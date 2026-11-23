@@ -159,7 +159,7 @@ pub(super) struct Zones {
     /// Zones made for row ids below this are not known until summed up.
     unknown_below: AtomicU64,
     /// Whether zones are kept: not until one is asked for
-    /// (`zones/cold.rs`, RULES.md D863).
+    /// (`zones/cold.rs`, RULES.md D868).
     warm: AtomicBool,
     /// The table's row ids given so far: one past them.
     given: Arc<AtomicU64>,

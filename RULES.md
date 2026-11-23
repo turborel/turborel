@@ -566,17 +566,22 @@ verification approach DO-178C expects (§8).
 | D857 | A thread pins a tree for a statement and is counted in its epoch once, its operations counting nothing meanwhile |
 | D858 | A thread keeps version-checked copies of the leaves it reads often and finds unchanged, and reads them with no latch |
 | D859 | A probe from a key borrows its key and shows the entries from it where they lie, allocating nothing |
+| D863 | A read by key shows its value to its caller where it lies, with the notes of a read that copies |
+| D864 | A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed |
+| D865 | A value read for a write and a value put by a change go through buffers their callers and threads keep |
 | D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
-| D863 | A table's zones are kept cold until a scan or a read asks them |
+| D868 | A table's zones are kept cold until a scan or a read asks them |
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 | D872 | A statement's writes of a table resolve it once |
+| D873 | The undo store gathers a batch a stripe of threads, and counts its pins by batch |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
 | D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
+| D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 
 ### The project
 
@@ -15966,7 +15971,133 @@ tree's tally and each leaf read noted for EXPLAIN ANALYZE (D621). The
 caller's function runs under a latch, so it may not use the tree nor
 wait, as a scan's visitor may not (D350).
 
-#### D863. A table's zones are kept cold until a scan or a read asks them
+#### D863. A read by key shows its value to its caller where it lies, with the notes of a read that copies
+
+A read of a row by its id copied the entry's value into the bytes its
+`Near` keeps (D31), and the row store then judged the version and
+decoded the row from the copy. For a version visible as it stands that
+copy was the whole row, moved once for nothing.
+
+`BLinkTree::get_near_with` shows the value to a function of its caller
+where it lies (`engine/tree/near.rs`): under the leaf's latch, or over a
+copy of the leaf, the scan's own (D806) or the thread's (D858). It looks
+where `get_near` looks, in the same order, the leaf remembered and its
+copy, the leaf noted for the row (D500), then a descent, and leaves the
+same notes for the next read, the leaf, the place in it and the misses.
+`get_near` is now that read with a function that copies. The function is
+called at most once, not at all for a key absent, and may not use the
+tree nor wait, as a scan's visitor may not (D350).
+
+#### D864. A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed
+
+Three costs of a node changed in place (D31, D847) were found by
+reading the write path.
+
+A node built again, the halves of a split, a node compacted, one whose
+prefix a key shortened, was allocated at its own size, so the first
+entry inserted into it grew the buffer and moved the whole node. Such a
+node is now built in a buffer of its page's size (`node::built_in`), and
+one built again for its prefix keeps the room its buffer had.
+
+A value replaced by a longer one was removed and inserted again. That
+took its slot out and put it back, parsed the node twice and sampled the
+hints twice. With room in the node it is now written in place
+(`node::lengthen`): the entry is written again at the end of the heap
+with its key's tail, the slots move past it once, and its slot is led to
+it. The node is byte for byte what removing and inserting left, the old
+bytes garbage and the entry marked as inserted last, so nothing that
+reads a node can tell the two apart.
+
+The hints (D500) were sampled again after every insert and remove. They
+are the heads of the slots at sixteen even steps of the count over
+seventeen. So they cannot have changed while the step is the same and
+the slot put in or taken out lies past the last one sampled, which is
+so of sixteen in seventeen entries appended to a node, as a table's rows
+are. Then they are left (`build.rs`, `hint_after`), and otherwise sampled
+again as before. The bytes are those sampling again would write, so the
+format and a search are unchanged.
+
+#### D865. A value read for a write and a value put by a change go through buffers their callers and threads keep
+
+Two calls of the write path returned or took a value in a vector made
+for the one call. `get_for_write` returned the row's newest version in a
+new vector at every update, and `update_alone` took the value its
+caller's change put in one, at every index entry written.
+
+`get_for_write_into` leaves the value in a buffer of its caller's, and
+`update_alone_into` hands the change a buffer to write its value into,
+which the thread keeps from one change to the next
+(`engine/tree/write.rs`). The older calls are now those with a buffer of
+their own. A delete of a value expected (`delete_if`) no longer copies
+the value it removes, which its caller has.
+
+What is left allocated on the write path is allocated by a split alone:
+the node's copy, its entries, its halves and the separator. A change
+with no split builds an empty list of splits, which allocates nothing,
+and the path of a descent and the place of a write are kept in place
+(D840, D843).
+#### D873. The undo store gathers a batch a stripe of threads, and counts its pins by batch
+
+Every first change of a row by a transaction appends the version it
+replaces to the undo store, which every table of a row store shares
+(D31). The store gathered one batch at a time. An append took the one
+lock of its batches, and then the one lock of its pins, to add the
+version's position to a map of every position still needed. A release
+took the pins' lock again. Every writer of every table met on those two
+locks at every row.
+
+Now each of 16 stripes of threads gathers a batch of its own, under a
+lock only its threads take (`undo/gathered.rs`). A batch takes its
+number from the store as it begins, so a position is still a batch's
+number and a place in it, and readers find a version as before. A
+version is pinned by being counted in its batch, which the append does
+anyway, so pinning takes no lock. A release marks the version released
+in its batch, a bit a version, so a position released twice counts once,
+as taking it out of the map did. Only the beginning and the end of a
+batch, a release, and a truncation take a lock the store shares, and a
+release takes the pins' alone.
+
+The log is truncated before the oldest batch holding a pinned version,
+written or still gathered. A truncation holds every stripe while it
+finds that batch and reads the log's end, so no version is pinned and no
+batch taken to be written meanwhile, which is what the one lock gave.
+It is asked for only when a batch's last pinned version is released, not
+at every release. A batch still gathered whose every version is
+released is given up there, never written, and its stripe begins
+another. So a stripe no thread appends through holds nothing back, and a
+transaction collected at once, as each is while no other is open, writes
+none of its versions to the undo log.
+
+A store of no batches, over a log in memory, keeps its map of pinned
+positions.
+#### D891. A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range
+
+D890 mended one choice of many fed by the estimate of a range past the
+statistics. The join's order, the size of a hash table, whether a
+grouping over the rows runs on several threads, and the plan a
+prepared statement or a procedure's body learns all read the same
+estimate (D370), and swung with it between passes. A plan made with
+slots shows the swing worst. Its range's probe holds no value until an
+execution fills it, so the index estimates nothing of it, and its join
+weighed the statistics' estimate alone. Kept, such a plan read the
+whole of STOCK at every later stock level.
+
+The estimator now asks the index where the statistics cannot know.
+Where a table's conjuncts hold an index's first columns equal to
+values, and bound its next column from below past the greatest value
+the pass saw of it, it builds the probe of that range, with a slot's
+value of the execution planned for (D613) and a slot less a constant
+folded (D760), and asks the index's estimate of it
+(`physical/cardinality/past.rs`). A plan made with slots and no values
+has no range to ask, and is weighed by the statistics alone. The share the
+conjuncts keep is at most that estimate's share of the table's rows,
+as every row they keep lies in the range. A range the statistics saw
+is left to them, so a plan made with fresh statistics estimates as
+before. The index's estimate costs a count of at most a leaf's entries,
+or the share of its tree a larger range takes, once for each estimate
+of the table's conjuncts.
+
+#### D868. A table's zones are kept cold until a scan or a read asks them
 
 Every write to a table kept its zone (D31): it found the zone, locked
 it, compared the values it changed with the zone's bounds, and widened

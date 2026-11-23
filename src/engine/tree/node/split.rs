@@ -4,7 +4,7 @@
 //! is built with its own prefix, what its first and last keys share with
 //! its new high key.
 
-use super::build::{Shape, built, built_size};
+use super::build::{Shape, built_in, built_size};
 use super::{KeyRef, child_of, corrupt, entry_size};
 use crate::disk::pager::PageId;
 use crate::error::Result;
@@ -53,11 +53,11 @@ pub(in crate::engine::tree) fn split(
     let (left_end, right_first) = if leaf { (middle.saturating_add(1), PageId(0)) } else { (middle, child_of(value)?) };
     let left_entries = entries.get(..left_end).unwrap_or_default();
     let right_entries = entries.get(middle.saturating_add(1)..).unwrap_or_default();
-    let left = built(&Shape { high: Some(&separator), right: Some(new), ..*shape }, left_entries, None, None)?;
+    let left = built_in(capacity, &Shape { high: Some(&separator), right: Some(new), ..*shape }, left_entries, None, None)?;
     // The entry added stays marked where it lands, should the split have
     // moved left of it to fit.
     let marked = at_run.and(run).and_then(|at| at.checked_sub(middle.saturating_add(1)));
-    let right = built(&Shape { first: right_first, ..*shape }, right_entries, marked, None)?;
+    let right = built_in(capacity, &Shape { first: right_first, ..*shape }, right_entries, marked, None)?;
     Ok(Halves { left, right, separator })
 }
 

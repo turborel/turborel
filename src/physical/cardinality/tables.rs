@@ -38,7 +38,8 @@ impl Estimates<'_> {
         }
         for of in &scans {
             let stats = self.statistics(of.table);
-            kept *= conjunction(&of.conds, Known { stats: stats.as_deref(), cost: self.cost() });
+            let share = conjunction(&of.conds, Known { stats: stats.as_deref(), cost: self.cost() });
+            kept *= self.past_capped(of.table, &of.conds, share);
         }
         kept
     }

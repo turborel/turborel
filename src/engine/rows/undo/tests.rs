@@ -2,7 +2,8 @@
 //! batch is, the log truncated by batch, and a batch that cannot be
 //! written; a truncation racing an append, alone or in batches; batches fitted to a page; and
 //! batches written kept in memory within the budget's share, past it read
-//! from the log, read on many threads; on the log of `hooked.rs`.
+//! from the log, read on many threads; batches gathered by stripe, with
+//! their pins counted by batch (RULES.md D873); on the log of `hooked.rs`.
 
 use super::hooked::{Hooked, shared};
 use super::*;
@@ -322,4 +323,98 @@ fn readers_read_while_batches_are_written_and_forgotten() {
         r.join().unwrap();
     }
     assert_eq!(store.pinned(), 0);
+}
+
+/// What `work` gives, run on a thread whose stripe is not this thread's.
+fn apart<T: Send>(work: impl Fn() -> T + Sync) -> T {
+    let mine = Stripes::of_thread();
+    loop {
+        let done = std::thread::scope(|scope| scope.spawn(|| (Stripes::of_thread() != mine).then(&work)).join().unwrap());
+        if let Some(done) = done {
+            return done;
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D873: a version appended to a batch its
+/// stripe is gathering takes no lock the whole store shares: a thread
+/// whose batch has begun appends, and reads back, though another holds the
+/// store's batches and its pins.
+#[test]
+fn an_append_to_a_batch_begun_takes_no_lock_of_the_store() {
+    let log = Arc::new(Hooked::default());
+    let store = Arc::new(UndoStore::batched(shared(&log), 4000));
+    let (begun, first) = std::sync::mpsc::channel();
+    let (go, held) = std::sync::mpsc::channel::<()>();
+    let (done, finished) = std::sync::mpsc::channel();
+    let appender = Arc::clone(&store);
+    std::thread::spawn(move || {
+        let mut at = vec![appender.append(&version(0)).unwrap()];
+        begun.send(()).unwrap();
+        held.recv().unwrap();
+        at.extend((1_u32..6_u32).map(|n| appender.append(&version(n)).unwrap()));
+        let read: Vec<Vec<u8>> = at.iter().map(|pos| appender.read(*pos).unwrap().to_vec()).collect();
+        done.send(read).unwrap();
+    });
+    first.recv().unwrap();
+    let (batches, pinned) = (lock_builtin(&store.batches), lock_builtin(&store.pinned));
+    go.send(()).unwrap();
+    let read = finished.recv_timeout(std::time::Duration::from_secs(5));
+    drop((batches, pinned));
+    assert_eq!(read.ok(), Some((0_u32..6_u32).map(version).collect::<Vec<_>>()), "the append waited on the store");
+    assert_eq!((store.pinned(), log.records()), (6, 0), "each pinned by its batch's count, none written yet");
+}
+
+/// Verifies: [DESIGN] RULES.md D873: a batch's pins are counted by its
+/// versions released, each once: a position released twice counts once, so
+/// a batch written goes with the release of its last version and not
+/// before, and a release of a version of a batch gone changes nothing.
+#[test]
+fn a_batch_goes_with_its_last_version_released_once() {
+    let log = Arc::new(Hooked::default());
+    let store = UndoStore::batched(shared(&log), 400);
+    let at: Vec<Lsn> = (0_u32..10_u32).map(|n| store.append(&version(n)).unwrap()).collect();
+    assert_eq!((log.records(), store.pinned()), (1, 10));
+    store.release(at[0]);
+    store.release(at[0]);
+    at.iter().take(9).for_each(|done| store.release(*done));
+    store.truncate().unwrap();
+    assert_eq!(store.pinned(), 1, "nine released, one of them twice");
+    assert_eq!((log.records(), store.read(at[9]).unwrap().to_vec()), (1, version(9)), "kept for its last version");
+    store.release(at[9]);
+    store.truncate().unwrap();
+    assert_eq!((log.records(), store.pinned()), (0, 0));
+    assert_eq!(store.read(at[9]).err().map(|e| e.code), Some(Code::Corrupt));
+    store.release(at[3]);
+    assert_eq!(store.pinned(), 0, "its batch is gone");
+}
+
+/// Verifies: [DESIGN] RULES.md D873: each stripe gathers a batch of its
+/// own, and the log is truncated before the oldest batch holding a pinned
+/// version, gathered or written. A batch one stripe gathers and never
+/// fills holds the batches written after it while a version of it is
+/// pinned, and holds nothing back once they are all released: it is given
+/// up, and the stripe's next version begins another.
+#[test]
+fn a_batch_a_stripe_gathers_holds_the_log_only_while_it_is_pinned() {
+    let log = Arc::new(Hooked::default());
+    let store = UndoStore::batched(shared(&log), 400);
+    let idle: Vec<Lsn> = apart(|| (0_u32..3_u32).map(|n| store.append(&version(n)).unwrap()).collect());
+    let filled: Vec<Lsn> = (10_u32..30_u32).map(|n| store.append(&version(n)).unwrap()).collect();
+    assert_eq!(log.records(), 2, "this stripe's two batches written, the other's still gathered");
+    for done in &filled {
+        store.release(*done);
+    }
+    store.truncate().unwrap();
+    assert_eq!(store.read(idle[2]).unwrap().to_vec(), version(2), "pinned, though its batch is older than those written");
+    assert_eq!(store.pinned(), 3);
+    assert_eq!(log.records(), 2, "and so are the batches written after it");
+    for done in &idle {
+        store.release(*done);
+    }
+    store.truncate().unwrap();
+    assert_eq!((log.records(), store.pinned()), (0, 0), "nothing held back by the batch never filled");
+    assert_eq!(store.read(idle[0]).err().map(|e| e.code), Some(Code::Corrupt), "given up");
+    let again = apart(|| store.append(&version(50)).unwrap());
+    assert_eq!(store.read(again).unwrap().to_vec(), version(50), "another begun reads back");
 }

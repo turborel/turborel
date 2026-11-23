@@ -64,6 +64,7 @@ impl BufferPool {
     /// its frame not latched exclusively since, so neither changed nor
     /// given another page. A write under way when the stamp was taken
     /// moved the version on as it took the latch, before it changed a byte.
+    #[inline]
     pub fn unchanged(&self, file: FileId, id: u64, stamp: Stamp) -> bool {
         let Some(frame) = self.frames.get(stamp.frame).filter(|_| stamp.pool == self.number) else { return false };
         frame.version.load(Ordering::SeqCst) == stamp.version && frame.key() == Some(Key { file, id })

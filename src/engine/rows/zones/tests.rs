@@ -145,7 +145,7 @@ fn an_opened_tables_zones_are_known_once_summed() {
     };
     let table = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
     // No zone was saved, so it opens cold, with none to sum up (RULES.md
-    // D863), until a scan told a condition asks.
+    // D868), until a scan told a condition asks.
     assert!(table.zones.cold() && !table.maintenance_due());
     assert!(reads(&table, &equal(0, 10), ids[2999]), "not known: read");
     assert!(table.maintenance_due());

@@ -1,5 +1,5 @@
 //! \[DESIGN\] Of the zones (see the module's documentation), a table's
-//! zones kept cold until something asks them (RULES.md D863). A table
+//! zones kept cold until something asks them (RULES.md D868). A table
 //! written and read by key alone, as an order entry's are, has no use for
 //! zones: no scan told a condition reads it, and no index-only scan asks
 //! whether its rows are visible. Its writes then touch no zone at all:
@@ -135,7 +135,7 @@ mod tests {
         (table, ids)
     }
 
-    /// Verifies: [DESIGN] RULES.md D863: a table no scan told a condition
+    /// Verifies: [DESIGN] RULES.md D868: a table no scan told a condition
     /// has read, and no read asked whether a row is visible, keeps no
     /// zone: its inserts, an update, a deletion and their commit make
     /// none, so none is locked, and nothing is due; a scan told a
@@ -152,7 +152,7 @@ mod tests {
         assert_eq!(table.get(NO_TRANSACTION, ids[0]).unwrap().map(|r| r[0].to_string()), Some("-1".to_owned()));
     }
 
-    /// Verifies: [DESIGN] RULES.md D863, D31: the first scan told a
+    /// Verifies: [DESIGN] RULES.md D868, D31: the first scan told a
     /// condition of a column kept warms the table: it reads every zone,
     /// each not known, and once they are summed up a scan reads only the
     /// zones whose rows may match; a row written after the warming is held
@@ -174,7 +174,7 @@ mod tests {
         assert!(!reads(&table, &equal(0, 777_778), late));
     }
 
-    /// Verifies: [DESIGN] RULES.md D863, D34: a read that asks whether a
+    /// Verifies: [DESIGN] RULES.md D868, D34: a read that asks whether a
     /// row of a cold table is visible to every reader is told it is not,
     /// and warms the table; a version superseded while the table was cold
     /// keeps every zone from being settled visible until it is collected,

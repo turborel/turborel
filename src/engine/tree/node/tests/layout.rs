@@ -103,7 +103,7 @@ fn heads_and_hints_find_every_key() {
         }
         finds(&content, &held, &probes);
     }
-    finds(&compact(&content).unwrap(), &held, &probes);
+    finds(&compact_in(&content, 0).unwrap(), &held, &probes);
 }
 
 /// Verifies: [DESIGN] RULES.md D500, a node names its tree: a node built,
@@ -116,7 +116,7 @@ fn a_node_names_its_tree() {
     let node = Node::parse(&content).unwrap();
     let halves = split(&node.shape(), &node.entries().unwrap(), None, (PageId(4), usize::MAX)).unwrap();
     assert_eq!((Node::parse(&halves.left).unwrap().tree, Node::parse(&halves.right).unwrap().tree), (TREE, TREE));
-    assert_eq!(Node::parse(&compact(&content).unwrap()).unwrap().tree, TREE);
+    assert_eq!(Node::parse(&compact_in(&content, 0).unwrap()).unwrap().tree, TREE);
     let gone = deleted(PageId(4), TREE).unwrap();
     assert!(Node::parse(&gone).unwrap().deleted && Node::parse(&gone).unwrap().tree == TREE);
     let mut long = leaf(Some(b"m"), Some(PageId(9)), &[(b"b", b"2")]);

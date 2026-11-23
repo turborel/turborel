@@ -6,6 +6,7 @@ use super::*;
 
 mod damage;
 mod layout;
+mod place;
 mod search;
 
 /// The tree the nodes of these tests are of.
@@ -60,7 +61,7 @@ fn nodes_read_back_and_change_in_place() {
     let removed = Node::parse(&content).unwrap();
     assert_eq!((removed.live(), content.len()), (before - entry_size(b"c", b"3"), before - SLOT));
     assert_eq!(keys(&content), [b"a", b"b", b"d", b"e"]);
-    let compacted = compact(&content).unwrap();
+    let compacted = compact_in(&content, 0).unwrap();
     assert_eq!((keys(&compacted), compacted.len()), (keys(&content), removed.live()));
     assert!(insert(&mut content, 9, b"z", b"").is_err(), "past its entries");
     assert!(remove(&mut content, 4).is_err(), "no entry 4");
@@ -124,7 +125,7 @@ fn runs_split_where_the_entry_goes() {
     insert(&mut content, 1, b"b", b"2").unwrap();
     assert_eq!(Node::parse(&content).unwrap().last_insert().unwrap(), Some(1));
     remove(&mut content, 0).unwrap();
-    let compacted = compact(&content).unwrap();
+    let compacted = compact_in(&content, 0).unwrap();
     assert_eq!(Node::parse(&compacted).unwrap().last_insert().unwrap(), Some(0), "compaction keeps the mark");
     let entries: Vec<(&[u8], &[u8])> = vec![(b"a", b"1"), (b"b", b"2"), (b"c", b"3"), (b"x", b"4"), (b"y", b"5")];
     let shape = Shape { level: 0, high: None, right: None, first: PageId(0), tree: TREE };
@@ -235,5 +236,9 @@ fn values_no_longer_are_written_over_in_place() {
         "its byte left is garbage"
     );
     assert_eq!((entry_of(&shorter, 0), entry_of(&shorter, 2)), ((b"a".to_vec(), b"11".to_vec()), (b"c".to_vec(), b"33".to_vec())));
-    assert_eq!(compact(&content).unwrap().len(), content.len().checked_sub(1).unwrap(), "and is reclaimed as the node is built again");
+    assert_eq!(
+        compact_in(&content, 0).unwrap().len(),
+        content.len().checked_sub(1).unwrap(),
+        "and is reclaimed as the node is built again"
+    );
 }
