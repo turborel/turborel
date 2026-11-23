@@ -352,7 +352,7 @@ fn inserted(exec: &mut Exec<'_>, contained: &Contained, i: &Inserted) -> Result<
 /// Whether `session` runs a procedure's body compiled
 /// (EXECUTOR.COMPILED_PROCEDURES, RULES.md D841).
 pub(in crate::db) fn compiled_procedures(st: &State, session: &Session) -> bool {
-    st.settings.is_on_for(crate::settings::COMPILED_PROCEDURES, &session.own.borrow())
+    st.settings.is_on_for(crate::settings::executor::COMPILED_PROCEDURES, &session.own.borrow())
 }
 
 #[cfg(test)]

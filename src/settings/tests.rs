@@ -2,6 +2,7 @@
 //! built-in keys (RULES.md D36, R-TEST-1).
 
 use super::builtin::{LOG_DURABILITY, text};
+use super::executor::COMPILED_PROCEDURES;
 use super::*;
 use crate::txn::LockWait;
 use crate::value::Decimal;
