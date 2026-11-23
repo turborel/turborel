@@ -7,7 +7,8 @@
 //!
 //! A copy read is exactly the node's content now, as the version moves on
 //! before any change, so a descent from it goes where one through the
-//! latch would. Leaves are never copied: a read of one takes its latch.
+//! latch would. A leaf is not copied here: a read of one takes its latch,
+//! unless the thread reads it often and finds it unchanged (`leaves.rs`).
 //!
 //! Each copy keeps the node's header as parsed beside it (RULES.md D840),
 //! so a descent through it reads no header and checks nothing again, as a
@@ -21,6 +22,7 @@ use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
 
+use super::leaves;
 use super::node::{Node, Parsed};
 use crate::disk::buffer::{BufferPool, FileId, PageRef, Stamp, Tally};
 use crate::error::Result;
@@ -151,6 +153,21 @@ fn current(pool: &BufferPool, file: FileId, id: u64) -> Option<(Rc<[u8]>, Parsed
         copy.used = true;
         Some((Rc::clone(&copy.bytes), copy.parsed))
     })
+}
+
+/// As `read`, of a page that may be a leaf if `leaf`: then from the
+/// thread's copy of the leaf, if it has one still current (`leaves.rs`,
+/// RULES.md D858).
+pub(super) fn read_at<'p>(
+    pool: &'p BufferPool,
+    (file, id): (FileId, u64),
+    tally: Option<&Tally>,
+    (copied, leaf): (bool, bool),
+) -> Result<Read<'p>> {
+    if let Some((bytes, parsed)) = leaf.then(|| leaves::current(pool, file, id)).flatten() {
+        return Ok(Read::Copied(bytes, parsed));
+    }
+    read(pool, (file, id), tally, copied)
 }
 
 /// Keeps a copy of `read`, page `id` of `file`, an inner node read

@@ -23,6 +23,15 @@ pub fn project(row: &[Value], columns: &[usize]) -> Option<Row> {
     columns.iter().map(|&c| row.get(c).cloned()).collect()
 }
 
+/// Appends to `out` the values of `row` at the positions `columns`, in
+/// that order, NULL for one past its end, if there is a row: whether there
+/// is, as the default `TableStorage::get_listed` gives a row read whole.
+pub(super) fn listed(row: Option<Row>, columns: &[usize], out: &mut Row) -> bool {
+    let Some(row) = row else { return false };
+    out.extend(columns.iter().map(|&c| row.get(c).cloned().unwrap_or(Value::Null)));
+    true
+}
+
 /// \[DESIGN\] The row of `values`, of `len` values at most, made once per
 /// row read or computed: sized once, as a vector collected through
 /// `Result` does not know its length and grows from a few values by
@@ -144,4 +153,27 @@ pub struct TableSizes {
     pub bytes: u64,
     /// Whether some of them are estimated.
     pub estimated: bool,
+}
+
+// Unit tests: a row read whole given as its listed columns (RULES.md
+// R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::{listed, located};
+    use crate::value::Value;
+
+    /// Verifies: [DESIGN] RULES.md D862, the default
+    /// `TableStorage::get_listed`: of a row read whole, the values at the
+    /// positions listed are appended in the order listed, one listed twice
+    /// given twice and one past the row's end NULL; of no row, nothing is,
+    /// and it says so.
+    #[test]
+    fn a_row_read_whole_gives_its_listed_columns_in_their_order() {
+        let mut out = vec![located(9)];
+        assert!(listed(Some(vec![located(0), located(1), located(2)]), &[2, 0, 2, 7], &mut out));
+        let shown: Vec<String> = out.iter().map(ToString::to_string).collect();
+        assert_eq!(shown, ["9", "2", "0", "2", &Value::Null.to_string()]);
+        assert!(!listed(None, &[0], &mut out));
+        assert_eq!(out.len(), 5);
+    }
 }

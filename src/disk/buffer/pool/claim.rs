@@ -1,7 +1,9 @@
 //! \[DESIGN\] Claiming a frame for a page not in the pool (RULES.md D30,
 //! D38): an empty one, or one the eviction policy proposes, checked again
-//! under the shards of both pages, still unpinned, and latched exclusively
-//! without waiting.
+//! under the shards of both pages, still unpinned, latched exclusively
+//! without waiting, and seen unpinned once more under that latch, as a
+//! hold that finds the frame by its hint pins it under the latch alone
+//! (`hits.rs`, RULES.md D854).
 //!
 //! A frame proposed may be held: pinned, or latched by a read that hit by
 //! its hint (`hits.rs`), which takes the latch and no pin. A pinned frame
@@ -27,6 +29,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use super::{Claim, Latch};
+use crate::disk::buffer::hits::Kept;
 use crate::disk::buffer::{BufferPool, Key, UNDO_WAITS, all_held, count};
 use crate::error::Result;
 use crate::hash::xxhash::{Xxh3Map, Xxh3Set};
@@ -208,11 +211,17 @@ impl BufferPool {
             return Ok(Attempt::Mapped);
         }
         // Still the page it held, and unpinned, now that both shards are
-        // locked: pins rise only under the shard of the page held.
+        // locked: pins rise only under the shard of the page held, or
+        // under the frame's latch, where they are looked at again
+        // (`Frame::taken`).
         if frame.key() != Some(old) || frame.pins.load(Ordering::Acquire) > 0 {
             return Ok(Attempt::Held);
         }
-        let Some(latch) = frame.try_latched() else { return Ok(Attempt::Latched) };
+        let latch = match frame.taken() {
+            Ok(latch) => latch,
+            Err(Kept::Latched) => return Ok(Attempt::Latched),
+            Err(Kept::Pinned) => return Ok(Attempt::Held),
+        };
         count(&self.counters.evictions);
         let claim = self.take(&mut map, (index, latch), key, Some(old))?;
         // A dirty page stays mapped until written back (`fill`).

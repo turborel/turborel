@@ -22,7 +22,7 @@ pub const COUNT: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a zone's rows are counted whether or not every reader sees them alone",
         file: "src/engine/rows/zones/visible.rs",
-        original: "            if map.visible.get(at).is_some_and(|flag| flag.load(AtomicOrdering::Acquire)) {",
+        original: "            if slot.visible.load(AtomicOrdering::Acquire) {",
         replacement: "            if zone.known {",
         integration: &[LEVELS],
         unit: &[COUNTED],

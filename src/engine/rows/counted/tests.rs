@@ -81,3 +81,26 @@ fn a_count_is_saved_only_to_its_meta_page() {
     files.save_counts().unwrap();
     assert_eq!(counted.holding(|_| Ok(())).err().map(|e| e.code), Some(Code::Api), "its meta page freed");
 }
+
+/// Verifies: [DESIGN] RULES.md D861: a count moved by threads at once,
+/// each on its stripe, one adding what another takes, sums to what was
+/// added less what was taken; set, it is that count; and a sum below zero
+/// reads as none.
+#[test]
+fn a_count_moved_by_threads_at_once_sums_exactly() {
+    let table = RowTable::create(&shadowed(), &TYPES, TableOptions::default()).unwrap();
+    let live = &table.counted.live;
+    live.store(1000, Ordering::Release);
+    std::thread::scope(|scope| {
+        for thread in 0..8_usize {
+            let step = move || if thread % 2 == 0 { live.fetch_add(3, Ordering::AcqRel) } else { live.fetch_sub(2, Ordering::AcqRel) };
+            scope.spawn(move || (0..5000_u32).for_each(|_| step()));
+        }
+    });
+    assert_eq!(live.load(Ordering::Acquire), 1000 + 4 * 5000 * 3 - 4 * 5000 * 2);
+    live.store(5, Ordering::Release);
+    live.fetch_sub(9, Ordering::AcqRel);
+    assert_eq!(live.load(Ordering::Acquire), 0);
+    live.fetch_add(9, Ordering::AcqRel);
+    assert_eq!(live.load(Ordering::Acquire), 5);
+}

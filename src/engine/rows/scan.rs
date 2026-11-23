@@ -13,6 +13,7 @@ use crate::engine::tree::{BLinkTree, Direction, Scan, Visit, Visited, scan_of};
 use crate::error::Result;
 use crate::storage::{Batches, Conjunction, Near, Ramp, Row, RowId, Rows, ScanOrder, batches_of};
 use crate::txn::TxId;
+use crate::value::Value;
 
 /// A table's tree, reached through the table, so a scan that owns the
 /// table owns the tree it reads.
@@ -79,6 +80,33 @@ impl RowTable {
             near.gone = self.deletion_of(&near.bytes);
         }
         Ok(seen)
+    }
+
+    /// \[DESIGN\] Appends to `out` the values of `columns` of row `id` as
+    /// `tx` sees it, in their order, and no other: whether it sees the
+    /// row, `out` as it was if not. A read of a few columns makes no row
+    /// of the table's width, and `near` and `out`, kept by the caller from
+    /// read to read, are written into again, not made for each (RULES.md
+    /// D862). The read is noted as `TableStorage::get_columns` notes it.
+    ///
+    /// # Errors
+    ///
+    /// As `TableStorage::get`.
+    pub fn get_listed(&self, tx: TxId, id: RowId, columns: &[usize], (near, out): (&mut Near, &mut Row)) -> Result<bool> {
+        let reader = self.read_row(tx, (id, columns_mask(columns.iter().copied())), near)?;
+        near.gone = None;
+        if !self.tree.get_near(&key(id), near)? {
+            let Some(row) = self.frozen_seen(id, Some(columns), reader)? else { return Ok(false) };
+            out.extend(columns.iter().map(|&c| row.get(c).cloned().unwrap_or(Value::Null)));
+            return Ok(true);
+        }
+        let Some(record) = self.visible_in(&near.bytes, reader)? else {
+            let gone = self.deletion_of(&near.bytes);
+            near.gone = gone;
+            return Ok(false);
+        };
+        self.decode_listed((id, &record), columns, out)?;
+        Ok(true)
     }
 
     /// Every entry of the table's tree, in row id order, read through

@@ -1,8 +1,11 @@
-//! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840):
+//! The mutations of a B-link tree probe's path (RULES.md R-TEST-9, D840,
+//! D852, D853, D854, D855, D856, D857,
+//! D858):
 //! the search over a node's slots, inner copies kept with their headers
 //! parsed, writers that find their leaf from its parent and change it
-//! through the frame they own, paths kept in place, and scans' buffers
-//! and bounds.
+//! through the frame they own, under one latch, from the leaf noted for a
+//! row, their page pinned through its hint, paths kept in place, and
+//! scans' buffers and bounds.
 
 use super::super::{Mutation, Package};
 
@@ -10,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 7] = [
+pub const TREE_PATH: [Mutation; 20] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -80,5 +83,135 @@ pub const TREE_PATH: [Mutation; 7] = [
         replacement: "let track_low = matches!(self.direction, Direction::Forward);",
         integration: &["trees::scans_honour_bounds_in_both_directions"],
         unit: &[],
+    },
+    Mutation {
+        name: "tree-here-covers",
+        package: Package::Core,
+        breaks: "a writer searches the leaf it owns though the key moved right of it with a split, and finds no entry there",
+        file: "src/engine/tree/here.rs",
+        original: "    if node.deleted || !node.covers(key) {",
+        replacement: "    if node.deleted {",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_replace_starts_at_the_leaf_a_read_left"],
+    },
+    Mutation {
+        name: "tree-here-compares",
+        package: Package::Core,
+        breaks: "a replace of a value expected compares only its length, so it writes over a value changed since it was read",
+        file: "src/engine/tree/here.rs",
+        original: "            if node.value(at)? == expected {",
+        replacement: "            if node.value(at)?.len() == expected.len() {",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_replace_starts_at_the_leaf_a_read_left"],
+    },
+    Mutation {
+        name: "tree-noted-for-write",
+        package: Package::Core,
+        breaks: "a row read for a write no longer starts at the leaf noted for it, and descends from the root",
+        file: "src/engine/tree/write.rs",
+        original: "        if let Some((leaf, value)) = self.at_noted(key, |leaf| value_of(leaf, key))? {",
+        replacement: "        if let Some((leaf, value)) = None::<(u64, Option<Vec<u8>>)> {",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::a_read_for_a_write_starts_at_the_leaf_noted"],
+    },
+    Mutation {
+        name: "pool-taken-pinned",
+        package: Package::Core,
+        breaks: "a frame latched to be taken from its page is taken though pinned under that latch, through its hint",
+        file: "src/disk/buffer/hits.rs",
+        original: "        if self.pins.load(Ordering::Acquire) > 0 {\n            return Err(Kept::Pinned);\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &["disk::buffer::hits::tests::a_page_pinned_through_its_hint_keeps_its_frame"],
+    },
+    Mutation {
+        name: "pool-pin-hinted-page",
+        package: Package::Core,
+        breaks: "a hold pins the frame its hint names though the frame holds another page now",
+        file: "src/disk/buffer/hits.rs",
+        original: "            if frame.loading.load(Ordering::Acquire) || frame.key() != Some(key) {\n                return None;\n            }\n            frame.pins",
+        replacement: "            if frame.loading.load(Ordering::Acquire) {\n                return None;\n            }\n            frame.pins",
+        integration: &[],
+        unit: &["disk::buffer::hits::tests::a_page_pinned_through_its_hint_keeps_its_frame"],
+    },
+    Mutation {
+        name: "scan-first-read-whole",
+        package: Package::Core,
+        breaks: "a forward scan's first read copies every entry of its leaf within its bounds, not one",
+        file: "src/engine/tree/scan.rs",
+        original: "            Direction::Forward => self.most,",
+        replacement: "            Direction::Forward => usize::MAX,",
+        integration: &[],
+        unit: &["engine::tree::tests::taken::a_forward_scan_copies_one_entry_then_a_few_then_leaves"],
+    },
+    Mutation {
+        name: "scan-part-not-read-again",
+        package: Package::Core,
+        breaks: "a scan ends at a leaf it took only part of, never reading the rest",
+        file: "src/engine/tree/scan.rs",
+        original: "                    (Taken::Part, Some(leaf)) => Next::Leaf(leaf),",
+        replacement: "                    (Taken::Part, Some(_)) => Next::Done,",
+        integration: &[],
+        unit: &["engine::tree::tests::taken::a_forward_scan_copies_one_entry_then_a_few_then_leaves"],
+    },
+    Mutation {
+        name: "tree-latched-covering",
+        package: Package::Core,
+        breaks: "a change latches the leaf it owns though the key moved right of it with a split, and finds no entry there",
+        file: "src/engine/tree/here.rs",
+        original: "            if !node.deleted && node.covers(key) {",
+        replacement: "            if !node.deleted {",
+        integration: &[],
+        unit: &["engine::tree::tests::placed::a_change_starts_where_the_write_left_the_entry"],
+    },
+    Mutation {
+        name: "tree-delete-uncompared",
+        package: Package::Core,
+        breaks: "a delete of a value expected removes the entry whatever its value",
+        file: "src/engine/tree/write.rs",
+        original: "        if expected.is_some_and(|expected| expected != old) {",
+        replacement: "        if expected.is_none() && old.is_empty() {",
+        integration: &[],
+        unit: &["engine::tree::tests::placed::a_delete_and_an_update_change_the_leaf_covering_their_key"],
+    },
+    Mutation {
+        name: "tree-pin-left-noted",
+        package: Package::Core,
+        breaks: "a pin dropped stays noted, so its thread's later operations enter no epoch and may read a page freed",
+        file: "src/engine/tree/pin.rs",
+        original: "                    *slot = 0;\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::tree::tests::pinned::a_pin_guards_its_threads_operations_until_it_is_dropped"],
+    },
+    Mutation {
+        name: "tree-leaf-copy-unchecked",
+        package: Package::Core,
+        breaks: "a leaf's copy is read though its frame's version moved on, so a read gives a value written over since",
+        file: "src/engine/tree/leaves.rs",
+        original: "leaf.copy.as_ref().filter(|_| pool.unchanged(file, id, leaf.stamp))?",
+        replacement: "leaf.copy.as_ref()?",
+        integration: &[],
+        unit: &["engine::tree::tests::leaf_copies::a_leaf_is_copied_once_read_unchanged_and_never_read_stale"],
+    },
+    Mutation {
+        name: "tree-leaf-copied-at-once",
+        package: Package::Core,
+        breaks: "a leaf is copied at every latched read, however often it is written",
+        file: "src/engine/tree/leaves.rs",
+        original: "        if self.seen < needed || self.copy.is_some() {",
+        replacement: "        if self.copy.is_some() {",
+        integration: &[],
+        unit: &["engine::tree::tests::leaf_copies::a_leaf_is_copied_once_read_unchanged_and_never_read_stale"],
+    },
+    Mutation {
+        name: "near-hint-clears-misses",
+        package: Package::Core,
+        breaks: "a hint that answers clears a scan's misses, so reads of rows far apart try the last leaf and its neighbour before every hint",
+        file: "src/engine/tree/near.rs",
+        original: "        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
+        replacement: "        near.misses = 0;\n        near.leaf = Some((leaf, stamp));\n        Ok(Some(found))",
+        integration: &[],
+        unit: &["engine::tree::tests::hinted::reads_far_apart_stop_trying_the_leaf_of_the_read_before"],
     },
 ];

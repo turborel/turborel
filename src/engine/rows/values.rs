@@ -31,7 +31,10 @@ impl RowTable {
     fn encode_after(&self, id: RowId, row: &Row, room: usize) -> Result<(Vec<u8>, Vec<PageId>)> {
         self.check_lobs(row)?;
         let mut pages = Vec::new();
-        let mut record = vec![0; room];
+        // Sized for the record written in line, as most are, so the room
+        // and the record are one allocation, not one grown into another.
+        let mut record = Vec::with_capacity(room.saturating_add(self.format.in_line_room(row)));
+        record.resize(room, 0);
         // A record sealed takes more: room is kept for it.
         let spill = Spill { most: self.spill.most.saturating_sub(self.sealing.overhead()), ..self.spill };
         let encoded = self.format.encode_spilling(row, spill, &mut record, |column, bytes| {
@@ -123,6 +126,24 @@ impl RowTable {
             self.lobs.resolve(&mut row);
         }
         Ok(row)
+    }
+
+    /// Appends to `out` the values of `columns` of the row `record` holds,
+    /// row `id`'s, in their order, and no other (`record/listed.rs`,
+    /// RULES.md D862).
+    pub(in crate::engine::rows) fn decode_listed(&self, (id, record): (RowId, &[u8]), columns: &[usize], out: &mut Row) -> Result<()> {
+        let mut fetch = |reference: Reference| self.get_value(id, reference);
+        let record = self.sealing.plain_record(id, record)?;
+        let base = out.len();
+        self.format.decode_listed_with(&record, columns, &mut fetch, out)?;
+        if !self.lobs.columns().is_empty() {
+            for (value, &column) in out.iter_mut().skip(base).zip(columns) {
+                if let Ok(one) = <&mut [Value; 1]>::try_from(std::slice::from_mut(value)) {
+                    self.lobs.resolve_column(column, one);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Each of `columns`, given with a place of the caller's, of the row

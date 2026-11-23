@@ -14,7 +14,7 @@
 //! A file not shadowed may hold pages written after its last checkpoint,
 //! so a table opened from one counts its rows by a pass.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use super::meta::{meta_content, parse_meta};
@@ -22,7 +22,65 @@ use super::{TableFiles, corrupt};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
-use crate::sync::lock;
+use crate::sync::{lock, thread_stripe};
+
+/// \[DESIGN\] Stripes of a count of rows: as many as a structure's tally
+/// of its reads has (`disk/buffer/tally.rs`), as every table has one.
+const STRIPES: usize = 16;
+
+/// A stripe's share of the count, alone on its cache lines: what its
+/// threads added less what they took, so it may be below zero.
+#[repr(align(128))]
+#[derive(Default)]
+struct Stripe(AtomicI64);
+
+/// \[DESIGN\] A count of rows moved by every insert and deletion (RULES.md
+/// D861): kept by stripe, a thread moving its own, so sessions writing one
+/// table do not pass one word between them; summed as it is read. Its
+/// methods are named and called as an atomic's, their orderings not used.
+pub(super) struct Live {
+    stripes: Box<[Stripe]>,
+}
+
+impl Live {
+    fn new() -> Live {
+        Live { stripes: (0..STRIPES).map(|_| Stripe::default()).collect() }
+    }
+
+    /// Moves the thread's stripe by `rows`, up or down.
+    fn moved(&self, rows: usize, up: bool) {
+        let by = i64::try_from(rows).unwrap_or(i64::MAX);
+        if let Some(stripe) = self.stripes.get(thread_stripe(STRIPES)) {
+            stripe.0.fetch_add(if up { by } else { by.saturating_neg() }, Ordering::Relaxed);
+        }
+    }
+
+    /// Counts `rows` more.
+    pub(in crate::engine::rows) fn fetch_add(&self, rows: usize, _: Ordering) {
+        self.moved(rows, true);
+    }
+
+    /// Counts `rows` fewer.
+    pub(in crate::engine::rows) fn fetch_sub(&self, rows: usize, _: Ordering) {
+        self.moved(rows, false);
+    }
+
+    /// The count: the stripes' sum, none below zero. A move made as it is
+    /// summed is counted or not.
+    pub(in crate::engine::rows) fn load(&self, _: Ordering) -> usize {
+        let sum = self.stripes.iter().fold(0_i64, |sum, stripe| sum.wrapping_add(stripe.0.load(Ordering::Relaxed)));
+        usize::try_from(sum).unwrap_or(0)
+    }
+
+    /// Makes the count `rows`, as a table opened sets it before any row
+    /// is written.
+    pub(in crate::engine::rows) fn store(&self, rows: usize, _: Ordering) {
+        let mut all = i64::try_from(rows).unwrap_or(i64::MAX);
+        for stripe in &self.stripes {
+            stripe.0.store(std::mem::take(&mut all), Ordering::Relaxed);
+        }
+    }
+}
 
 /// \[DESIGN\] A table's count of rows, and where it is saved.
 pub(super) struct Counted {
@@ -30,7 +88,7 @@ pub(super) struct Counted {
     file: FileId,
     meta: PageId,
     /// The rows whose newest version is not a deletion.
-    pub(super) live: AtomicUsize,
+    pub(super) live: Live,
     /// The count its meta page holds, under this lock while the page is
     /// written; `None` once the page is freed.
     saved: Mutex<Option<u64>>,
@@ -40,7 +98,7 @@ impl Counted {
     /// The count of a table whose meta page is `meta` of `file` in `pool`,
     /// holding `saved`.
     pub(super) fn new((pool, file): (&Arc<BufferPool>, FileId), meta: PageId, saved: u64) -> Counted {
-        Counted { pool: Arc::clone(pool), file, meta, live: AtomicUsize::new(0), saved: Mutex::new(Some(saved)) }
+        Counted { pool: Arc::clone(pool), file, meta, live: Live::new(), saved: Mutex::new(Some(saved)) }
     }
 
     /// `write` given the count the meta page holds, which stays so while
