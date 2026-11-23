@@ -568,6 +568,7 @@ verification approach DO-178C expects (§8).
 | D859 | A probe from a key borrows its key and shows the entries from it where they lie, allocating nothing |
 | D863 | A read by key shows its value to its caller where it lies, with the notes of a read that copies |
 | D864 | A node is built with its page's room, takes a longer value in place, and samples its hints again only when one may have changed |
+| D865 | A value read for a write and a value put by a change go through buffers their callers and threads keep |
 | D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
@@ -12974,6 +12975,7 @@ kernels of a statement's executor, its filters over batches, groupings
 and sorts; a table's storage keeps the set registered, whatever the
 setting, since a table is opened once for many statements.
 
+
 #### D571. A vector distance is summed by the registered kernels in 16 lanes, the portable order, no fused multiply
 
 The built-in metrics (dot, Euclidean, cosine) over FLOAT32, FLOAT16 and
@@ -16011,6 +16013,26 @@ so of sixteen in seventeen entries appended to a node, as a table's rows
 are. Then they are left (`build.rs`, `hint_after`), and otherwise sampled
 again as before. The bytes are those sampling again would write, so the
 format and a search are unchanged.
+
+#### D865. A value read for a write and a value put by a change go through buffers their callers and threads keep
+
+Two calls of the write path returned or took a value in a vector made
+for the one call. `get_for_write` returned the row's newest version in a
+new vector at every update, and `update_alone` took the value its
+caller's change put in one, at every index entry written.
+
+`get_for_write_into` leaves the value in a buffer of its caller's, and
+`update_alone_into` hands the change a buffer to write its value into,
+which the thread keeps from one change to the next
+(`engine/tree/write.rs`). The older calls are now those with a buffer of
+their own. A delete of a value expected (`delete_if`) no longer copies
+the value it removes, which its caller has.
+
+What is left allocated on the write path is allocated by a split alone:
+the node's copy, its entries, its halves and the separator. A change
+with no split builds an empty list of splits, which allocates nothing,
+and the path of a descent and the place of a write are kept in place
+(D840, D843).
 
 ## 2. Project layout
 

@@ -13,7 +13,7 @@ use super::super::{Mutation, Package};
 const THREADS: &str = "tree_paths::writers_through_owned_frames_split_and_merge_under_readers";
 
 /// Mechanisms of a probe's path whose removal must fail their tests.
-pub const TREE_PATH: [Mutation; 25] = [
+pub const TREE_PATH: [Mutation; 26] = [
     Mutation {
         name: "tree-path-slot-head",
         package: Package::Core,
@@ -109,8 +109,8 @@ pub const TREE_PATH: [Mutation; 25] = [
         package: Package::Core,
         breaks: "a row read for a write no longer starts at the leaf noted for it, and descends from the root",
         file: "src/engine/tree/write.rs",
-        original: "        if let Some((leaf, value)) = self.at_noted(key, |leaf| value_of(leaf, key))? {",
-        replacement: "        if let Some((leaf, value)) = None::<(u64, Option<Vec<u8>>)> {",
+        original: "        if let Some((leaf, found)) = self.at_noted(key, |leaf| value_into(leaf, key, into))? {",
+        replacement: "        if let Some((leaf, found)) = None::<(u64, bool)> {",
         integration: &[],
         unit: &["engine::tree::tests::hinted::a_read_for_a_write_starts_at_the_leaf_noted"],
     },
@@ -263,5 +263,15 @@ pub const TREE_PATH: [Mutation; 25] = [
         replacement: "    let mut out = Vec::with_capacity(size);",
         integration: &[],
         unit: &["engine::tree::node::tests::place::a_node_built_with_room_takes_entries_where_it_is"],
+    },
+    Mutation {
+        name: "tree-put-buffer-uncleared",
+        package: Package::Core,
+        breaks: "a change is handed the buffer of the thread's last change with that change's value still in it",
+        file: "src/engine/tree/write.rs",
+        original: "        let mut value = VALUE.take();\n        value.clear();\n",
+        replacement: "        let mut value = VALUE.take();\n",
+        integration: &[],
+        unit: &["engine::tree::tests::placed::values_are_read_into_and_put_from_buffers_kept"],
     },
 ];
