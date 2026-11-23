@@ -19,6 +19,18 @@ impl Effects<'_> {
         self.delta.as_ref().map_or(Ok(()), |c| c.record(table, old, new))
     }
 
+    /// \[DESIGN\] RULES.md D849: a row of `table` made `new` by increments
+    /// reserved rather than written, a row of the statement's delta table,
+    /// whose reader shows none of the columns added to. Nothing else
+    /// notes it, as the row is not written before its transaction commits.
+    ///
+    /// # Errors
+    ///
+    /// The spill area's.
+    pub(in crate::db) fn reserved(&self, table: &QualifiedName, new: &Row) -> Result<()> {
+        self.delta.as_ref().map_or(Ok(()), |c| c.record(table, None, Some(new)))
+    }
+
     /// Row `id` of `table`, `row`, inserted: a transition of its state
     /// change, if a trigger may read it [ISO/IEC 9075-2:2023 §15.11 GR5].
     ///

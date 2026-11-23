@@ -400,6 +400,7 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -914 if a change could not be undone. The transaction still ends.
+    /// SQLCODE -922 if a commit it rests on was left in doubt by a failed sync.
     pub(crate) fn rollback(&self, tx: &Txn) -> Result<()> {
         // Never refused by the memory budget, nor the collection after,
         // which gives back what the undo leaves (RULES.md D38).
@@ -427,7 +428,9 @@ impl State {
         drop(gate);
         tx.release();
         self.collect_ended(tx, &joined);
-        damage
+        // [DESIGN] RULES.md D850: a completion told only as the
+        // transaction ends, rolled back, waits as it would have.
+        tx.replied(damage)
     }
 }
 
