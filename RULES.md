@@ -549,6 +549,7 @@ verification approach DO-178C expects (§8).
 | D839 | No estimate makes a scan of a whole unique key, nor of a key's range a scan reads past, and a plan kept is learned again with statistics |
 | D840 | A probe of a B-link tree searches slots without building errors, reads inner copies parsed once, finds a writer's leaf from its parent and writes it through the frame it owns, and allocates no path or scan buffer |
 | D841 | A procedure's body runs as the program it is compiled to, its point reads and point changes straight on their tables |
+| D842 | A home waits on its client for a second, its permit given up after a millisecond |
 
 ### The project
 
@@ -15173,6 +15174,40 @@ change of a view, of a typed or partitioned table, of a table some
 trigger is on that the change may write, or with XML options in scope,
 runs the general path always, as does every other statement, cursor and
 FOR. EXECUTOR.COMPILED_PROCEDURES OFF runs each body by the interpreter.
+
+#### D842. A home waits on its client for a second, its permit given up after a millisecond
+
+A worker waited for a client's next request only `lent::WAITED`, a
+millisecond (D42). A client slower than that, as one that thinks between
+its requests or one whose threads outnumber its processors, had its next
+request read by the connection's task: the socket handed back to the
+runtime and registered with it again, the task woken by the runtime, the
+request handed to the home under its lock and the home woken, and the
+loan given back to the task as the reply went out. Two moves between
+threads and two of the socket at every request, and a client near the
+millisecond moved between the two paths request by request.
+
+Now a connection's home waits on, after `WAITED`, as long as
+`waiting::HOME_WAITED`, a second, in slices of `lent::LOOKED`
+(`native/waiting.rs`). Between slices it looks whether the operator
+ended the connection or the server stopped, and if so gives the client
+back to the task, which ends the connection as before. Its wait ends
+sooner than SERVER.IDLE_TIMEOUT_MS, and SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS
+while a transaction is active, and the task counts the client's idle time
+from when the home began to wait (`Lent::idle_since`), so a client is
+closed as idle at the time it was. A home waits whether or not its client
+was fast, so a client once slow is not read by the task from then on. A
+worker that is not the connection's home still waits only `WAITED`.
+
+Past `WAITED` the worker gives its permit to run statements up, whether
+or not another waits for one, so a statement waiting for a permit waits
+for a home's client no longer than D815 allows. A client slower than a
+millisecond then takes the limit's lock again at its next request, as
+every request of a client did before D815, but no longer moves between
+threads. A client that thinks longer than a second pays the two moves
+once a second at most, under a ten-thousandth of its time, and a waiting
+home is woken fifty times a second, so a longer wait gains nothing
+measurable and keeps a thread from the pool longer.
 
 ## 2. Project layout
 

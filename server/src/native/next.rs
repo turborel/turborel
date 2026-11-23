@@ -130,18 +130,18 @@ pub(super) async fn received(wire: &mut Wire, present: &Present, stopping: impl 
 
 /// What the client asks next, each Ping answered meanwhile: waited for
 /// SERVER.IDLE_TIMEOUT_MS, or SERVER.IDLE_IN_TRANSACTION_TIMEOUT_MS too
-/// while the session's transaction is active; the client fast if it came
+/// while the session's transaction is active, from when the worker that
+/// gave it back began to wait on the client (`Lent::idle_since`); the client fast if it came
 /// within `lent::WAITED` (`Lent::fast`). Refused (SQLSTATE 28000) if the
 /// session is `user`'s, and the user has been dropped since it logged in.
 pub(super) async fn next_work(lent: &mut Lent, (services, present): (&Services, &Present), user: Option<&str>) -> Result<Next> {
     loop {
         let began = Instant::now();
+        // The wait of the worker that gave the client back counts as idle.
+        let since = lent.idle_since.take().unwrap_or(began);
+        let in_transaction = lent.held.session.transaction().is_some();
         let receiving = super::next(&mut lent.wire, services, present);
-        let request = if lent.held.session.transaction().is_some() {
-            services.idle_in_transaction(receiving).await
-        } else {
-            services.idle(receiving).await
-        };
+        let request = services.idle_since(since, in_transaction, receiving).await;
         lent.fast = began.elapsed() < lent::WAITED;
         let Some(next) = next_of(request?, lent.held.granted)? else {
             services.idle(lent.wire.send_now(&Reply::Pong)).await?;
