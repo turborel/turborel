@@ -396,7 +396,7 @@ fn increments_applied_leave_the_rows_entries_and_records_of_the_locked_path() {
 #[test]
 fn an_increment_of_a_column_past_the_mask_is_applied_whole() {
     let db = Database::new();
-    db.set_setting("LOCKS.WAIT", &Value::Char("ON".to_owned())).unwrap();
+    db.set_setting("LOCKS.WAIT", &Value::Char("ON".into())).unwrap();
     let fillers: Vec<String> = (0..70).map(|n| format!("F{n} INTEGER")).collect();
     db.schema(&format!(
         "CREATE SCHEMA AUTHORIZATION A CREATE TABLE W (ID INTEGER NOT NULL, NEAR INTEGER, {}, FAR INTEGER)",

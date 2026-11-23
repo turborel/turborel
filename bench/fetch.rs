@@ -169,8 +169,8 @@ fn key(n: u64) -> Key {
 /// S_YTD, S_ORDER_CNT, S_REMOTE_CNT and S_DATA.
 fn row(n: u64) -> Row {
     let mut row = vec![number(n), number(1), number(10 + n % 91)];
-    row.extend((0..10_u32).map(|d| Value::Char(format!("{:<24}", format!("dist {d} of {n}")))));
-    row.extend([number(0), number(0), number(0), Value::Char(format!("{:<40}", format!("stock data {n}")))]);
+    row.extend((0..10_u32).map(|d| Value::Char(format!("{:<24}", format!("dist {d} of {n}")).into())));
+    row.extend([number(0), number(0), number(0), Value::Char(format!("{:<40}", format!("stock data {n}")).into())]);
     row
 }
 

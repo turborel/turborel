@@ -115,7 +115,7 @@ fn a_record_that_cannot_be_patched_is_refused() {
     let (format, base) = fixture();
     let whole = encoded(&format, &base);
     let mut longer = base.clone();
-    longer[0] = Value::Char("x".repeat(30));
+    longer[0] = Value::Char("x".repeat(30).into());
     let refused = |old: &[u8], row: &Row, spill: Option<Spill>| {
         let mut out = vec![9_u8];
         let made = format.patched(old, (row, &[0]), spill, &mut out).unwrap();

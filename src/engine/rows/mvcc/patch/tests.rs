@@ -32,7 +32,7 @@ fn int(n: i128) -> Value {
 }
 
 fn row(n: i128) -> Row {
-    vec![int(n), Value::Char(format!("text {n}")), Value::Char(format!("{:<8}", "c")), int(n.saturating_mul(10))]
+    vec![int(n), Value::Char(format!("text {n}").into()), Value::Char(format!("{:<8}", "c").into()), int(n.saturating_mul(10))]
 }
 
 /// A table of `TYPES` in memory, with rows 1 to 3, its zones kept.
@@ -137,12 +137,12 @@ fn a_patch_leaves_the_version_a_whole_write_leaves() {
     let first = twins.same_version(id);
     assert!(Version::parse(&first).unwrap().older.is_some(), "the committed version went to the undo store");
     twins.set(10, id, &[(0, int(7)), (3, int(70))]);
-    twins.set(10, id, &[(2, Value::Null), (1, Value::Char(String::new()))]);
+    twins.set(10, id, &[(2, Value::Null), (1, Value::Char(String::new().into()))]);
     assert_ne!(twins.same_version(id), first);
     assert_eq!(twins.same_row(10, id)[0], format!("{:?}", int(7)));
     twins.patched.commit(10, 11);
     twins.whole.commit(10, 11);
-    assert_eq!(twins.same_row(NO_TRANSACTION, id), shown(&vec![int(7), Value::Char(String::new()), Value::Null, int(70)]));
+    assert_eq!(twins.same_row(NO_TRANSACTION, id), shown(&vec![int(7), Value::Char(String::new().into()), Value::Null, int(70)]));
     let committed = twins.same_row(NO_TRANSACTION, id);
     twins.begin(20, 12);
     twins.set(20, id, &[(3, int(1))]);
@@ -194,7 +194,7 @@ fn outside(table: &RowTable, id: RowId) -> usize {
 #[test]
 fn a_record_with_a_value_out_of_line_is_written_whole() {
     let twins = Twins::new(TableOptions { out_of_line: Some(10), ..TableOptions::default() });
-    let (id, long) = (twins.ids[0], Value::Char("x".repeat(60)));
+    let (id, long) = (twins.ids[0], Value::Char("x".repeat(60).into()));
     twins.begin(10, 9);
     twins.set(10, id, &[(1, long.clone())]);
     assert_eq!((outside(&twins.patched, id), outside(&twins.whole, id)), (1, 1), "a short value made long goes out");

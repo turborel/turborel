@@ -396,7 +396,7 @@ fn seen_at(level: &str, compiled: bool) -> Vec<String> {
         a.commit().unwrap();
     }
     // A writer waits for the transaction that holds its row.
-    db.set_setting("LOCKS.WAIT", &Value::Char("ON".to_owned())).unwrap();
+    db.set_setting("LOCKS.WAIT", &Value::Char("ON".into())).unwrap();
     let b = session(&db, compiled);
     let read = |s: &Session| rows(s, "SELECT B, V, C FROM T WHERE K = 1").unwrap().concat();
     let mut seen = Vec::new();
@@ -494,7 +494,7 @@ fn set_functions_folded_over_a_patched_row_read_the_columns_it_does_not_set() {
 fn an_engine_that_patches_nothing_writes_the_row_whole() {
     let int = |n: i128| Value::Exact(Decimal::new(n, 0));
     let table = MemoryTable::new();
-    let id = table.insert(0, vec![int(1), Value::Char("kept".to_owned()), int(3)]).unwrap();
+    let id = table.insert(0, vec![int(1), Value::Char("kept".into()), int(3)]).unwrap();
     let shown = |row: &[Value]| row.iter().map(ToString::to_string).collect::<Vec<_>>().join(",");
     let set = vec![Value::Null, Value::Null, int(9)];
     let mut image = AfterImage::new();

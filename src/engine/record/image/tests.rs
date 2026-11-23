@@ -74,7 +74,7 @@ fn a_malformed_records_image_is_refused() {
     let strings = RecordFormat::new(&[DataType::character(2), DataType::varying(9)]);
     let wide = RecordFormat::new(&[DataType::character(9), DataType::varying(9)]);
     let mut long = Vec::new();
-    wide.encode(&vec![Value::Char(format!("{:<9}", "abc")), Value::Char("v".into())], &mut long).unwrap();
+    wide.encode(&vec![Value::Char(format!("{:<9}", "abc").into()), Value::Char("v".into())], &mut long).unwrap();
     assert_eq!(strings.image(&long, &[], &mut image).err().map(|e| e.code), Some(Code::Corrupt), "longer than its column");
     for at in [long.len().saturating_sub(1), long.len().saturating_sub(2)] {
         let mut broken = long.clone();

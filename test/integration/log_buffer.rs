@@ -32,7 +32,7 @@ fn made(dir: &Path) -> (Database, std::sync::Arc<Faults>) {
 /// for the log if `waits`.
 fn commit(db: &Database, id: i32, waits: bool) {
     let s = db.session("APP");
-    s.set_setting("LOG.COMMIT_SYNC", &Value::Char(if waits { "ON" } else { "OFF" }.to_owned())).unwrap();
+    s.set_setting("LOG.COMMIT_SYNC", &Value::Char(if waits { "ON" } else { "OFF" }.into())).unwrap();
     s.run(&format!("INSERT INTO T (ID) VALUES ({id})")).unwrap();
     s.commit().unwrap();
 }

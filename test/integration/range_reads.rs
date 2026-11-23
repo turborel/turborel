@@ -101,7 +101,7 @@ fn called(s: &Session, call: &str, values: &[Value]) -> String {
 /// division by zero in a set function's argument.
 fn script() -> Vec<(&'static str, Vec<Value>)> {
     let mut calls = Vec::new();
-    let text = |s: &str| Value::Char(s.to_owned());
+    let text = |s: &str| Value::Char(s.into());
     for round in 0..9_i64 {
         let (w, d) = (round % 2 + 1, round % 10 + 1);
         calls.push(("CALL CNT(?,?,?)", vec![int(w), int(d)]));
@@ -302,7 +302,7 @@ fn cursors(how: &str, compiled: bool) -> Vec<String> {
     a.run(&format!("SET EXECUTOR.POINT_OPERATIONS = '{how}'")).unwrap();
     a.run(&format!("SET EXECUTOR.COMPILED_PROCEDURES = '{}'", if compiled { "ON" } else { "OFF" })).unwrap();
     let pairs = |more: &[Vec<Value>]| (1..=9_i64).map(|d| vec![int(d % 2 + 1), int(d)]).chain(more.iter().cloned()).collect::<Vec<_>>();
-    let odd = [vec![int(3), int(1)], vec![Value::Null, int(1)], vec![Value::Char("x".to_owned()), int(1)]];
+    let odd = [vec![int(3), int(1)], vec![Value::Null, int(1)], vec![Value::Char("x".into()), int(1)]];
     let mut out = prepared(&a, "SELECT K, V FROM T WHERE W = ? AND D = ? AND K < 4", &pairs(&odd));
     out.extend(prepared(&a, "SELECT K, N FROM T WHERE W = ? AND D = ? AND K > 110 ORDER BY N, K DESC", &pairs(&odd)));
     out.extend(prepared(&a, "SELECT 60 / (K - 3) FROM T WHERE W = ? AND D = ? AND K < 6", &pairs(&odd)));
@@ -312,11 +312,11 @@ fn cursors(how: &str, compiled: bool) -> Vec<String> {
     out.push(format!("{} rows of long ranges, the last {:?}", long.len(), long.iter().rev().nth(1)));
     for round in 0..9_i64 {
         let (w, d) = (round % 2 + 1, round % 10 + 1);
-        out.push(called(&a, "CALL WALK(?,?,?,?,?,?)", &[int(w), int(d), Value::Char(format!("S{round}")), int(round % 4)]));
+        out.push(called(&a, "CALL WALK(?,?,?,?,?,?)", &[int(w), int(d), Value::Char(format!("S{round}").into()), int(round % 4)]));
         out.push(called(&a, "CALL TOTAL(?,?,?,?,?)", &[int(w), int(d), int(120 - round * 2)]));
         out.push(called(&a, "CALL BUMP(?,?,?)", &[int(w), int(round % 3 + 1)]));
     }
-    out.push(called(&a, "CALL WALK(?,?,?,?,?,?)", &[int(1), int(1), Value::Char("S1".to_owned()), int(40)]));
+    out.push(called(&a, "CALL WALK(?,?,?,?,?,?)", &[int(1), int(1), Value::Char("S1".into()), int(40)]));
     out.push(called(&a, "CALL TOTAL(?,?,?,?,?)", &[int(1), int(1), int(500)]));
     out.extend(prepared(&a, "SELECT D, K, N FROM T WHERE W = ? AND D = ? AND K < 9", &[vec![int(1), int(1)], vec![int(2), int(3)]]));
     out
