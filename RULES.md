@@ -15201,7 +15201,11 @@ worker that is not the connection's home still waits only `WAITED`.
 
 Past `WAITED` the worker gives its permit to run statements up, whether
 or not another waits for one, so a statement waiting for a permit waits
-for a home's client no longer than D815 allows. A client slower than a
+for a home's client no longer than D815 allows. A home whose client's last
+request came later than `WAITED` waits in slices of `LOOKED` from the
+first, its permit given up at once, so a client that thinks is not woken
+for in vain after a millisecond at every request; once a request comes
+within `WAITED` again the client counts as fast. A client slower than a
 millisecond then takes the limit's lock again at its next request, as
 every request of a client did before D815, but no longer moves between
 threads. A client that thinks longer than a second pays the two moves

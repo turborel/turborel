@@ -184,7 +184,8 @@ impl Lent {
             let Some(place) = running.services.hot() else { return Ok(None) };
             Some(place)
         };
-        let mut waiting = Waiting::new(running.homed, Instant::now());
+        let waiting = Waiting::new(running.homed, Instant::now());
+        let mut waiting = if self.fast { waiting } else { waiting.of_slow_client() };
         let next = loop {
             let session = &self.held.session;
             let Some(slice) = waiting.slice(|| running.leaving(), || running.idle_bound(session)) else {
@@ -198,7 +199,10 @@ impl Lent {
                 continue;
             }
             match self.taken(running) {
-                Arrived::Taken(work) => break Some(work),
+                Arrived::Taken(work) => {
+                    self.fast = waiting.quick();
+                    break Some(work);
+                }
                 Arrived::Left => break None,
                 Arrived::Awaited => {}
             }
