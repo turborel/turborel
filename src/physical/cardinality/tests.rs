@@ -348,3 +348,63 @@ fn a_lateral_of_one_row_is_estimated_at_one_for_each_row_before_it() {
     let many = rows(&s, "SELECT * FROM V, LATERAL (SELECT K FROM T WHERE T.G = V.K) AS M (L)");
     assert!(near(many, 10.0_f64 * UNNEST_FANOUT), "{many}");
 }
+
+/// `per` keys of each of ten groups into X.G, from `from`, committed,
+/// and its statistics gathered if `analyzed`.
+fn grown(db: &Database, s: &Session, (from, per): (i32, i32), analyzed: bool) {
+    let rows: Vec<String> = (1_i32..=10_i32).flat_map(|g| (from..from.saturating_add(per)).map(move |k| format!("({g}, {k})"))).collect();
+    for part in rows.chunks(500) {
+        s.run(&format!("INSERT INTO G VALUES {}", part.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    if analyzed {
+        db.analyze("X.G").unwrap();
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D891, D381: once a key's greatest value
+/// rose at two passes of the statistics, a range of its index past the
+/// greatest the last pass saw, its first column held equal, is estimated
+/// at no more rows than the index holds there, not at the share of every
+/// row written since; a range within what the pass saw is left to the
+/// statistics, which scale it by the rows written since. A bound of a
+/// slot less a constant is read as the execution's value folded.
+///
+/// Regression test (R-TEST-7): the ten rows of a group's newest ten keys
+/// were estimated at about a tenth of the 17,000 rows written since.
+#[test]
+fn a_range_past_the_statistics_is_estimated_by_its_index() {
+    let db = Database::new();
+    db.set_job_policy(crate::threads::JobPolicy::Manual).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE G (G INTEGER NOT NULL, K INTEGER NOT NULL, PRIMARY KEY (G, K))").unwrap();
+    let s = db.session("X");
+    for from in [1_i32, 101_i32, 201_i32] {
+        grown(&db, &s, (from, 100_i32), true);
+    }
+    grown(&db, &s, (301_i32, 1_700_i32), false);
+    let past = rows(&s, "SELECT * FROM G WHERE G = 3 AND K >= 1991 AND K < 2001");
+    assert!(near(past, 10.0_f64), "past the pass: {past}");
+    let within = rows(&s, "SELECT * FROM G WHERE G = 3 AND K >= 51 AND K < 61");
+    assert!(within > 20.0_f64, "within the pass, left to the statistics: {within}");
+    let slotted = slotted_share(&s, 2_001);
+    assert!(near(slotted * 20_000.0_f64, 10.0_f64), "a slot less a constant, by its value: {slotted}");
+}
+
+/// The share of X.G's rows that `G = 3 AND K >= ? - 10 AND K < ?` keeps,
+/// capped past the statistics, its slot `value` as an execution gives it.
+fn slotted_share(s: &Session, value: i128) -> f64 {
+    use crate::logical::Slot;
+    use crate::value::{ArithOp, DataType, Spelled};
+    let (st, _) = s.optimized("SELECT * FROM G").unwrap();
+    let slot = || Expr::Dynamic(Slot { index: 0, data_type: DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, at: 0 });
+    let int = |n: i128| Expr::Const(Value::Exact(Decimal::new(n, 0)));
+    let low = Expr::Arith(Box::new(slot()), ArithOp::Sub, Box::new(int(10)));
+    let conds = [
+        Cond::Compare(Expr::Column(0), CompOp::Eq, int(3)),
+        Cond::Compare(Expr::Column(1), CompOp::Ge, low),
+        Cond::Compare(Expr::Column(1), CompOp::Lt, slot()),
+    ];
+    let table = QualifiedName { auth: "X".into(), ident: "G".into() };
+    let values = [Value::Exact(Decimal::new(value, 0))];
+    crate::physical::estimate::valued(Some(&values), || Estimates::new(&st).past_capped(&table, &conds, 1.0_f64))
+}

@@ -559,6 +559,7 @@ verification approach DO-178C expects (§8).
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
+| D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 
 ### The project
 
@@ -15478,6 +15479,33 @@ rows alike. The margin still weighs the probes against the left giving
 some times those rows, and the upper bound the statistics prove is
 kept. A semi join's left plan is not built before its method is chosen,
 and is weighed by the statistics alone, as before.
+
+#### D891. A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range
+
+D890 mended one choice of many fed by the estimate of a range past the
+statistics. The join's order, the size of a hash table, whether a
+grouping over the rows runs on several threads, and the plan a
+prepared statement or a procedure's body learns all read the same
+estimate (D370), and swung with it between passes. A plan made with
+slots shows the swing worst. Its range's probe holds no value until an
+execution fills it, so the index estimates nothing of it, and its join
+weighed the statistics' estimate alone. Kept, such a plan read the
+whole of STOCK at every later stock level.
+
+The estimator now asks the index where the statistics cannot know.
+Where a table's conjuncts hold an index's first columns equal to
+values, and bound its next column from below past the greatest value
+the pass saw of it, it builds the probe of that range, with a slot's
+value of the execution planned for (D613) and a slot less a constant
+folded (D760), and asks the index's estimate of it
+(`physical/cardinality/past.rs`). A plan made with slots and no values
+has no range to ask, and is weighed by the statistics alone. The share the
+conjuncts keep is at most that estimate's share of the table's rows,
+as every row they keep lies in the range. A range the statistics saw
+is left to them, so a plan made with fresh statistics estimates as
+before. The index's estimate costs a count of at most a leaf's entries,
+or the share of its tree a larger range takes, once for each estimate
+of the table's conjuncts.
 
 ## 2. Project layout
 

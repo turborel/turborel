@@ -18,7 +18,7 @@ mod sampled;
 mod valued;
 
 pub use conjunction::conjunction;
-pub(super) use valued::{estimated, valued};
+pub(super) use valued::{estimated, filled, valued};
 
 use crate::logical::{Cond, Expr, Truth, compared_with_constant, split_and};
 use crate::stats::Statistics;
@@ -40,7 +40,7 @@ pub struct Known<'a> {
 /// `known`.
 pub fn selectivity(cond: &Cond, known: Known<'_>) -> f64 {
     // A slot read as its value, of a plan made with it (`valued.rs`).
-    if let Some(filled) = valued::filled(cond) {
+    if let Some(filled) = filled(cond) {
         return of_cond(&filled, known);
     }
     of_cond(cond, known)
