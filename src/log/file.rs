@@ -263,6 +263,12 @@ impl Segment {
         })
     }
 
+    /// Whether it is sealed and every block of it durable: a seal of it
+    /// then has nothing to do.
+    fn settled(&self) -> bool {
+        self.sealed.load(Ordering::Acquire) && self.durable_end.load(Ordering::Acquire) >= self.blocks.end().0
+    }
+
     /// Records that an append taking it finished, waking a thread waiting
     /// for its appends to drain.
     fn finished(&self) {
@@ -525,7 +531,11 @@ impl Log for FileLog {
             SqlError::new(Code::Api, format!("[DESIGN] the log in {} has no record at position {}", self.dir.display(), through.0))
         })?;
         // Earlier segments are synced when sealed; seal any not yet sealed.
-        let earlier: Vec<Arc<Segment>> = lock_builtin(&self.segments).range(..number).map(|(_, s)| Arc::clone(s)).collect();
+        // One sealed and synced is passed over under the lock, so a sync
+        // costs nothing for each segment the log keeps.
+        let unsettled = |(_, s): &(&u64, &Arc<Segment>)| !s.settled();
+        let earlier: Vec<Arc<Segment>> =
+            lock_builtin(&self.segments).range(..number).filter(unsettled).map(|(_, s)| Arc::clone(s)).collect();
         for older in earlier {
             self.seal(&older)?;
         }

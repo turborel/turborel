@@ -156,8 +156,13 @@ impl FileLog {
     /// as the log's durability says now. One sealed while that was `None`
     /// is synced by the first seal after it is not.
     pub(super) fn seal(&self, segment: &Segment) -> Result<()> {
-        let synced = segment.durable_end.load(Ordering::Acquire) >= segment.blocks.end().0;
-        if segment.sealed.load(Ordering::Acquire) && synced {
+        if segment.settled() {
+            return Ok(());
+        }
+        // [DESIGN] One sealed while the log syncs nothing
+        // was drained and cut as it was sealed, and is asked no sync now,
+        // so it is left as it is until the log syncs again.
+        if segment.sealed.load(Ordering::Acquire) && self.durability() == Durability::None {
             return Ok(());
         }
         self.healthy()?;
