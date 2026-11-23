@@ -21,7 +21,7 @@ mod key;
 pub use key::Key;
 mod counted;
 mod entries;
-pub use entries::{Encoded, EncodedEntries, EncodedEntry, Entries, RowIds};
+pub use entries::{Encoded, EncodedEntries, EncodedEntry, Entries, KeyProbe, RowIds};
 pub mod expression;
 pub mod fulltext;
 mod hash;
@@ -542,6 +542,11 @@ pub trait Index: Send + Sync {
     /// \[DESIGN\] (RULES.md D821) The entries `search` finds, each key as the bytes the index holds, if it holds them so: for a caller
     /// that compares a row's key with them as bytes. Default: none, and the caller takes `search_for`'s keys.
     fn search_encoded(self: Arc<Self>, _probe: &Probe, _order: KeyOrder) -> Option<Encoded> {
+        None
+    }
+    /// \[DESIGN\] (RULES.md D881) Itself as it finds a whole key's entries by their first bytes, if it does. Default: none, and it is
+    /// searched.
+    fn key_probe(&self) -> Option<&dyn KeyProbe> {
         None
     }
     /// \[DESIGN\] (RULES.md D297) The entries `search` finds in ascending order, cut by keys

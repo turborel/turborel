@@ -4,7 +4,7 @@
 use super::Key;
 use crate::error::Result;
 use crate::storage::RowId;
-use crate::value::DataType;
+use crate::value::{DataType, Value};
 
 /// \[DESIGN\] The entries a search finds, (key, row) pairs, read as they
 /// are taken (`Index::search`).
@@ -37,4 +37,23 @@ pub struct EncodedEntry<'a> {
     pub row: RowId,
     /// The types of the key's columns, which its bytes are of.
     pub types: &'a [DataType],
+}
+
+/// \[DESIGN\] (RULES.md D881) An index that finds the entries of a whole
+/// key by the bytes they begin with (`Index::key_probe`): a probe of a
+/// unique key, which boxes nothing and does not hold the index.
+pub trait KeyProbe {
+    /// What finds the entries of the whole key `key`, a value for each of
+    /// its columns, by `entries_of`: given only if it places each value
+    /// exactly, so the entries found are those `Index::search` gives for
+    /// an equality on every column, none checked. It reads nothing.
+    fn whole_key(&self, key: &[Value]) -> Option<Vec<u8>>;
+    /// The entries of the key `whole_key` gave as `key`, each lent to
+    /// `each` as it is read, in `Index::search`'s order, until `each` says
+    /// it wants no more or they end.
+    ///
+    /// # Errors
+    ///
+    /// Its storage's, and `each`'s.
+    fn entries_of(&self, key: Vec<u8>, each: &mut dyn FnMut(EncodedEntry<'_>) -> Result<bool>) -> Result<()>;
 }

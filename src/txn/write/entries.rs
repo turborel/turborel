@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::catalog::{IndexDesc, QualifiedName};
 use crate::db::State;
 use crate::error::Result;
-use crate::log::record::insert_record;
+use crate::log::record::put_insert_record;
 use crate::log::sealed::seal_plain;
 use crate::storage::{Row, RowId};
 use crate::txn::writing::{Entries, Writing};
@@ -82,14 +82,19 @@ impl State {
     /// of the table of `writing`, of a change of its row `id`, sealed if
     /// its rows are; none made without a log. Made from the images as the
     /// statement holds them, none copied for it (RULES.md D750).
-    pub(super) fn log_row(tx: &Txn, (writing, id): (&Writing<'_>, RowId), record: impl FnOnce(u32) -> Vec<u8>) -> Result<()> {
+    pub(super) fn log_row(tx: &Txn, (writing, id): (&Writing<'_>, RowId), record: impl FnOnce(&mut Vec<u8>, u32)) -> Result<()> {
         if tx.origin.log.is_none() {
             return Ok(());
         }
-        let plain = record(writing.generation);
+        let generation = writing.generation;
         match &writing.seal {
-            Some(pipeline) => tx.log_encoded(seal_plain(&plain, id, pipeline)?, 1),
-            None => tx.log_encoded(plain, 1),
+            Some(pipeline) => {
+                let mut plain = Vec::new();
+                record(&mut plain, generation);
+                tx.log_encoded(&seal_plain(&plain, id, pipeline)?, 1)
+            }
+            // Encoded where the transaction holds it (RULES.md D882).
+            None => tx.log_written(1, |out| record(out, generation)),
         }
     }
 
@@ -130,7 +135,7 @@ impl State {
         }
         if Self::logs_changes(writing.caps.persistence) {
             // Made from the row as it is held (RULES.md D531).
-            Self::log_row(tx, (writing, id), |generation| insert_record(tx.id, (table, generation), id, kept))?;
+            Self::log_row(tx, (writing, id), |out, generation| put_insert_record(out, tx.id, (table, generation), id, kept))?;
         }
         for entries in &writing.indexes {
             Self::index_add_in(tx, entries, kept, Self::entry_id(entries.partition, id)?)?;

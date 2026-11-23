@@ -543,3 +543,44 @@ fn an_indexs_columns_are_as_distinct_as_its_keys() {
     let product = stats.distinct(0).unwrap() * stats.distinct(1).unwrap();
     assert!(product > 3_000.0_f64, "the product counts every pair: {product}");
 }
+
+/// Verifies: [DESIGN] RULES.md D881, `KeyProbe::whole_key` and
+/// `KeyProbe::entries_of`: a value of each key column, each placed exactly,
+/// has a whole key, whose entries are those an equality on every column
+/// finds, lent in the search's order and no further than the callback
+/// asks; a value of a finer scale than its column's, a null, or fewer
+/// values than columns has none. MC/DC of a whole key: every value exact
+/// (given) against one not (none), and as many values as columns (given)
+/// against fewer (none).
+#[test]
+fn a_whole_key_finds_its_entries_and_no_others() {
+    let index = index(&[MONEY, MONEY]);
+    let key = |units: i128, n: i128| Key(vec![exact(units, 2), exact(n, 0)]);
+    for (row, (units, n)) in (1..).zip([(100, 1), (100, 2), (100, 2), (105, 2), (200, 1)]) {
+        index.insert(key(units, n), row).unwrap();
+    }
+    let lent = |values: &[Value], most: usize| {
+        let probe = index.key_probe().unwrap();
+        let bytes = probe.whole_key(values)?;
+        let mut rows = Vec::new();
+        probe
+            .entries_of(bytes, &mut |entry: EncodedEntry<'_>| {
+                assert_eq!(decode_key(entry.key, entry.types).unwrap().len(), 2);
+                rows.push(entry.row);
+                Ok(rows.len() < most)
+            })
+            .unwrap();
+        Some(rows)
+    };
+    assert_eq!(lent(&key(100, 2).0, 9), Some(vec![2, 3]), "the key's entries, in row order");
+    assert_eq!(lent(&key(100, 2).0, 1), Some(vec![2]), "no further than asked");
+    assert_eq!(lent(&key(100, 3).0, 9), Some(vec![]), "a key of no entry");
+    // 1.00 as an exact number of no scale is placed exactly.
+    assert_eq!(lent(&[exact(1, 0), exact(1, 0)], 9), Some(vec![1]));
+    assert_eq!(lent(&[exact(1_001, 3), exact(1, 0)], 9), None, "a finer scale has no exact place");
+    assert_eq!(lent(&[Value::Null, exact(1, 0)], 9), None, "a null");
+    assert_eq!(lent(&[exact(100, 2)], 9), None, "fewer values than columns");
+    let searched: Vec<RowId> =
+        searched(&index, &Probe::Prefix { equal: key(100, 2).0, then: None }).unwrap().into_iter().map(|(_, row)| row).collect();
+    assert_eq!(lent(&key(100, 2).0, 9), Some(searched), "as the search of the equality");
+}

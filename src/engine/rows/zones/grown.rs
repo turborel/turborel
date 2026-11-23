@@ -85,7 +85,7 @@ impl<T: Default> Grown<T> {
 // (RULES.md R-TEST-1, R-TEST-2).
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::{FIRST, Grown, place};
 
@@ -138,6 +138,14 @@ mod tests {
         len
     }
 
+    /// Reads `grown` as `read_filled` does, over and over, until it holds
+    /// `items` or `done` is set.
+    fn read_until(grown: &Grown<AtomicUsize>, done: &AtomicBool, items: usize) {
+        while !done.load(Ordering::Acquire) && read_filled(grown) < items {
+            std::hint::spin_loop();
+        }
+    }
+
     /// Verifies: [DESIGN] RULES.md D860: readers and a thread adding items
     /// at once: every item a reader finds below the length it read is
     /// filled, the one at its place, and a pass over the first items gives
@@ -146,16 +154,18 @@ mod tests {
     fn readers_find_only_items_filled_as_the_sequence_grows() {
         const ITEMS: usize = 20_000;
         let grown: Grown<AtomicUsize> = Grown::default();
+        let done = AtomicBool::new(false);
         std::thread::scope(|scope| {
             for _ in 0..3_u8 {
-                scope.spawn(|| while read_filled(&grown) < ITEMS {});
+                scope.spawn(|| read_until(&grown, &done, ITEMS));
             }
             scope.spawn(|| {
-                for n in 0..ITEMS {
-                    assert!(grown.push(|item| item.store(n + 1, Ordering::Release)));
-                }
+                // Counted, not asserted, so a failure ends the readers too.
+                let pushed = (0..ITEMS).take_while(|&n| grown.push(|item| item.store(n.saturating_add(1), Ordering::Release))).count();
+                done.store(true, Ordering::Release);
+                assert_eq!(pushed, ITEMS);
             });
         });
-        assert_eq!(grown.len(), ITEMS);
+        assert_eq!(read_filled(&grown), ITEMS);
     }
 }

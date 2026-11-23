@@ -327,3 +327,25 @@ pub(super) fn create_index(r: &mut Reader<'_>) -> Result<Change> {
     }
     Ok(Change::CreateIndex { name, table, columns, method, options, expressions })
 }
+
+/// A user's name, and its verifier if it is kept.
+pub(super) fn put_user(out: &mut Vec<u8>, name: &str, verifier: Option<&[u8]>) {
+    out.put_str(name);
+    out.put_u8(u8::from(verifier.is_some()));
+    if let Some(verifier) = verifier {
+        out.put_bytes(verifier);
+    }
+}
+
+/// A role creator's name, and whether it may create roles.
+pub(super) fn put_creator(out: &mut Vec<u8>, name: &str, allowed: bool) {
+    out.put_str(name);
+    out.put_u8(u8::from(allowed));
+}
+
+/// What `put_user` wrote, as a change.
+pub(super) fn user(r: &mut Reader<'_>) -> Result<Change> {
+    let name = r.str()?;
+    let kept = r.u8()? != 0;
+    Ok(Change::User { name, verifier: if kept { Some(r.bytes()?.to_vec()) } else { None } })
+}

@@ -11,7 +11,7 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
-use crate::log::record::{delete_record, update_record};
+use crate::log::record::{put_delete_record, put_update_record};
 use crate::storage::{Row, RowId, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
@@ -145,7 +145,7 @@ impl State {
             };
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
-            let attempt = match self.unreserved(tx, (table, id), (&write, fold), (&mut turn, write_once))? {
+            let attempt = match self.unreserved(tx, (writing, id), (&write, fold), (&mut turn, write_once))? {
                 Guarded::Written(attempt) => attempt,
                 Guarded::Waited => continue,
             };
@@ -331,7 +331,7 @@ impl State {
             tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(writing.storage), id, old: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            Self::log_row(tx, (writing, id), |generation| update_record(tx.id, (table, generation), id, (old, row)))?;
+            Self::log_row(tx, (writing, id), |out, generation| put_update_record(out, tx.id, (table, generation), id, (old, row)))?;
         }
         // An engine keeping versions keeps the old version's entries for
         // the readers that still see it, until the version is removed
@@ -383,7 +383,7 @@ impl State {
             tx.log(UndoEntry::Deleted { table: table.clone(), storage: Arc::clone(writing.storage), id, row: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            Self::log_row(tx, (writing, id), |generation| delete_record(tx.id, (table, generation), id, old))?;
+            Self::log_row(tx, (writing, id), |out, generation| put_delete_record(out, tx.id, (table, generation), id, old))?;
         }
         Ok(())
     }

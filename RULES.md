@@ -571,6 +571,9 @@ verification approach DO-178C expects (§8).
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 | D872 | A statement's writes of a table resolve it once |
+| D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
+| D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
+| D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 
 ### The project
 
@@ -15736,6 +15739,117 @@ the rows to stamp, the rows a stamp leaves, and the garbage of a commit
 together with the deletions its stamping may file. A commit's garbage is filed
 once, or each time it passes the bytes held, not once a statement. A
 list that may pass the bytes held is made as before.
+#### D880. A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads
+
+A point change written straight (D841) ended its statement as the
+general path does. Each row constraint read the row back from its table
+by its id, a descent and a decode of a row the statement held a moment
+before. Each UNIQUE constraint built its whole check, with its table's
+indexes, its family and its names, and only then found that the row's
+entry had been inserted alone (`Txn::alone`), which settles it. And
+below SERIALIZABLE the transaction told every table it had joined to
+check its reads, and told each again to stop, around checks that often
+read nothing.
+
+Now `State::end_straight` is given the one row written as its statement
+holds it (`integrity/straight.rs`). A row constraint is checked of that
+row. The row held is the row stored unless the table has a system-time
+period, whose rows are stamped as they are written, or the row holds a
+value its table keeps apart, a large object or one inside another value.
+Of those the row is read back as before. A UNIQUE constraint keeps, from
+when the program is learned, the unique indexes of exactly its key, and
+a row whose entry in one was inserted alone is passed over before any
+check is built. This holds where `KeyCheck::row` would pass it over. That
+is a constraint with no period, of a table that is no subtable and no
+partition. Any other is checked whole.
+
+The participants are told to check reads only where a check reads a
+table. That is a row constraint other than NOT NULL, a row read back, or
+a UNIQUE check not settled. A participant already reads as the
+transaction does, told as it joined and at each new snapshot, so telling
+it to check and then not to, with no read between, changed nothing. The
+last call, which ends checked reads, is made as before.
+
+#### D881. A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied
+
+A point read (D752) ran its one probe as any search runs. It found its
+table, its index and the index's counts by name and took a reference to
+each, which wrote counts every session shares. It rebuilt the key's
+shape from the catalog. It copied its probe to say what it read, and the
+row store copied it again where reads are checked. The index built a
+range of two bounds from a vector for each value, and gave a boxed
+iterator that decoded each entry's key into values.
+
+Now an index may say it finds a whole key's entries by their first
+bytes (`Index::key_probe`, which gives a `KeyProbe`). `whole_key` gives
+those bytes for a value of each key column, if it places each exactly.
+`entries_of` then lends each entry beginning with them to a callback,
+in the search's order, until the callback wants no more. The default is
+none, and the B-link index answers. It anchors each value into one buffer (`key::anchor_into`),
+which becomes the scan's lower bound, and reads through its tree
+borrowed.
+
+`PointRead` keeps, from when its plan is kept, what it needs of its
+index's definition (`exec/point/keyed.rs`). It is read so only for an
+equality on the key's first columns, on an index of its table's own
+rows, keyed by the columns as they are, with no sort key, expression or
+projection. A plan is kept for one generation of the definitions, so
+what it keeps of them stays true. Each read borrows the table, the index
+and the counts from the snapshot and holds none. An entry found by an
+exact key has that key, so the row is checked against the probe's values
+in place of the entry's key decoded. A covering read of a row every
+reader sees still decodes the key, as its values are the row given. A
+row gone for every reader has its entry taken back as before (D837),
+its key decoded only then.
+
+The read is told to the table as before, by the condition of the
+key's columns and the probe (`TableStorage::read_by_condition`). The
+probe placed for the read is moved into that condition, where it was
+copied, and the key's values are then read from it. So a read at READ
+COMMITTED copies no probe, and one at SERIALIZABLE records what it
+recorded before, the row store copying the condition it keeps. A
+cancel is looked for before the probe, as each entry comes and after
+the last, and the entries are counted for the statement, the operator
+and the index as a search counts them.
+
+Any other index, probe or key is searched as before. A value not of its
+column's type has no exact anchor, and a null has none.
+
+The tree's scan keeps its bounds, so a probe still allocates the two.
+
+#### D882. A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there
+
+A transaction held each row change's record in a vector of its own
+until its commit (D470), so a transaction of twenty changes allocated
+and freed twenty-one vectors and the list of them. At the commit the
+block file framed them into a buffer it allocated for the run.
+
+Now the records are held end to end in one buffer, with where each ends
+in a second (`txn/pending.rs`). A row change is encoded where it is
+kept (`Txn::log_written`, `record::put_insert_record` and its kin), and
+so is the commit record. A record of a table with encodings is sealed
+in a buffer of its own first, as the sealing reads it whole. A place
+undone to cuts the buffer at the end of the record before it. As a
+transaction ends, its two buffers go to its thread, emptied, for the
+next transaction begun there, unless they grew past twice what a
+transaction holds before it writes. A checkpoint that writes a
+transaction's records takes its buffers for the write and gives them
+back if it holds none by then.
+
+`Log::append_run` takes the buffer and the ends. Its default appends a
+copy of each record by `append_all`, so a log that knows neither is
+given what it was given before. The file log frames each record from the
+buffer (`BlockFile::append_each`) into a buffer of frames its thread
+keeps, up to a megabyte. The bytes written are those `append_all` wrote.
+The record and block formats are unchanged.
+
+The records are still copied once into their frames. A frame is its
+payload's length, its digest, the payload and the length again, of the
+segment's hash, and through the segment's encodings, both of which may
+change at a rotation between a record's encoding and its write. Framing
+in place would have the transaction lay its records out for one
+segment's format before it knows the segment. The copy of a commit's
+few kilobytes was judged not worth that coupling.
 
 #### D871. A thread keeps the bookkeeping it last found of a transaction in a table
 
