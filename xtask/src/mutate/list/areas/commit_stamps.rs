@@ -1,6 +1,7 @@
 //! The mutations of a commit's stamps from where its writes left its rows
 //! (RULES.md R-TEST-9, D843): the stamp written in place, the leaf trusted
-//! only while the tree's stamp is unchanged, and the entry found from it.
+//! only while the tree's stamp is unchanged, and the entry found from it;
+//! and an index fill counted through a commit timestamp, not an id (D844).
 
 use super::super::{Mutation, Package};
 
@@ -10,7 +11,7 @@ const STAMPED: &str = "engine::rows::mvcc::stamps::tests::a_commit_stamps_its_ro
 const PLACED: &str = "engine::tree::tests::placed::a_change_starts_where_the_write_left_the_entry";
 
 /// Mechanisms of the stamps in place whose removal must fail their tests.
-pub const COMMIT_STAMPS: [Mutation; 3] = [
+pub const COMMIT_STAMPS: [Mutation; 4] = [
     Mutation {
         name: "commit-stamps-flag",
         package: Package::Core,
@@ -40,5 +41,15 @@ pub const COMMIT_STAMPS: [Mutation; 3] = [
         replacement: "Ok(Some(0))",
         integration: &[],
         unit: &[PLACED, STAMPED],
+    },
+    Mutation {
+        name: "commit-stamps-fill-through",
+        package: Package::Core,
+        breaks: "an index filled with the writers kept out is filled through the highest id, so later commits look older than the fill (D844)",
+        file: "src/db/recovery.rs",
+        original: "self.tx.latest_commit() } else { as_of };",
+        replacement: "self.tx.highest() } else { as_of };",
+        integration: &["undo_memory::a_crash_with_batches_kept_recovers_what_was_committed"],
+        unit: &[],
     },
 ];
