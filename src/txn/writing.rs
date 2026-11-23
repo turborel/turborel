@@ -25,7 +25,7 @@ use crate::db::State;
 use crate::disk::encoding::Pipeline;
 use crate::error::{Code, Result, SqlError};
 use crate::index::Index;
-use crate::storage::TableStorage;
+use crate::storage::{Row, TableStorage, unchanged};
 
 /// One index a table's rows have entries in, as a statement's writes find
 /// it: the table's own, or \[EXTENSION\] a global index over a partition,
@@ -80,9 +80,33 @@ pub(crate) struct Writing<'s> {
     pub(super) checked: bool,
     /// Whether it has a system-time period, whose columns a write stamps.
     pub(super) stamped: bool,
+    /// The columns its statement may change, as bits, if it said
+    /// (`setting`): every other column an update leaves as it was.
+    set: Option<u64>,
 }
 
-impl Writing<'_> {
+impl<'s> Writing<'s> {
+    /// \[DESIGN\] This, of a statement that changes no column but those
+    /// of `set`, a bit a column (`storage::column_bit`), its last bit
+    /// standing for no column, so a statement setting one past it says
+    /// nothing (RULES.md D875). What the statement's rows keep of the
+    /// columns it does not set is then known with no row looked at. The
+    /// caller answers for `set`: a column a trigger, a generated column or
+    /// a period's stamp changes is one the statement changes.
+    #[must_use]
+    pub(crate) fn setting(mut self, set: u64) -> Writing<'s> {
+        self.set = Some(set);
+        self
+    }
+
+    /// RULES.md D443, D875: of `row` written over `old`, the columns the
+    /// keys of the table's indexes read that both hold alike. Only those
+    /// the statement sets are compared, the others taken as kept.
+    pub(super) fn kept_columns(&self, old: &Row, row: &Row) -> u64 {
+        let set = self.set.unwrap_or(u64::MAX);
+        unchanged(old, row, self.key_columns & set) | (self.key_columns & !set)
+    }
+
     /// The table's name.
     pub(crate) fn table(&self) -> &QualifiedName {
         self.name
@@ -130,6 +154,7 @@ impl State {
             indexes,
             checked: !self.catalog.spatial().columns().is_empty() || !self.catalog.partitioning().is_empty(),
             stamped: desc.is_some_and(|desc| desc.period_columns(crate::ast::SYSTEM_TIME).is_some()),
+            set: None,
         })
     }
 }

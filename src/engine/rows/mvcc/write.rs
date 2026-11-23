@@ -23,7 +23,7 @@ impl RowTable {
     pub(in crate::engine::rows) fn write_over(&self, tx: TxId, id: RowId, row: Option<&Row>, past: Past) -> Result<Option<Row>> {
         let Some(row) = row else {
             let replaced = self.write_version(tx, id, None, past)?;
-            let old = self.replaced(id, replaced.as_deref());
+            let old = self.replaced(id, replaced.as_deref(), None);
             if let Some(buffer) = replaced {
                 give_back(buffer);
             }
@@ -34,13 +34,36 @@ impl RowTable {
         };
         let (mut framed, pages) = self.encode_framed(id, row)?;
         let replaced = self.write_version(tx, id, Some(&mut framed), past).inspect_err(|_| self.free(&pages))?;
-        let old = self.replaced(id, replaced.as_deref());
+        let old = self.replaced(id, replaced.as_deref(), None);
         if let Some(buffer) = replaced {
             give_back(buffer);
         }
         self.widen_over(id, Some(row), live(&old));
         self.counted_change(tx);
         old.map(|old| old.map(|(was, _)| was))
+    }
+
+    /// \[DESIGN\] As `write_over` of a row made `row`, for a caller that
+    /// reads only the columns `read` of the row replaced (RULES.md D875):
+    /// that row with those decoded and every other null, so an update pays
+    /// for the columns its statement uses of it. Its zone reads the columns
+    /// it keeps from the version's bytes itself (`widen_past`).
+    pub(in crate::engine::rows) fn write_over_reading(
+        &self,
+        tx: TxId,
+        id: RowId,
+        row: &Row,
+        (past, read): (Past, &[usize]),
+    ) -> Result<Option<Row>> {
+        let (mut framed, pages) = self.encode_framed(id, row)?;
+        let replaced = self.write_version(tx, id, Some(&mut framed), past).inspect_err(|_| self.free(&pages))?;
+        let old = self.replaced(id, replaced.as_deref(), Some(read));
+        let widened = self.widen_past(id, Some(row), replaced.as_deref());
+        if let Some(buffer) = replaced {
+            give_back(buffer);
+        }
+        self.counted_change(tx);
+        widened.and(old).map(|old| old.map(|(was, _)| was))
     }
 
     /// As `write_over`, for a caller that does not read the row replaced.
@@ -85,11 +108,11 @@ impl RowTable {
     /// it found one, and whether that version is a deletion: its values
     /// out of line are freed only as the transaction ends, so they are
     /// still there to read. It is decoded once, for the write's caller and
-    /// its zone alike (RULES.md D835).
-    fn replaced(&self, id: RowId, replaced: Option<&[u8]>) -> Result<Option<(Row, bool)>> {
+    /// its zone alike (RULES.md D835), only the columns `read` if given.
+    fn replaced(&self, id: RowId, replaced: Option<&[u8]>, read: Option<&[usize]>) -> Result<Option<(Row, bool)>> {
         let decoded = |bytes| {
             let version = Version::parse(bytes)?;
-            Ok((self.decode(id, version.record, None)?, version.deleted))
+            Ok((self.decode(id, version.record, read)?, version.deleted))
         };
         replaced.map(decoded).transpose()
     }

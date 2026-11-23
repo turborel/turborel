@@ -12,7 +12,7 @@ use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
 use crate::log::record::{put_delete_record, put_update_record};
-use crate::storage::{Row, RowId, unchanged};
+use crate::storage::{Row, RowId};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
 use escrowed::Guarded;
@@ -362,7 +362,7 @@ impl State {
     /// from `old` by `tx`, the columns both hold alike of those its indexes
     /// read, noted by its storage on the change; those it noted.
     fn keep_entries(tx: &Txn, (writing, id): (&Writing<'_>, RowId), (old, row): (&Row, &Row)) -> u64 {
-        match unchanged(old, row, writing.key_columns) {
+        match writing.kept_columns(old, row) {
             0 => 0,
             kept => writing.storage.keep_entries(tx.id, id, kept),
         }
