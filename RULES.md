@@ -16605,21 +16605,23 @@ A direct read (D930) now takes an inner index join whose probe fixes
 every column of a unique index by columns of its left operand
 (`join/indexed/direct.rs`). Its left operand is the range, filtered or
 projected to columns, constants and the statement's values. The probe
-of each left row is a point read (D752, D881), made once with the plan.
-The row's values of the key are its values, its index is probed by the
-whole key with nothing boxed, and the row found is read of the columns
+of each left row is read as a point read reads (D881), made once with
+the plan. The row's values of the key are its values, its index is
+probed by the whole key with nothing boxed, and the row found is read of the columns
 the statement reads alone into a row kept with the plan. The pair is
 made in a row kept for the run. The left row's values are moved into
 it, as a unique key pairs a left row once, and the rest of the join's
 condition is judged of the pair as the join judges it.
 
 A point read casts each value to its key column's type, where the join
-places it as it is. So the join is taken only if each key column takes
+places it as it is, so the probe is not a point read itself. So the join is taken only if each key column takes
 what its left column gives unchanged, which is a value of the column's
 own type or a constant the cast leaves as it was. A left row with a null
 for a key column pairs with nothing and reads nothing, as in the join.
-Each probe is recorded, counted and looked to for a cancel by the point
-read, as a probe of the join is. An outer, semi or anti join, a probe
+Each probe is told to its table, counted for its index and looked to
+for a cancel as a probe of the join is. Its rows are not counted among
+the rows the statement read, as the join's are not, so a procedure's
+ROWS_READ is the same on both paths. An outer, semi or anti join, a probe
 of part of a key, of a range or by a function, a spatial join and a
 located one are the executor's.
 
