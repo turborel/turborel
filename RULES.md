@@ -586,7 +586,6 @@ verification approach DO-178C expects (§8).
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
-| D91 | An inverted index of JSON documents' paths and values, every row found rechecked |
 | D910 | A value that is one of a type already is read, cast and assigned as it is, an array with no element copied |
 | D911 | A point change places its probe once, each value read over the slots where they are |
 | D912 | A point change makes its candidate row of the row it read |
