@@ -10,7 +10,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 11] = [
+pub const TXN_LAYER: [Mutation; 14] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -123,5 +123,35 @@ pub const TXN_LAYER: [Mutation; 11] = [
         replacement: "            if owed.is_empty() {",
         integration: &[],
         unit: &["db::tests::a_served_session_collects_the_tables_it_wrote"],
+    },
+    Mutation {
+        name: "writing-never-prepared",
+        package: Package::Core,
+        breaks: "a write through a Writing does its transaction's first-time work again at every row (D872)",
+        file: "src/txn/writing.rs",
+        original: "        Ok(written && unchanged && joined && saved)",
+        replacement: "        Ok(written && unchanged && joined && saved && st.doomed.is_some())",
+        integration: &[],
+        unit: &["txn::writing::tests::a_write_finds_its_first_work_done_only_while_it_holds"],
+    },
+    Mutation {
+        name: "writing-prepared-past-its-statement",
+        package: Package::Core,
+        breaks: "a write through a Writing held across statements takes no savepoint of a later statement, which is then not undone alone (D872)",
+        file: "src/txn/writing.rs",
+        original: "        Ok(written && unchanged && joined && saved)",
+        replacement: "        Ok(written && unchanged && joined && (saved || st.wrote))",
+        integration: &[],
+        unit: &["txn::writing::tests::a_writing_held_across_statements_writes_as_the_name_does"],
+    },
+    Mutation {
+        name: "writing-prepared-past-new-definitions",
+        package: Package::Core,
+        breaks: "a write through a Writing is taken as prepared though a table the transaction wrote has had an index added (D872)",
+        file: "src/txn/writing.rs",
+        original: "        Ok(written && unchanged && joined && saved)",
+        replacement: "        Ok(written && (unchanged || st.wrote) && joined && saved)",
+        integration: &[],
+        unit: &["txn::writing::tests::a_write_finds_its_first_work_done_only_while_it_holds"],
     },
 ];

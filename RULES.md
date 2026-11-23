@@ -569,6 +569,8 @@ verification approach DO-178C expects (§8).
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
+| D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
+| D872 | A statement's writes of a table resolve it once |
 | D880 | A point change written straight checks the row it holds, takes a key inserted alone as checked, and tells its participants nothing where no check reads |
 | D881 | A point read probes its index by the whole key, its entries lent, with no iterator boxed, no handle held and no probe copied |
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
@@ -15854,6 +15856,62 @@ change at a rotation between a record's encoding and its write. Framing
 in place would have the transaction lay its records out for one
 segment's format before it knows the segment. The copy of a commit's
 few kilobytes was judged not worth that coupling.
+
+#### D871. A thread keeps the bookkeeping it last found of a transaction in a table
+
+A table keeps each open transaction's bookkeeping in a map of shards
+(D784). A scan by row id kept what it found in its `Near`, but every
+write, every read with no `Near` of its own, and every savepoint looked
+the transaction up again. An update of one row took a shard's lock and
+hashed the id twice, and a third time for its statement's savepoint.
+
+A transaction runs on its session's thread. So each thread keeps the
+bookkeeping it last found, of up to 16 tables, and a lookup finds it
+there with no lock and no hash (`mvcc/found.rs`). One not kept is found
+in the map as before, and kept from then on, so a transaction that moves
+to another thread loses nothing but one lookup.
+
+What is kept must never be given for another table, nor after its
+transaction has ended. A table is named by a token, an allocation of its
+own that the thread holds as well, so no table made later can have the
+same one. Whether a transaction has ended in a table is a flag beside
+the bookkeeping's lock (`opens.rs`, `Opened`), set as the map lets it go
+and read with no lock by whatever still holds it, a thread or a `Near`.
+Bookkeeping of ended transactions goes from the thread as it next keeps
+one. The storage trait is unchanged. A handle the coordinator passes
+down would avoid the thread's list, and needs every engine's methods to
+take it.
+
+#### D872. A statement's writes of a table resolve it once
+
+The coordinator's row writes took a table's name. For every row an
+update looked the name up about eighteen times, in the map of storages,
+the map of locks and the catalog, for its capabilities, its lock, its
+generation, its seal and its indexes, whose key columns it worked out
+again each time. It then took the transaction's own lock five times to
+find its first-time work already done.
+
+A `Writing` (`txn/writing.rs`) holds what those lookups gave, found once
+in the definitions a statement reads, which it borrows, so it cannot
+outlive them. `State::writing` makes one, and `insert_row_in`,
+`update_row_in`, `delete_row_in`, `rewrite_row_in` and `index_add_in`
+take it. The entry points that take a name make one for their row, so
+their callers are unchanged and a caller writing many rows of a table
+holds one for all of them.
+
+What a write does in its transaction the first time is the policy's
+check of its persistence, the table's lock, the joining of the engine
+and the statement's savepoint there. A write through a `Writing` asks
+the transaction whether all of that is done (`Txn::prepared`), read from
+the transaction's own bookkeeping under its lock taken once. Nothing is
+remembered in the `Writing` or beside the bookkeeping. A statement's
+end, a mark undone and a savepoint gone back to each take savepoints out
+of the bookkeeping, and a flag kept apart would have to be cleared by
+every one of them. The checks that only the lock and the engine's
+capabilities decide, damage, the table's generation and a change of its
+definitions, are made at every write as before. A table whose changes
+the log does not hold is prepared in full at every write, as the
+policy's refusals of it depend on the setting as it stands.
 
 ## 2. Project layout
 

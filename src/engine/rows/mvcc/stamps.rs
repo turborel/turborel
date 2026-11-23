@@ -78,7 +78,6 @@ impl RowTable {
         let Some(open) = removed else { return };
         let (changes, adopted) = {
             let mut open = lock_builtin(&open);
-            open.ended = true;
             (mem::take(&mut open.changes), mem::take(&mut open.adopted))
         };
         let count = u64::try_from(changes.len()).unwrap_or(u64::MAX);
@@ -278,4 +277,4 @@ impl RowTable {
 // Unit tests: commits read through the status table before their stamps,
 // and versions appended stamped (RULES.md R-TEST-1).
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

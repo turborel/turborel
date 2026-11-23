@@ -3,24 +3,23 @@
 //! logs what undoes it for the coordinator [X3.135-1986 §4.16, §7.3 GR3b i].
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::UndoEntry;
-use super::kept::key_columns;
-use crate::catalog::{IndexDesc, QualifiedName};
+use super::writing::Writing;
+use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::db::write::system_time::{Changed, Stamp};
 use crate::error::{Code, Result, SqlError};
-use crate::index::{Index, Key};
-use crate::log::record::{put_delete_record, put_insert_record, put_update_record};
-use crate::log::sealed::seal_plain;
-use crate::storage::{Row, RowId, TableStorage, unchanged};
+use crate::log::record::{put_delete_record, put_update_record};
+use crate::storage::{Row, RowId, unchanged};
 use crate::txn::{Concurrency, LockWait, Timestamp, TxId, Txn, Undo};
 use crate::value::Value;
 use escrowed::Guarded;
 
+mod entries;
 mod escrowed;
+mod noted;
 
 /// What a writer refused does next (RULES.md D442, D747).
 enum Next {
@@ -36,128 +35,16 @@ enum Next {
 }
 
 impl State {
-    /// The indexes `table`'s rows have entries in: its own, each entry of
-    /// the row's id, and \[EXTENSION\] of a partition, the global indexes
-    /// over it, each of the id packed with the partition's (RULES.md D157).
-    /// Its own are borrowed from the catalog, not copied for each row
-    /// written.
-    pub(crate) fn table_indexes(&self, table: &QualifiedName) -> Vec<(Cow<'_, IndexDesc>, Option<u64>)> {
-        let own = self.catalog.indexes(table).into_iter().map(|ix| (Cow::Borrowed(ix), None));
-        own.chain(self.globals_over(table).into_iter().map(|(ix, partition)| (Cow::Owned(ix), Some(partition)))).collect()
-    }
-
-    /// The id of the entry of row `id` in an index, packed with `partition`.
-    pub(crate) fn entry_id(partition: Option<u64>, id: RowId) -> Result<RowId> {
-        partition.map_or(Ok(id), |p| crate::db::partitions::global::packed(p, id))
-    }
-
-    /// The key of `row` in the index `ix`: an error an expression of it
-    /// raises fails the write (RULES.md D92).
-    fn index_key(ix: &IndexDesc, row: &Row) -> Result<Key> {
-        ix.computed_key(row)
-    }
-
-    pub(crate) fn index_add(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
-        let key = Self::index_key(ix, row)?;
-        if ix.holds(&key) {
-            let index = self.index_handle(&ix.name)?;
-            // Of a unique index, whether the key's only entry, so its
-            // constraint need not look for another row (`Txn::alone`).
-            if ix.unique {
-                let alone = index.insert_alone(key.clone(), id)?;
-                tx.note_alone(&ix.name, id, alone)?;
-            } else {
-                index.insert(key.clone(), id)?;
-            }
-            tx.log(UndoEntry::IndexInserted { table: ix.table.clone(), index, key, id })?;
-        }
-        Ok(())
-    }
-
-    pub(crate) fn index_remove(&self, tx: &Txn, ix: &IndexDesc, row: &Row, id: RowId) -> Result<()> {
-        let key = Self::index_key(ix, row)?;
-        if ix.holds(&key) {
-            let index = self.index_handle(&ix.name)?;
-            index.remove(&key, id)?;
-            tx.log(UndoEntry::IndexRemoved { table: ix.table.clone(), index, key, id })?;
-        }
-        Ok(())
-    }
-
-    /// The index named `name`, shared.
-    fn index_handle(&self, name: &str) -> Result<Arc<dyn Index>> {
-        self.indexes.get(name).map(Arc::clone).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] the index {name} does not exist")))
-    }
-
-    /// Logs the insert of `row` as row `id` of `table`, made from the row
-    /// as it is held (RULES.md D531).
-    fn log_insert(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        self.log_row(tx, (table, id), |out, generation| put_insert_record(out, tx.id, (table, generation), id, row))
-    }
-
-    /// Logs the record `record` makes, given the generation of `table`'s
-    /// storage, of a change of its row `id`, sealed if its rows are; none
-    /// made without a log. Made from the images as the statement holds
-    /// them, none copied for it (RULES.md D750).
-    fn log_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), record: impl FnOnce(&mut Vec<u8>, u32)) -> Result<()> {
-        let seal = self.seal_of(table)?;
-        if tx.origin.log.is_none() {
-            return Ok(());
-        }
-        let generation = self.generation_of(table);
-        match seal {
-            Some(pipeline) => {
-                let mut plain = Vec::new();
-                record(&mut plain, generation);
-                tx.log_encoded(&seal_plain(&plain, id, &pipeline)?, 1)
-            }
-            // Encoded where the transaction holds it (RULES.md D882).
-            None => tx.log_written(1, |out| record(out, generation)),
-        }
-    }
-
-    /// [X3.135-1986 §8.7] Inserts `row`, with its index entries, under its
-    /// table's lock (`prepare_write`), logging what undoes it [X3.135-1986
-    /// §4.16, §7.3 GR3b i].
-    pub(crate) fn insert_row(&self, tx: &Txn, table: &QualifiedName, row: &Row) -> Result<RowId> {
-        crate::geometry::registered::check_row(&*self.catalog, table, row)?;
-        // [EXTENSION] a partition holds only the rows its bounds hold (RULES.md D155).
-        if !self.catalog.partitioning().is_empty() {
-            self.check_holds(table, row)?;
-        }
-        self.prepare_write(tx, table)?;
-        // A row of large objects is copied, so each names one the table
-        // keeps for it, or is held in the row inside another value
-        // (RULES.md D79, D106); any other is written as given.
-        let kept = if row.iter().any(Value::needs_keeping) {
-            let mut kept = row.clone();
-            self.keep_lobs(tx, table, None, &mut kept)?;
-            Cow::Owned(kept)
-        } else {
-            Cow::Borrowed(row)
-        };
-        let kept: &Row = &kept;
-        // After any wait for a lock: a checkpoint never waits on a waiter.
-        let _gate = self.tx.gate.enter();
-        let id = self.storage_of(table)?.insert_from(tx.id, kept)?;
-        let caps = self.capabilities(table)?;
-        if caps.undo == Undo::Log {
-            tx.log(UndoEntry::Inserted { table: table.clone(), storage: Arc::clone(self.storage_of(table)?), id })?;
-        }
-        if Self::logs_changes(caps.persistence) {
-            self.log_insert(tx, table, id, kept)?;
-        }
-        for (ix, partition) in self.table_indexes(table) {
-            self.index_add(tx, &ix, kept, Self::entry_id(partition, id)?)?;
-        }
-        Ok(id)
-    }
-
     /// [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §4.11] That a row `write`
     /// gives `table` holds in each registered geometry column a value of
     /// the column's system (`geometry::registered`), and \[EXTENSION\] of a
     /// partition, is one its bounds hold.
-    fn check_written(&self, table: &QualifiedName, write: &Write<'_>) -> Result<()> {
+    fn check_written(&self, writing: &Writing<'_>, write: &Write<'_>) -> Result<()> {
+        // Nothing is registered beside any table: no row is looked at.
+        if !writing.checked {
+            return Ok(());
+        }
+        let table = writing.table();
         match write {
             Write::Update(row) => {
                 crate::geometry::registered::check_row(&*self.catalog, table, row)?;
@@ -172,12 +59,22 @@ impl State {
     /// [X3.135-1986 §8.11, §8.12] Replaces row `id` with `row`, as `insert_row`
     /// inserts, waiting for a transaction changing it to end (RULES.md D28).
     pub(crate) fn update_row(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        self.change_row(tx, (table, id), (Write::Update(Cow::Borrowed(row)), false), None).map(|_| ())
+        self.update_row_in(tx, &self.writing(table)?, id, row)
+    }
+
+    /// As `update_row`, of a row of the table of `writing` (RULES.md D872).
+    pub(crate) fn update_row_in(&self, tx: &Txn, writing: &Writing<'_>, id: RowId, row: &Row) -> Result<()> {
+        self.change_row(tx, (writing, id), (Write::Update(Cow::Borrowed(row)), false), None).map(|_| ())
     }
 
     /// [X3.135-1986 §8.4, §8.5] Deletes row `id`, as `update_row` replaces it.
     pub(crate) fn delete_row(&self, tx: &Txn, table: &QualifiedName, id: RowId) -> Result<()> {
-        self.change_row(tx, (table, id), (Write::Delete, false), None).map(|_| ())
+        self.delete_row_in(tx, &self.writing(table)?, id)
+    }
+
+    /// As `delete_row`, of a row of the table of `writing` (RULES.md D872).
+    pub(crate) fn delete_row_in(&self, tx: &Txn, writing: &Writing<'_>, id: RowId) -> Result<()> {
+        self.change_row(tx, (writing, id), (Write::Delete, false), None).map(|_| ())
     }
 
     /// As `update_row` with `row`, or `delete_row` with none; of a row
@@ -192,8 +89,19 @@ impl State {
         row: Option<&Row>,
         recheck: Recheck<'_>,
     ) -> Result<Option<Row>> {
+        self.rewrite_row_in(tx, (&self.writing(table)?, id), row, recheck)
+    }
+
+    /// As `rewrite_row`, of a row of the table of `writing` (RULES.md D872).
+    pub(crate) fn rewrite_row_in(
+        &self,
+        tx: &Txn,
+        (writing, id): (&Writing<'_>, RowId),
+        row: Option<&Row>,
+        recheck: Recheck<'_>,
+    ) -> Result<Option<Row>> {
         let write = row.map_or(Write::Delete, |row| Write::Update(Cow::Borrowed(row)));
-        self.change_row(tx, (table, id), (write, false), Some(recheck))
+        self.change_row(tx, (writing, id), (write, false), Some(recheck))
     }
 
     /// \[DESIGN\] As `rewrite_row` with `row`, the increments reserved on
@@ -201,7 +109,7 @@ impl State {
     /// kept waiting by the reservations of others, whose increments add to
     /// the same columns as its own and are applied over it.
     pub(crate) fn fold_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), row: &Row, recheck: Recheck<'_>) -> Result<Option<Row>> {
-        self.change_row(tx, (table, id), (Write::Update(Cow::Borrowed(row)), true), Some(recheck))
+        self.change_row(tx, (&self.writing(table)?, id), (Write::Update(Cow::Borrowed(row)), true), Some(recheck))
     }
 
     /// `write` of row `id`, tried again as long as another transaction's
@@ -212,15 +120,16 @@ impl State {
     fn change_row(
         &self,
         tx: &Txn,
-        (table, id): (&QualifiedName, RowId),
+        (writing, id): (&Writing<'_>, RowId),
         (mut write, fold): (Write<'_>, bool),
         mut recheck: Option<Recheck<'_>>,
     ) -> Result<Option<Row>> {
-        self.check_written(table, &write)?;
-        self.prepare_write(tx, table)?;
+        let table = writing.table();
+        self.check_written(writing, &write)?;
+        self.prepare_in(tx, writing)?;
         // [ISO/IEC 9075-2:2023 §15.14 GR10a] a row of a system-time period
         // stamped, and of a system-versioned table, kept as it was.
-        let stamp = self.stamp_of(tx, table)?;
+        let stamp = if writing.stamped { self.stamp_of(tx, table)? } else { None };
         if let (Some(stamp), Write::Update(row)) = (&stamp, &mut write) {
             stamp.put(row.to_mut());
         }
@@ -232,11 +141,11 @@ impl State {
             let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
-                self.write_once(tx, (table, id), (&write, stamp.as_ref()), seen.as_ref())
+                Self::write_once(tx, (writing, id), (&write, stamp.as_ref()), seen.as_ref())
             };
             // [DESIGN] RULES.md D452: not over the columns another
             // transaction's increments reserved guard, until it ends.
-            let attempt = match self.unreserved(tx, (table, id), (&write, fold), (&mut turn, write_once))? {
+            let attempt = match Self::unreserved(tx, (writing, id), (&write, fold), (&mut turn, write_once))? {
                 Guarded::Written(attempt) => attempt,
                 Guarded::Waited => continue,
             };
@@ -252,7 +161,7 @@ impl State {
                 Err(e) => e,
             };
             tries = tries.saturating_add(1);
-            if !self.waits(tx, table, &e, tries)? {
+            if !Self::waits(tx, writing, &e, tries) {
                 return Err(self.refused(tx, table, id, e));
             }
             let check = recheck.as_mut().filter(|_| !tx.one_snapshot());
@@ -319,10 +228,10 @@ impl State {
     }
 
     /// Whether a writer refused by `e`, after `tries` refusals, waits and
-    /// tries the row of `table` again.
-    fn waits(&self, tx: &Txn, table: &QualifiedName, e: &SqlError, tries: usize) -> Result<bool> {
+    /// tries the row of the table of `writing` again.
+    fn waits(tx: &Txn, writing: &Writing<'_>, e: &SqlError, tries: usize) -> bool {
         let waits = e.code == Code::Conflict && tx.lock_wait == LockWait::Wait && tries < MOST_CONFLICTS;
-        Ok(waits && self.capabilities(table)?.concurrency != Concurrency::Coordinator)
+        waits && writing.caps.concurrency != Concurrency::Coordinator
     }
 
     /// What a writer refused at row `id` of `table` does next, its writer
@@ -369,13 +278,12 @@ impl State {
     /// history it is kept in, if `stamp`, of the table's system-time
     /// period, says it is [ISO/IEC 9075-2:2023 §15.14 GR10a iii].
     fn write_once(
-        &self,
         tx: &Txn,
-        (table, id): (&QualifiedName, RowId),
+        (writing, id): (&Writing<'_>, RowId),
         (write, system): (&Write<'_>, Option<&Stamp>),
         seen: Option<&(Timestamp, Row)>,
     ) -> Result<(Row, Option<QualifiedName>)> {
-        let storage = self.storage_of(table)?;
+        let (table, storage) = (writing.table(), writing.storage);
         // Borrowed: the engine encodes it, and the caller keeps it for its
         // index entries and its log record, with no copy made (RULES.md D417).
         let new = match write {
@@ -399,8 +307,8 @@ impl State {
             (None, None) => (storage.replace(tx.id, id, new)?, None),
         };
         match write {
-            Write::Update(row) => self.updated(tx, (table, id), (&old, row))?,
-            Write::Delete => self.deleted(tx, table, id, &old)?,
+            Write::Update(row) => Self::updated(tx, (writing, id), (&old, row))?,
+            Write::Delete => Self::deleted(tx, writing, id, &old)?,
         }
         Ok((old, history))
     }
@@ -415,16 +323,15 @@ impl State {
         })
     }
 
-    /// Of row `id` of `table` made `row` from `old`: what undoes it, its
-    /// log record and its index entries.
-    fn updated(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), (old, row): (&Row, &Row)) -> Result<()> {
-        let storage = self.storage_of(table)?;
-        let caps = self.capabilities(table)?;
+    /// Of row `id` of the table of `writing` made `row` from `old`: what
+    /// undoes it, its log record and its index entries.
+    fn updated(tx: &Txn, (writing, id): (&Writing<'_>, RowId), (old, row): (&Row, &Row)) -> Result<()> {
+        let (table, caps) = (writing.table(), writing.caps);
         if caps.undo == Undo::Log {
-            tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(storage), id, old: old.clone() })?;
+            tx.log(UndoEntry::Updated { table: table.clone(), storage: Arc::clone(writing.storage), id, old: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            self.log_row(tx, (table, id), |out, generation| put_update_record(out, tx.id, (table, generation), id, (old, row)))?;
+            Self::log_row(tx, (writing, id), |out, generation| put_update_record(out, tx.id, (table, generation), id, (old, row)))?;
         }
         // An engine keeping versions keeps the old version's entries for
         // the readers that still see it, until the version is removed
@@ -432,65 +339,51 @@ impl State {
         // of an index whose key reads only columns it kept, where the two
         // share one (RULES.md D443).
         let versions = caps.concurrency != Concurrency::Coordinator;
-        let indexes: Vec<_> = self
-            .table_indexes(table)
-            .into_iter()
-            .map(|(ix, p)| {
-                let columns = if p.is_none() { key_columns(&ix) } else { 0 };
-                (ix, p, columns)
-            })
-            .collect();
-        let kept = if versions { Self::keep_entries((tx, storage), id, (old, row), &indexes) } else { 0 };
-        for (ix, partition, columns) in indexes {
+        let kept = if versions { Self::keep_entries(tx, (writing, id), (old, row)) } else { 0 };
+        for entries in &writing.indexes {
             // RULES.md D92: an entry of one row's one version keeps
             // its key while the columns its expressions read are unchanged.
-            if !versions && ix.has_expressions() && ix.unchanged(old, row) {
+            if !versions && entries.ix.has_expressions() && entries.ix.unchanged(old, row) {
                 continue;
             }
-            if columns != 0 && columns & !kept == 0 {
+            if entries.columns != 0 && entries.columns & !kept == 0 {
                 continue;
             }
-            let entry = Self::entry_id(partition, id)?;
+            let entry = Self::entry_id(entries.partition, id)?;
             if !versions {
-                self.index_remove(tx, &ix, old, entry)?;
+                Self::index_remove_in(tx, entries, old, entry)?;
             }
-            self.index_add(tx, &ix, row, entry)?;
+            Self::index_add_in(tx, entries, row, entry)?;
         }
         Ok(())
     }
 
-    /// RULES.md D443: of row `id` made `row` from `old` by `tx`, the
-    /// columns both hold alike of those `indexes` read, noted by `storage`
-    /// on the change; those it noted.
-    fn keep_entries(
-        (tx, storage): (&Txn, &Arc<dyn TableStorage>),
-        id: RowId,
-        (old, row): (&Row, &Row),
-        indexes: &[(Cow<'_, IndexDesc>, Option<u64>, u64)],
-    ) -> u64 {
-        let columns = indexes.iter().fold(0, |all, &(_, _, columns)| all | columns);
-        match unchanged(old, row, columns) {
+    /// RULES.md D443: of row `id` of the table of `writing` made `row`
+    /// from `old` by `tx`, the columns both hold alike of those its indexes
+    /// read, noted by its storage on the change; those it noted.
+    fn keep_entries(tx: &Txn, (writing, id): (&Writing<'_>, RowId), (old, row): (&Row, &Row)) -> u64 {
+        match unchanged(old, row, writing.key_columns) {
             0 => 0,
-            kept => storage.keep_entries(tx.id, id, kept),
+            kept => writing.storage.keep_entries(tx.id, id, kept),
         }
     }
 
-    /// Of row `id` of `table`, `old`, deleted, as `updated` says.
-    fn deleted(&self, tx: &Txn, table: &QualifiedName, id: RowId, old: &Row) -> Result<()> {
-        let storage = self.storage_of(table)?;
-        let caps = self.capabilities(table)?;
+    /// Of row `id` of the table of `writing`, `old`, deleted, as `updated`
+    /// says.
+    fn deleted(tx: &Txn, writing: &Writing<'_>, id: RowId, old: &Row) -> Result<()> {
+        let (table, caps) = (writing.table(), writing.caps);
         // An engine keeping versions keeps the deleted version's entries
         // until it is removed, as for an update.
         if caps.concurrency == Concurrency::Coordinator {
-            for (ix, partition) in self.table_indexes(table) {
-                self.index_remove(tx, &ix, old, Self::entry_id(partition, id)?)?;
+            for entries in &writing.indexes {
+                Self::index_remove_in(tx, entries, old, Self::entry_id(entries.partition, id)?)?;
             }
         }
         if caps.undo == Undo::Log {
-            tx.log(UndoEntry::Deleted { table: table.clone(), storage: Arc::clone(storage), id, row: old.clone() })?;
+            tx.log(UndoEntry::Deleted { table: table.clone(), storage: Arc::clone(writing.storage), id, row: old.clone() })?;
         }
         if Self::logs_changes(caps.persistence) {
-            self.log_row(tx, (table, id), |out, generation| put_delete_record(out, tx.id, (table, generation), id, old))?;
+            Self::log_row(tx, (writing, id), |out, generation| put_delete_record(out, tx.id, (table, generation), id, old))?;
         }
         Ok(())
     }
@@ -525,74 +418,3 @@ pub(crate) type Recheck<'a> = &'a mut dyn FnMut(&Row) -> Result<Again>;
 /// an engine whose answers disagree, never for a row in demand, so READ
 /// COMMITTED waits until its lock timeout or a deadlock (RULES.md D454).
 const MOST_CONFLICTS: usize = 64;
-
-/// Notes in `noted` each row of `rows` that was alone, and takes out each
-/// that was not.
-fn note_rows(noted: &mut HashSet<RowId>, rows: &mut dyn Iterator<Item = (RowId, bool)>) {
-    for (row, alone) in rows {
-        if alone {
-            noted.insert(row);
-        } else {
-            noted.remove(&row);
-        }
-    }
-}
-
-impl Txn {
-    /// The row it wrote of form `form`'s change to the kept totals of
-    /// `table`, if it wrote one; a statement undone may have taken it.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the transaction's state is poisoned.
-    pub(crate) fn kept_row(&self, table: &QualifiedName, form: usize) -> Result<Option<RowId>> {
-        Ok(self.state()?.kept_rows.get(&(table.clone(), form)).copied())
-    }
-
-    /// Notes `row` as the one it writes of form `form`'s change to the kept
-    /// totals of `table`.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the transaction's state is poisoned.
-    pub(crate) fn note_kept_row(&self, table: &QualifiedName, form: usize, row: RowId) -> Result<()> {
-        self.state()?.kept_rows.insert((table.clone(), form), row);
-        Ok(())
-    }
-
-    /// Notes whether row `row`'s entry in the unique index `index`, as it
-    /// was inserted, was its key's only one.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the transaction's state is poisoned.
-    pub(crate) fn note_alone(&self, index: &str, row: RowId, alone: bool) -> Result<()> {
-        self.note_alone_rows(index, &mut std::iter::once((row, alone)))
-    }
-
-    /// As `note_alone` of each row and whether it was alone, of `rows`, the
-    /// transaction's state taken once.
-    ///
-    /// # Errors
-    ///
-    /// As `note_alone`.
-    pub(crate) fn note_alone_rows(&self, index: &str, rows: &mut dyn Iterator<Item = (RowId, bool)>) -> Result<()> {
-        let mut state = self.state()?;
-        // Found by one hash of its name; the name is copied only the first time.
-        if let Some(noted) = state.alone.get_mut(index) {
-            note_rows(noted, rows);
-            return Ok(());
-        }
-        let mut noted = HashSet::new();
-        note_rows(&mut noted, rows);
-        state.alone.insert(index.to_owned(), noted);
-        Ok(())
-    }
-
-    /// Whether row `row`'s entry in the unique index `index`, as it was
-    /// last inserted, was its key's only one: another row of its key,
-    /// inserted after, was not, and is looked for itself.
-    pub(crate) fn alone(&self, index: &str, row: RowId) -> bool {
-        self.state().is_ok_and(|s| s.alone.get(index).is_some_and(|rows| rows.contains(&row)))
-    }
-}

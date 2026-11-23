@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 11] = [
+pub const READERS: [Mutation; 10] = [
     Mutation {
         name: "reader-collects-nothing",
         package: Package::Core,
@@ -73,28 +73,18 @@ pub const READERS: [Mutation; 11] = [
         package: Package::Core,
         breaks: "read-only path: a scan reads through a transaction's bookkeeping after it ended",
         file: "src/engine/rows/mvcc/open.rs",
-        original: "            if !open.ended {",
-        replacement: "            if true {",
+        original: ".filter(|opened| !opened.ended())",
+        replacement: ".filter(|opened| opened.ended() || !opened.ended())",
         integration: &[],
         unit: &["engine::rows::tests::a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open"],
     },
     Mutation {
-        name: "kept-after-commit",
+        name: "kept-after-its-end",
         package: Package::Core,
-        breaks: "read-only path: a transaction's bookkeeping not marked ended as it commits",
-        file: "src/engine/rows/mvcc/stamps.rs",
-        original: "            open.ended = true;",
-        replacement: "            open.ended = false;",
-        integration: &[],
-        unit: &["engine::rows::tests::a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open"],
-    },
-    Mutation {
-        name: "kept-after-rollback",
-        package: Package::Core,
-        breaks: "read-only path: a transaction's bookkeeping not marked ended as it rolls back",
-        file: "src/engine/rows/mvcc.rs",
-        original: "            lock_builtin(&open).ended = true;",
-        replacement: "            lock_builtin(&open).ended = false;",
+        breaks: "read-only path: a transaction's bookkeeping not marked ended as it commits or rolls back",
+        file: "src/engine/rows/mvcc/opens.rs",
+        original: "            opened.ended.store(true, Ordering::Release);",
+        replacement: "            opened.ended.store(false, Ordering::Release);",
         integration: &[],
         unit: &["engine::rows::tests::a_scan_keeps_a_transactions_bookkeeping_only_while_it_is_open"],
     },

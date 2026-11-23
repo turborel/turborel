@@ -203,11 +203,11 @@ impl TableStorage for RowTable {
     }
 
     fn update(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.write_over(tx, id, Some(&row), Past::Snapshot).map(drop)
+        self.write_unread(tx, id, Some(&row), Past::Snapshot)
     }
 
     fn delete(&self, tx: TxId, id: RowId) -> Result<()> {
-        self.write_over(tx, id, None, Past::Snapshot).map(drop)
+        self.write_unread(tx, id, None, Past::Snapshot)
     }
 
     fn replace(&self, tx: TxId, id: RowId, row: Option<&Row>) -> Result<Row> {
@@ -219,7 +219,7 @@ impl TableStorage for RowTable {
     }
 
     fn write_newest(&self, tx: TxId, id: RowId, row: Option<&Row>, seen: Timestamp) -> Result<()> {
-        self.write_over(tx, id, row, Past::Stamp(seen)).map(drop)
+        self.write_unread(tx, id, row, Past::Stamp(seen))
     }
 
     fn keep_entries(&self, tx: TxId, id: RowId, unchanged: u64) -> u64 {
