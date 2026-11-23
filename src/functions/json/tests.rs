@@ -70,7 +70,7 @@ fn dynamic_parameters_20_7() {
 fn a_call_short_of_arguments_is_refused() {
     let value = JsonOperation::Value { returning: DataType::varying(4), on_empty: ValueSlot::Default, on_error: ValueSlot::Error };
     let f = call(vec![("A".to_owned(), false)], value);
-    let text = |t: &str| Value::Char(t.to_owned());
+    let text = |t: &str| Value::Char(t.into());
     for short in [vec![], vec![text("{}")], vec![text("{}"), text("1")]] {
         assert_eq!(f.call(&short).unwrap_err().code, Code::Api, "{short:?}");
     }

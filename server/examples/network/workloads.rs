@@ -104,7 +104,7 @@ pub fn streaming(bench: &Bench, served: &Served) {
 
 /// The values of the `n`th row inserted.
 fn row(n: usize) -> Vec<Value> {
-    vec![Value::Exact(Decimal::new(n as i128, 0)), Value::Char(format!("row {n} of the bulk insert"))]
+    vec![Value::Exact(Decimal::new(n as i128, 0)), Value::Char(format!("row {n} of the bulk insert").into())]
 }
 
 /// Bulk inserts through a prepared statement, in one transaction: each

@@ -146,7 +146,7 @@ pub const OFF: &str = "OFF";
 
 /// A character string value.
 pub(super) fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// A whole number value.

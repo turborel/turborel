@@ -36,9 +36,9 @@ const PROCEDURES: [&str; 2] = [
 /// X 100, Y 0 and N 0; table SEEN; and `PROCEDURES`.
 fn database(escrow: &str, point: &str) -> Database {
     let db = Database::new();
-    db.set_setting("LOCKS.WAIT", &Value::Char("ON".to_owned())).unwrap();
-    db.set_setting("TRANSACTION.ESCROW", &Value::Char(escrow.to_owned())).unwrap();
-    db.set_setting("EXECUTOR.POINT_OPERATIONS", &Value::Char(point.to_owned())).unwrap();
+    db.set_setting("LOCKS.WAIT", &Value::Char("ON".into())).unwrap();
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char(escrow.into())).unwrap();
+    db.set_setting("EXECUTOR.POINT_OPERATIONS", &Value::Char(point.into())).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
          CREATE TABLE T (ID INTEGER NOT NULL PRIMARY KEY, X DECIMAL(6,2), Y INTEGER, N INTEGER, NAME VARCHAR(8))

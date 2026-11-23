@@ -84,7 +84,7 @@ impl ScalarFunction for QueryAttribute {
 
     fn call(&self, args: &[Value]) -> Result<Value> {
         let Some(Value::Char(name)) = args.first() else { return Ok(Value::Null) };
-        Ok(self.0.value(name).map_or(Value::Null, Value::Char))
+        Ok(self.0.value(name).map_or(Value::Null, |s| Value::Char(s.into())))
     }
 
     fn deterministic(&self) -> bool {

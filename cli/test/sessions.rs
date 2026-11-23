@@ -185,11 +185,11 @@ fn a_run_ends_when_it_cannot_go_on() {
 pub fn with_passwords(pki: &crate::common::Pki) -> (Database, Running) {
     let db = Database::new();
     secured(&db, pki, "ON");
-    db.set_setting(TLS_CLIENT_CA, &Value::Char(pki.authority.display().to_string())).unwrap();
+    db.set_setting(TLS_CLIENT_CA, &Value::Char(pki.authority.display().to_string().into())).unwrap();
     let made = Pbkdf2::new(NonZeroU32::new(10_000).unwrap());
     db.create_user("ANN", made.make("ann's").unwrap().as_bytes()).unwrap();
     #[cfg(any(unix, windows))]
-    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.socket("s").display().to_string())).unwrap();
+    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.socket("s").display().to_string().into())).unwrap();
     let scram = Scram::new(db.clone(), &made).unwrap();
     let server = start_with(&db, &[], vec![Arc::new(scram.plus()), Arc::new(scram), Arc::new(Certificate::new(db.clone()))]);
     (db, server)

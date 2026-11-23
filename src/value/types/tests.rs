@@ -211,13 +211,13 @@ fn varying_keys_order_as_strings_compare() {
     let t = DataType::varying(3);
     let key = |s: &str| {
         let mut out = Vec::new();
-        t.encode_key(&Value::Char(s.to_owned()), &mut out).unwrap();
+        t.encode_key(&Value::Char(s.into()), &mut out).unwrap();
         out
     };
     let keys: Vec<Vec<u8>> = strings.iter().map(|s| key(s)).collect();
     for (a, ka) in strings.iter().zip(&keys) {
         let read = t.decode_key(&mut ka.as_slice()).unwrap();
-        assert_eq!(compare(&read, &Value::Char(a.clone())), Some(Ordering::Equal), "{a:?} reads back");
+        assert_eq!(compare(&read, &Value::Char(a.clone().into())), Some(Ordering::Equal), "{a:?} reads back");
         for (b, kb) in strings.iter().zip(&keys) {
             assert_eq!(ka.cmp(kb), compare_strings(a, b), "{a:?} and {b:?}");
             assert!(ka == kb || !kb.starts_with(ka), "{a:?}'s key begins {b:?}'s");

@@ -6,7 +6,7 @@ use crate::value::Binary;
 use crate::value::lob::Lob;
 
 fn octets(b: &[u8]) -> Value {
-    Value::Binary(Binary::new(b.to_vec()))
+    Value::Binary(Binary::of(b))
 }
 
 fn blob(b: &[u8]) -> Value {
@@ -38,7 +38,7 @@ fn a_pattern_past_a_chunk_is_refused() {
     let long = blob(&vec![b'%'; CHUNK_OCTETS.saturating_add(1)]);
     let e = OctetLike.call(&[octets(b"a"), long]).unwrap_err();
     assert!(e.code == Code::Unsupported && e.to_string().contains("a LIKE pattern"), "{e}");
-    let text = Value::Char("a".to_owned());
+    let text = Value::Char("a".into());
     assert_eq!(OctetLike.call(&[octets(b"a"), text.clone()]).unwrap_err().code, Code::Api);
     assert_eq!(OctetLike.call(&[text, octets(b"a")]).unwrap_err().code, Code::Api);
     assert_eq!(OctetLike.call(&[octets(b"a")]).unwrap_err().code, Code::Api);

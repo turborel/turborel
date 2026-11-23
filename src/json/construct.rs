@@ -115,7 +115,7 @@ fn input_item(input: &Input<'_>, keys: Keys) -> Result<Item> {
         Value::Null => return Ok(Item::Null),
         Value::Char(_) | Value::Exact(_) | Value::Approx(_) | Value::DecFloat(_) | Value::Bool(_) => input.value.clone(),
         Value::Lob(lob) => match lob.kind() {
-            LobKind::Character => Value::Char(held_text(lob, INPUT_TEXT)?),
+            LobKind::Character => Value::Char(held_text(lob, INPUT_TEXT)?.into()),
             LobKind::Binary => cast(input.value.clone(), &SDT)?,
         },
         Value::Datetime(_)
@@ -151,7 +151,7 @@ fn key(name: &Value) -> Result<String> {
             "[ISO/IEC 9075-2:2023 §6.34 GR2d ii 1 D] the name of a member of a JSON object is the null value",
         )
         .with_state(SqlState::NULL_VALUE_NOT_ALLOWED)),
-        Value::Char(s) => Ok(s.clone()),
+        Value::Char(s) => Ok(s.to_string()),
         Value::Lob(lob) => match lob.kind() {
             LobKind::Character => held_text(lob, NAME_TEXT),
             LobKind::Binary => Err(not_a_name(name)),

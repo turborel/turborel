@@ -60,12 +60,12 @@ impl Native {
         if let Some((at, node, seq)) = &self.draw {
             let Value::Exact(next) = st.next_value(seq)? else { return Err(api("[DESIGN] a generator gave no integer")) };
             let id = ElementId { node: *node, table: self.table.clone(), id: next.units };
-            put(row, *at, Value::Char(id.text()))?;
+            put(row, *at, Value::Char(id.text().into()))?;
         }
         for &at in &self.ends {
             let Some(Value::Char(text)) = row.get(at) else { continue };
             let id = self.endpoint(st, text)?;
-            put(row, at, Value::Char(id.text()))?;
+            put(row, at, Value::Char(id.text().into()))?;
         }
         Ok(())
     }

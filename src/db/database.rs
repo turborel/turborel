@@ -391,7 +391,7 @@ impl Database {
     ///
     /// SQLCODE -910 if no engine has that name.
     pub fn use_engine(&self, name: &str) -> Result<()> {
-        self.set_setting("TABLES.ENGINE", &Value::Char(name.to_owned()))
+        self.set_setting("TABLES.ENGINE", &Value::Char(name.into()))
     }
 
     /// \[DESIGN\] Choose the storage engine for one table, "AUTH.TABLE", before
@@ -464,7 +464,7 @@ impl Database {
     ///
     /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
     pub fn set_transaction_policy(&self, policy: Policy) -> Result<()> {
-        self.set_setting("TRANSACTION.STRICT", &Value::Char(settings::policy_word(policy).to_owned()))
+        self.set_setting("TRANSACTION.STRICT", &Value::Char(settings::policy_word(policy).into()))
     }
 
     /// What happens to an open transaction when a session ends: the choice is
@@ -475,7 +475,7 @@ impl Database {
     ///
     /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
     pub fn set_session_end(&self, end: SessionEnd) -> Result<()> {
-        self.set_setting("SESSION.COMMIT_AT_END", &Value::Char(settings::session_end_word(end).to_owned()))
+        self.set_setting("SESSION.COMMIT_AT_END", &Value::Char(settings::session_end_word(end).into()))
     }
 
     /// \[DESIGN\] The log transactions begun from now on write to (RULES.md

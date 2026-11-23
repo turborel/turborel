@@ -44,7 +44,7 @@ fn served_by(pki: &Pki, plus_only: bool) -> (Database, Running) {
     let made = Pbkdf2::new(NonZeroU32::new(10_000).unwrap());
     db.create_user("ANN", made.make("ann's").unwrap().as_bytes()).unwrap();
     #[cfg(any(unix, windows))]
-    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.socket("s").display().to_string())).unwrap();
+    db.set_setting(turborel_server::settings::SOCKET, &Value::Char(pki.scratch.socket("s").display().to_string().into())).unwrap();
     let scram = Scrammed::new(db.clone(), &made).unwrap();
     let mut mechanisms: Vec<Arc<dyn Authenticator>> = vec![Arc::new(scram.plus())];
     if !plus_only {
@@ -286,8 +286,8 @@ fn a_certificate_taken_again_binds_the_connections_after() {
     let (old, new) = (pki("scram-reload-old"), pki("scram-reload-new"));
     let (db, server) = served(&old);
     assert_eq!(over_tls(&server, &old, ("ann", "ann's")).unwrap(), "ANN");
-    db.set_setting(TLS_CERTIFICATE, &Value::Char(new.chain.display().to_string())).unwrap();
-    db.set_setting(TLS_KEY, &Value::Char(new.key.display().to_string())).unwrap();
+    db.set_setting(TLS_CERTIFICATE, &Value::Char(new.chain.display().to_string().into())).unwrap();
+    db.set_setting(TLS_KEY, &Value::Char(new.key.display().to_string().into())).unwrap();
     assert_eq!(over_tls(&server, &new, ("ann", "ann's")).unwrap(), "ANN", "bound to the new one");
     let mut stale = Scram::new("ann's");
     stale.bind(&by_certificate(der_of(&old.chain)));

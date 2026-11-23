@@ -137,7 +137,7 @@ fn kept(row: &Row) -> Row {
 fn kept_value(value: &Value) -> Value {
     match value {
         Value::Char(s) => match s.char_indices().nth(ROW_CHARACTERS) {
-            Some((end, _)) => Value::Char(s.get(..end).unwrap_or_default().to_owned()),
+            Some((end, _)) => Value::Char(s.get(..end).unwrap_or_default().into()),
             None => value.clone(),
         },
         Value::Binary(b) => {

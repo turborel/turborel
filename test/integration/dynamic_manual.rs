@@ -41,7 +41,7 @@ fn program() -> Params {
 
 /// `p`'s parameter `name` set to the string `s`.
 fn set(p: &mut Params, name: &str, s: &str) {
-    p.set(name, Value::Char(s.to_owned()));
+    p.set(name, Value::Char(s.into()));
 }
 
 /// `p`'s parameter `name` set to the number `n`.

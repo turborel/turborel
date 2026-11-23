@@ -129,10 +129,10 @@ fn cond(state: &mut u64, depth: usize) -> Cond {
     let nested = depth > 0;
     match below(state, if nested { 12 } else { 8 }) {
         0 | 1 => Cond::Compare(value(state, deeper), op, value(state, deeper)),
-        2 => Cond::Compare(Expr::Column(3), op, Expr::Const(Value::Char(WORDS[below(state, WORDS.len())].to_owned()))),
+        2 => Cond::Compare(Expr::Column(3), op, Expr::Const(Value::Char(WORDS[below(state, WORDS.len())].into()))),
         3 => Cond::Compare(Expr::Column(6), op, Expr::Const(date(state))),
         4 => Cond::IsNull(value(state, deeper), below(state, 2) == 1),
-        5 => Cond::Like(Expr::Column(3), Expr::Const(Value::Char(["a%", "_b%", "%!%", "B"][below(state, 4)].to_owned())), escape(state)),
+        5 => Cond::Like(Expr::Column(3), Expr::Const(Value::Char(["a%", "_b%", "%!%", "B"][below(state, 4)].into())), escape(state)),
         6 => Cond::In(value(state, deeper), Arc::new(InSet::of(vec![exact(1, 0), exact(-3, 0), exact(25, 1), Value::Null]))),
         7 => Cond::Value(Expr::Column(5)),
         8 => Cond::And(Box::new(cond(state, deeper)), Box::new(cond(state, deeper))),
@@ -155,7 +155,7 @@ fn date(state: &mut u64) -> Value {
 
 /// An escape character, or none.
 fn escape(state: &mut u64) -> Option<Expr> {
-    (below(state, 2) == 1).then(|| Expr::Const(Value::Char("!".to_owned())))
+    (below(state, 2) == 1).then(|| Expr::Const(Value::Char("!".into())))
 }
 
 /// Each row's value of `e`, given `rows` of `batch`, evaluated a row at a

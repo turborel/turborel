@@ -45,7 +45,7 @@ fn row(n: i128) -> Row {
     let text = if n.checked_rem(7) == Some(0) {
         Value::Null
     } else {
-        Value::Char("t".repeat(usize::try_from(n.checked_rem(13).unwrap()).unwrap()))
+        Value::Char("t".repeat(usize::try_from(n.checked_rem(13).unwrap()).unwrap()).into())
     };
     vec![int(n), text, int(n.checked_div(100).unwrap())]
 }
@@ -432,7 +432,7 @@ fn pax_groups_read_back_as_columns_do() {
     // than a page of 150 bytes together, one of 5 characters with the next
     // fit.
     let small = Pages { capacity: 150, compress: false, ..pax };
-    let text = |n: i128| Value::Char("w".repeat(if n % 3 == 0 { 120 } else { 5 }));
+    let text = |n: i128| Value::Char("w".repeat(if n % 3 == 0 { 120 } else { 5 }).into());
     let long: Vec<Row> = (0..40).map(|n| vec![int(n), text(n), int(n)]).collect();
     let ids: Vec<RowId> = (1..=40).collect();
     let group = Group::write(&small, &TYPES, (&ids, &long), (&[], &[], &[])).unwrap();

@@ -344,7 +344,7 @@ pub(super) fn kept_row(at: usize, delta: &Totals, mv: Move) -> Row {
         number(i128::try_from(at).unwrap_or(i128::MAX)),
         number(delta.counted),
         number(delta.nulled),
-        Value::Char(sum.units.to_string()),
+        Value::Char(sum.units.to_string().into()),
         number(i128::from(sum.scale)),
         number(mv.sign()),
     ]

@@ -41,7 +41,7 @@ impl Rule for MaxPasses {
 }
 
 fn word(w: &str) -> Value {
-    Value::Char(w.to_owned())
+    Value::Char(w.into())
 }
 
 /// Verifies: [DESIGN] RULES.md D35, D36: each built-in rule has a setting

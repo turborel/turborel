@@ -59,7 +59,7 @@ fn identifier() -> DataType {
 /// The text `v` holds, none if it is null.
 fn text(v: Option<&Value>) -> Option<String> {
     match v {
-        Some(Value::Char(s)) => Some(s.clone()),
+        Some(Value::Char(s)) => Some(s.to_string()),
         Some(_) | None => None,
     }
 }

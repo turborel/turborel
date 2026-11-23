@@ -108,7 +108,7 @@ mod tests {
 
     /// The outcome of `ROLE_QUERY` of one row, of `role`.
     fn shown(role: &str) -> Outcome {
-        Outcome::Rows { columns: Vec::new(), rows: vec![vec![Value::Char(role.to_owned())]] }
+        Outcome::Rows { columns: Vec::new(), rows: vec![vec![Value::Char(role.into())]] }
     }
 
     /// Verifies: [DESIGN] RULES.md D201, D57: a server alone, which has

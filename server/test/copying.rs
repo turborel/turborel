@@ -24,7 +24,7 @@ fn int(n: i32) -> Value {
 
 /// The row of `k` and `s`.
 fn row(k: i32, s: &str) -> Vec<Value> {
-    vec![int(k), Value::Char(s.to_owned())]
+    vec![int(k), Value::Char(s.into())]
 }
 
 /// Verifies: [DESIGN] [ISO/IEC 9075:1992 §13.8 GR4b iii] RULES.md D195:

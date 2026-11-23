@@ -47,7 +47,7 @@ fn database(n: i128) -> Database {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER NOT NULL, V INTEGER)").unwrap();
     db.register_scalar_function(Box::new(ThreadNumber)).unwrap();
-    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned())).unwrap();
+    db.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     let s = db.session("X");
     for k in 1..=n {
         s.run(&format!("INSERT INTO T VALUES ({k}, 0)")).unwrap();

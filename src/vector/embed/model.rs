@@ -253,6 +253,6 @@ impl ScalarFunction for BoundVersion {
         if args.first().is_some_and(Value::is_null) {
             return Ok(Value::Null);
         }
-        Ok(Value::Char(self.model.tag()))
+        Ok(Value::Char(self.model.tag().into()))
     }
 }

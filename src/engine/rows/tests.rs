@@ -133,7 +133,7 @@ fn the_newest_version_is_written_over_by_its_stamp() {
     let file = pool.add_pager(Arc::new(pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
     let table = RowTable::create(&files, &[DataType::character(5)], TableOptions::default()).unwrap();
-    let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}"))];
+    let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}").into())];
     let a = table.insert(NO_TRANSACTION, row("x")).unwrap();
     let code = |r: Result<()>| r.err().map(|e| e.code);
     let shown = |r: Option<Row>| r.map(|r| r.iter().map(ToString::to_string).collect::<String>());
@@ -173,7 +173,7 @@ fn preserving_writes_fail_no_reader() {
         let file = pool.add_pager(Arc::new(pager));
         let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
         let table = RowTable::create(&files, &[DataType::character(5)], TableOptions::default()).unwrap();
-        let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}"))];
+        let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}").into())];
         let a = table.insert(NO_TRANSACTION, row("a")).unwrap();
         table.begin(20, 1).unwrap();
         assert!(table.get(20, a).unwrap().is_some(), "read by the reader");
@@ -204,7 +204,7 @@ fn preserving_writes_fail_no_reader() {
 fn a_validation_out_of_commit_order_is_still_checked() {
     for (snapshot, refused) in [(8, true), (11, false)] {
         let table = RowTable::create(&small_pool(), &[DataType::character(5)], TableOptions::default()).unwrap();
-        let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}"))];
+        let row = |s: &str| vec![crate::value::Value::Char(format!("{s:<5}").into())];
         let (a, b) = (table.insert(NO_TRANSACTION, row("a")).unwrap(), table.insert(NO_TRANSACTION, row("b")).unwrap());
         for (tx, id) in [(30, a), (31, b)] {
             table.begin(tx, 1).unwrap();
@@ -270,7 +270,7 @@ fn a_discarded_table_frees_its_pages_when_it_goes() {
     let file = pool.add_pager(Arc::clone(&pager));
     let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
     let types = [DataType::character(900)];
-    let long = |n: u64| vec![crate::value::Value::Char(format!("{n:>900}"))];
+    let long = |n: u64| vec![crate::value::Value::Char(format!("{n:>900}").into())];
     let written = |table: &RowTable| {
         let ids: Vec<RowId> = (0..300).map(|n| table.insert(NO_TRANSACTION, long(n)).unwrap()).collect();
         table.begin(10, 1).unwrap();
@@ -343,7 +343,7 @@ fn small_pool() -> TableFiles {
 
 /// A row of 200 characters, `n` the last.
 fn wide(n: u32) -> Row {
-    vec![crate::value::Value::Char(format!("{n:>200}"))]
+    vec![crate::value::Value::Char(format!("{n:>200}").into())]
 }
 
 /// Verifies: [DESIGN] RULES.md D35, a fetch's cost (`TableStorage::fetch_cost`):
@@ -533,7 +533,7 @@ fn collection_reads_only_the_versions_it_needs() {
     let mut read = Vec::new();
     for (tx, (key, kept)) in [(10, ("key  ", 0b01)), (12, ("other", 0))] {
         table.begin(tx, tx - 1).unwrap();
-        table.update(tx, id, vec![Value::Char(key.into()), Value::Char(format!("v{tx}  "))]).unwrap();
+        table.update(tx, id, vec![Value::Char(key.into()), Value::Char(format!("v{tx}  ").into())]).unwrap();
         assert_eq!(table.keep_entries(tx, id, kept), kept);
         table.commit(tx, tx + 1);
         let needs = |of: Kept| of.unchanged & 0b01 == 0;

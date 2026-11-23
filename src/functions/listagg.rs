@@ -127,7 +127,7 @@ impl AggregateFunction for Listagg {
 /// SQLCODE -910 if it is no character string; as reading it fails.
 fn listed(v: Option<&Value>) -> Result<String> {
     if let Some(Value::Char(text)) = v {
-        return Ok(text.clone());
+        return Ok(text.to_string());
     }
     let Some(Value::Lob(lob)) = v else { return Err(not_bound()) };
     let most = u64::from(MAX_LISTAGG_LENGTH).saturating_add(1);
@@ -242,8 +242,11 @@ impl Accumulator for Joined {
         let place = Place { keys: keyed.collect::<Result<_>>()?, read: self.read, orders: Arc::clone(&self.spec.orders) };
         self.read = self.read.saturating_add(1);
         if self.spec.distinct {
-            let id =
-                self.spec.collation.as_ref().map_or_else(|| Ok(Value::Char(text.clone())), |c| c.sort_key(&Value::Char(text.clone())))?;
+            let id = self
+                .spec
+                .collation
+                .as_ref()
+                .map_or_else(|| Ok(Value::Char(text.clone().into())), |c| c.sort_key(&Value::Char(text.clone().into())))?;
             self.distinct(id.norm(), place, text.clone());
             return Ok(());
         }
@@ -262,11 +265,11 @@ impl Accumulator for Joined {
         let values: Vec<&str> = self.kept.values().map(String::as_str).collect();
         let most = usize::try_from(MAX_LISTAGG_LENGTH).unwrap_or(usize::MAX);
         if !self.trimmed && self.length() <= most {
-            return Ok(Value::Char(values.join(&self.spec.separator)));
+            return Ok(Value::Char(values.join(&self.spec.separator).into()));
         }
         match &self.spec.truncation {
             None => too_long(),
-            Some(t) => Ok(Value::Char(truncated(&values, self.count, &self.spec.separator, t))),
+            Some(t) => Ok(Value::Char(truncated(&values, self.count, &self.spec.separator, t).into())),
         }
     }
 }

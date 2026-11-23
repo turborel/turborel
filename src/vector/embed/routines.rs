@@ -83,7 +83,7 @@ impl ScalarFunction for VersionFunction {
         let texts: Vec<Option<String>> = args.iter().map(text_of).collect::<Result<_>>()?;
         let (Some(Some(name)), None | Some(Some(_))) = (texts.first(), texts.get(1)) else { return Ok(Value::Null) };
         let model = self.models.named(name)?.ok_or_else(|| data(&format!("names no model {name}")))?;
-        Ok(Value::Char(format!("{}:{}", model.name(), model.version())))
+        Ok(Value::Char(format!("{}:{}", model.name(), model.version()).into()))
     }
     fn deterministic(&self) -> bool {
         false
@@ -107,7 +107,7 @@ pub(super) fn arguments(name: &str, what: &str) -> SqlError {
 pub fn text_of(v: &Value) -> Result<Option<String>> {
     match v {
         Value::Null => Ok(None),
-        Value::Char(s) => Ok(Some(s.clone())),
+        Value::Char(s) => Ok(Some(s.to_string())),
         Value::Lob(lob) => {
             let bytes = lob.bounded(MOST_TEXT_BYTES)?.ok_or_else(|| data("reads a text of at most 16 MiB"))?;
             String::from_utf8(bytes).map(Some).map_err(|_| SqlError::new(Code::Api, "[EXTENSION] a text is not UTF-8"))
@@ -272,7 +272,7 @@ fn chunks_value(chunks: Vec<Chunk>) -> Result<Value> {
         if chunk.text.chars().count() > longest {
             return Err(data("gives chunks of at most 32767 characters"));
         }
-        let fields: Arc<[Value]> = Arc::from([whole(chunk.id), whole(chunk.offset), whole(chunk.length), Value::Char(chunk.text)]);
+        let fields: Arc<[Value]> = Arc::from([whole(chunk.id), whole(chunk.offset), whole(chunk.length), Value::Char(chunk.text.into())]);
         rows.push(Value::Row(fields));
     }
     Ok(Value::Array(Arc::from(rows)))

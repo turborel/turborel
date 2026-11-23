@@ -204,7 +204,7 @@ impl Trim {
             | Value::Row(_)
             | Value::Json(_)
             | Value::Extension(_)
-            | Value::Xml(_) => Ok(text(source)?.map_or(Value::Null, |s| Value::Char(trimmed(s, &set, ends).to_owned()))),
+            | Value::Xml(_) => Ok(text(source)?.map_or(Value::Null, |s| Value::Char(trimmed(s, &set, ends).into()))),
         }
     }
 }
@@ -372,7 +372,7 @@ impl ScalarFunction for Padding {
         let Some(tpl) = whole(Some(tpl))? else { return Ok(Value::Null) };
         // [GR14c]
         if tpl < 1 {
-            return Ok(if let Value::Lob(_) = ps { Value::Lob(Lob::empty(LobKind::Character)) } else { Value::Char(String::new()) });
+            return Ok(if let Value::Lob(_) = ps { Value::Lob(Lob::empty(LobKind::Character)) } else { Value::Char(String::new().into()) });
         }
         // [GR14d]
         let Some(pv) = padding(pv)? else { return Ok(Value::Null) };
@@ -390,6 +390,6 @@ impl ScalarFunction for Padding {
         // [GR14k-GR14n] PI repetitions of PV, then its first PR characters.
         let pad: String = pv.chars().cycle().take(mrl.saturating_sub(lps)).collect();
         // [GR14o]
-        Ok(Value::Char(if self.left { pad + ps } else { format!("{ps}{pad}") }))
+        Ok(Value::Char(if self.left { (pad + ps).into() } else { format!("{ps}{pad}").into() }))
     }
 }

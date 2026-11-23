@@ -32,7 +32,7 @@ pub(super) fn options() -> Vec<TableOption> {
     let block = |n: usize| i128::try_from(n).unwrap_or(i128::MAX);
     vec![
         TableOption::new(
-            (QUANTIZATION_OPTION, Kind::Choice(&QUANTIZATIONS), Value::Char(Quantization::Uint8.name().to_owned())),
+            (QUANTIZATION_OPTION, Kind::Choice(&QUANTIZATIONS), Value::Char(Quantization::Uint8.name().into())),
             Rebuild::No,
             "How posting weights are stored: FLOAT32 as given, FLOAT16 scaled by each block's greatest, or UINT8 in 255 steps of each block's range.",
         ),

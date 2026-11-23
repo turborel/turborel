@@ -363,7 +363,7 @@ impl Server {
         declare(&db)?;
         // A row's second writer waits for the first to end, as clients of a
         // server expect; deadlocks are refused (RULES.md D28).
-        db.set_setting_default("LOCKS.WAIT", &Value::Char("ON".to_owned()))?;
+        db.set_setting_default("LOCKS.WAIT", &Value::Char("ON".into()))?;
         db.set_credentials(Box::new(Pbkdf2::of(&db)))?;
         let shown = Arc::new(Shown::default());
         db.register_system_table(Box::new(shown::Connections(Arc::clone(&shown))))?;

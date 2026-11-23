@@ -35,7 +35,7 @@ fn text_of(context: &str, path: &str, options: &QueryOptions<'_>) -> Option<Stri
         return None;
     }
     let Value::Char(s) = got else { panic!("{got:?}") };
-    Some(s)
+    Some(s.to_string())
 }
 
 /// The SQLSTATE of the exception JSON_QUERY of `context` and `path`

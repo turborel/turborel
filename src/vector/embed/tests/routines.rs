@@ -18,7 +18,7 @@ fn assert_same(a: &Value, b: &Value) {
 }
 
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 fn routine(models: &Arc<Embedders>, name: &str) -> Box<dyn ScalarFunction> {
@@ -182,7 +182,7 @@ fn embed_version_of_a_named_model() {
     );
     let model = models.named(HASH_DENSE).unwrap().unwrap();
     let expected = format!("{}:{}", model.name(), model.version());
-    assert_same(&version.call(&[text("hash_dense")]).unwrap(), &Value::Char(expected));
+    assert_same(&version.call(&[text("hash_dense")]).unwrap(), &Value::Char(expected.into()));
     assert_same(&version.call(&[Value::Null]).unwrap(), &Value::Null);
     assert_eq!(version.call(&[text("NO_SUCH_MODEL")]).unwrap_err().code, Code::Data);
     assert!(!version.deterministic());

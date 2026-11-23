@@ -331,7 +331,7 @@ fn where_written_8_23() {
              SUM(JSON_VALUE(J, 'lax $.n' RETURNING INTEGER DEFAULT 1 ON EMPTY)) FROM DOCS";
     assert_eq!(rows(&s, q), expected(&["12,3,12"]));
     let p = s.prepare("VALUES JSON_VALUE(?, 'lax $.a' PASSING ? FORMAT JSON AS B RETURNING INTEGER DEFAULT ? ON EMPTY)").unwrap();
-    let text = |t: &str| Value::Char(t.to_owned());
+    let text = |t: &str| Value::Char(t.into());
     let mut c = s.open_prepared(&p, &[text(r#"{"a":3}"#), text("1"), text("9")]).unwrap();
     assert_eq!(c.fetch().unwrap().map(|r| r[0].to_string()), Some("3".to_owned()));
     let mut c = s.open_prepared(&p, &[text("{}"), text("1"), text("9")]).unwrap();

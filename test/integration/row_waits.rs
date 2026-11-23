@@ -22,7 +22,7 @@ fn database() -> Database {
     db.set_lock_wait(LockWait::Wait).unwrap();
     // Rows written and held, as every test here is of: increments are not
     // reserved (RULES.md D452).
-    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".to_owned())).unwrap();
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char("OFF".into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL UNIQUE, V INTEGER)").unwrap();
     let s = db.session("A");
     s.run("INSERT INTO T VALUES (1, 10), (2, 20)").unwrap();

@@ -27,7 +27,7 @@ fn a_client_certificate_is_presented_by_settings() {
     let (pki, other) = (pki("client-tls-identity"), pki("client-tls-identity-other"));
     let db = Database::new();
     secured(&db, &pki, "ON");
-    db.set_setting(TLS_CLIENT_CA, &Value::Char(pki.authority.display().to_string())).unwrap();
+    db.set_setting(TLS_CLIENT_CA, &Value::Char(pki.authority.display().to_string().into())).unwrap();
     db.create_user("ANN", b"unused").unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE T (K INTEGER)").unwrap();
     let server = start_with(&db, &[], vec![Arc::new(Certificate::new(db.clone()))]);

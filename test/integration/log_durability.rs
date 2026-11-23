@@ -25,7 +25,7 @@ use crate::logs::{all, record};
 
 /// A word of LOG.DURABILITY, as a value.
 fn word(durability: Durability) -> Value {
-    Value::Char(durability.word().to_owned())
+    Value::Char(durability.word().into())
 }
 
 /// The segment files of the log in `dir`, sorted.
@@ -56,9 +56,9 @@ fn log_durability_takes_the_durabilities_words() {
     }
     let db = Database::new();
     assert_eq!(db.setting("LOG.DURABILITY").unwrap().to_string(), "DATA");
-    db.set_setting("log.durability", &Value::Char("full".to_owned())).unwrap();
+    db.set_setting("log.durability", &Value::Char("full".into())).unwrap();
     assert_eq!(db.setting("LOG.DURABILITY").unwrap().to_string(), "FULL");
-    let refused = db.set_setting("LOG.DURABILITY", &Value::Char("SOMETIMES".to_owned()));
+    let refused = db.set_setting("LOG.DURABILITY", &Value::Char("SOMETIMES".into()));
     assert_eq!(refused.err().map(|e| e.code), Some(Code::Api));
 }
 

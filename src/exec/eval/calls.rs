@@ -159,7 +159,7 @@ fn an_operand_slot_not_of_its_type_is_cast() {
     let slot = |index| Expr::Dynamic(Slot { index, data_type: tenths.clone(), at: 0 });
     let exact = |units, scale| Value::Exact(Decimal::new(units, scale));
     // Slot 0 is to be cast, slot 1 is of its type, slot 2 has no value of it.
-    let frame = [exact(5, 0), exact(25, 1), Value::Char("x".to_owned())];
+    let frame = [exact(5, 0), exact(25, 1), Value::Char("x".into())];
     let outer = [exact(7, 0)];
     let framed = Framed { inner: &NoSubqueries, frame: &frame, outer: &outer };
     let none = Vec::new();

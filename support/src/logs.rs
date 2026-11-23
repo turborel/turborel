@@ -313,7 +313,7 @@ pub fn a_commit_need_not_wait_for_the_log(log: Arc<dyn Log>) {
     let log = Arc::new(Watched::over(log));
     db.set_log(Arc::clone(&log) as Arc<dyn Log>).unwrap();
     let (quick, careful) = (db.session("APP"), db.session("APP"));
-    let off = Value::Char("OFF".to_owned());
+    let off = Value::Char("OFF".into());
     quick.set_setting("LOG.COMMIT_SYNC", &off).unwrap();
     quick.run("INSERT INTO T (ID, NAME) VALUES (10, 'TEN')").unwrap();
     quick.commit().unwrap();
@@ -329,7 +329,7 @@ pub fn a_commit_need_not_wait_for_the_log(log: Arc<dyn Log>) {
     careful.run("INSERT INTO T (ID, NAME) VALUES (12, 'TWELVE')").unwrap();
     careful.commit().unwrap();
     assert_eq!(log.synced.lock().unwrap().len(), synced, "the database's OFF");
-    let maybe = quick.set_setting("LOG.COMMIT_SYNC", &Value::Char("MAYBE".to_owned()));
+    let maybe = quick.set_setting("LOG.COMMIT_SYNC", &Value::Char("MAYBE".into()));
     assert_eq!(maybe.map_err(|e| e.sqlcode()), Err(-910_i32));
 }
 

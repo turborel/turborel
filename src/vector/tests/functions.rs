@@ -29,7 +29,7 @@ fn approx(v: &Value) -> f64 {
 /// A character string result's text.
 fn chars(v: Value) -> String {
     let Value::Char(text) = v else { panic!("not a character string") };
-    text
+    text.to_string()
 }
 
 /// Verifies: [EXTENSION] §6.1: VECTOR_DISTANCE in both argument orders

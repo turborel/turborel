@@ -39,7 +39,7 @@ fn calls_map_names() {
     assert_eq!(call(&IdentifierToName(Escape::Full), of("a:b")), shown("a_x003A_b"));
     assert_eq!(call(&NameToIdentifier, Value::Null), format!("{:?}", Value::Null));
     let long = " ".repeat(usize::try_from(MAX_CHARACTER_LENGTH).unwrap());
-    let error = IdentifierToName(Escape::Partial).call(&[Value::Char(long)]).unwrap_err();
+    let error = IdentifierToName(Escape::Partial).call(&[Value::Char(long.into())]).unwrap_err();
     assert_eq!(error.sqlstate().as_str(), "22001");
     assert!(NameToIdentifier.call(&[]).is_err());
 }

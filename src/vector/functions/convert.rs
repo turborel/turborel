@@ -84,7 +84,7 @@ impl Convert {
                     let long = mismatch("the vector's text is longer than a character string; use FROM_VECTOR_CLOB");
                     return Err(long.with_state(SqlState::STRING_DATA_RIGHT_TRUNCATION));
                 }
-                Ok(Value::Char(written))
+                Ok(Value::Char(written.into()))
             }
         }
     }

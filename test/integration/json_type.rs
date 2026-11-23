@@ -270,7 +270,7 @@ fn json_parameters() {
     assert_eq!(p.parameters().get(1).map(|t| t.clone().data_type()), Some(DataType::Json));
     let made = Json::parse(r#"{"k":[true,null]}"#, turborel::json::Keys::Any).unwrap();
     a.execute_prepared(&p, &[Value::Exact(turborel::value::Decimal::new(9, 0)), Value::Json(made.clone())]).unwrap();
-    a.execute_prepared(&p, &[Value::Exact(turborel::value::Decimal::new(10, 0)), Value::Char("[4]".to_owned())]).unwrap();
+    a.execute_prepared(&p, &[Value::Exact(turborel::value::Decimal::new(10, 0)), Value::Char("[4]".into())]).unwrap();
     let q = a.prepare("SELECT J FROM DOCS WHERE J = ?").unwrap();
     let mut c = a.open_prepared(&q, &[Value::Json(made.clone())]).unwrap();
     let row = c.fetch().unwrap().unwrap();

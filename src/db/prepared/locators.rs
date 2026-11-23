@@ -52,7 +52,7 @@ mod tests {
         let number = Value::Exact(Decimal::new(1, 0));
         assert!(may_hold(&lob));
         assert!(!may_hold(&number));
-        assert!(!may_hold(&Value::Char("a".to_owned())));
+        assert!(!may_hold(&Value::Char("a".into())));
         assert!(!may_hold(&Value::Null));
         let plain: Arc<[Value]> = vec![number.clone(), Value::Null].into();
         assert!(!may_hold(&Value::Array(Arc::clone(&plain))));

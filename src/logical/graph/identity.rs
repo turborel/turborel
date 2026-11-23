@@ -63,7 +63,7 @@ pub fn identity_text(alias: &str, key: &[Value]) -> Result<String> {
 /// SQLCODE -910 if it cannot be serialized.
 pub fn element_text(alias: &str, native: bool, key: &[Value]) -> Result<String> {
     if let (true, [Value::Char(id)]) = (native, key) {
-        return Ok(id.clone());
+        return Ok(id.to_string());
     }
     identity_text(alias, key)
 }
@@ -93,7 +93,7 @@ impl ScalarFunction for ElementIdentity {
         if args.iter().any(Value::is_null) {
             return Ok(Value::Null);
         }
-        Ok(Value::Char(element_text(&self.alias, self.native, args)?))
+        Ok(Value::Char(element_text(&self.alias, self.native, args)?.into()))
     }
 }
 

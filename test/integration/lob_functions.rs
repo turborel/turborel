@@ -284,7 +284,7 @@ fn like_of_character_large_objects_8_5() {
     assert_eq!(matched("C LIKE '%a!%%' ESCAPE '!'"), Vec::<String>::new());
     assert_eq!(matched("C LIKE CAST('%€😀%' AS CLOB)"), ["1", "2"]);
     let p = a.prepare("SELECT K FROM T WHERE C LIKE ? ORDER BY K").unwrap();
-    let mut c = a.open_prepared(&p, &[Value::Char("%aa€😀éb%".to_owned())]).unwrap();
+    let mut c = a.open_prepared(&p, &[Value::Char("%aa€😀éb%".into())]).unwrap();
     assert_eq!(c.fetch().unwrap().unwrap().first().unwrap().to_string(), "2");
     assert!(c.fetch().unwrap().is_none());
     assert_eq!(code(&a, "SELECT K FROM T WHERE B LIKE '%'"), Code::SyntaxRule);

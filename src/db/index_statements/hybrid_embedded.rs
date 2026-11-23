@@ -62,7 +62,7 @@ pub(super) fn kept(name: &str, schema: &str) -> (QualifiedName, QualifiedName, S
 /// The options of `options` with HYBRID.STATE `state`.
 fn in_state(options: &[(String, Value)], state: &str) -> Vec<(String, Value)> {
     let mut set: Vec<(String, Value)> = options.iter().filter(|(n, _)| n != STATE_OPTION).cloned().collect();
-    set.push((STATE_OPTION.to_owned(), Value::Char(state.to_owned())));
+    set.push((STATE_OPTION.to_owned(), Value::Char(state.into())));
     set
 }
 
@@ -203,7 +203,7 @@ impl Session {
 
     /// HYBRID.STATE of the index `name` set to `state`, READY if none.
     pub(super) fn state_set(&self, name: &str, state: Option<&str>) -> Result<()> {
-        let value = state.map(|s| Value::Char(s.to_owned()));
+        let value = state.map(|s| Value::Char(s.into()));
         self.db.noted(self.db.alter_index(name, &[(STATE_OPTION.to_owned(), value)]))
     }
 

@@ -133,8 +133,8 @@ impl Utility {
             Utility::Norm => named_norm(v, text_at(args, 1)?).map(Value::Approx),
             Utility::Normalize => normalize(v, text_at(args, 1)?),
             Utility::DimensionCount => Ok(integer(i128::from(v.dims))),
-            Utility::DimensionFormat => Ok(Value::Char(v.element.name().to_owned())),
-            Utility::Layout => Ok(Value::Char(v.layout().name().to_owned())),
+            Utility::DimensionFormat => Ok(Value::Char(v.element.name().into())),
+            Utility::Layout => Ok(Value::Char(v.layout().name().into())),
             Utility::Nonzero => Ok(integer(i128::from(v.nonzero()))),
             Utility::Element => element(v, integer_at(args, 1)?.unwrap_or_default()),
             Utility::Slice => slice(v, integer_at(args, 1)?.unwrap_or_default(), integer_at(args, 2)?.unwrap_or_default()),
@@ -230,10 +230,10 @@ fn concat(a: VectorRef<'_>, b: VectorRef<'_>) -> Result<Value> {
 
 fn property(v: VectorRef<'_>, name: &str) -> Result<Value> {
     if name.eq_ignore_ascii_case(DIMENSIONS) {
-        return Ok(Value::Char(v.dims.to_string()));
+        return Ok(Value::Char(v.dims.to_string().into()));
     }
     if name.eq_ignore_ascii_case(BASE_TYPE) {
-        return Ok(Value::Char(v.element.name().to_ascii_lowercase()));
+        return Ok(Value::Char(v.element.name().to_ascii_lowercase().into()));
     }
     Err(mismatch(&format!("unknown vector property {name}: Dimensions or BaseType")))
 }

@@ -120,7 +120,7 @@ fn fits(text: &str, most: u32) -> bool {
 /// The key of `bytes`: compared as unsigned bytes, as `bytes` compare,
 /// and no other's prefix.
 fn put_key(bytes: &[u8], out: &mut Vec<u8>) {
-    Binary::new(bytes.to_vec()).put_key(out);
+    Binary::of(bytes).put_key(out);
 }
 
 /// The bytes of the key `rest` begins with, of a type named `name`.

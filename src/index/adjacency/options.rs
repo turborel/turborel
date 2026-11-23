@@ -171,7 +171,7 @@ pub fn options() -> Vec<TableOption> {
             "How many of the key's last columns are edge properties kept in each entry for covering reads; each is NOT NULL.",
         ),
         TableOption::new(
-            (DIRECTION_OPTION, Kind::Choice(DIRECTIONS), Value::Char(BOTH.to_owned())),
+            (DIRECTION_OPTION, Kind::Choice(DIRECTIONS), Value::Char(BOTH.into())),
             Rebuild::Yes,
             "BOTH, OUT or IN: whether edges are kept by source, by destination, or both, to be followed either way.",
         ),

@@ -10,7 +10,7 @@ use crate::value::{Binary, Decimal};
 /// whole groups.
 #[test]
 fn binary_strings_in_hex_or_base64() {
-    let v = |o: &[u8]| Value::Binary(Binary::new(o.to_vec()));
+    let v = |o: &[u8]| Value::Binary(Binary::of(o));
     assert_eq!(xml_lexical(&v(&[0x0F, 0xB7]), BinaryEncoding::Hex, true).unwrap(), "0FB7");
     let cases: [(&[u8], &str); 4] = [(b"", ""), (b"M", "TQ=="), (b"Ma", "TWE="), (b"Man", "TWFu")];
     for (octets, expected) in cases {
@@ -26,10 +26,10 @@ fn binary_strings_in_hex_or_base64() {
 /// precision's digits.
 #[test]
 fn values_as_text() {
-    let text = Value::Char("a<b>&\r".to_owned());
+    let text = Value::Char("a<b>&\r".into());
     assert_eq!(xml_lexical(&text, BinaryEncoding::Hex, true).unwrap(), "a&lt;b&gt;&amp;&#x0d;");
     assert_eq!(xml_lexical(&text, BinaryEncoding::Hex, false).unwrap(), "a<b>&\r");
-    let bad = xml_lexical(&Value::Char("\u{FFFF}".to_owned()), BinaryEncoding::Hex, true).unwrap_err();
+    let bad = xml_lexical(&Value::Char("\u{FFFF}".into()), BinaryEncoding::Hex, true).unwrap_err();
     assert_eq!(bad.sqlstate(), SqlState::INVALID_XML_CHARACTER);
     assert_eq!(xml_lexical(&Value::Exact(Decimal::new(-150, 2)), BinaryEncoding::Hex, true).unwrap(), "-1.50");
     assert_eq!(xml_lexical(&Value::Bool(false), BinaryEncoding::Hex, true).unwrap(), "false");

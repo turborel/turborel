@@ -68,7 +68,7 @@ impl SqlType for PluginType {
     fn lowered(&self, v: &Value, to: &DataType) -> Option<Value> {
         let m = self.forms_of(v)?;
         if to.is_character() {
-            return Some(Value::Char(m.text));
+            return Some(Value::Char(m.text.into()));
         }
         matches!(to, DataType::Binary { .. } | DataType::VarBinary { .. }).then(|| Value::Binary(Binary::new(m.binary)))
     }
@@ -115,7 +115,7 @@ impl SqlType for PluginType {
     fn encode_key(&self, v: &Value, _: &DataType, out: &mut Vec<u8>) -> Result<()> {
         let m = self.forms_of(v).ok_or_else(|| self.mismatch(v))?;
         Binary::new(m.key).put_key(out);
-        Binary::new(bytes_of(self, v).unwrap_or_default().to_vec()).put_key(out);
+        Binary::of(bytes_of(self, v).unwrap_or_default()).put_key(out);
         Ok(())
     }
     fn decode_key(&self, rest: &mut &[u8], _: &DataType) -> Result<Value> {

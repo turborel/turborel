@@ -347,7 +347,7 @@ pub(crate) fn cardinal(name: &str, not_null: bool) -> ColumnDesc {
 
 /// A character string value.
 pub(crate) fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// A whole number value, of a CARDINAL_NUMBER column.

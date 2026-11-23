@@ -50,7 +50,7 @@ impl GraphShape {
         if let (true, [id]) = (self.native, key) {
             return Ok(Some(id.clone()));
         }
-        Ok(Some(Value::Char(identity_text(alias, key)?)))
+        Ok(Some(Value::Char(identity_text(alias, key)?.into())))
     }
 
     /// The edges and the vertices of `inputs`, the rows of its edge tables

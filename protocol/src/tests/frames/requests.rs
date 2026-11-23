@@ -110,7 +110,7 @@ fn statements() -> Vec<Sample> {
 
 /// The samples of Execute, Fetch, Close and Deallocate.
 fn executions() -> Vec<Sample> {
-    let values = vec![Value::Null, Value::Char(String::new()), Value::Bool(true)];
+    let values = vec![Value::Null, Value::Char(String::new().into()), Value::Bool(true)];
     vec![
         client(
             "execute",

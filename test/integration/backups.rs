@@ -152,7 +152,7 @@ fn a_restore_stops_at_its_target() {
     let clock = Arc::new(FixedClock::at(1_000));
     let db = open(&scratch.path("db"), &clock);
     let archive = dir_target(&scratch.path("archive"));
-    db.set_setting("ARCHIVE.TARGET", &turborel::value::Value::Char(archive.clone())).unwrap();
+    db.set_setting("ARCHIVE.TARGET", &turborel::value::Value::Char(archive.clone().into())).unwrap();
     db.set_setting("ARCHIVE.MODE", &turborel::value::Value::Char("ON".into())).unwrap();
     base(&db, 5);
     let location = dir_target(&scratch.path("target"));

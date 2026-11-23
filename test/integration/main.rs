@@ -93,6 +93,7 @@ mod bulk_load;
 mod call_outputs;
 mod cancel;
 mod candidate_keys;
+mod char_strings;
 mod check_rebind;
 mod checkpoint_phases;
 mod checkpoints;

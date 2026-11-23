@@ -32,7 +32,7 @@ fn chunks_read_back() {
     let numbers: Vec<Value> = (0..9).map(|n| if n % 4 == 1 { Value::Null } else { int(n * 1000 - 3) }).collect();
     let expected: Vec<String> = numbers.iter().map(ToString::to_string).collect();
     assert_eq!(round_trip(&INTEGER, &numbers), expected);
-    let texts: Vec<Value> = ["", "a", "bc", "", "def"].iter().map(|s| Value::Char((*s).to_owned())).chain([Value::Null]).collect();
+    let texts: Vec<Value> = ["", "a", "bc", "", "def"].iter().map(|s| Value::Char((*s).into())).chain([Value::Null]).collect();
     assert_eq!(round_trip(&TEXT, &texts), ["", "a", "bc", "", "def", "NULL"]);
     let fields = Fields::of(&TEXT, texts.into_iter()).unwrap();
     let bytes = fields.chunk(&TEXT, 0, (fields.len(), false)).unwrap();
@@ -56,7 +56,7 @@ fn values_fit_their_chunks() {
     let chunk = fields.chunk(&INTEGER, 20, (10, false)).unwrap();
     assert!(chunk.len() <= capacity);
     assert_eq!(Chunk::parse(&chunk).unwrap().value(0, &INTEGER).unwrap().to_string(), "20");
-    let long = Fields::of(&TEXT, [Value::Char("x".repeat(90)), Value::Char("y".into())].into_iter()).unwrap();
+    let long = Fields::of(&TEXT, [Value::Char("x".repeat(90).into()), Value::Char("y".into())].into_iter()).unwrap();
     assert_eq!(long.fitting(&TEXT, 0, (16, false)), 1, "at least one");
     assert!(!long.is_empty());
 }
@@ -112,12 +112,12 @@ fn chunks_are_compressed() {
     assert!(check(&INTEGER, near, FRAME) < 140, "a byte each");
     let wider: Vec<Value> = (0..100).map(|n| int(-5000 + n * 100)).collect();
     check(&INTEGER, wider, FRAME);
-    let few: Vec<Value> = (0..300).map(|n| Value::Char(["red", "green", "blue"][n % 3].to_owned())).collect();
+    let few: Vec<Value> = (0..300).map(|n| Value::Char(["red", "green", "blue"][n % 3].into())).collect();
     assert!(check(&TEXT, few, DICTIONARY) < 160, "two bits each");
-    let hundreds: Vec<Value> = (0..3000_u32).map(|n| Value::Char(format!("v{}", n.checked_rem(300).unwrap()))).collect();
+    let hundreds: Vec<Value> = (0..3000_u32).map(|n| Value::Char(format!("v{}", n.checked_rem(300).unwrap()).into())).collect();
     // 3,375 bytes of codes, 300 entries' offsets and texts.
     assert!(check(&TEXT, hundreds, DICTIONARY) < 3375 + 300 * 9, "nine bits each");
-    let apart: Vec<Value> = (0..50_u32).map(|n| Value::Char(format!("value {n}"))).collect();
+    let apart: Vec<Value> = (0..50_u32).map(|n| Value::Char(format!("value {n}").into())).collect();
     check(&TEXT, apart, VARYING);
     let spread: Vec<Value> = (0..50).map(|n| int(n * 10_000_000_000)).collect();
     assert!(check(&INTEGER, spread, FRAME) < 50 * 5 + 40, "39 bits each");
@@ -208,14 +208,15 @@ fn chunks_give_their_texts() {
                 Value::Null
             } else {
                 Value::Char(
-                    ["", "é", "a ", "text"][usize::try_from(n % 4).unwrap()].repeat(usize::try_from(n % 3 + 1).unwrap()) + &n.to_string(),
+                    (["", "é", "a ", "text"][usize::try_from(n % 4).unwrap()].repeat(usize::try_from(n % 3 + 1).unwrap()) + &n.to_string())
+                        .into(),
                 )
             }
         })
         .collect();
     let few: Vec<Value> =
-        (0..300).map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].to_owned()) }).collect();
-    let constant: Vec<Value> = (0_u32..20_u32).map(|n| if n % 5 == 0 { Value::Null } else { Value::Char("same".to_owned()) }).collect();
+        (0..300).map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].into()) }).collect();
+    let constant: Vec<Value> = (0_u32..20_u32).map(|n| if n % 5 == 0 { Value::Null } else { Value::Char("same".into()) }).collect();
     for (values, kind) in [(&varying, "varying"), (&few, "a dictionary"), (&constant, "a constant")] {
         for t in [TEXT, CHAR] {
             let whole = texts_of(&t, values, (0, values.len())).unwrap();
@@ -254,9 +255,8 @@ fn coded_of(t: &DataType, values: &[Value], positions: &[usize]) -> Option<(Vec<
 /// a position past its end.
 #[test]
 fn chunks_give_their_codes() {
-    let few: Vec<Value> = (0_usize..300_usize)
-        .map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].to_owned()) })
-        .collect();
+    let few: Vec<Value> =
+        (0_usize..300_usize).map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].into()) }).collect();
     let all: Vec<usize> = (0..300).collect();
     let (made, read) = coded_of(&TEXT, &few, &all).unwrap();
     assert_eq!(made, read, "all");
@@ -265,7 +265,7 @@ fn chunks_give_their_codes() {
     let some = [0_usize, 7, 11, 150, 299];
     let (made_some, read_some) = coded_of(&TEXT, &few, &some).unwrap();
     assert_eq!(made_some, read_some, "some");
-    let varying: Vec<Value> = (0_u32..30_u32).map(|n| Value::Char(format!("value {n}"))).collect();
+    let varying: Vec<Value> = (0_u32..30_u32).map(|n| Value::Char(format!("value {n}").into())).collect();
     assert_eq!(coded_of(&TEXT, &varying, &[0, 1]), None, "varying fields");
     assert_eq!(coded_of(&TEXT, &few, &[300]), None, "past the end");
 }
@@ -361,7 +361,7 @@ fn approximate_numbers_are_decimals() {
 #[test]
 fn texts_are_compressed_by_their_parts() {
     let texts: Vec<Value> = (0..300_u32)
-        .map(|k| if k % 23 == 5 { Value::Null } else { Value::Char(format!("customer{k}@mail{}.example.com", k % 7)) })
+        .map(|k| if k % 23 == 5 { Value::Null } else { Value::Char(format!("customer{k}@mail{}.example.com", k % 7).into()) })
         .collect();
     let fields = Fields::of(&TEXT, texts.iter().cloned()).unwrap();
     let bytes = fields.chunk(&TEXT, 0, (fields.len(), true)).unwrap();

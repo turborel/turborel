@@ -111,12 +111,12 @@ fn texts_keep_what_their_values_keep() {
     let nulls = Mask::from_bools(&(0_i32..200_i32).map(|n| n % 13_i32 == 0_i32).collect::<Vec<_>>());
     let words = ["red", "grün", "blue", "red ", ""];
     let text_values: Vec<Value> =
-        (0..200).map(|n| if n % 13 == 0 { Value::Null } else { Value::Char(words[n % words.len()].to_owned()) }).collect();
+        (0..200).map(|n| if n % 13 == 0 { Value::Null } else { Value::Char(words[n % words.len()].into()) }).collect();
     let text: String = text_values.iter().filter_map(|v| if let Value::Char(s) = v { Some(s.as_str()) } else { None }).collect();
     let texts = Column::Texts(Texts::new(text, text_ends(&text_values), Some(nulls.clone())));
-    let strings = [Value::Char("red".to_owned()), Value::Char("blue  ".to_owned()), Value::Char("gr".to_owned())];
+    let strings = [Value::Char("red".into()), Value::Char("blue  ".into()), Value::Char("gr".into())];
     judged_as_values(&texts, &text_values, &conjuncts(&strings), "texts");
-    let entries = Arc::new(Texts::new(words.concat(), text_ends(&words.map(|w| Value::Char(w.to_owned()))), None));
+    let entries = Arc::new(Texts::new(words.concat(), text_ends(&words.map(|w| Value::Char(w.into()))), None));
     let coded = Coded { codes: (0..200).map(|n| u32::try_from(n % words.len()).unwrap()).collect(), entries };
     let dictionary = Column::Texts(Texts::coded(coded, Some(nulls)));
     judged_as_values(&dictionary, &text_values, &conjuncts(&strings), "a dictionary");
@@ -135,7 +135,7 @@ fn texts_coded_by_symbols_compare_padded() {
             if k % 23 == 5 {
                 Value::Null
             } else {
-                Value::Char(format!("customer{k}@mail{}.example.com{}", k % 7, ["", "  ", "\t"][usize::try_from(k % 3).unwrap()]))
+                Value::Char(format!("customer{k}@mail{}.example.com{}", k % 7, ["", "  ", "\t"][usize::try_from(k % 3).unwrap()]).into())
             }
         })
         .collect();
@@ -178,7 +178,7 @@ fn the_scan_judges_conjuncts_of_one_column() {
     let two = Conjunct::Condition(Condition { columns: vec![0, 1], probe: Probe::Compare { op: CompOp::Eq, value: Value::Null } });
     let of_json = Conjunct::Null { column: 2, not: false };
     let judged =
-        [compare(CompOp::Lt, Value::Exact(Decimal::new(3, 0))), Conjunct::NotIn { column: 1, values: vec![Value::Char("a".to_owned())] }];
+        [compare(CompOp::Lt, Value::Exact(Decimal::new(3, 0))), Conjunct::NotIn { column: 1, values: vec![Value::Char("a".into())] }];
     let all = Conjunction(judged.into_iter().chain([two, of_json]).collect());
     let judgment = Judgment::of(Some(&all), &types);
     assert_eq!(judgment.preds.iter().map(|p| p.column).collect::<Vec<_>>(), vec![0, 1]);

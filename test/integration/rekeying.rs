@@ -73,7 +73,7 @@ impl HashFunction for Keyed {
 }
 
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// A database with the keyed function and the test encodings registered,

@@ -6,7 +6,7 @@ use crate::error::{Code, SqlState};
 use crate::value::Decimal;
 
 fn reference(octets: &[u8]) -> Value {
-    Value::Reference(Binary::new(octets.to_vec()))
+    Value::Reference(Binary::of(octets))
 }
 
 fn ref_of(scope: Option<UdtName>) -> DataType {

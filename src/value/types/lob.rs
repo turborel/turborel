@@ -230,9 +230,9 @@ pub(crate) fn lowered(lob: Lob, to: &DataType, how: Lowering<'_>) -> Result<Opti
     }
     let bytes = cut.kept.reader().read(0, cut.kept.octets())?;
     let value = match kind {
-        LobKind::Character => {
-            Value::Char(String::from_utf8(bytes).map_err(|_| crate::value::lob::broken("a character large object's octets are not UTF-8"))?)
-        }
+        LobKind::Character => Value::Char(
+            String::from_utf8(bytes).map_err(|_| crate::value::lob::broken("a character large object's octets are not UTF-8"))?.into(),
+        ),
         LobKind::Binary => Value::Binary(Binary::new(bytes)),
     };
     let warning = (matches!(how, Lowering::Cast) && warned).then_some(SqlState::STRING_TRUNCATED);
@@ -246,7 +246,7 @@ fn text_of(lob: &Lob, to: &DataType, how: Lowering<'_>) -> Result<Option<(Value,
         return Ok(None);
     }
     match trimmed(lob, u64::from(crate::value::MAX_CHARACTER_LENGTH))? {
-        Some(text) => Ok(Some((Value::Char(text), None))),
+        Some(text) => Ok(Some((Value::Char(text.into()), None))),
         None => fail_with(
             Code::Data,
             SqlState::INVALID_CHARACTER_VALUE_FOR_CAST,

@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn rows_of_kinds_not_alike_sort_by_their_values() {
         let int = |n: i128, scale: u32| Value::Exact(Decimal::new(n, scale));
-        let mixed = Column::Values(vec![int(2_i128, 0_u32), Value::Char("a".to_owned()), int(15_i128, 1_u32), int(1_i128, 0_u32)]);
+        let mixed = Column::Values(vec![int(2_i128, 0_u32), Value::Char("a".into()), int(15_i128, 1_u32), int(1_i128, 0_u32)]);
         let place = Column::Ints(Ints::new(vec![0_i64, 1_i64, 2_i64, 3_i64], 0_u32, None));
         let up = [SortKey::ascending(0)];
         let made = sorted_of(&up, vec![mixed.clone(), place.clone()], 4_usize).unwrap();
@@ -423,7 +423,7 @@ mod tests {
         for (x, y) in pairs {
             assert_eq!(cell_cmp(x, y), sort_cmp(&x.to_value(), &y.to_value()), "{x:?} {y:?}");
         }
-        let (a, b) = (Value::Char("b".to_owned()), Value::Char("a".to_owned()));
+        let (a, b) = (Value::Char("b".into()), Value::Char("a".into()));
         assert_eq!(cell_cmp(Cell::Value(&a), Cell::Value(&b)), Ordering::Greater);
     }
 }

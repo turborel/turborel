@@ -74,9 +74,9 @@ fn xml_functions_refuse_arguments_of_other_types() {
 /// is parsed by its encoding.
 #[test]
 fn text_past_the_limit_is_refused() {
-    let long = Value::Char("a".repeat(MAX_INPUT.saturating_add(1)));
+    let long = Value::Char("a".repeat(MAX_INPUT.saturating_add(1)).into());
     let e = parser(Syntax::Content).call(&[long]).unwrap_err();
     assert!(e.code == Code::Unsupported && e.to_string().contains("beyond turborel's limits"), "{e}");
-    assert_eq!(xml_text(&Value::Binary(Binary::new(b"<a/>".to_vec()))).unwrap(), None);
-    assert_eq!(xml_text(&Value::Char("<a/>".to_owned())).unwrap().as_deref(), Some("<a/>"));
+    assert_eq!(xml_text(&Value::Binary(Binary::of(b"<a/>"))).unwrap(), None);
+    assert_eq!(xml_text(&Value::Char("<a/>".into())).unwrap().as_deref(), Some("<a/>"));
 }

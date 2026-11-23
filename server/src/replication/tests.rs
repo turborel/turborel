@@ -12,7 +12,7 @@ use crate::settings::{self, MEMBERS, REPLICA, REPLICATION_CA, REPLICATION_TLS, T
 
 /// `s` as a value: a whole number if it is one, else text.
 fn value(s: &str) -> Value {
-    s.parse::<i128>().map_or_else(|_| Value::Char(s.to_owned()), |n| Value::Exact(Decimal::new(n, 0)))
+    s.parse::<i128>().map_or_else(|_| Value::Char(s.into()), |n| Value::Exact(Decimal::new(n, 0)))
 }
 
 /// A database with the replica's and the server's settings declared, and

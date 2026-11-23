@@ -22,7 +22,7 @@ pub(in crate::engine::rows) const TYPES: [DataType; 2] =
 /// Row `n`: its text long, out of line, every fifth row.
 pub(in crate::engine::rows) fn row(n: i128) -> Row {
     let text = if n % 5 == 0 { format!("long {n} ").repeat(30) } else { format!("text {n}") };
-    vec![Value::Exact(Decimal::new(n, 0)), Value::Char(text)]
+    vec![Value::Exact(Decimal::new(n, 0)), Value::Char(text.into())]
 }
 
 /// The files of tables of the row store in memory.

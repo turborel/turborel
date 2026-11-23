@@ -115,7 +115,7 @@ impl State {
             let names = columns_named(value);
             if names.iter().any(|n| n == column) {
                 let renamed: Vec<String> = names.iter().map(|n| quoted(if n == column { to } else { n })).collect();
-                *value = Value::Char(renamed.join(", "));
+                *value = Value::Char(renamed.join(", ").into());
             }
         }
     }

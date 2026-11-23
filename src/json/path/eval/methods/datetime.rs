@@ -74,7 +74,7 @@ pub(super) fn templated(base: &[Cow<'_, Item>], template: &DatetimeTemplate) -> 
     base.iter()
         .map(|each| {
             let Some(text) = string(each) else { return Err(invalid(NOT_A_STRING)) };
-            let read = template.cast().call(&[Value::Char(text.to_owned())]);
+            let read = template.cast().call(&[Value::Char(text.into())]);
             read.map(item).map_err(|e| if e.code == Code::Data { unread(text, template, &e) } else { e })
         })
         .collect()

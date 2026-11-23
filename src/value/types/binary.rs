@@ -205,7 +205,7 @@ impl SqlType for BinaryKind {
     }
 
     fn value(&self, r: &mut Reader<'_>) -> Result<Value> {
-        Ok(Value::Binary(Binary::new(r.bytes()?.to_vec())))
+        Ok(Value::Binary(Binary::of(r.bytes()?)))
     }
 
     fn put_params(&self, t: &DataType, out: &mut Vec<u8>) {
@@ -233,7 +233,7 @@ impl SqlType for BinaryKind {
 
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
         let fits = self.varying || field.len() == octets(length_of(t));
-        fits.then(|| Value::Binary(Binary::new(field.to_vec())))
+        fits.then(|| Value::Binary(Binary::of(field)))
     }
 
     fn encode_key(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {

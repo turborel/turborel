@@ -406,7 +406,7 @@ impl Shown {
 }
 
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 fn number(n: impl TryInto<i128>) -> Value {

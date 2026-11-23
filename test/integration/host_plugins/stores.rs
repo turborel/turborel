@@ -108,5 +108,5 @@ fn a_sort_spills_to_a_host_plugin() {
     let spilled = rows(&s, "SELECT K FROM T ORDER BY K, S").unwrap();
     assert_eq!(spilled, in_memory);
     assert!(std::fs::read_to_string(plugin.join("spill.log")).is_ok_and(|l| l.contains("run")), "runs made in the program");
-    db.set_setting("PLUGINS.HOST", &Value::Char(spec)).unwrap();
+    db.set_setting("PLUGINS.HOST", &Value::Char(spec.into())).unwrap();
 }

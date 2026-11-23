@@ -83,7 +83,7 @@ fn input(v: &Value) -> Result<Option<Input>> {
     let read = if v.is_null() {
         return Ok(None);
     } else if let Value::Char(s) = v {
-        Input::Text(s.clone())
+        Input::Text(s.to_string())
     } else if let Value::Binary(b) = v {
         Input::Octets(b.bytes().to_vec())
     } else if let Value::Lob(l) = v {
@@ -316,7 +316,7 @@ impl ScalarFunction for XmlSerialize {
         }
         let text = serialize(&sequence, &self.parameters())?;
         let serialized = if !self.0.binary {
-            Value::Char(text)
+            Value::Char(text.into())
         } else if self.0.utf16 {
             let units = std::iter::once(BYTE_ORDER_MARK).chain(text.chars()).collect::<String>();
             Value::Binary(Binary::new(units.encode_utf16().flat_map(u16::to_be_bytes).collect()))

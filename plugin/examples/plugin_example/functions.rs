@@ -33,7 +33,7 @@ impl Scalar for Function {
             ("TWICE", Value::Exact(d)) => {
                 Value::Exact(d.checked_mul(Decimal::new(2, 0)).map_err(|_| PluginError::new("22003", "out of range"))?)
             }
-            ("SHOUT", Value::Char(s)) => Value::Char(s.to_uppercase()),
+            ("SHOUT", Value::Char(s)) => Value::Char(s.to_uppercase().into()),
             ("PID", _) => Value::Exact(Decimal::new(i128::from(std::process::id()), 0)),
             ("FAIL", Value::Char(s)) => return Err(PluginError::new("22012", &s)),
             ("CRASH", _) => std::process::abort(),
@@ -44,7 +44,7 @@ impl Scalar for Function {
                 let _ = std::io::stdout().write_all(&[1, 0, 0, 0, 99]).and_then(|()| std::io::stdout().flush());
                 Value::Null
             }
-            ("HUGE", Value::Exact(n)) => Value::Char("x".repeat(usize::try_from(n.units).unwrap_or(0))),
+            ("HUGE", Value::Exact(n)) => Value::Char("x".repeat(usize::try_from(n.units).unwrap_or(0)).into()),
             _ => return Err(PluginError::external("no such function, or an argument of a type it takes not")),
         })
     }

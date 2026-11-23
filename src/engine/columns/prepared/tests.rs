@@ -38,9 +38,9 @@ fn row(n: u32) -> Row {
     vec![
         i(n),
         null(i(n.checked_div(700).unwrap())),
-        null(Value::Char(format!("entry {}", n.wrapping_mul(7) % 30))),
+        null(Value::Char(format!("entry {}", n.wrapping_mul(7) % 30).into())),
         null(Value::Approx(f64::from(n.wrapping_mul(37) % 10_000) / 100.0)),
-        null(Value::Char(format!("customer{n}@mail{}.example.com", n % 7))),
+        null(Value::Char(format!("customer{n}@mail{}.example.com", n % 7).into())),
         null(i(n.wrapping_mul(3001) % 16_000_000)),
     ]
 }

@@ -87,7 +87,7 @@ impl SupportType {
             | Support::Knot
             | Support::TextElement
             | Support::TextElementArray
-            | Support::AnnotationText => uncastable(&Value::Char(text.to_owned()), &super::data_type(self.which)),
+            | Support::AnnotationText => uncastable(&Value::Char(text.into()), &super::data_type(self.which)),
         }
     }
 
@@ -241,7 +241,7 @@ impl SqlType for SupportType {
 
     fn lowered(&self, v: &Value, to: &DataType) -> Option<Value> {
         if to.is_character() {
-            return text_of(self.which, v).ok().map(Value::Char);
+            return text_of(self.which, v).ok().map(|s| Value::Char(s.into()));
         }
         if to.is_numeric() {
             return self.radians(v).map(Value::Approx);

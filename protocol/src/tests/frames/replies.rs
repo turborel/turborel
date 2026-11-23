@@ -93,7 +93,7 @@ fn described() -> Vec<Sample> {
 
 /// The samples of the rows and completions of a statement.
 fn completions() -> Vec<Sample> {
-    let rows = vec![vec![Value::Exact(Decimal::new(1, 0)), Value::Char("a".into())], vec![Value::Null, Value::Char(String::new())]];
+    let rows = vec![vec![Value::Exact(Decimal::new(1, 0)), Value::Char("a".into())], vec![Value::Null, Value::Char(String::new().into())]];
     vec![
         server("rows", &[], &Reply::Rows(rows), "Rows, two rows, 1 and a, then null and the empty string"),
         server("rows-none", &[], &Reply::Rows(Vec::new()), "Rows of no rows"),
@@ -265,7 +265,7 @@ fn statuses() -> Vec<Sample> {
 
 /// A Rows reply compressed, as the server sends one past its threshold.
 fn compressed() -> Sample {
-    let rows: Vec<Vec<Value>> = (0..64).map(|i| vec![Value::Exact(Decimal::new(i, 0)), Value::Char("abcdefgh".repeat(4))]).collect();
+    let rows: Vec<Vec<Value>> = (0..64).map(|i| vec![Value::Exact(Decimal::new(i, 0)), Value::Char("abcdefgh".repeat(4).into())]).collect();
     let mut plain = Vec::new();
     Reply::Rows(rows).encode(&mut plain);
     let mut bytes = Vec::new();

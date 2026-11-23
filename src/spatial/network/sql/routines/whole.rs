@@ -19,7 +19,7 @@ const VIEWS: &str = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_S
 
 /// The count of the rows of `sql` of `args` in `cx`.
 fn count(cx: &mut dyn ProcedureContext, sql: &str, args: &[&str]) -> Result<i32> {
-    let values: Vec<Value> = args.iter().map(|a| Value::Char((*a).to_owned())).collect();
+    let values: Vec<Value> = args.iter().map(|a| Value::Char((*a).into())).collect();
     let rows = cx.rows(sql, &values)?;
     Ok(integer(rows.first().and_then(|r| r.first()))?.unwrap_or_default())
 }

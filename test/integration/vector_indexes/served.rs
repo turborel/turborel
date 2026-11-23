@@ -95,7 +95,7 @@ fn a_parameter_takes_the_columns_vector_type() {
     // format leaves it.
     assert_eq!(t.to_string(), format!("VECTOR({DIMS})"));
     let text: Vec<String> = query_of(3).iter().map(|x| format!("{x}")).collect();
-    let mut cursor = s.open_prepared(&p, &[Value::Char(format!("[{}]", text.join(",")))]).unwrap();
+    let mut cursor = s.open_prepared(&p, &[Value::Char(format!("[{}]", text.join(",")).into())]).unwrap();
     let mut got = Vec::new();
     while let Some(row) = cursor.fetch().unwrap() {
         got.push(row.first().unwrap().to_string());
@@ -373,7 +373,7 @@ fn each_method_refuses_a_unique_index_r3_11() {
     for method in METHODS {
         assert_eq!(s.run(&format!("CREATE UNIQUE INDEX X ON T (V) USING {method}")).unwrap_err().code, Code::Syntax, "{method}");
         s.rollback().unwrap();
-        db.set_setting("TABLES.UNIQUE_INDEX_METHOD", &Value::Char(method.to_owned())).unwrap();
+        db.set_setting("TABLES.UNIQUE_INDEX_METHOD", &Value::Char(method.into())).unwrap();
         let unique = s.run(&format!("CREATE TABLE U_{method} (V VECTOR({DIMS}, FLOAT32) UNIQUE)")).unwrap_err();
         assert_eq!(unique.code, Code::SyntaxRule, "{method}: {unique}");
         s.rollback().unwrap();

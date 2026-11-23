@@ -15,7 +15,7 @@ fn every_kind() -> Item {
         scalar(Value::Exact(Decimal::new(i128::from(i64::MAX).checked_mul(1000).unwrap(), 3))),
         scalar(Value::DecFloat(DecFloat::new(15, -1, 34).unwrap())),
         scalar(Value::Approx(-0.25)),
-        scalar(Value::Char("s\u{e9}".to_owned())),
+        scalar(Value::Char("s\u{e9}".into())),
         scalar(Value::Bool(true)),
         scalar(datetime),
         Item::Null,

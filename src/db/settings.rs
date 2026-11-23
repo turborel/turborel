@@ -75,17 +75,17 @@ impl State {
             let given = settings::accepted(&canonical, &definition.kind, v)?;
             self.key_taken(key, &given)?;
             let missing = match (&definition.kind, &given) {
-                (Kind::Engine, Value::Char(engine)) => !self.engines.contains_key(engine),
-                (Kind::IndexMethod, Value::Char(method)) => !self.methods.contains_key(method),
+                (Kind::Engine, Value::Char(engine)) => !self.engines.contains_key(engine.as_str()),
+                (Kind::IndexMethod, Value::Char(method)) => !self.methods.contains_key(method.as_str()),
                 (Kind::HashFunction, Value::Char(hash)) => {
                     // Kept as it is registered.
                     let found = self.hashes.iter().find(|h| h.name().eq_ignore_ascii_case(hash));
-                    value = found.map(|h| Value::Char(h.name().to_owned()));
+                    value = found.map(|h| Value::Char(h.name().into()));
                     found.is_none()
                 }
                 (Kind::Encodings, Value::Char(names)) => {
                     let found = self.encodings.canonical(names)?.ok();
-                    value = found.clone().map(Value::Char);
+                    value = found.clone().map(|s| Value::Char(s.into()));
                     found.is_none()
                 }
                 (
@@ -131,7 +131,7 @@ impl State {
                 None => self.settings.declare(Definition {
                     name: name.clone(),
                     kind: Kind::Choice(settings::SWITCHES),
-                    default: Value::Char("ON".to_owned()),
+                    default: Value::Char("ON".into()),
                     per_session: true,
                     node: false,
                     effect: settings::Effect::Statement,
@@ -157,7 +157,7 @@ impl Database {
     ///
     /// SQLCODE -910 if called back from a plug-in, or a lock is poisoned.
     pub fn set_lock_wait(&self, wait: LockWait) -> Result<()> {
-        self.set_setting("LOCKS.WAIT", &Value::Char(settings::lock_wait_word(wait).to_owned()))
+        self.set_setting("LOCKS.WAIT", &Value::Char(settings::lock_wait_word(wait).into()))
     }
 
     /// \[DESIGN\] How many statements wait now for a lock or a row another

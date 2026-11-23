@@ -42,7 +42,7 @@ fn hosted(scratch: &Scratch, objects: &str) -> PathBuf {
 fn database(spec: &str) -> Database {
     let db = Database::new();
     db.set_package_crypto(std::sync::Arc::new(Crypto)).unwrap();
-    db.set_setting("PLUGINS.HOST", &Value::Char(spec.to_owned())).unwrap();
+    db.set_setting("PLUGINS.HOST", &Value::Char(spec.into())).unwrap();
     db
 }
 

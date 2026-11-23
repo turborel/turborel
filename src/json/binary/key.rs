@@ -303,7 +303,7 @@ fn item_within(rest: &mut &[u8], depth: usize) -> Result<Item> {
     match next(rest)? {
         NULL_KEY => Ok(Item::Null),
         NUMBER_KEY => scalar(number_of_key(rest)?),
-        STRING_KEY => scalar(Value::Char(string_of_key(rest)?)),
+        STRING_KEY => scalar(Value::Char(string_of_key(rest)?.into())),
         BOOLEAN_KEY => match next(rest)? {
             0 => scalar(Value::Bool(false)),
             1 => scalar(Value::Bool(true)),

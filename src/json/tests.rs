@@ -9,7 +9,7 @@ pub(super) fn number(units: i128, scale: u32) -> Item {
 }
 
 pub(super) fn string(s: &str) -> Item {
-    Item::Scalar(Scalar::new(Value::Char(s.to_owned())).unwrap())
+    Item::Scalar(Scalar::new(Value::Char(s.into())).unwrap())
 }
 
 pub(super) fn truth(b: bool) -> Item {
@@ -34,7 +34,7 @@ fn equivalent(a: &Item, b: &Item) -> bool {
 /// null value and a binary string are none.
 #[test]
 fn a_scalar_is_of_the_types_the_model_names() {
-    assert!(Scalar::new(Value::Char("a".to_owned())).is_some());
+    assert!(Scalar::new(Value::Char("a".into())).is_some());
     assert!(Scalar::new(Value::Approx(1.5)).is_some());
     assert!(Scalar::new(Value::Bool(true)).is_some());
     assert!(Scalar::new(Value::Null).is_none());

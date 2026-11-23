@@ -34,7 +34,13 @@ fn types() -> [DataType; 5] {
 fn row(n: i128) -> Row {
     let flag = if n % 7 == 0 { Value::Null } else { Value::Bool(n % 2 == 0) };
     let float = f64::from(i32::try_from(n).unwrap_or(0_i32));
-    vec![Value::Exact(Decimal::new(n, 0)), flag, Value::Exact(Decimal::new(n, 2)), Value::Approx(float), Value::Char(format!("t{n}"))]
+    vec![
+        Value::Exact(Decimal::new(n, 0)),
+        flag,
+        Value::Exact(Decimal::new(n, 2)),
+        Value::Approx(float),
+        Value::Char(format!("t{n}").into()),
+    ]
 }
 
 /// A table in memory of the column store, groups of 2048 frozen at once

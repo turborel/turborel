@@ -24,7 +24,7 @@ use crate::value::{CompOp, DataType, Decimal, Spelled, Value};
 const TYPES: [DataType; 2] = [DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer }, DataType::varying(20)];
 
 fn row(n: i128) -> Row {
-    vec![Value::Exact(Decimal::new(n, 0)), Value::Char(format!("v{n}"))]
+    vec![Value::Exact(Decimal::new(n, 0)), Value::Char(format!("v{n}").into())]
 }
 
 /// A pager file in memory, its pager, and the tables' files in it.
@@ -328,7 +328,7 @@ fn compressed_groups_take_fewer_pages() {
             Value::Exact(Decimal::new(n, 0)),
             Value::Exact(Decimal::new(n.checked_rem(7).unwrap(), 0)),
             Value::Exact(Decimal::new(n.checked_rem(100).unwrap().checked_mul(100).unwrap().checked_add(50).unwrap(), 2)),
-            Value::Char(format!("status {}", n.checked_rem(5).unwrap())),
+            Value::Char(format!("status {}", n.checked_rem(5).unwrap()).into()),
         ]
     };
     let (compressed, read) = group_pages_of(&types, make, true);

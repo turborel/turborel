@@ -122,7 +122,7 @@ fn read_whole(v: &Value) -> Result<Value> {
 /// `v` cast to CHARACTER VARYING: its text form.
 fn text_form(v: &Value) -> String {
     match cast(v.clone(), &DataType::varying(TEXT_LENGTH)) {
-        Ok(Value::Char(s)) => s,
+        Ok(Value::Char(s)) => s.to_string(),
         Ok(_) | Err(_) => v.to_string(),
     }
 }
@@ -182,8 +182,8 @@ pub fn value(r: &mut Reader<'_>) -> Result<Value> {
             Value::Exact(Decimal { units, scale: r.u32()? })
         }
         APPROXIMATE => Value::Approx(f64::from_bits(r.u64()?)),
-        CHARACTER | TEXT => Value::Char(r.str()?),
-        BINARY => Value::Binary(Binary::new(r.bytes()?.to_vec())),
+        CHARACTER | TEXT => Value::Char(r.str()?.into()),
+        BINARY => Value::Binary(Binary::of(r.bytes()?)),
         ARRAY => Value::Array(r.nested(values)?.into()),
         ROW => Value::Row(r.nested(values)?.into()),
         DENSE_VECTOR => {

@@ -274,7 +274,7 @@ impl Out for Built<'_, '_> {
 fn within_most(out: String) -> Result<Value> {
     let n = out.chars().count();
     if u32::try_from(n).is_ok_and(|n| n <= TRANSLATED_LENGTH) {
-        return Ok(Value::Char(out));
+        return Ok(Value::Char(out.into()));
     }
     fail_with(
         Code::Data,

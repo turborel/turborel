@@ -71,7 +71,7 @@ fn entries_carry_projected_keys() {
 fn stop_words_only_find_every_document_and_null_finds_none() {
     let index = fruit();
     assert_eq!(found(&index, &matching(Value::Char("the and".into()))), [1, 2, 3, 4]);
-    assert_eq!(found(&index, &matching(Value::Char(String::new()))), [1, 2, 3, 4]);
+    assert_eq!(found(&index, &matching(Value::Char(String::new().into()))), [1, 2, 3, 4]);
     assert_eq!(found(&index, &matching(Value::Null)), Vec::<RowId>::new());
     assert_eq!(found(&index, &Probe::All), [1, 2, 3, 4]);
 }

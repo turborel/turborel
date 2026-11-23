@@ -43,5 +43,5 @@ pub fn code_with(s: &Session, sql: &str, p: &mut Params) -> Code {
 
 /// `p`, of `dynamic_host`, its TEXT set to `text`.
 pub fn set_text(p: &mut Params, text: &str) {
-    p.set("TEXT", Value::Char(text.to_owned()));
+    p.set("TEXT", Value::Char(text.into()));
 }

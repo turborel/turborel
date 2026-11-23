@@ -106,7 +106,7 @@ impl Summary {
 /// The bytes of the heap a value's own holds besides itself.
 fn heap(v: &Value) -> usize {
     match v {
-        Value::Char(s) => s.capacity(),
+        Value::Char(s) => s.len(),
         Value::Null
         | Value::Exact(_)
         | Value::Approx(_)

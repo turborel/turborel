@@ -34,12 +34,12 @@ pub(super) const LIKE_REST: f64 = 0.25;
 pub(super) fn selectivity(c: &Cond, known: Known<'_>) -> Option<f64> {
     known.stats?;
     let Prefixed { column, pattern, escape, prefix } = prefixed(c)?;
-    let from = compare((column, CompOp::Ge, &Value::Char(prefix.clone())), known);
-    let past = next_prefix(&prefix).map_or(0.0_f64, |next| compare((column, CompOp::Ge, &Value::Char(next)), known));
+    let from = compare((column, CompOp::Ge, &Value::Char(prefix.clone().into())), known);
+    let past = next_prefix(&prefix).map_or(0.0_f64, |next| compare((column, CompOp::Ge, &Value::Char(next.into())), known));
     let rest = if constant_rest_is_any(pattern, escape) { 1.0_f64 } else { sampled_rest(c, column, &prefix, known).unwrap_or(LIKE_REST) };
     // A range narrower than a histogram's bucket shows no share of it; it
     // keeps at least what an equality with the prefix would.
-    let equal = compare((column, CompOp::Eq, &Value::Char(prefix)), known);
+    let equal = compare((column, CompOp::Eq, &Value::Char(prefix.into())), known);
     Some(((from - past).max(equal).max(0.0_f64) * rest).clamp(0.0, 1.0))
 }
 

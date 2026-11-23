@@ -101,7 +101,7 @@ impl Parser {
     /// `<setting literal>`: a signed number or a character string.
     fn setting_literal(&mut self) -> Result<Value> {
         match self.literal()? {
-            Literal::Character(s) => Ok(Value::Char(s)),
+            Literal::Character(s) => Ok(Value::Char(s.into())),
             Literal::Exact(d) => Ok(Value::Exact(d)),
             Literal::Approximate(x) => Ok(Value::Approx(x)),
             Literal::Binary(_) | Literal::Datetime(_) | Literal::Interval(_) | Literal::Boolean(_) => {

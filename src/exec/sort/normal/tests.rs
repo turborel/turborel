@@ -72,7 +72,7 @@ fn value(kind: usize, g: &mut Seeded) -> Value {
         1 => Value::Exact(Decimal::new(n, u32::try_from(g.below(3)).unwrap())),
         2 => Value::Exact(Decimal::new(if g.below(2) == 0 { i128::from(i64::MAX).wrapping_mul(n) } else { n }, 1_u32)),
         3 => Value::Approx(NUMBERS[g.below(NUMBERS.len())]),
-        4 => Value::Char(TEXTS[g.below(TEXTS.len())].to_owned()),
+        4 => Value::Char(TEXTS[g.below(TEXTS.len())].into()),
         5 => {
             [octets(0, 0), octets(0, 1), octets(0, 2), octets(1, 1), octets(0xA5, 33), octets(0xA5, 34), octets(0xA5, 40), octets(0xFF, 1)]
                 [g.below(8)]
@@ -93,7 +93,7 @@ fn value(kind: usize, g: &mut Seeded) -> Value {
             qualifier: Qualifier { start: DatetimeField::Day, end: DatetimeField::Second, leading: 2_u8, fraction: 0_u8 },
         }),
         8 => Value::Bool(g.below(2) == 0),
-        _ => Value::Char(format!("customer#{:05}", g.below(50))),
+        _ => Value::Char(format!("customer#{:05}", g.below(50)).into()),
     }
 }
 
@@ -247,7 +247,7 @@ fn padding_null_bytes_and_widths() {
     let up = SortOrder::of(false, None);
     let field = Field { column: 0, order: up, code: Code::Text { prefix: 4 }, ints: Ints::Exact, nullable: false, at: 0 };
     let texts = Layout { fields: vec![field], width: 5, truncates: true };
-    let at = |t: &str| key_of(&texts, &vec![Value::Char(t.to_owned())]);
+    let at = |t: &str| key_of(&texts, &vec![Value::Char(t.into())]);
     assert_eq!(at("a"), at("a "));
     assert!(at("a\t") < at("a"), "a tab is below the space padding");
     assert!(at("abcd\t") < at("abcd") && at("abcd") < at("abcde"), "past the prefix");

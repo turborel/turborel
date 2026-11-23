@@ -107,7 +107,7 @@ pub(crate) fn approximate_literal(x: f64) -> String {
 pub(crate) fn padded(text: &str, length: u32) -> Result<Value> {
     let n = text.chars().count();
     match usize::try_from(length).ok().and_then(|l| l.checked_sub(n)) {
-        Some(spaces) => Ok(Value::Char(format!("{text}{}", " ".repeat(spaces)))),
+        Some(spaces) => Ok(Value::Char(super::CharString::padded(text, spaces))),
         None => fail_with(
             Code::Data,
             SqlState::STRING_DATA_RIGHT_TRUNCATION,

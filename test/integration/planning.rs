@@ -273,7 +273,7 @@ fn custom_rules_plug_in() {
     let db = setup();
     // Disable the built-in rule that would do the same job...
     crate::common::set_rule(&db, SIMPLIFY_CONDITIONS, false);
-    let off = Value::Char("OFF".to_owned());
+    let off = Value::Char("OFF".into());
     assert_eq!(db.set_setting(&switch_name("no_such_rule"), &off).map_err(|e| e.sqlcode()), Err(-910_i32), "no such rule");
     let s = db.session("APP");
     assert!(s.physical_plan("SELECT ID FROM T WHERE 1 = 1", &Params::new()).unwrap().contains("Filter TRUE"));

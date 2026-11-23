@@ -5,7 +5,7 @@ use super::*;
 use crate::value::collation::{CASE_INSENSITIVE, Pad, builtin};
 
 fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 fn insensitive(max: bool) -> CollatedExtreme {

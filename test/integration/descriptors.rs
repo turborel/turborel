@@ -77,7 +77,7 @@ fn set_and_get_descriptor_17_4_17_5() {
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = 4, DATA = K", &mut p).unwrap();
     assert_eq!(run(&s, "GET DESCRIPTOR 'D' VALUE 1 N = TYPE, VAL = DATA", &mut p), Ok(Completion::Success));
     assert_eq!((p.value("N").to_string(), p.value("VAL").to_string()), ("4".to_owned(), "1".to_owned()));
-    p.set("SN", Value::Char("hello".to_owned()));
+    p.set("SN", Value::Char("hello".into()));
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 TYPE = 12, LENGTH = 128, DATA = SN", &mut p).unwrap();
     run(&s, "GET DESCRIPTOR 'D' VALUE 1 TEXT = DATA", &mut p).unwrap();
     assert_eq!(p.value("TEXT").to_string(), "hello", "a target of no shorter length matches");
@@ -239,7 +239,7 @@ fn execute_using_a_descriptor_17_9() {
     run(&s, "DESCRIBE INPUT S USING SQL DESCRIPTOR 'D'", &mut p).unwrap();
     assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Err("07001".to_owned()), "GR5b iv: no DATA");
     p.set("K", number(9));
-    p.set("NM", Value::Char("ZED".to_owned()));
+    p.set("NM", Value::Char("ZED".into()));
     run(&s, "SET DESCRIPTOR 'D' VALUE 1 DATA = K", &mut p).unwrap();
     run(&s, "SET DESCRIPTOR 'D' VALUE 2 DATA = NM", &mut p).unwrap();
     assert_eq!(run(&s, "EXECUTE S USING SQL DESCRIPTOR 'D'", &mut p), Ok(Completion::Success));

@@ -171,7 +171,7 @@ impl Database {
     ///
     /// As `set_setting`'s.
     pub fn set_job_policy(&self, policy: JobPolicy) -> Result<()> {
-        self.set_setting("JOBS.POLICY", &Value::Char(policy.word().to_owned()))
+        self.set_setting("JOBS.POLICY", &Value::Char(policy.word().into()))
     }
 
     /// JOBS.POLICY, as the database's settings now say; AUTOMATIC once

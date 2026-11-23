@@ -224,7 +224,7 @@ fn word_of(language: Language, token: &Token, stemmed: bool) -> Result<String> {
 fn tokens(language: Language, contents: &str, stemmed: bool) -> Result<Value> {
     let mut out = Vec::new();
     for token in words(language, contents) {
-        out.push(Value::Char(word_of(language, &token?, stemmed)?));
+        out.push(Value::Char(word_of(language, &token?, stemmed)?.into()));
     }
     array(out)
 }
@@ -246,7 +246,7 @@ fn positions(language: Language, contents: &str, unit: Unit, stemmed: bool) -> R
     for token in words(language, contents) {
         let token = token?;
         let (position, corrval) = place(&token, unit);
-        let row = [Value::Char(word_of(language, &token, stemmed)?), integer(position), integer(corrval)];
+        let row = [Value::Char(word_of(language, &token, stemmed)?.into()), integer(position), integer(corrval)];
         out.push(Value::Row(Arc::from(row)));
     }
     array(out)

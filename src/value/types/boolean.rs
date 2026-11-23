@@ -114,8 +114,7 @@ pub(crate) fn as_text(b: bool, t: &DataType) -> Result<Value> {
         let msg = format!("[ISO/IEC 9075-2:2023 §6.13 {rule}] {word} is longer than {length} characters");
         return fail_with(Code::Data, SqlState::INVALID_CHARACTER_VALUE_FOR_CAST, msg);
     };
-    let pad = if fixed { " ".repeat(spaces) } else { String::new() };
-    Ok(Value::Char(format!("{word}{pad}")))
+    Ok(Value::Char(crate::value::CharString::padded(word, if fixed { spaces } else { 0 })))
 }
 
 impl SqlType for Boolean {

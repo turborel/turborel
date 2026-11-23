@@ -251,7 +251,7 @@ fn count(cx: &mut dyn ProcedureContext, sql: &str, args: &[Value]) -> Result<i32
 /// statement's.
 fn init(name: &str, cx: &mut dyn ProcedureContext) -> Result<()> {
     let schemata = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?";
-    if count(cx, schemata, &[Value::Char(name.to_owned())])? > 0_i32 {
+    if count(cx, schemata, &[Value::Char(name.into())])? > 0_i32 {
         return Err(fault(
             "§11.3.17 Description 2b",
             SqlState::SPATIAL_SCHEMA_ALREADY_EXISTS,
@@ -297,13 +297,13 @@ fn for_create(name: &str, args: &[Value], cx: &mut dyn ProcedureContext) -> Resu
 /// its schema or one of its views is not there.
 fn missing(name: &str, cx: &mut dyn ProcedureContext) -> Result<crate::error::SqlError> {
     let schemata = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?";
-    let named = [Value::Char(name.to_owned())];
+    let named = [Value::Char(name.into())];
     if count(cx, schemata, &named)? == 0_i32 {
         return Ok(fault("§11.3.18 Description 2e", SqlState::SPATIAL_NON_EXISTENT_SCHEMA, &format!("no schema {}", delimited(name))));
     }
     for (view, rule) in [("ST_NODE", "2f"), ("ST_EDGE", "2g"), ("ST_FACE", "2h")] {
         let views = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?";
-        if count(cx, views, &[Value::Char(name.to_owned()), Value::Char(view.to_owned())])? == 0_i32 {
+        if count(cx, views, &[Value::Char(name.into()), Value::Char(view.into())])? == 0_i32 {
             let detail = format!("schema {} has no view {view}", delimited(name));
             return Ok(fault(&format!("§11.3.18 Description {rule}"), SqlState::SPATIAL_NON_EXISTENT_VIEW, &detail));
         }

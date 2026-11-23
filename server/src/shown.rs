@@ -367,7 +367,7 @@ impl SystemTable for Connections {
 
     fn rows(&self, seen: &Seen<'_>) -> Result<Vec<Row>> {
         let every = seen.may_monitor();
-        let yes = |is: bool| Value::Char(if is { "YES" } else { "NO" }.to_owned());
+        let yes = |is: bool| Value::Char(if is { "YES" } else { "NO" }.into());
         let rows = self.0.locked().clone();
         let holders = activity::holders(rows.iter().filter_map(|(id, e)| e.stop.as_deref().map(|s| (*id, s))));
         Ok(rows
@@ -381,10 +381,10 @@ impl SystemTable for Connections {
                 };
                 let mut row = vec![
                     count(id),
-                    e.user.map_or(Value::Null, Value::Char),
-                    Value::Char(e.peer),
+                    e.user.map_or(Value::Null, |s| Value::Char(s.into())),
+                    Value::Char(e.peer.into()),
                     yes(e.secure),
-                    Value::Char(state(&e.state).to_owned()),
+                    Value::Char(state(&e.state).into()),
                     application(&e.attributes),
                 ];
                 row.extend(activity::values(&doing, &holders));

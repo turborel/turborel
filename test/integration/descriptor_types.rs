@@ -137,7 +137,7 @@ fn names_and_parameters_of_dynamic_sql_5_4() {
     let mut p = dynamic_host();
     text(&mut p, &"D".repeat(129));
     assert_eq!(code(&s, "ALLOCATE DESCRIPTOR TEXT", &mut p), Code::SyntaxRule);
-    p.set("DN", Value::Char("D".to_owned()));
+    p.set("DN", Value::Char("D".into()));
     run(&s, "ALLOCATE DESCRIPTOR DN WITH MAX K", &mut p).unwrap();
     assert_eq!(code(&s, "GET DESCRIPTOR DN :N = COUNT", &mut p), Code::Unsupported);
     assert_eq!(code(&s, "SET DESCRIPTOR DN COUNT = :N", &mut p), Code::Unsupported);

@@ -20,7 +20,7 @@ fn keys_made_in_place_are_normalized_keys() {
         Value::Null,
         Value::Char("ab".into()),
         Value::Char("ab   ".into()),
-        Value::Char(String::new()),
+        Value::Char(String::new().into()),
         Value::Exact(Decimal::new(150, 2)),
         Value::Exact(Decimal::new(15, 1)),
         Value::Exact(Decimal::new(-7, 0)),

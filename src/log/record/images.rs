@@ -196,7 +196,7 @@ mod tests {
     /// A row of ten columns, the first `n`, the others wide.
     fn wide(n: i128) -> Row {
         let mut row = vec![Value::Exact(Decimal::new(n, 0))];
-        row.extend((0_u8..9).map(|c| Value::Char(format!("{c:-<40}"))));
+        row.extend((0_u8..9).map(|c| Value::Char(format!("{c:-<40}").into())));
         row
     }
 

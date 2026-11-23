@@ -105,7 +105,7 @@ fn a_server_shows_its_files_to_the_owner() {
     let mut expected = vec![format!("{},NO,1", pki.chain.display()), format!("{},NO,1", pki.key.display())];
     if cfg!(any(unix, windows)) {
         let socket = pki.scratch.socket("s");
-        db.set_setting(SOCKET, &Value::Char(socket.display().to_string())).unwrap();
+        db.set_setting(SOCKET, &Value::Char(socket.display().to_string().into())).unwrap();
         expected.push(format!("{},YES,0", socket.display()));
     }
     let server = start(&db, &[]);

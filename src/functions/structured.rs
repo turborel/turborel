@@ -249,7 +249,7 @@ impl ScalarFunction for SpecificType {
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         let Some(s) = structured(args.first(), SPECIFICTYPE)? else { return Ok(Value::Null) };
-        Ok(Value::Char(format!("{}.{}.{}", quoted(&self.catalog), quoted(&s.of.schema), quoted(&s.of.name))))
+        Ok(Value::Char(format!("{}.{}.{}", quoted(&self.catalog), quoted(&s.of.schema), quoted(&s.of.name)).into()))
     }
     fn deterministic(&self) -> bool {
         true

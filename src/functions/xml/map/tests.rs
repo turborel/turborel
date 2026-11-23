@@ -50,7 +50,7 @@ fn written(shape: RowShape, rows: &[Vec<Value>]) -> Result<String> {
 /// and the target namespace of a table mapped alone.
 #[test]
 fn rows_written_9_10() {
-    let rows = [vec![Value::Exact(Decimal::new(1, 0)), Value::Char("a&b".to_owned())], vec![Value::Exact(Decimal::new(2, 0)), Value::Null]];
+    let rows = [vec![Value::Exact(Decimal::new(1, 0)), Value::Char("a&b".into())], vec![Value::Exact(Decimal::new(2, 0)), Value::Null]];
     let absent = written(RowShape::of(&table(), &choices(Nulls::Absent, false, ""), true), &rows).unwrap();
     assert_eq!(absent, "<row><K>1</K><s_x0020_t>a&amp;b</s_x0020_t></row><row><K>2</K></row>");
     let nil = written(RowShape::of(&table(), &choices(Nulls::Nil, true, "urn:t"), true), &rows).unwrap();
@@ -113,7 +113,7 @@ fn texts_past_the_limit() {
     let past = data(limited(first), &[rows[0], rows[1], (2, "<row/>")]);
     assert_eq!(past.unwrap_err().code, Code::Unsupported, "past it as the second table's row comes");
     let shape = RowShape::of(&table(), &choices(Nulls::Absent, false, ""), true);
-    let long = vec![Value::Exact(Decimal::new(1, 0)), Value::Char("x".repeat(MAX_INPUT))];
+    let long = vec![Value::Exact(Decimal::new(1, 0)), Value::Char("x".repeat(MAX_INPUT).into())];
     assert_eq!(written(shape, &[long]).unwrap_err().code, Code::Unsupported);
 }
 

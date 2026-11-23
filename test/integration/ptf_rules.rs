@@ -133,7 +133,7 @@ fn component_procedures_conform_11_60() {
 fn a_ptf_is_no_scalar_function_9_18() {
     let db = defined();
     let a = db.session("A");
-    a.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned())).unwrap();
+    a.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
     let Err(e) = a.open_cursor("SELECT ECHO (CAST (K AS VARCHAR(128))) FROM T") else { panic!("ECHO invoked as a value") };
     assert_eq!(e.code, Code::SyntaxRule, "{e:?}");
     assert!(e.msg.contains("no function named ECHO"), "{e:?}");

@@ -83,7 +83,7 @@ impl DataArea {
             descriptors: HashMap::new(),
             cursors: HashMap::new(),
             private,
-            status: Value::Char(SUCCESSFUL.to_owned()),
+            status: Value::Char(SUCCESSFUL.into()),
             running: None,
             piped: Vec::new(),
             catalog,
@@ -93,7 +93,7 @@ impl DataArea {
     /// Whether its status variable is other than successful completion.
     pub(crate) fn failed(&self) -> Option<String> {
         if let Value::Char(s) = &self.status {
-            return (s != SUCCESSFUL).then(|| s.clone());
+            return (s != SUCCESSFUL).then(|| s.to_string());
         }
         if self.status.is_null() {
             return Some(" ".repeat(SUCCESSFUL.len()));
@@ -175,7 +175,7 @@ impl Layout {
 
 /// The value of an argument that names `n`.
 fn name(n: &str) -> Value {
-    Value::Char(n.to_owned())
+    Value::Char(n.into())
 }
 
 /// The name of the full row type descriptor area of generic table `t`.

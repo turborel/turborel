@@ -238,9 +238,9 @@ impl SqlType for UuidType {
     fn lowered(&self, v: &Value, to: &DataType) -> Option<Value> {
         let octets = octets_of(v)?;
         if to.is_character() {
-            return Some(Value::Char(text(&octets)));
+            return Some(Value::Char(text(&octets).into()));
         }
-        to.is_binary().then(|| Value::Binary(Binary::new(octets.to_vec())))
+        to.is_binary().then(|| Value::Binary(Binary::of(&octets)))
     }
 
     fn literal(&self, v: &Value) -> String {

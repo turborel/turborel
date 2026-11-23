@@ -13,7 +13,7 @@ use crate::value::{Binary, Spelled, compare};
 
 /// A character string.
 pub(super) fn text(s: &str) -> Value {
-    Value::Char(s.to_owned())
+    Value::Char(s.into())
 }
 
 /// The value of the character string `s` cast to `t`.

@@ -71,7 +71,7 @@ impl Shared {
         let Some(source) = self.graph.tables.get(usize::try_from(element.table).unwrap_or(usize::MAX)) else { return Ok(Value::Null) };
         let Some(row) = self.store.row(element)? else { return Ok(Value::Null) };
         let key: Vec<Value> = source.key.iter().map(|&k| row.get(k).cloned().unwrap_or(Value::Null)).collect();
-        Ok(Value::Char(element_text(&source.alias, source.native, &key)?))
+        Ok(Value::Char(element_text(&source.alias, source.native, &key)?.into()))
     }
 
     /// Fills the columns of element variable `var` in `row` with those of

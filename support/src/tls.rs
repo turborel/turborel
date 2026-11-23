@@ -75,7 +75,7 @@ pub fn ed25519_certificate() -> Vec<u8> {
 /// files.
 pub fn secured(db: &Database, pki: &Pki, mode: &str) {
     settings::declare(db).unwrap();
-    let text = |s: &str| Value::Char(s.to_owned());
+    let text = |s: &str| Value::Char(s.into());
     db.set_setting(TLS, &text(mode)).unwrap();
     db.set_setting(TLS_CERTIFICATE, &text(&pki.chain.display().to_string())).unwrap();
     db.set_setting(TLS_KEY, &text(&pki.key.display().to_string())).unwrap();

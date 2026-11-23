@@ -138,6 +138,12 @@ they are fetched, in the session's transaction, not gathered first.
 gives a cursor, `Direct::Rows`; any other statement its completion,
 `Direct::Done`.
 
+A character string's value, `Value::Char`, holds a `CharString`. It is
+made of a `&str` or a `String` by `into()`, and lends its text as a
+`str`, so a `str`'s methods apply to it and `to_string()` copies it out.
+A short string is held in the value itself, and a clone of a long one
+shares its text.
+
 ```rust
 use turborel::db::{Database, Direct};
 use turborel::value::Value;
@@ -442,7 +448,7 @@ fn main() -> Result<()> {
     let ann = db.session("ANN");
     let mut rows = ann.open_cursor("VALUES TWICE(21)")?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("42".to_owned()));
-    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("OFF".to_owned()))?;
+    ann.set_setting("SQL.FUNCTION_CALLS", &Value::Char("OFF".into()))?;
     assert_eq!(ann.run("VALUES TWICE(21)").unwrap_err().sqlcode(), -102);
     Ok(())
 }

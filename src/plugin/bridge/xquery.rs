@@ -91,7 +91,7 @@ impl PluginXQuery {
     /// The SQL value of an argument, of the type of its parameter.
     fn argument(s: &Sequence, t: &DataType) -> Result<Value> {
         match s.items().first() {
-            Some(Item::Atomic(a)) => cast(Value::Char(a.lexical.to_string()), t),
+            Some(Item::Atomic(a)) => cast(Value::Char(a.lexical.to_string().into()), t),
             Some(Item::Node(_)) | None => Ok(Value::Null),
         }
     }

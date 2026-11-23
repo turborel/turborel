@@ -75,9 +75,9 @@ fn last_length(long: usize) -> usize {
 fn row(n: u64, long: usize) -> Row {
     vec![
         Value::Exact(Decimal::new(i128::from(n), 0)),
-        Value::Char(format!("{:<40}", format!("name {n}"))),
+        Value::Char(format!("{:<40}", format!("name {n}")).into()),
         Value::Approx(n as f64),
-        Value::Char(format!("{:<width$}", "x".repeat(long), width = last_length(long))),
+        Value::Char(format!("{:<width$}", "x".repeat(long), width = last_length(long)).into()),
     ]
 }
 

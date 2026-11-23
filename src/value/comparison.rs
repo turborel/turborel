@@ -25,7 +25,12 @@ use crate::error::{Code, Result, SqlError};
 /// space decides: below a space only for a scalar below one, as a
 /// character of several bytes begins with a byte past every ASCII one.
 pub fn compare_strings(left: &str, right: &str) -> Ordering {
-    let (left, right) = (left.as_bytes(), right.as_bytes());
+    compare_octets(left.as_bytes(), right.as_bytes())
+}
+
+/// As `compare_strings`, of the strings' octets as UTF-8, so that a string
+/// held in a value is compared with no check of its text (RULES.md D960).
+pub(crate) fn compare_octets(left: &[u8], right: &[u8]) -> Ordering {
     let common = left.len().min(right.len());
     let (Some((left_head, left_rest)), Some((right_head, right_rest))) = (left.split_at_checked(common), right.split_at_checked(common))
     else {

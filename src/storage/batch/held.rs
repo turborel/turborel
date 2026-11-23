@@ -121,7 +121,7 @@ impl Column {
                 .filter(|_| !ints.is_null(r))
                 .map_or(Value::Null, |&u| Value::Exact(Decimal::new(i128::from(u), ints.scale))),
             Column::Floats(floats) => floats.get(r).map_or(Value::Null, Value::Approx),
-            Column::Texts(texts) => texts.get(r).map_or(Value::Null, |s| Value::Char(s.to_owned())),
+            Column::Texts(texts) => texts.get(r).map_or(Value::Null, |s| Value::Char(s.into())),
             Column::Datetimes(d) => d.get(r).map_or(Value::Null, Value::Datetime),
             Column::Bools(b) => b.get(r).map_or(Value::Null, Value::Bool),
             Column::Nulls(_) => Value::Null,

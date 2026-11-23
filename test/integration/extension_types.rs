@@ -362,6 +362,6 @@ fn a_function_declares_its_arguments_types() {
     let p = a.prepare("VALUES IDENT_BYTE(?, ?)").unwrap();
     let described: Vec<DataType> = p.parameters().iter().map(|t| t.clone().data_type()).collect();
     assert_eq!(described, [ident_type(), POSITION]);
-    let mut opened = a.open_prepared(&p, &[Value::Char(hex(9)), Value::Exact(Decimal::new(16, 0))]).unwrap();
+    let mut opened = a.open_prepared(&p, &[Value::Char(hex(9).into()), Value::Exact(Decimal::new(16, 0))]).unwrap();
     assert_eq!(opened.fetch().unwrap().map(|r| r[0].to_string()), Some("9".to_owned()));
 }

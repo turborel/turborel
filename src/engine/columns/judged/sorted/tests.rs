@@ -7,7 +7,7 @@ use crate::value::{CharUnits, CompOp, DataType};
 
 /// A conjunct comparing column 0 with the string `c` by `op`.
 fn compare(op: CompOp, c: &str) -> Conjunct {
-    Conjunct::Condition(Condition { columns: vec![0], probe: Probe::Compare { op, value: Value::Char(c.to_owned()) } })
+    Conjunct::Condition(Condition { columns: vec![0], probe: Probe::Compare { op, value: Value::Char(c.into()) } })
 }
 
 /// The conjuncts judged, of `constants`: every comparison of each, a LIKE
@@ -22,7 +22,7 @@ fn conjuncts(constants: &[&str]) -> Vec<Conjunct> {
     }
     out.push(compare(CompOp::Ge, "gr"));
     out.push(compare(CompOp::Lt, "gs"));
-    let strings: Vec<Value> = constants.iter().map(|c| Value::Char((*c).to_owned())).collect();
+    let strings: Vec<Value> = constants.iter().map(|c| Value::Char((*c).into())).collect();
     out.push(Conjunct::NotIn { column: 0, values: strings.clone() });
     out.push(Conjunct::In { column: 0, values: strings.into_iter().chain([Value::Null]).collect() });
     out.push(Conjunct::Any(vec![compare(CompOp::Lt, "blue"), compare(CompOp::Eq, "red")]));
@@ -42,7 +42,7 @@ fn dictionaries_in_order_judge_by_codes() {
     let words = ["red", "grün", "blue", "red ", "", "green", "gray", "zinc"];
     let types = [DataType::varying(20), DataType::Character { length: 6, units: CharUnits::Characters }];
     let values: Vec<Value> =
-        (0..300).map(|n| if n % 13 == 0 { Value::Null } else { Value::Char(words[n * 7 % words.len()].to_owned()) }).collect();
+        (0..300).map(|n| if n % 13 == 0 { Value::Null } else { Value::Char(words[n * 7 % words.len()].into()) }).collect();
     for t in types {
         let fields = Fields::of(&t, values.iter().cloned()).unwrap();
         let bytes = fields.chunk(&t, 0, (fields.len(), true)).unwrap();

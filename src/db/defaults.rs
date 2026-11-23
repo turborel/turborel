@@ -174,7 +174,7 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
             if units.count(s) > usize::try_from(*length).unwrap_or(usize::MAX) {
                 return Some(Err(rule(format!("[ISO/IEC 9075:1992 §11.5 SR3a i] the default '{s}' is longer than {subject}"))));
             }
-            Some(Ok(Value::Char(s.to_owned())))
+            Some(Ok(Value::Char(s.into())))
         }
         // [ISO/IEC 9075-2:2023 §11.5 SR4a i] of a character large object
         // too, a value held in its record.
@@ -184,9 +184,9 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
             }
             Some(Ok(Value::Lob(Lob::of_text(s))))
         }
-        DataType::Extension(e) => Some(e.kind.cast(Value::Char(s.to_owned()), subject)),
+        DataType::Extension(e) => Some(e.kind.cast(Value::Char(s.into()), subject)),
         // [EXTENSION] JSON text, parsed as CAST to JSON parses it.
-        DataType::Json => Some(subject.kind().cast(Value::Char(s.to_owned()), subject)),
+        DataType::Json => Some(subject.kind().cast(Value::Char(s.into()), subject)),
         DataType::Exact { .. }
         | DataType::Approximate { .. }
         | DataType::DecFloat { .. }

@@ -95,7 +95,7 @@ fn elements_type() -> DataType {
 
 fn text(v: Option<&Value>, name: &str) -> Result<String> {
     let Some(Value::Char(s)) = v else { return Err(signature(name)) };
-    Ok(s.clone())
+    Ok(s.to_string())
 }
 
 fn integer(v: Option<&Value>, name: &str) -> Result<i32> {
@@ -169,9 +169,9 @@ impl TinRoutine {
             // [§17.1.3 Description 2a] An observer of the empty set gives
             // the null value, as of a part not given.
             return Ok(match self {
-                Self::ElementType => parts.element_type.map_or(Value::Null, Value::Char),
+                Self::ElementType => parts.element_type.map_or(Value::Null, |s| Value::Char(s.into())),
                 Self::ElementId => parts.id.map_or(Value::Null, |id| Value::Exact(crate::value::Decimal::new(i128::from(id), 0))),
-                Self::ElementTag => parts.tag.map_or(Value::Null, Value::Char),
+                Self::ElementTag => parts.tag.map_or(Value::Null, |s| Value::Char(s.into())),
                 Self::IsEmpty => Value::Exact(crate::value::Decimal::new(i128::from(parts.is_empty()), 0)),
                 Self::ElementGeometry | Self::Element | Self::Tin | Self::Elements => parts.geometry.map_or(Value::Null, |g| g.to_value()),
             });

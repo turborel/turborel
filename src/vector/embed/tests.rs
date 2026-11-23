@@ -28,7 +28,7 @@ pub(super) fn rows(session: &Session, sql: &str) -> Result<Vec<String>> {
 pub(super) fn database() -> Database {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION U").unwrap();
-    db.set_setting("SQL.FUNCTION_CALLS", &crate::value::Value::Char("ON".to_owned())).unwrap();
+    db.set_setting("SQL.FUNCTION_CALLS", &crate::value::Value::Char("ON".into())).unwrap();
     db
 }
 

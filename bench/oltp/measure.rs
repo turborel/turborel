@@ -105,7 +105,7 @@ pub fn statements(client: &mut impl Client, like: &str) -> Statements {
     let mut all = Statements::new();
     for row in found {
         let number = |i: usize| row[i].as_f64().unwrap_or(0.0_f64);
-        let text = if let turborel::value::Value::Char(s) = &row[0] { s.clone() } else { String::new() };
+        let text = if let turborel::value::Value::Char(s) = &row[0] { s.to_string() } else { String::new() };
         let counts = all.entry(text).or_default();
         for (i, count) in counts.iter_mut().enumerate() {
             *count += number(i + 1);
@@ -137,7 +137,7 @@ pub fn index_use(client: &mut impl Client) -> Statements {
         .into_iter()
         .map(|row| {
             let number = |i: usize| row[i].as_f64().unwrap_or(0.0_f64);
-            let name = if let turborel::value::Value::Char(s) = &row[0] { s.clone() } else { String::new() };
+            let name = if let turborel::value::Value::Char(s) = &row[0] { s.to_string() } else { String::new() };
             (name, [number(1), number(2), number(3)])
         })
         .collect()

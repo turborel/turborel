@@ -48,7 +48,7 @@ impl Session {
     /// statement variable>`, a character string.
     fn statement_text(&self, v: &ValueSpecification, params: &Params, rule: &str) -> Result<String> {
         match value_of(self, v, params)? {
-            (Value::Char(text), _) => Ok(text),
+            (Value::Char(text), _) => Ok(text.to_string()),
             (_, _) => Err(SqlError::new(
                 Code::SyntaxRule,
                 format!("[ISO/IEC 9075:1992 {rule}] an <SQL statement variable> is a character string"),

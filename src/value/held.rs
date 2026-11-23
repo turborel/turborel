@@ -89,7 +89,7 @@ mod tests {
     }
 
     fn text(s: &str) -> Value {
-        Value::Char(s.to_owned())
+        Value::Char(s.into())
     }
 
     /// The values and types the cases below pair, each with each.

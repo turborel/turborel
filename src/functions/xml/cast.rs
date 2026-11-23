@@ -317,7 +317,7 @@ fn sql_value(bv: &Atomic) -> Result<Value> {
         | Primitive::GYear
         | Primitive::GMonthDay
         | Primitive::GDay
-        | Primitive::GMonth => Value::Char(text.to_owned()),
+        | Primitive::GMonth => Value::Char(text.into()),
         Primitive::HexBinary => Value::Binary(Binary::new(hex(text).unwrap_or_default())),
         Primitive::Base64Binary => Value::Binary(Binary::new(base64(text).unwrap_or_default())),
         Primitive::Decimal | Primitive::Integer => Value::Exact(exact(text)?),
@@ -325,9 +325,9 @@ fn sql_value(bv: &Atomic) -> Result<Value> {
         Primitive::Boolean => Value::Bool(text == "true"),
         Primitive::YearMonthDuration => interval(text, true)?,
         Primitive::DayTimeDuration => interval(text, false)?,
-        Primitive::Date => Value::Char(datetime(text, Shape::Date)?),
-        Primitive::Time => Value::Char(datetime(text, Shape::Time)?),
-        Primitive::DateTime => Value::Char(datetime(text, Shape::DateTime)?),
+        Primitive::Date => Value::Char(datetime(text, Shape::Date)?.into()),
+        Primitive::Time => Value::Char(datetime(text, Shape::Time)?.into()),
+        Primitive::DateTime => Value::Char(datetime(text, Shape::DateTime)?.into()),
     })
 }
 

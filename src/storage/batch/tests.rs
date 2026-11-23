@@ -165,7 +165,7 @@ fn batches_count_the_bytes_their_vectors_hold() {
     let ints = Column::Ints(Ints::new(vec![1_i64, 2_i64], 0_u32, Some(vec![false, true].into())));
     assert_eq!(Column::bytes(&ints), 24_usize);
     assert_eq!(Column::bytes(&Column::Floats(Floats::new(vec![1.0_f64], None))), 8_usize);
-    let values = Column::Values(vec![Value::Char("abc".to_owned())]);
+    let values = Column::Values(vec![Value::Char("abc".into())]);
     assert_eq!(Column::bytes(&values), size_of::<Value>() + 3_usize);
     let texts = Texts::new("abcd".to_owned(), vec![2_usize, 4_usize], None);
     assert_eq!(Column::bytes(&Column::Texts(texts.clone())), 4_usize + 2_usize * size_of::<usize>());

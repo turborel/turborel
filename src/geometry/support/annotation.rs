@@ -266,7 +266,7 @@ fn text_envelope(args: &[Value]) -> Result<Value> {
 
 /// A text string attribute, the null value if it is.
 fn string_value(s: Option<String>) -> Value {
-    s.map_or(Value::Null, Value::Char)
+    s.map_or(Value::Null, |s| Value::Char(s.into()))
 }
 
 /// A geometry attribute, the null value if it is.

@@ -316,7 +316,7 @@ fn lateral_7_11() {
     let q = "SELECT D.ID, N FROM D CROSS JOIN JSON_TABLE(D.DOC, 'lax $.no' COLUMNS (N INTEGER PATH 'lax $')) AS JT WHERE N > 7";
     assert_eq!(query(&s, q), ["2,8"]);
     let p = s.prepare("SELECT V FROM JSON_TABLE(?, 'lax $[*]' COLUMNS (V INTEGER PATH 'lax $')) AS JT").unwrap();
-    let mut c = s.open_prepared(&p, &[Value::Char("[4,5]".to_owned())]).unwrap();
+    let mut c = s.open_prepared(&p, &[Value::Char("[4,5]".into())]).unwrap();
     assert_eq!(c.fetch().unwrap().map(|r| r[0].to_string()), Some("4".to_owned()));
 }
 

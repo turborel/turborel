@@ -212,9 +212,9 @@ fn first_value(kind: &Kind) -> std::result::Result<Value, String> {
         Kind::Number { min, max } => Ok(Value::Approx(0.0_f64.clamp(*min, *max))),
         Kind::Choice(words) => {
             let word = if *words == SWITCHES { OFF } else { words.first().copied().unwrap_or(OFF) };
-            Ok(Value::Char(word.to_owned()))
+            Ok(Value::Char(word.into()))
         }
-        Kind::Text { .. } => Ok(Value::Char(String::new())),
+        Kind::Text { .. } => Ok(Value::Char(String::new().into())),
         Kind::Identifier
         | Kind::Engine
         | Kind::IndexMethod

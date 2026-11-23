@@ -136,6 +136,6 @@ fn hash_admits_by_the_hash_of_equal_values() {
 #[test]
 fn equal_values_hash_alike() {
     assert_eq!(hash::key_hash(&[Value::Exact(Decimal::new(150, 2))]), hash::key_hash(&[Value::Exact(Decimal::new(15, 1))]));
-    assert_eq!(hash::key_hash(&[Value::Char("A ".to_owned())]), hash::key_hash(&[Value::Char("A".to_owned())]));
+    assert_eq!(hash::key_hash(&[Value::Char("A ".into())]), hash::key_hash(&[Value::Char("A".into())]));
     assert_ne!(hash::key_hash(&[int(1)]), hash::key_hash(&[int(2)]));
 }

@@ -169,17 +169,17 @@ pub(super) fn options() -> Vec<TableOption> {
             "BM25's b: how much a document's weight is normalized by its length, from 0 to 1.",
         ),
         TableOption::new(
-            (RANKING_OPTION, Kind::Identifier, Value::Char(BM25.to_owned())),
+            (RANKING_OPTION, Kind::Identifier, Value::Char(BM25.into())),
             Rebuild::No,
             "The ranking Rank uses, by its name: BM25, built in, or one registered.",
         ),
         TableOption::new(
-            (LANGUAGE_OPTION, Kind::Identifier, Value::Char(Language::English.name().to_owned())),
+            (LANGUAGE_OPTION, Kind::Identifier, Value::Char(Language::English.name().into())),
             Rebuild::Yes,
             "The language documents are read in: how words are stemmed and, by default, which are stop words.",
         ),
         TableOption::new(
-            (STOP_WORDS_OPTION, Kind::Text { max: most }, Value::Char(DEFAULT_STOP_WORDS.to_owned())),
+            (STOP_WORDS_OPTION, Kind::Text { max: most }, Value::Char(DEFAULT_STOP_WORDS.into())),
             Rebuild::Yes,
             "The words not indexed: DEFAULT for the language's stop words, NONE for none, or the words by commas.",
         ),

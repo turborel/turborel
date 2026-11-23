@@ -255,7 +255,7 @@ mod tests {
     fn batch() -> Batch {
         let ints = Column::Ints(Ints::new(vec![7_i64, -3_i64, 0_i64, i64::MIN], 2_u32, Some(vec![false, true, false, false].into())));
         let values = Column::Values(vec![
-            Value::Char("a".to_owned()),
+            Value::Char("a".into()),
             Value::Null,
             Value::Exact(Decimal::new(15_i128, 1_u32)),
             Value::Binary(Binary::new(vec![0xA0])),
@@ -390,7 +390,7 @@ mod tests {
         let integer = DataType::Exact { precision: 18_u32, scale: 0_u32, spelled: crate::value::Spelled::Integer };
         let counted = || count.0.accumulator(integer.clone());
         let mut table = GroupTable::new(2, &[call(count.clone(), integer.clone())], &Seed::default(), usize::MAX);
-        let values = vec![Value::Char("k".to_owned()), Value::Null];
+        let values = vec![Value::Char("k".into()), Value::Null];
         let (mut three, mut acc) = (Vec::new(), counted());
         acc.update_rows(3_usize).unwrap();
         assert!(acc.write_state(&mut three));

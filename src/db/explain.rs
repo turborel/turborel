@@ -117,7 +117,7 @@ fn plan_rows(st: &Arc<State>, text: &str) -> Result<(Vec<OutColumn>, Stream)> {
         not_null: true,
         origin: None,
     };
-    let rows = text.lines().map(|l| vec![Value::Char(l.to_owned())]).collect();
+    let rows = text.lines().map(|l| vec![Value::Char(l.into())]).collect();
     Ok((vec![column], Stream::made(st, rows)?))
 }
 

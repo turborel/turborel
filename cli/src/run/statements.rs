@@ -182,8 +182,11 @@ const DESCRIBED: [&str; 2] = ["Column", "Type"];
 /// was declared where the server tells it (RULES.md D396).
 fn described<S: Read + Write>(connection: &mut Connection<S>, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
     let statement = connection.prepare(sql)?;
-    let rows: Vec<Row> =
-        statement.columns().iter().map(|c| vec![Value::Char(c.name.clone().unwrap_or_default()), Value::Char(c.type_written())]).collect();
+    let rows: Vec<Row> = statement
+        .columns()
+        .iter()
+        .map(|c| vec![Value::Char(c.name.clone().unwrap_or_default().into()), Value::Char(c.type_written().into())])
+        .collect();
     // Nothing of it ran; a failure to free its number changes nothing
     // described.
     drop(connection.deallocate(statement));

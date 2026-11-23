@@ -313,12 +313,12 @@ fn columns_declared(cols: Columns) -> Vec<TableOption> {
             "Whether a table of the column store compresses the chunks of the groups it freezes from then on: AUTO, each in the encoding that takes fewest bytes; NONE, its values as they are.",
         ),
         TableOption::new(
-            (ORDER, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new())),
+            (ORDER, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new().into())),
             Rebuild::No,
             "The columns, by commas, by which a table of the column store sorts the rows of each group it freezes, ascending, so a condition on the first skips more of them, groups frozen before sorted again in the background; none, in the order they were written.",
         ),
         TableOption::new(
-            (BLOOM, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new())),
+            (BLOOM, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new().into())),
             Rebuild::No,
             "The columns, by commas, of which a table of the column store keeps a Bloom filter of each 1024 rows of each group it freezes, so an equality or IN on one skips the rows that cannot hold its values, groups frozen before written again so in the background; none if empty.",
         ),
@@ -343,7 +343,7 @@ fn skipping_declared(cols: Columns) -> Vec<TableOption> {
             "Whether a table of the column store keeps, of the groups it freezes from then on, imprints of each column of exact numbers, datetimes or character strings: of each 64 rows, the bins of the group's values they fall in, so a comparison, IN or LIKE prefix skips stretches of rows that cannot match within 1024; ON or OFF.",
         ),
         TableOption::new(
-            (SKETCH, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new())),
+            (SKETCH, Kind::Columns { most: MOST_ORDER }, Value::Char(String::new().into())),
             Rebuild::No,
             "The columns, by commas, of which a table of the column store keeps a sketch of each group it freezes, a byte of each row ordered as its value, if the column is VARCHAR and its values are compressed by a table of symbols, so a comparison, IN or LIKE prefix compares the texts of few rows, groups frozen before written again so in the background; none if empty.",
         ),

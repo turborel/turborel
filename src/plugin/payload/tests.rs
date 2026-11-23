@@ -47,7 +47,7 @@ fn written(write: impl FnOnce(&mut Vec<u8>)) -> Vec<u8> {
 
 /// A key of two values.
 fn key(n: i128) -> Vec<Value> {
-    vec![Value::Exact(Decimal::new(n, 0)), Value::Char(format!("k{n}"))]
+    vec![Value::Exact(Decimal::new(n, 0)), Value::Char(format!("k{n}").into())]
 }
 
 /// Verifies: [DESIGN] RULES.md D226, D227: each operator, each probe of

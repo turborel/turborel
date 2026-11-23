@@ -125,7 +125,7 @@ fn a_bound_model_embeds_and_names_its_version() {
     let models = Embedders::built_in();
     let model = models.bind(&desc(HASH_DENSE, Vec::new())).unwrap();
     let embed = BoundEmbed { name: "EMBED", model: Arc::clone(&model) };
-    let text = |s: &str| Value::Char(s.to_owned());
+    let text = |s: &str| Value::Char(s.into());
     assert_eq!(embed.return_type(&[DataType::varying(10)]).unwrap(), model.shape().data_type().unwrap());
     assert_eq!(embed.return_type(&[DataType::Boolean]).err().map(|e| e.code), Some(Code::SyntaxRule));
     let one = embed.call(&[text("a b")]).unwrap();

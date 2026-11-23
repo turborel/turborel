@@ -28,7 +28,7 @@ impl Scalar for Twice {
                         cx.check()?;
                     }
                 }
-                Ok(Value::Char(s.repeat(1000)))
+                Ok(Value::Char(s.repeat(1000).into()))
             }
             _ => Err(PluginError::data("not an integer")),
         }
@@ -49,7 +49,7 @@ struct Rows(i128);
 
 impl SystemTable for Rows {
     fn rows(&mut self, user: &str, _owner: bool) -> Answer<Vec<Vec<Value>>> {
-        let mut all = vec![vec![Value::Char(user.to_owned())]];
+        let mut all = vec![vec![Value::Char(user.into())]];
         all.extend((1..self.0).map(|i| vec![Value::Exact(Decimal::new(i, 0))]));
         Ok(all)
     }

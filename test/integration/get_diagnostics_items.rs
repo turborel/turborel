@@ -236,8 +236,8 @@ fn positioned_statements_of_dynamic_cursors_coded_23_1() {
     let s = db.session("APP");
     let mut p = dynamic_host();
     let codes = |s: &Session| ["COMMAND_FUNCTION_CODE", "DYNAMIC_FUNCTION", "DYNAMIC_FUNCTION_CODE"].map(|name| statement(s, name));
-    p.set("SN", Value::Char("Q".to_owned()));
-    p.set("CN", Value::Char("CUR".to_owned()));
+    p.set("SN", Value::Char("Q".into()));
+    p.set("CN", Value::Char("CUR".into()));
     text(&mut p, "SELECT ID, AMT FROM T FOR UPDATE OF AMT");
     run(&s, "PREPARE SN FROM TEXT", &mut p).unwrap();
     run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p).unwrap();

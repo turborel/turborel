@@ -7,6 +7,7 @@ mod batches;
 mod btree;
 mod budget;
 mod bulk;
+mod char_strings;
 mod checkpoint;
 mod checkpoint_cost;
 mod io_path;
@@ -105,6 +106,7 @@ pub fn core() -> [&'static [Mutation]; 31] {
         &steady::STEADY_PLANS,
         &alloc::ALLOC,
         &tpcc_allocs::TPCC_ALLOCS,
+        &char_strings::CHAR_STRINGS,
         &commit_path::COMMIT_PATH,
         &dirty_frames::DIRTY_FRAMES,
         &range_path::RANGE_PATH,

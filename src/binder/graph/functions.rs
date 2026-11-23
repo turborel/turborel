@@ -108,7 +108,7 @@ pub(super) fn element_function(
                 .tables
                 .iter()
                 .map(|(t, labels, _)| {
-                    let names: Vec<Value> = labels.iter().map(|l| Value::Char(l.clone())).collect();
+                    let names: Vec<Value> = labels.iter().map(|l| Value::Char(l.clone().into())).collect();
                     (is_table(&table, *t), Expr::Const(Value::Array(names.into())))
                 })
                 .collect();

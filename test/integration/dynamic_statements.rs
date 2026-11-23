@@ -30,7 +30,7 @@ fn a_statement_prepared_by_name_is_executed_17_6_17_10() {
     assert_eq!(run(&s, "PREPARE S1 FROM TEXT", &mut p), Ok(Completion::Success));
     assert_eq!(diagnostic(&s, "COMMAND_FUNCTION"), "PREPARE");
     p.set("ID", number(7));
-    p.set("NM", Value::Char("EVE".to_owned()));
+    p.set("NM", Value::Char("EVE".into()));
     assert_eq!(run(&s, "EXECUTE S1 USING ID, NM", &mut p), Ok(Completion::Success));
     assert_eq!((diagnostic(&s, "COMMAND_FUNCTION"), diagnostic(&s, "DYNAMIC_FUNCTION")), ("EXECUTE".to_owned(), "INSERT".to_owned()));
     p.set("ID", number(8));
@@ -50,7 +50,7 @@ fn extended_statement_names_5_4_17_6() {
     let db = setup();
     let s = db.session("APP");
     let mut p = dynamic_host();
-    p.set("SN", Value::Char("  S2 ".to_owned()));
+    p.set("SN", Value::Char("  S2 ".into()));
     text(&mut p, "DELETE FROM T WHERE ID = 3");
     assert_eq!(run(&s, "PREPARE GLOBAL SN FROM TEXT", &mut p), Ok(Completion::Success));
     assert_eq!(run(&s, "EXECUTE SN", &mut p), Err("26000".to_owned()), "LOCAL is implicit, and apart");
@@ -59,10 +59,10 @@ fn extended_statement_names_5_4_17_6() {
     assert_eq!(run(&s, "PREPARE GLOBAL SN FROM TEXT", &mut p), Ok(Completion::Success), "GR6: the first deallocated");
     assert_eq!(run(&s, "EXECUTE GLOBAL SN", &mut p), Ok(Completion::Success));
     assert_eq!(rows(&s, "SELECT ID FROM T ORDER BY ID").unwrap(), ["1", "3"]);
-    p.set("SN", Value::Char("NOT ONE".to_owned()));
+    p.set("SN", Value::Char("NOT ONE".into()));
     assert_eq!(run(&s, "PREPARE SN FROM TEXT", &mut p), Err("26000".to_owned()), "GR8");
     assert_eq!(code(&s, "EXECUTE GLOBAL 'S2'", &mut p), Code::SyntaxRule, "§5.4 SR13");
-    p.set("SN", Value::Char("S2".to_owned()));
+    p.set("SN", Value::Char("S2".into()));
     assert_eq!(run(&s, "EXECUTE GLOBAL SN", &mut p), Ok(Completion::NoData), "the name trimmed is S2's: no row to delete");
 }
 
@@ -97,7 +97,7 @@ fn what_prepare_and_execute_refuse_17_6_17_10() {
     run(&s, "PREPARE S FROM TEXT", &mut p).unwrap();
     assert_eq!(run(&s, "EXECUTE S", &mut p), Err("07004".to_owned()), "§17.10 GR4");
     assert_eq!(run(&s, "EXECUTE S USING K", &mut p), Err("07001".to_owned()), "§17.9 GR5a");
-    p.set("TXT", Value::Char("x".to_owned()));
+    p.set("TXT", Value::Char("x".into()));
     assert_eq!(run(&s, "EXECUTE S USING TXT, K", &mut p), Err("22018".to_owned()), "GR5f: CAST's own");
     text(&mut p, "SELECT ID FROM T WHERE CAST(? AS DATE) IS NOT NULL");
     run(&s, "PREPARE D FROM TEXT", &mut p).unwrap();

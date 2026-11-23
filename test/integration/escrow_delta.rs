@@ -33,8 +33,8 @@ const PROCEDURES: [&str; 3] = [
 /// rows 1 to 4 of X 100, Y 0 and N 0; table SEEN; and `PROCEDURES`.
 fn database(escrow: &str) -> Database {
     let db = Database::new();
-    db.set_setting("LOCKS.WAIT", &Value::Char("ON".to_owned())).unwrap();
-    db.set_setting("TRANSACTION.ESCROW", &Value::Char(escrow.to_owned())).unwrap();
+    db.set_setting("LOCKS.WAIT", &Value::Char("ON".into())).unwrap();
+    db.set_setting("TRANSACTION.ESCROW", &Value::Char(escrow.into())).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (ID INTEGER NOT NULL, X DECIMAL(6,2), Y INTEGER, N INTEGER)
          CREATE TABLE SEEN (P VARCHAR(8), V DECIMAL(8,2))",

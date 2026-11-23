@@ -35,7 +35,7 @@ impl ScalarFunction for Recorded {
 fn default_borrowed_calls_preserve_arguments_side_effects_and_errors() {
     let function = Recorded(Mutex::new(Vec::new()));
     for count in 0_usize..=5 {
-        let values: Vec<_> = (0..count).map(|n| Value::Char(n.to_string())).collect();
+        let values: Vec<_> = (0..count).map(|n| Value::Char(n.to_string().into())).collect();
         let refs: Vec<_> = values.iter().collect();
         assert!(matches!(function.call_borrowed(&refs, None).unwrap(), Value::Bool(true)));
         assert_eq!(function.0.lock().unwrap().pop().unwrap(), values.iter().map(ToString::to_string).collect::<Vec<_>>());

@@ -92,7 +92,7 @@ pub fn failure<T: std::fmt::Debug>(result: Result<T, SqlError>) -> (Code, String
 /// Makes `db`'s transactions SERIALIZABLE unless they say otherwise, for a
 /// test of what that level alone guarantees.
 pub fn serializable(db: &Database) {
-    db.set_setting("TRANSACTION.ISOLATION", &Value::Char("SERIALIZABLE".to_owned())).unwrap();
+    db.set_setting("TRANSACTION.ISOLATION", &Value::Char("SERIALIZABLE".into())).unwrap();
 }
 
 /// `setup` with T at 60 rows and a hash index on ID: rows 4-60 have NAME
@@ -336,12 +336,12 @@ pub fn money() -> Database {
 
 /// Turns the function call syntax on for `s` (SQL.FUNCTION_CALLS).
 pub fn function_calls(s: &Session) {
-    s.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".to_owned())).unwrap();
+    s.set_setting("SQL.FUNCTION_CALLS", &Value::Char("ON".into())).unwrap();
 }
 
 /// Turns the optimizer rule `rule` of `db` on or off, by its setting (RULES.md D36).
 pub fn set_rule(db: &Database, rule: &str, enabled: bool) {
-    db.set_setting(&turborel::optimizer::switch_name(rule), &Value::Char(if enabled { "ON" } else { "OFF" }.to_owned())).unwrap();
+    db.set_setting(&turborel::optimizer::switch_name(rule), &Value::Char(if enabled { "ON" } else { "OFF" }.into())).unwrap();
 }
 
 /// The rows of `sql`, sorted, read by batches where it can be, and read

@@ -63,7 +63,7 @@ impl Scalar {
 
 impl From<String> for Scalar {
     fn from(string: String) -> Scalar {
-        Scalar(Value::Char(string))
+        Scalar(Value::Char(string.into()))
     }
 }
 

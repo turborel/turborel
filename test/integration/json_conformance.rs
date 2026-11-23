@@ -106,7 +106,7 @@ fn constructors_in_definitions_6_34() {
 fn dynamic_parameters_in_every_form_20_6() {
     let db = setup();
     let s = db.session("APP");
-    let text = |t: &str| Value::Char(t.to_owned());
+    let text = |t: &str| Value::Char(t.into());
     let int = |n: i128| Value::Exact(turborel::value::Decimal::new(n, 0));
     let read = |sql: &str, args: &[Value]| {
         let p = s.prepare(sql).unwrap();

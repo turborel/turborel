@@ -44,11 +44,11 @@ fn dec(units: i64, scale: u32) -> Value {
 }
 
 fn text(s: String) -> Value {
-    Value::Char(s)
+    Value::Char(s.into())
 }
 
 fn now() -> Value {
-    Value::Char(NOW.to_owned())
+    Value::Char(NOW.into())
 }
 
 /// The rows of one table on their way in.

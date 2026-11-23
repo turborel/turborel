@@ -189,7 +189,7 @@ pub(crate) fn compare_structured(a: &Structured, b: &Structured) -> Option<Order
 /// attributes.
 fn identity_parts(s: &Structured) -> Vec<Value> {
     let mut parts = Vec::with_capacity(s.attributes.len().saturating_add(1));
-    parts.push(Value::Char(s.of.to_string()));
+    parts.push(Value::Char(s.of.to_string().into()));
     parts.extend(s.attributes.iter().cloned());
     parts
 }

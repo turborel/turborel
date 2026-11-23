@@ -27,7 +27,7 @@ fn number(n: i128) -> Value {
 }
 
 fn word(w: &str) -> Value {
-    Value::Char(w.to_owned())
+    Value::Char(w.into())
 }
 
 impl Store {

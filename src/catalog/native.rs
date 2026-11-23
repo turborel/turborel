@@ -173,7 +173,7 @@ impl ElementId {
         };
         let Some(Value::Exact(d)) = member(ID_KEY) else { return None };
         let id = (d.scale == 0).then_some(d.units)?;
-        Some(ElementId { node, table: QualifiedName { auth: string(SCHEMA_KEY)?, ident: string(TABLE_KEY)? }, id })
+        Some(ElementId { node, table: QualifiedName { auth: string(SCHEMA_KEY)?.to_string(), ident: string(TABLE_KEY)?.to_string() }, id })
     }
 }
 

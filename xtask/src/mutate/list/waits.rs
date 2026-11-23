@@ -84,7 +84,7 @@ pub const WAITS: [Mutation; 18] = [
         package: Package::Server,
         breaks: "a served database refuses a row's second writer at once",
         file: "server/src/server.rs",
-        original: "        db.set_setting_default(\"LOCKS.WAIT\", &Value::Char(\"ON\".to_owned()))?;\n",
+        original: "        db.set_setting_default(\"LOCKS.WAIT\", &Value::Char(\"ON\".into()))?;\n",
         replacement: "",
         integration: &["settings::a_served_database_waits_for_locks_by_default"],
         unit: &[],

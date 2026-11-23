@@ -73,7 +73,7 @@ fn prepared_and_lateral_joins_route_each_probe() {
     assert!(shown.contains("each probe routed to one"), "{shown}");
     let p = s.prepare(sql).unwrap();
     for (id, want) in [("3", "3.00"), ("5", "5.00"), ("9", ""), ("4", "4.00")] {
-        let mut c = s.open_prepared(&p, &[Value::Char(id.to_owned())]).unwrap();
+        let mut c = s.open_prepared(&p, &[Value::Char(id.into())]).unwrap();
         let got = c.fetch().unwrap().map(|r| r[0].to_string()).unwrap_or_default();
         assert_eq!(got, want, "{id}");
     }

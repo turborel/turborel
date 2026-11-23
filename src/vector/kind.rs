@@ -95,7 +95,7 @@ fn checked<'a>(v: &'a Value, t: &DataType) -> Result<VectorRef<'a>> {
 /// A character string's text, of a CHARACTER or a CLOB value.
 pub(crate) fn text_of(v: &Value) -> Result<Option<String>> {
     if let Value::Char(s) = v {
-        return Ok(Some(s.clone()));
+        return Ok(Some(s.to_string()));
     }
     let Value::Lob(lob) = v else { return Ok(None) };
     if !matches!(lob.kind(), crate::value::lob::LobKind::Character) {
@@ -230,7 +230,7 @@ impl SqlType for VectorType {
 
     fn encode_key(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {
         checked(v, t)?;
-        Binary::new(image(v).unwrap_or_default().to_vec()).put_key(out);
+        Binary::of(image(v).unwrap_or_default()).put_key(out);
         Ok(())
     }
 

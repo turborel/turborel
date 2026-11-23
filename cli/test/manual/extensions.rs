@@ -78,7 +78,7 @@ fn the_extension_examples_run_as_printed() {
             std::fs::write(up.join("up.sql"), "CALL NOTE('updated to 1.1.0')").unwrap();
         }
         let db = Database::new();
-        db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(root.display().to_string())).unwrap();
+        db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(root.display().to_string().into())).unwrap();
         db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
         assert!(Client::of(&db, "ANN").page(page) > 0, "{page} shows its examples' output");
     }
@@ -107,7 +107,7 @@ pub(super) fn ran(args: &str, scratch: &Scratch) -> String {
 fn packaged(scratch: &Scratch) -> Database {
     let db = Database::new();
     db.set_package_crypto(std::sync::Arc::new(turborel_client::packages::Crypto)).unwrap();
-    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(scratch.path("plugins").display().to_string())).unwrap();
+    db.set_setting("PLUGINS.DIRECTORIES", &Value::Char(scratch.path("plugins").display().to_string().into())).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION ANN").unwrap();
     std::fs::write(scratch.path("author.key"), AUTHOR_SEED).unwrap();
     db

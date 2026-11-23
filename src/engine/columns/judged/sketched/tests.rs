@@ -44,14 +44,14 @@ fn url(n: u32) -> Value {
         return Value::Null;
     }
     if n.is_multiple_of(4) {
-        return Value::Char("http://often.example/".to_owned());
+        return Value::Char("http://often.example/".into());
     }
     let pad = if n.is_multiple_of(11) { " " } else { "" };
-    Value::Char(format!("http://site{}.example/page{}{pad}", n.wrapping_mul(7919) % 300, n.wrapping_mul(104_729) % 50_000))
+    Value::Char(format!("http://site{}.example/page{}{pad}", n.wrapping_mul(7919) % 300, n.wrapping_mul(104_729) % 50_000).into())
 }
 
 fn compare(op: CompOp, c: &str) -> Conjunct {
-    Conjunct::Condition(Condition { columns: vec![1], probe: Probe::Compare { op, value: Value::Char(c.to_owned()) } })
+    Conjunct::Condition(Condition { columns: vec![1], probe: Probe::Compare { op, value: Value::Char(c.into()) } })
 }
 
 /// The conjuncts judged, of `constants`: every comparison of each, a LIKE
@@ -64,7 +64,7 @@ fn conjuncts(constants: &[&str]) -> Vec<Conjunct> {
             out.push(compare(op, c));
         }
     }
-    let strings: Vec<Value> = constants.iter().map(|c| Value::Char((*c).to_owned())).collect();
+    let strings: Vec<Value> = constants.iter().map(|c| Value::Char((*c).into())).collect();
     out.push(Conjunct::NotIn { column: 1, values: strings.clone() });
     out.push(Conjunct::In { column: 1, values: strings.into_iter().chain([Value::Null]).collect() });
     out.push(Conjunct::Any(vec![compare(CompOp::Lt, "http://site1"), Conjunct::Null { column: 1, not: false }]));

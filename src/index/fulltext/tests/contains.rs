@@ -109,7 +109,7 @@ fn contains_finds_a_superset() {
         for row in 1..=60_u64 {
             let text = random_text(&mut draw);
             let document = match draw.below(3) {
-                0 => Value::Char(text),
+                0 => Value::Char(text.into()),
                 1 => full_text(Language::English, &text).unwrap(),
                 _ => full_text(Language::None, &text).unwrap(),
             };

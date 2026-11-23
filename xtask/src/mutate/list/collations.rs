@@ -147,7 +147,7 @@ pub const COLLATIONS: [Mutation; 14] = [
         package: Package::Core,
         breaks: "a subquery's kept rows: strings equal when padded share a run",
         file: "src/exec/subquery.rs",
-        original: "        Value::Char(s) => NormKey::Char(s.clone()),",
+        original: "        Value::Char(s) => NormKey::Char(s.to_string()),",
         replacement: "        Value::Char(_) => v.norm(),",
         integration: &["collated_indexes::a_subquery_tells_apart_strings_equal_when_padded"],
         unit: &[],

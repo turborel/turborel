@@ -185,7 +185,7 @@ impl Calls {
             made[0] = made[0].saturating_add(planned(s, &self.neword, &new_order(r, district)));
         }
         let byname = int(i64::from(r.between(1, 100) <= 60));
-        let name = Value::Char(last_name(r.between(0, 9)));
+        let name = Value::Char(last_name(r.between(0, 9)).into());
         let (d, c) = (int(r.between(1, 10)), int(r.between(1, CUSTOMERS)));
         let payment = vec![int(1), d.clone(), int(1), d.clone(), c.clone(), byname.clone(), int(r.between(1, 5000)), name.clone()];
         let calls: [(&Prepared, Vec<Value>); 4] = [

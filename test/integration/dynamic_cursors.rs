@@ -64,8 +64,8 @@ fn an_allocated_cursor_17_13() {
     let db = setup();
     let s = db.session("APP");
     let mut p = dynamic_host();
-    p.set("SN", Value::Char("Q".to_owned()));
-    p.set("CN", Value::Char("CUR".to_owned()));
+    p.set("SN", Value::Char("Q".into()));
+    p.set("CN", Value::Char("CUR".into()));
     assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p), Err("26000".to_owned()), "GR1");
     text(&mut p, "SELECT ID, AMT FROM T WHERE ID < ? FOR UPDATE OF AMT");
     run(&s, "PREPARE SN FROM TEXT", &mut p).unwrap();
@@ -88,9 +88,9 @@ fn an_allocated_cursor_17_13() {
     assert_eq!(rows(&s, "SELECT ID, AMT FROM T ORDER BY ID").unwrap(), ["1,99.00", "3,NULL"]);
     text(&mut p, "DELETE FROM T");
     run(&s, "PREPARE GLOBAL SN FROM TEXT", &mut p).unwrap();
-    p.set("CN", Value::Char("OTHER".to_owned()));
+    p.set("CN", Value::Char("OTHER".into()));
     assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR GLOBAL SN", &mut p), Err("07005".to_owned()), "GR2");
-    p.set("CN", Value::Char("NOT ONE".to_owned()));
+    p.set("CN", Value::Char("NOT ONE".into()));
     assert_eq!(run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p), Err("34000".to_owned()), "GR4");
     assert_eq!(code(&s, "ALLOCATE 'C' CURSOR FOR SN", &mut p), Code::SyntaxRule, "§5.4 SR13");
 }
@@ -104,8 +104,8 @@ fn deallocate_prepare_destroys_its_cursors_17_7() {
     let db = setup();
     let s = db.session("APP");
     let mut p = dynamic_host();
-    p.set("SN", Value::Char("Q".to_owned()));
-    p.set("CN", Value::Char("CUR".to_owned()));
+    p.set("SN", Value::Char("Q".into()));
+    p.set("CN", Value::Char("CUR".into()));
     text(&mut p, "SELECT ID FROM T");
     run(&s, "PREPARE SN FROM TEXT", &mut p).unwrap();
     run(&s, "ALLOCATE CN CURSOR FOR SN", &mut p).unwrap();
@@ -149,8 +149,8 @@ fn positioned_statements_prepared_17_19_17_20() {
     assert_eq!(s.execute_prepared(&api, &[]).map_err(|e| e.code), Err(Code::Cursor), "on no row, deleted");
     run(&s, "CLOSE CUR", &mut p).unwrap();
     assert_eq!(rows(&s, "SELECT ID, AMT FROM T ORDER BY ID").unwrap(), ["1,10.50", "2,1.00"]);
-    p.set("CN", Value::Char("CUR".to_owned()));
-    p.set("SN", Value::Char("S".to_owned()));
+    p.set("CN", Value::Char("CUR".into()));
+    p.set("SN", Value::Char("S".into()));
     text(&mut p, "SELECT ID FROM T");
     run(&s, "PREPARE SN FROM TEXT", &mut p).unwrap();
     run(&s, "ALLOCATE GLOBAL CN CURSOR FOR SN", &mut p).unwrap();
@@ -170,7 +170,7 @@ fn extended_cursor_names_refused_17_17_17_18() {
     let db = setup();
     let s = db.session("APP");
     let mut p = dynamic_host();
-    p.set("CN", Value::Char("CUR".to_owned()));
+    p.set("CN", Value::Char("CUR".into()));
     for refused in ["DELETE FROM T WHERE CURRENT OF CN", "UPDATE T SET AMT = 1 WHERE CURRENT OF CN", "CLOSE CN", "FETCH CN INTO ID"] {
         assert_eq!(run(&s, refused, &mut p), Err("34000".to_owned()), "{refused}");
     }

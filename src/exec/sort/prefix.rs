@@ -340,7 +340,7 @@ mod tests {
     /// read in place, and a null.
     #[test]
     fn prefixes_of_cells_are_their_values() {
-        let text = Value::Char("a b".to_owned());
+        let text = Value::Char("a b".into());
         let cells = [
             Cell::Exact(-15_i64, 1_u32),
             Cell::Exact(7_i64, 0_u32),
@@ -402,7 +402,7 @@ mod tests {
     #[test]
     fn sorted_by_prefixes_as_whole() {
         let int = |n: i128| Value::Exact(Decimal::new(n, 0_u32));
-        let text = |t: &str| Value::Char(t.to_owned());
+        let text = |t: &str| Value::Char(t.into());
         as_whole(&[
             vec![int(3_i128), Value::Null, int(-1_i128), int(3_i128), int(i128::MAX), int(0_i128)],
             vec![text("pear"), text("apple pie"), text("apple tart"), Value::Null, text("apple pie "), text("b")],
