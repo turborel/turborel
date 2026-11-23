@@ -110,6 +110,19 @@ impl Keyed {
     }
 }
 
+impl Keyed {
+    /// What a read under `probe` tells its table it read, the condition
+    /// `scan::asked` makes of a key of its columns. Its list of them is
+    /// made in `room`, which the last read left, so none is allocated
+    /// for each read.
+    fn told(&self, room: &mut Vec<usize>, probe: Cow<'_, Probe>) -> Condition {
+        let mut columns = std::mem::take(room);
+        columns.clear();
+        columns.extend_from_slice(&self.shape.columns);
+        Condition { columns, probe: probe.into_owned() }
+    }
+}
+
 /// The values of the key `probe` asks for by equality: of its first
 /// columns, or its first.
 fn key_of(probe: &Probe) -> Option<&[Value]> {
@@ -267,11 +280,7 @@ impl PointRead {
         }
         // What it read, told with the probe it holds, moved, not copied:
         // the condition `scan::asked` makes of a key of its columns.
-        // The list its read is told with, made in the room the last left.
-        let mut key_columns = std::mem::take(told_by);
-        key_columns.clear();
-        key_columns.extend_from_slice(&keyed.shape.columns);
-        let told = Condition { columns: key_columns, probe: probe.into_owned() };
+        let told = keyed.told(told_by, probe);
         storage.read_by_condition(tx, &told)?;
         let key = key_of(&told.probe).unwrap_or_default();
         let stop = st.tx.stop_of(tx);
