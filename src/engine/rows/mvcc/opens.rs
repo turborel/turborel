@@ -129,7 +129,8 @@ impl Opens {
         self.shards.iter().map(|shard| Self::write(shard)).collect()
     }
 
-    /// Whether no transaction is open here.
+    /// Whether no transaction is open here: for tests.
+    #[cfg(test)]
     pub(super) fn is_empty(&self) -> bool {
         self.shards.iter().all(|shard| shard.len.load(Ordering::SeqCst) == 0)
     }

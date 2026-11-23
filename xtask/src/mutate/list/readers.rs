@@ -1,41 +1,51 @@
-//! The mutations of the read-only path (RULES.md R-TEST-9, D29): what a
-//! transaction that wrote nothing collects as it ends, when maintenance
-//! is due, the shared bookkeeping every transaction takes and gives
+//! The mutations of the read-only path (RULES.md R-TEST-9, D29): what an
+//! end leaves to the maintenance job's pass and what the pass collects,
+//! when maintenance is due, the shared bookkeeping every transaction takes and gives
 //! back, its logged first and what cancels its statements, and what a scan
 //! keeps of a transaction's bookkeeping in a table.
 
 use super::{Mutation, Package};
 
 /// The mutations of the read-only path, in the order they run.
-pub const READERS: [Mutation; 10] = [
+pub const READERS: [Mutation; 11] = [
     Mutation {
-        name: "reader-collects-nothing",
+        name: "pass-collects-nothing",
         package: Package::Core,
-        breaks: "read-only path: a transaction that wrote nothing leaves the tables awaiting collection to the next writer",
-        file: "src/txn/end.rs",
-        original: "        if self.tx.awaiting.load(Ordering::Acquire) && !self.tx.read_collecting.swap(true, Ordering::AcqRel) {",
-        replacement: "        if false {",
-        integration: &["mvcc::an_idle_tables_garbage_is_collected_once_readers_end"],
+        breaks: "the maintenance job's pass collects no table awaiting collection, so what a batch left stays (RULES.md D920)",
+        file: "src/txn/collect.rs",
+        original: "        if self.tx.awaiting.load(Ordering::Acquire) {\n            self.gc_waiting(std::iter::empty());",
+        replacement: "        if false {\n            self.gc_waiting(std::iter::empty());",
+        integration: &["collection::reading_ends_leave_collection_to_the_maintenance_pass"],
         unit: &[],
     },
     Mutation {
-        name: "reader-collecting-kept",
+        name: "pass-asked-once",
         package: Package::Core,
-        breaks: "read-only path: an end that collected keeps the mark that one is collecting, so no later one collects (RULES.md D453)",
-        file: "src/txn/end.rs",
-        original: "            self.tx.read_collecting.store(false, Ordering::Release);",
+        breaks: "a pass begun keeps the mark that one was asked for, so no end asks for another (RULES.md D920)",
+        file: "src/txn/collect.rs",
+        original: "        self.pass_asked.store(false, Ordering::Release);",
         replacement: "",
-        integration: &["collection::reading_ends_collect_one_at_a_time_and_leave_nothing"],
+        integration: &["collection::the_maintenance_pass_is_asked_for_after_each"],
         unit: &[],
     },
     Mutation {
-        name: "reader-awaiting-unset",
+        name: "left-never-noted",
         package: Package::Core,
-        breaks: "read-only path: the flag of tables awaiting collection never set, so no reader collects them",
-        file: "src/txn/end.rs",
-        original: "            self.tx.awaiting.store(now, Ordering::Release);",
-        replacement: "            self.tx.awaiting.store(false, Ordering::Release);",
-        integration: &["mvcc::an_idle_tables_garbage_is_collected_once_readers_end"],
+        breaks: "a table whose collection is not due is never noted as awaiting, so the pass never collects it (RULES.md D920)",
+        file: "src/txn/collect.rs",
+        original: "        if lock.noted() || !storage.uncollected() {",
+        replacement: "        if true {",
+        integration: &["collection::reading_ends_leave_collection_to_the_maintenance_pass"],
+        unit: &[],
+    },
+    Mutation {
+        name: "quiet-collected-at-once",
+        package: Package::Core,
+        breaks: "a table is collected by every end, whatever the horizon is past its garbage (RULES.md D451, D920)",
+        file: "src/engine/rows/mvcc/gc.rs",
+        original: "is_some_and(|past| past >= COLLECT_AFTER)",
+        replacement: "is_some()",
+        integration: &["collection::a_quiet_table_is_collected_a_batch_of_commits_at_a_time"],
         unit: &[],
     },
     Mutation {

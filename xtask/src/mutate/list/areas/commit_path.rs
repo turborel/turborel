@@ -61,7 +61,7 @@ pub const COMMIT_PATH: [Mutation; 7] = [
         name: "commit-path-noted-never-filed",
         package: Package::Core,
         breaks: "a table not yet due is never filed as awaiting collection, so no later end collects it (D795)",
-        file: "src/txn/end.rs",
+        file: "src/txn/collect.rs",
         original: "(Some(true), Some(true)) | (None, Some(false))",
         replacement: "(Some(true), _) | (None, Some(false))",
         integration: &["collection::a_busy_table_is_collected_a_batch_of_commits_at_a_time"],
@@ -70,11 +70,11 @@ pub const COMMIT_PATH: [Mutation; 7] = [
     Mutation {
         name: "commit-path-awaiting-never-stored",
         package: Package::Core,
-        breaks: "whether tables await collection is never stored, so an end that wrote nothing never collects them (D795)",
-        file: "src/txn/end.rs",
+        breaks: "whether tables await collection is never stored, so the maintenance pass is never asked for them (D795, D920)",
+        file: "src/txn/collect.rs",
         original: "        if self.tx.awaiting.load(Ordering::Relaxed) != now {",
         replacement: "        if false && self.tx.awaiting.load(Ordering::Relaxed) != now {",
-        integration: &["collection::a_session_collects_once_its_reply_is_sent"],
+        integration: &["collection::reading_ends_leave_collection_to_the_maintenance_pass"],
         unit: &[],
     },
 ];

@@ -19,6 +19,13 @@
 //! COLUMNSTORE.FREEZE_DELAY. `Database::maintain` does every table's now,
 //! until none does more.
 //!
+//! The job first collects the garbage of every table awaiting collection
+//! (`State::collect_awaiting`, RULES.md D920): a transaction's end
+//! collects a table only once a batch of garbage is due (D451), and one
+//! that leaves a table awaiting asks for the job a second later, so the
+//! garbage of a table gone quiet waits no longer than that.
+//! `Database::maintain` collects them at once.
+//!
 //! One table's work is done at a time, under the gate, so a checkpoint
 //! waits for it (`db/checkpoint.rs`), and none while the table's
 //! collection is held back, or its definition is newer than the state
@@ -50,14 +57,20 @@ impl Database {
         let st = self.snapshot()?;
         let tables: Vec<QualifiedName> = st.catalog.tables().iter().map(|t| t.name.clone()).collect();
         let _turn = self.background().maintenance_turn.take("maintenance")?;
+        st.collect_awaiting();
         while st.maintain_round(&tables, true)? {}
         Ok(())
     }
 
-    /// Asks for the maintenance job, if a table has maintenance due.
+    /// Asks for the maintenance job, if a table has maintenance due; or,
+    /// a second from now, if a table awaits collection and the job's pass
+    /// has not been asked for since its last (RULES.md D920).
     pub(super) fn maintain_if_due(&self) {
-        if self.snapshot().is_ok_and(|st| st.tx.maintenance_due()) {
+        let Ok(st) = self.snapshot() else { return };
+        if st.tx.maintenance_due() {
             self.request_maintenance();
+        } else if st.tx.ask_pass() {
+            self.request_maintenance_after(AGAIN);
         }
     }
 }
@@ -72,11 +85,11 @@ impl Database {
 /// noted again.
 pub(super) fn maintained(db: &Database) -> Result<Option<Duration>> {
     let st = db.snapshot()?;
+    let _turn = db.background().maintenance_turn.take("maintenance")?;
+    // Collected first: a table collected may be noted for maintenance.
+    st.collect_awaiting();
     let tables: Vec<QualifiedName> = st.tx.take_maintenance().into_iter().collect();
-    let worked = {
-        let _turn = db.background().maintenance_turn.take("maintenance")?;
-        st.maintain_round(&tables, false)?
-    };
+    let worked = st.maintain_round(&tables, false)?;
     Ok(if worked { Some(Duration::ZERO) } else { st.tx.maintenance_due().then_some(AGAIN) })
 }
 

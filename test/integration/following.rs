@@ -123,6 +123,8 @@ fn a_following_database_recovers_from_its_checkpoint_alone() {
     open.commit().unwrap();
     give(&again, &log, Lsn(last(&log).0 - 1_u64), last(&log));
     assert_eq!(shown(&again), shown(&primary));
+    // What a batch left collected (RULES.md D920): one entry a row.
+    primary.maintain().unwrap();
     assert_eq!(again.index_entries("T_V").unwrap(), primary.index_entries("T_V").unwrap());
 }
 

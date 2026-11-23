@@ -1,21 +1,26 @@
 //! \[DESIGN\] Garbage collection under many sessions (RULES.md D29, D445):
 //! one transaction's end collects a table at a time, the others pass it
-//! over, and what they pass over is collected by a later end; a busy
-//! table a batch of commits at a time (D451).
+//! over, and what they pass over is collected later; a table a batch of
+//! commits at a time, busy or quiet (D451, D920), what a batch leaves
+//! collected by the maintenance job's pass.
 
 use std::thread;
 
 use turborel::db::Database;
+use turborel::threads::JobPolicy;
 
 use crate::common::rows;
 
 /// The rows of T.
 const ROWS: usize = 64;
+/// The commits a table's earliest garbage waits past the horizon for
+/// before an end collects it (RULES.md D451).
+const BATCH: usize = 64;
 
 /// Verifies: [DESIGN] RULES.md D29, D445: sixteen sessions changing the
 /// key of an index's rows at once, each end passing over a collection
-/// under way, leave no version behind: once they end, one transaction's
-/// end collects the rest, and the index holds one entry a row.
+/// under way, leave no version behind: once they end, the maintenance
+/// pass collects the rest, and the index holds one entry a row.
 #[test]
 fn collections_passed_over_are_done_later() {
     let db = Database::new();
@@ -42,54 +47,56 @@ fn collections_passed_over_are_done_later() {
     for t in threads {
         t.join().unwrap();
     }
-    rows(&s, "SELECT ID FROM T WHERE ID = 0").unwrap();
-    s.commit().unwrap();
+    db.maintain().unwrap();
     assert_eq!(db.index_entries("T_X").unwrap(), ROWS, "every superseded version's entry taken back");
     assert_eq!(rows(&s, "SELECT SUM(X) FROM T"), Ok(vec!["640".to_owned()]));
 }
 
-/// Verifies: [DESIGN] RULES.md D450: a session collecting after its reply
-/// leaves its commit's garbage, and the versions' index entries, until it
-/// collects; a rollback's too; and another transaction's end collects
-/// what it left all the same.
+/// Verifies: [DESIGN] RULES.md D450, D451, D920: a session collecting
+/// after its reply leaves its commit's garbage, and the versions' index
+/// entries, until it collects, and then until a batch is due, the horizon
+/// `BATCH` commits past it; a rollback's versions go at its next
+/// collection; and the maintenance pass collects what it left all the
+/// same.
 #[test]
 fn a_session_collects_once_its_reply_is_sent() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, X INTEGER)").unwrap();
-    db.create_index("T_X", "APP.T", &["X"], "btree").unwrap();
-    let s = db.session("APP");
-    s.run("INSERT INTO T VALUES (1, 0), (2, 0)").unwrap();
-    s.commit().unwrap();
+    let db = busy(2);
+    db.maintain().unwrap();
+    let (s, u) = (db.session("APP"), db.session("APP"));
     s.collect_after_reply(true);
     s.run("UPDATE T SET X = 1 WHERE ID = 1").unwrap();
     s.commit().unwrap();
     assert_eq!(db.index_entries("T_X").unwrap(), 3, "the old version's entry kept");
     s.collect();
-    assert_eq!(db.index_entries("T_X").unwrap(), 2);
+    assert_eq!(db.index_entries("T_X").unwrap(), 3, "no batch due yet");
+    for _ in 0..BATCH {
+        u.run("INSERT INTO U VALUES (1)").unwrap();
+        u.commit().unwrap();
+    }
+    assert_eq!(db.index_entries("T_X").unwrap(), 3, "the ends of transactions that wrote another table leave it");
     s.run("UPDATE T SET X = 2 WHERE ID = 2").unwrap();
     s.rollback().unwrap();
+    s.collect();
+    assert_eq!(db.index_entries("T_X").unwrap(), 2, "collected by its session once the batch was due");
     s.run("UPDATE T SET X = 3 WHERE ID = 1").unwrap();
     s.commit().unwrap();
     assert_eq!(db.index_entries("T_X").unwrap(), 3);
-    let other = db.session("APP");
-    assert_eq!(rows(&other, "SELECT X FROM T WHERE ID = 2").unwrap(), vec!["0".to_owned()]);
-    other.commit().unwrap();
-    assert_eq!(db.index_entries("T_X").unwrap(), 2, "another end collected it");
+    db.maintain().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 2, "the maintenance pass collected it");
 }
 
-/// Verifies: [DESIGN] RULES.md D453: sixteen sessions that only read,
-/// ending at once while a table's garbage awaits collection, collect it one
-/// at a time, the others passing by; once they end, the end of one more
-/// that reads leaves no version behind.
+/// Verifies: [DESIGN] RULES.md D453, D920: sixteen sessions that only
+/// read, ending at once while a table's garbage awaits collection, collect
+/// nothing, as the end of a transaction that wrote nothing collects no
+/// table; the maintenance job, asked for by an end that left the table
+/// awaiting, collects it when the program runs what is due, and leaves no
+/// version behind.
 #[test]
-fn reading_ends_collect_one_at_a_time_and_leave_nothing() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, X INTEGER)").unwrap();
-    db.create_index("T_X", "APP.T", &["X"], "btree").unwrap();
+fn reading_ends_leave_collection_to_the_maintenance_pass() {
+    let db = busy(ROWS);
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.maintain().unwrap();
     let s = db.session("APP");
-    let values: Vec<String> = (0..ROWS).map(|i| format!("({i}, 0)")).collect();
-    s.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
-    s.commit().unwrap();
     let reader = db.session("APP");
     rows(&reader, "SELECT COUNT(*) FROM T").unwrap();
     s.run("UPDATE T SET X = X + 1").unwrap();
@@ -110,9 +117,81 @@ fn reading_ends_collect_one_at_a_time_and_leave_nothing() {
     for t in threads {
         t.join().unwrap();
     }
-    rows(&s, "SELECT ID FROM T WHERE ID = 0").unwrap();
-    s.commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), ROWS * 2, "no reading end collected it");
+    db.run_due().unwrap();
     assert_eq!(db.index_entries("T_X").unwrap(), ROWS, "every superseded version's entry taken back");
+}
+
+/// Verifies: [DESIGN] RULES.md D920: an end that leaves a table awaiting
+/// collection asks for the maintenance job once, the ends after it asking
+/// no more; once the job's pass has begun, the next such end asks again,
+/// so each batch left is collected.
+#[test]
+fn the_maintenance_pass_is_asked_for_after_each() {
+    let db = busy(1);
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.maintain().unwrap();
+    let w = db.session("APP");
+    for round in 1..=2 {
+        for n in 1..=3 {
+            w.run(&format!("UPDATE T SET X = {} WHERE ID = 0", round * 10 + n)).unwrap();
+            w.commit().unwrap();
+        }
+        assert_eq!(db.index_entries("T_X").unwrap(), 4, "round {round}: three old versions' entries kept");
+        db.run_due().unwrap();
+        assert_eq!(db.index_entries("T_X").unwrap(), 1, "round {round}: collected by the pass");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D451, D920: a quiet table, no transaction
+/// open in it, is collected a batch of commits at a time too: each commit
+/// leaves its garbage until the horizon is `BATCH` commits past the
+/// earliest, and the commit that takes it there collects all of it, its
+/// own with it.
+#[test]
+fn a_quiet_table_is_collected_a_batch_of_commits_at_a_time() {
+    let db = busy(1);
+    db.set_job_policy(JobPolicy::Paused).unwrap();
+    db.maintain().unwrap();
+    let w = db.session("APP");
+    for n in 1..=BATCH {
+        w.run(&format!("UPDATE T SET X = {n} WHERE ID = 0")).unwrap();
+        w.commit().unwrap();
+        assert_eq!(db.index_entries("T_X").unwrap(), n + 1, "commit {n}: every old version's entry kept");
+    }
+    w.run("UPDATE T SET X = 0 WHERE ID = 0").unwrap();
+    w.commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 1, "the batch collected by the commit that made it due");
+    assert_eq!(rows(&w, "SELECT X FROM T"), Ok(vec!["0".to_owned()]));
+}
+
+/// Verifies: [DESIGN] RULES.md D29, D920: a batch never takes a version a
+/// reader may still read, at READ COMMITTED or at SERIALIZABLE: a
+/// transaction open since before the commits reads its version through
+/// every collection, a batch due and the maintenance pass, and once it
+/// ends the pass takes the version.
+#[test]
+fn a_batch_keeps_what_an_open_transaction_reads() {
+    for level in ["READ COMMITTED", "SERIALIZABLE"] {
+        let db = busy(1);
+        db.set_job_policy(JobPolicy::Paused).unwrap();
+        db.maintain().unwrap();
+        let (w, reader) = (db.session("APP"), db.session("APP"));
+        reader.run("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE").unwrap();
+        assert_eq!(rows(&reader, "SELECT X FROM T"), Ok(vec!["0".to_owned()]));
+        for n in 1..=BATCH * 2 {
+            w.run(&format!("SET TRANSACTION ISOLATION LEVEL {level}")).unwrap();
+            w.run(&format!("UPDATE T SET X = {n} WHERE ID = 0")).unwrap();
+            w.commit().unwrap();
+        }
+        db.maintain().unwrap();
+        assert_eq!(rows(&reader, "SELECT X FROM T"), Ok(vec!["0".to_owned()]), "{level}: its snapshot's version kept");
+        assert_eq!(rows(&reader, "SELECT COUNT(*) FROM T WHERE X = 0"), Ok(vec!["1".to_owned()]), "{level}: and its index entry");
+        reader.commit().unwrap();
+        db.maintain().unwrap();
+        assert_eq!(db.index_entries("T_X").unwrap(), 1, "{level}: collected once no transaction reads it");
+        assert_eq!(rows(&reader, "SELECT X FROM T"), Ok(vec![(BATCH * 2).to_string()]));
+    }
 }
 
 /// A database with APP's table T, of `rows` rows (ID, 0) and the index T_X
@@ -129,49 +208,47 @@ fn busy(rows: usize) -> Database {
 }
 
 /// Verifies: [DESIGN] RULES.md D451: while a transaction is open in a
-/// table, the ends of others pass its garbage over until the horizon is
-/// a batch of commits past it, then one collects it.
+/// table, the ends of those that write it pass its garbage over until the
+/// horizon is a batch of commits past it, then one collects it.
 #[test]
 fn a_busy_table_is_collected_a_batch_of_commits_at_a_time() {
-    let db = busy(1);
-    let (w, u) = (db.session("APP"), db.session("APP"));
+    let db = busy(2);
+    db.set_job_policy(JobPolicy::Paused).unwrap();
+    db.maintain().unwrap();
+    let w = db.session("APP");
     let readers = [db.session("APP"), db.session("APP")];
     rows(&readers[0], "SELECT X FROM T").unwrap();
     w.run("UPDATE T SET X = 1 WHERE ID = 0").unwrap();
     w.commit().unwrap();
-    // Each round a reader begins in T, the other ends, and a commit in U
-    // moves the clock: T is never without a transaction open.
-    for n in 1..=100 {
+    // Each round a reader begins in T, the other ends, and a commit that
+    // changes no key of T moves the clock: T is never without a
+    // transaction open.
+    for n in 1..=BATCH + 4 {
         rows(&readers[n % 2], "SELECT X FROM T").unwrap();
         readers[(n + 1) % 2].commit().unwrap();
-        u.run("INSERT INTO U VALUES (1)").unwrap();
-        u.commit().unwrap();
+        w.run("UPDATE T SET ID = 1 WHERE ID = 1").unwrap();
+        w.commit().unwrap();
         if n == 2 {
-            assert_eq!(db.index_entries("T_X").unwrap(), 2, "the old version's entry kept while T is busy");
+            assert_eq!(db.index_entries("T_X").unwrap(), 3, "the old version's entry kept while T is busy");
         }
     }
-    assert_eq!(db.index_entries("T_X").unwrap(), 1, "collected once the horizon passed the batch");
+    assert_eq!(db.index_entries("T_X").unwrap(), 2, "collected once the horizon passed the batch");
 }
 
-/// Verifies: [DESIGN] RULES.md D451: a busy table whose garbage passes the
-/// bound of versions is collected at the next end, however near the
-/// horizon; what it collected counts no more.
+/// Verifies: [DESIGN] RULES.md D451: a table whose garbage passes the
+/// bound of versions is collected at the next end of a transaction that
+/// wrote it, however near the horizon; what it collected counts no more.
 #[test]
-fn a_busy_table_with_much_garbage_is_collected_at_once() {
+fn a_table_with_much_garbage_is_collected_at_once() {
     let db = busy(5_000);
+    db.set_job_policy(JobPolicy::Paused).unwrap();
+    db.maintain().unwrap();
     let w = db.session("APP");
-    let readers = [db.session("APP"), db.session("APP")];
-    rows(&readers[0], "SELECT X FROM T WHERE ID = 0").unwrap();
     w.run("UPDATE T SET X = 1").unwrap();
     w.commit().unwrap();
-    rows(&readers[1], "SELECT X FROM T WHERE ID = 0").unwrap();
-    readers[0].commit().unwrap();
     assert_eq!(db.index_entries("T_X").unwrap(), 5_000, "every old version's entry taken back");
     // What was collected no longer counts: one more version waits.
     w.run("UPDATE T SET X = 2 WHERE ID = 0").unwrap();
     w.commit().unwrap();
-    rows(&readers[0], "SELECT X FROM T WHERE ID = 0").unwrap();
-    readers[1].commit().unwrap();
-    assert_eq!(db.index_entries("T_X").unwrap(), 5_001, "the one old version's entry kept while T is busy");
-    readers[0].commit().unwrap();
+    assert_eq!(db.index_entries("T_X").unwrap(), 5_001, "the one old version's entry kept, no batch due");
 }

@@ -425,9 +425,9 @@ verification approach DO-178C expects (§8).
 | D448 | SERIALIZABLE certifies by column, and skips the check when no one read |
 | D449 | A row's turn passed wakes only the waiter whose turn it is |
 | D450 | A served session's transactions are collected once their reply is sent |
-| D451 | A busy table is collected a batch of commits at a time |
+| D451 | A table is collected a batch of commits at a time |
 | D452 | A READ COMMITTED UPDATE that only adds to a column reserves its increments, applied as its transaction commits |
-| D453 | One transaction that wrote nothing collects at a time |
+| D453 | A transaction that wrote nothing collects no table, and a served session collects the tables it wrote |
 | D454 | A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own |
 | D455 | A row a transaction wrote is no read of another's change at its validation |
 | D456 | A row waited for is claimed for the first in its line |
@@ -586,6 +586,7 @@ verification approach DO-178C expects (§8).
 | D882 | A transaction holds its log records end to end in one buffer its thread keeps, and the log frames them from there |
 | D890 | A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more |
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
+| D920 | A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves |
 
 ### The project
 
@@ -16287,6 +16288,61 @@ before. The index's estimate costs a count of at most a leaf's entries,
 or the share of its tree a larger range takes, once for each estimate
 of the table's conjuncts.
 
+#### D920. A commit collects a table only once a batch is due, quiet or busy, and the maintenance job's pass collects what a batch leaves
+
+With no transaction open in a table, its collection was due at every
+end (D451), so a session writing alone collected each table it wrote at
+every commit, for that one commit's garbage. Each collection entered the
+gate, found the table's lock and storage by name, took the locks of its
+garbage, of its undone versions, of its commits to stamp and of its
+validated transactions, split the garbage list, and truncated the undo
+store. In an order entry workload at one session that was near a third
+of each commit, and it was the committer that paid it, before its reply.
+
+A transaction's end now collects a table it joined only when a batch is
+due, whether or not the table is quiet (`RowTable::due_at`,
+`txn/collect.rs`). One collection then takes the garbage of many commits
+with one set of locks. A table left with garbage is noted as awaiting
+collection, once (D795). The end of a transaction looks only at the
+tables it joined. It no longer walks the set of tables awaiting, and the
+end of a transaction that wrote nothing collects nothing (D453).
+
+What a batch leaves is collected by the maintenance job
+(`db/maintenance.rs`). An end that leaves a table awaiting asks for the
+job a second later, once until its pass begins. The pass collects every
+table awaiting as far as the horizon lets, due or not, waiting for a
+collection under way, and then does the maintenance noted.
+`Database::maintain` does the same at once. Under JOBS.POLICY MANUAL the
+program's `run_due` runs the pass, and under PAUSED it waits for the
+policy to change, a batch that comes due being collected meanwhile.
+
+The bound is 64 commits past a table's earliest garbage, the bound D451
+chose for a busy table. A sweep of it on the in-repo order entry bench
+at one session, over 1, 4, 16, 64, 256 and 1024 commits, showed a
+commit's time fall by about a quarter at every value against a
+collection at each end, and no difference between the values beyond the
+spread of the runs: what a commit saves is the collection of its own
+garbage at its own end and the walk of the tables awaiting, not the size
+of the batch. So the bound stays the one rule for quiet and busy tables,
+and the versions held stay bounded by it. The sweep's figures are in the
+commit that made the change.
+
+The semantics hold for these reasons.
+
+- The horizon rule is unchanged. A collection removes only what commits
+  at or before the horizon superseded, so no reader, at any isolation
+  level, meets a version collected too early. A batch only comes later.
+- The garbage a table holds is bounded by a batch, 64 commits or 4096
+  versions, whichever comes first, beyond what a lagging horizon keeps
+  as before. Its lists are counted against the memory budget and spill
+  as before (D38, D870).
+- A table no transaction writes again is collected by the pass, within
+  a second of the end that left it, so its zones become visible to all
+  and its undo store is truncated without another commit.
+- Maintenance is noted as before. An end notes a table whose engine has
+  some due whether or not it collected it.
+- A checkpoint and a close collect every table, waiting, as before.
+
 ## 2. Project layout
 
 ```
@@ -16682,12 +16738,12 @@ their tables as awaiting collection, and the session collects them with
 `Session::collect`. The server turns this on for every session it
 serves, and collects once it has flushed the replies of a request. A
 request whose reply is held for the next, pipelined, leaves it to that
-one. Until then, the end of any other transaction collects the noted
-tables as it would any awaiting, and a checkpoint waits for them
-(`gc_waiting`). The horizon rule is unchanged, so no version a snapshot
-can read is removed; collection only comes a little later.
+one. Until then the noted tables await collection as any other does.
+The maintenance job's pass collects them (D920), and a checkpoint waits
+for them (`gc_waiting`). The horizon rule is unchanged, so no version a
+snapshot can read is removed; collection only comes a little later.
 
-#### D451. A busy table is collected a batch of commits at a time
+#### D451. A table is collected a batch of commits at a time
 
 Every transaction's end that found a table's garbage past the horizon
 collected it (D29, D445), so a table written by many sessions was
@@ -16695,18 +16751,24 @@ collected after nearly every commit, each time for one commit's garbage,
 and paid the collection's fixed costs each time.
 
 An end now collects a table only when the collection is due
-(`TableStorage::collection_due`). It is due at once when no transaction
-is open in the table, as after every end in a quiet database. In a busy
-table it is due once the horizon is 64 commits past its earliest garbage,
-or once 4096 versions filed as garbage await collection, or while versions undone by rollbacks wait. Those are released
-as soon as the readers that may go back to them end (D29), and rollbacks
-are rare. Until then the table stays awaiting collection, and a later
-end looks again. A checkpoint's collection (`gc_waiting`) takes
+(`TableStorage::collection_due`). It is due once the horizon is 64
+commits past its earliest garbage, or once 4096 versions filed as garbage
+await collection, or while versions undone by rollbacks wait. Those are
+released as soon as the readers that may go back to them end (D29), and
+rollbacks are rare. Until then the table stays awaiting collection, and
+a later end of a transaction that wrote it looks again. A checkpoint's
+collection (`gc_waiting`) and the maintenance job's pass (D920) take
 everything, due or not. Versions left unstamped wait with the garbage,
 a reader resolving an unstamped version by its transaction's status.
 The horizon rule is unchanged, so no version a snapshot can
-read is removed. A busy table keeps at most a batch of commits' garbage
-more than it did.
+read is removed. A table keeps at most a batch of commits' garbage
+more than it did, in lists counted against the memory budget as before
+(D38, D870).
+
+The rule held at first only of a busy table. With no transaction open
+in a table its collection was due at once, as after every end in a quiet
+database. D920 took that case out, so one session writing alone
+collects in batches too.
 
 Eager pruning at write, releasing a superseded version's undo slot as a
 writer passes it, was rejected. The slot belongs to its commit's garbage,
@@ -16760,33 +16822,33 @@ savepoint takes back the reservations made since.
 A procedure's increment through a delta table that shows none of the
 columns it adds to is reserved too (D849).
 
-#### D453. One transaction that wrote nothing collects at a time
+#### D453. A transaction that wrote nothing collects no table, and a served session collects the tables it wrote
 
-The end of a transaction that wrote nothing collects the tables awaiting
+The end of a transaction that wrote nothing collected the tables awaiting
 collection, since its end may move the horizon (D29). Once a served
 session collects after its reply (D450), every session's request did
 so. Many sessions ending at once then took the collection's locks in
 turn, though only one could collect a table (D445) and the others
-found nothing left to do.
+found nothing left to do. Such ends were then let collect one at a time,
+the others passing by.
 
-Such an end now collects only while no other such end is collecting.
-One that finds another under way passes by. The one collecting collects
-the same tables, and what its horizon does not reach waits for any later
-end, as a table passed over does (D445). A transaction that wrote
-still collects its own tables as before.
+Such an end now collects nothing (D920). A table awaits collection
+almost always once tables are collected in batches (D451), so every
+such end would walk the set of them to find none due. The end asks for
+the maintenance job instead, whose pass collects the set, and a
+transaction that wrote collects its own tables when a batch is due.
 
-A served session's collection after its reply first collects the tables
-its own transactions wrote since it last collected, as their ends would
-have, and only then the set, as such an end does. Before, its
-transactions only noted their tables in the set, and its collection was
-one of these ends, so at many writing sessions one session at a time
-collected every table. That one fell behind the commits, each pass took
-longer for the garbage left meanwhile, and a table's transactions kept
-for validation (D448) grew to thousands. The tables a session wrote are
-kept with its cancel flag, each once, and taken by its collection. Each
-is collected as at a transaction's end, one collector at a time and
-only when due (D445, D451), so sessions writing different tables
-collect them at once.
+A served session's collection after its reply collects the tables its
+own transactions wrote since it last collected, as their ends would
+have. Before, its transactions only noted their tables in the set, and
+its collection was one of the ends that collected the set, so at many
+writing sessions one session at a time collected every table. That one
+fell behind the commits, each pass took longer for the garbage left
+meanwhile, and a table's transactions kept for validation (D448) grew to
+thousands. The tables a session wrote are kept with its cancel flag,
+each once, and taken by its collection. Each is collected as at a
+transaction's end, one collector at a time and only when due (D445,
+D451), so sessions writing different tables collect them at once.
 
 #### D454. A READ COMMITTED write waits for a row in demand as long as it takes, and a procedure's statement reads at a snapshot of its own
 

@@ -84,6 +84,7 @@ mod access;
 mod begin;
 mod capabilities;
 mod clock;
+mod collect;
 mod durable;
 mod end;
 pub(crate) mod escrow;
@@ -108,8 +109,8 @@ pub(crate) mod writing;
 pub(crate) use begin::Origin;
 pub use capabilities::{Concurrency, Persistence, Policy, TxCapabilities, Undo};
 use clock::Clock;
+pub(crate) use collect::remove_entries;
 pub(crate) use durable::Committing;
-pub(crate) use end::remove_entries;
 pub(crate) use followed::{Followed, FollowedRecords, Following};
 pub(crate) use kept::Sharing;
 pub use locks::Damage;
@@ -294,14 +295,17 @@ pub(crate) struct Transactions {
     /// the two take turns.
     pub(crate) replaying: crate::threads::Turn,
     /// The tables whose engines hold versions awaiting collection
-    /// (`TableStorage::uncollected`), collected as any transaction ends.
+    /// (`TableStorage::uncollected`), collected by the end of a
+    /// transaction that wrote them once a batch is due, or by the
+    /// maintenance job's pass (RULES.md D451, D920).
     uncollected: Mutex<BTreeSet<QualifiedName>>,
-    /// Whether `uncollected` names any table, as it was last changed: so a
-    /// transaction that wrote nothing looks at it without its lock.
+    /// Whether `uncollected` names any table, as it was last changed: so
+    /// a transaction's end looks at it without its lock.
     awaiting: Alone<AtomicBool>,
-    /// Whether the end of a transaction that wrote nothing is collecting
-    /// `uncollected`: another such end passes it by (RULES.md D453).
-    read_collecting: AtomicBool,
+    /// Whether the pass collecting `uncollected` has been asked for and
+    /// has not begun: an end that leaves a table awaiting asks once
+    /// (RULES.md D920).
+    pass_asked: AtomicBool,
     /// The tables whose engines have maintenance due (`TableStorage::maintenance_due`).
     maintenance: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `maintenance` names any table.
@@ -364,7 +368,7 @@ impl Default for Transactions {
             replaying: crate::threads::Turn::default(),
             uncollected: Mutex::new(BTreeSet::new()),
             awaiting: Alone(AtomicBool::new(false)),
-            read_collecting: AtomicBool::new(false),
+            pass_asked: AtomicBool::new(false),
             maintenance: Mutex::new(BTreeSet::new()),
             noted: AtomicBool::new(false),
             folds: Mutex::new(BTreeSet::new()),
@@ -377,13 +381,6 @@ impl Default for Transactions {
 }
 
 impl Transactions {
-    /// Whether a transaction that wrote nothing is collecting: for tests
-    /// that hold such a collection under way (RULES.md D453).
-    #[cfg(test)]
-    pub(crate) fn read_collecting(&self) -> &AtomicBool {
-        &self.read_collecting
-    }
-
     /// The oldest snapshot any open transaction reads at, or, with none
     /// open, the stable timestamp: no transaction reads before it.
     pub(crate) fn horizon(&self) -> Timestamp {
