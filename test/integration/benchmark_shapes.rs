@@ -128,12 +128,13 @@ fn estimated(plan: &str) -> f64 {
     digits.parse().unwrap_or(0.0)
 }
 
-/// Verifies: [DESIGN] RULES.md D302: of a customer found by warehouse,
-/// district and last name, the index whose prefix holds all three is read,
-/// not the key's prefix of two; that prefix, of 1,100 rows, which the key
-/// stopped counting at 1,000, is estimated to find more than it counted,
-/// not the 55 a guess of independent columns gives, so the table is
-/// scanned rather than a twentieth of it fetched by the key.
+/// Verifies: [DESIGN] RULES.md D302, D381, D839: of a customer found by
+/// warehouse, district and last name, the index whose prefix holds all
+/// three is read, not the key's prefix of two. That prefix, of 1,100 rows,
+/// past what the key counts, is estimated by the share of the tree between
+/// its bounds, within twice its rows, not the 55 a guess of independent
+/// columns gives. Its rows lie together in the zones a scan of the district
+/// reads, so the key's range, priced as that scan, is read (D839).
 #[test]
 fn a_longer_equal_prefix_is_read() {
     let db = customers();
@@ -143,6 +144,8 @@ fn a_longer_equal_prefix_is_read() {
     assert!(plan.contains("using CU_NAME"), "{plan}");
     assert_eq!(sorted(&s, sql).len(), 2);
     let district = physical(&s, "SELECT ID, BAL FROM CU WHERE W = 1 AND D = 1");
-    assert!(district.contains("SeqScan") || estimated(&district) > 1000.0, "{district}");
+    let est = estimated(&district);
+    assert!(district.contains("IndexScan C.CU") && !district.contains("CU_NAME"), "{district}");
+    assert!((550.0..=2200.0).contains(&est), "{district}");
     assert_eq!(sorted(&s, "SELECT ID FROM CU WHERE W = 1 AND D = 1").len(), 1100);
 }
