@@ -10,21 +10,24 @@
 use crate::compiled_procedures::same;
 
 /// The tables of these cases: P, referenced by C's PK; C, with a NOT NULL
-/// column, a UNIQUE one, a foreign key and a deferrable CHECK.
-const SETUP: [&str; 4] = [
+/// column, a UNIQUE one, a foreign key and a CHECK; E, with a deferrable
+/// CHECK.
+const SETUP: [&str; 6] = [
     "CREATE TABLE P (K INTEGER PRIMARY KEY, V INTEGER)",
-    "CREATE TABLE C (K INTEGER PRIMARY KEY, V INTEGER NOT NULL, U INTEGER UNIQUE, PK INTEGER REFERENCES P,
-       DK INTEGER CONSTRAINT DK_POSITIVE CHECK (DK > 0) DEFERRABLE INITIALLY IMMEDIATE)",
+    "CREATE TABLE C (K INTEGER PRIMARY KEY, V INTEGER NOT NULL, U INTEGER UNIQUE, PK INTEGER REFERENCES P, DK INTEGER CHECK (DK > 0))",
+    "CREATE TABLE E (K INTEGER PRIMARY KEY, DK INTEGER CONSTRAINT DK_POSITIVE CHECK (DK > 0) DEFERRABLE INITIALLY IMMEDIATE)",
     "INSERT INTO P VALUES (1, 0), (2, 0), (3, 0), (4, 0)",
     "INSERT INTO C VALUES (1, 1, 1, 1, 1), (2, 2, 2, 2, 2), (3, 3, 3, 1, 3)",
+    "INSERT INTO E VALUES (1, 1), (2, 2)",
 ];
 
 /// The procedures of these cases, one point change each.
-const PROCEDURES: [&str; 8] = [
+const PROCEDURES: [&str; 9] = [
     "CREATE PROCEDURE SETV (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET V = NULLIF(X, -1) WHERE K = KK",
     "CREATE PROCEDURE SETU (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET U = X WHERE K = KK",
     "CREATE PROCEDURE SETPK (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET PK = X WHERE K = KK",
-    "CREATE PROCEDURE SETDK (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET DK = X WHERE K = KK",
+    "CREATE PROCEDURE SETDK (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE E SET DK = X WHERE K = KK",
+    "CREATE PROCEDURE SETCK (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE C SET DK = X WHERE K = KK",
     "CREATE PROCEDURE REKEY (IN KK INTEGER, IN X INTEGER) MODIFIES SQL DATA UPDATE P SET K = X WHERE K = KK",
     "CREATE PROCEDURE DROPP (IN KK INTEGER) MODIFIES SQL DATA DELETE FROM P WHERE K = KK",
     "CREATE PROCEDURE DROPC (IN KK INTEGER, OUT X INTEGER) MODIFIES SQL DATA
@@ -36,7 +39,7 @@ const PROCEDURES: [&str; 8] = [
 /// `setup` and `PROCEDURES`, then `script`, compiled and interpreted.
 fn alike(setup: &[&str], script: &[String]) -> Vec<String> {
     let all: Vec<&str> = SETUP.iter().chain(setup).chain(PROCEDURES.iter()).copied().collect();
-    let read = ["? SELECT K, V, U, PK, DK FROM C ORDER BY K", "? SELECT K, V FROM P ORDER BY K"];
+    let read = ["? SELECT K, V, U, PK, DK FROM C ORDER BY K", "? SELECT K, V FROM P ORDER BY K", "? SELECT K, DK FROM E ORDER BY K"];
     let script: Vec<&str> = script.iter().map(String::as_str).chain(read).collect();
     same(&all, &script)
 }
@@ -55,10 +58,12 @@ fn a_point_change_checks_its_rows_constraints() {
     let mut script = calls("SETV", &["1, 10", "1, 11", "2, 12", "1, 13", "2, -1", "9, 1"]);
     script.extend(calls("SETPK", &["1, 2", "1, 3", "2, 4", "1, 1", "2, 9"]));
     script.extend(calls("SETU", &["1, 10", "1, 11", "2, 12", "1, 13", "2, 13"]));
+    script.extend(calls("SETCK", &["1, 10", "1, 11", "2, 12", "1, 13", "2, 0"]));
     script.extend(calls("BUMP", &["1, 1, ?", "1, 1, ?", "2, 1, ?", "9, 1, ?", "1, 1, ?"]));
     script.extend(calls("DROPC", &["9, ?", "3, ?", "3, ?"]));
     let gave = alike(&[], &script);
     assert!(gave.iter().any(|l| l.starts_with("CALL SETU(2, 13): error 23000")), "unique: {gave:?}");
+    assert!(gave.iter().any(|l| l.starts_with("CALL SETCK(2, 0): error 23000")), "CHECK: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL SETV(2, -1): error 23000")), "NOT NULL: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL SETPK(2, 9): error 23000")), "foreign key: {gave:?}");
     assert!(gave.iter().any(|l| l.starts_with("CALL DROPC(3, ?): ok")), "OLD TABLE: {gave:?}");
