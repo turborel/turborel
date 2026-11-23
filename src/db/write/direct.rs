@@ -8,22 +8,24 @@
 //! note of each row for the end of the statement is left out: no trigger
 //! may read it, no delta table but the one its caller makes of the row it
 //! returns, and the constraints its end checks are those of the row it
-//! wrote alone (`integrity/straight.rs`). A change whose increments would
-//! be reserved (RULES.md D452), or whose plan is not a point read as this
-//! execution runs it, is handed back to the general path. An INSERT of
+//! wrote alone (`integrity/straight.rs`). A change whose increments may
+//! be reserved (RULES.md D452) reserves them where it is and writes
+//! nothing (D942). One whose reservation is not taken, or whose plan is
+//! not a point read as this execution runs it, is handed back to the
+//! general path. An INSERT of
 //! one row of values is written as `insert_rows` writes a row, and its
 //! end checks the constraints of that row alone, as its end would.
 
 use super::{ObjectRows, Written};
-use crate::catalog::ColumnDefault;
+use crate::catalog::{ColumnDefault, QualifiedName};
 use crate::db::assignment::{candidate, candidate_of};
-use crate::db::escrow::reserving;
+use crate::db::escrow::{deltas, reserving};
 use crate::db::integrity::Straight;
 use crate::db::prepared::Keeping;
 use crate::db::routines::Hosted;
 use crate::db::{Session, StatementContext};
 use crate::error::Result;
-use crate::exec::Slots;
+use crate::exec::{PointRead, Slots};
 use crate::logical::LogicalPlan;
 use crate::params::Params;
 use crate::storage::{Row, RowId};
@@ -54,8 +56,9 @@ pub(in crate::db) fn point_change(
     let placed = if let ObjectRows::Point(_, _, placed) = &mut w.rows { placed.take() } else { None };
     let ObjectRows::Point(kept, reads, _) = &w.rows else { return Ok(Err(w)) };
     let Some(point) = kept.point(st) else { return Ok(Err(w)) };
-    if !delete && reserving(st, tx, &w, shown).is_some() {
-        return Ok(Err(w));
+    if !delete && let Some(guarded) = reserving(st, tx, &w, shown) {
+        let reserved = escrowed((session, cx), (&w, straight), (point, reads), guarded)?;
+        return Ok(reserved.ok_or(w));
     }
     // T, to be written, and the tables its condition and SET values read.
     st.update_lock(tx, &w.bound.table)?;
@@ -91,6 +94,46 @@ pub(in crate::db) fn point_change(
     let held = rows.as_ref().and_then(|(_, new)| new.as_ref());
     st.end_straight(tx, (&w.bound.table, straight), wrote.as_slice(), held)?;
     Ok(Ok(Pointed::Wrote(rows)))
+}
+
+/// \[DESIGN\] RULES.md D942. `w`, an UPDATE of `session` whose increments
+/// may be reserved guarding the columns of `guarded`, its row found by
+/// `point` after the locks `update_rows` takes, of its table and of the
+/// tables of `reads`. Its increments are reserved as `update_rows`
+/// reserves them (D452, D849) and its statement ended with nothing
+/// written. What it did is the row read and that row with the increments
+/// added, which its transaction writes as it commits. None if the
+/// increments are not reserved, and `w` is then to run the general path.
+///
+/// # Errors
+///
+/// As `update_rows`, and the statement's end.
+fn escrowed(
+    (session, cx): (&Session, StatementContext<'_>),
+    (w, straight): (&Written, &Straight),
+    (point, reads): (&PointRead, &[QualifiedName]),
+    guarded: u64,
+) -> Result<Option<Pointed>> {
+    let StatementContext { st, tx } = cx;
+    st.update_lock(tx, &w.bound.table)?;
+    for t in reads.iter().chain(straight.set_tables()) {
+        st.read_lock(tx, t)?;
+    }
+    let Some((id, seen)) = point.entry(st, tx.id, w.slots.as_deref().unwrap_or_default())? else {
+        if st.catalog.any_triggers() {
+            st.end_straight(tx, (&w.bound.table, straight), &[], None)?;
+        }
+        return Ok(Some(Pointed::Unfound));
+    };
+    let db = w.db(st);
+    let hosted = Hosted::in_db(Some(session), cx, &db);
+    let new = candidate(w, &seen, ("ISO/IEC 9075:1992 §13.10 GR8", &hosted))?;
+    let Some(added) = deltas(w, (&seen, &new), &hosted)? else { return Ok(None) };
+    if !st.reserve_row(tx, (&w.bound.table, id), (&seen, &added, guarded))? {
+        return Ok(None);
+    }
+    st.end_straight(tx, (&w.bound.table, straight), &[], None)?;
+    Ok(Some(Pointed::Wrote(Some((seen, Some(new))))))
 }
 
 /// Row `id` deleted by `w`, its condition read by `hosted`: the row it

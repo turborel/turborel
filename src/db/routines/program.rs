@@ -38,11 +38,11 @@ use std::sync::Arc;
 
 use super::super::area::commands::{self, Command};
 use super::super::execute::command_of;
-use super::super::{Completion, Session, StatementContext};
+use super::super::{Completion, Session, State, StatementContext};
 use crate::ast::{ControlStatement, SqlStatement};
 use crate::binder::{Frame, bind_program};
 use crate::catalog::{DataAccess, WHOLE};
-use crate::error::Result;
+use crate::error::{Code, Result, SqlError};
 use crate::exec::{Ended, run_program};
 use crate::logical::{Program, Step};
 use crate::params::{Params, RoutineScope};
@@ -157,16 +157,19 @@ impl Session {
         params: &Params,
         routine: Option<&KeptRoutine>,
     ) -> Result<KeptProgram> {
-        let scope = params.routine_scope().map_or_else(|| RoutineScope::unnamed(WHOLE.clone()), RoutineScope::clone);
-        let transitions = params.transitions_shared();
-        let base = params.dynamic_values().len();
-        let frame = Frame { base, scope: Arc::new(scope), transitions, returns: None, inline: false };
-        let Some(routine) = routine else { return Ok(KeptProgram::of(self.bound(cx.st, params, |b| bind_program(b, stmt, frame))?)) };
+        // Its frame is made only as it is bound, so a program kept copies
+        // no scope (RULES.md D940).
+        let frame = || {
+            let scope = params.routine_scope().map_or_else(|| RoutineScope::unnamed(WHOLE.clone()), RoutineScope::clone);
+            let (base, transitions) = (params.dynamic_values().len(), params.transitions_shared());
+            Frame { base, scope: Arc::new(scope), transitions, returns: None, inline: false }
+        };
+        let Some(routine) = routine else { return Ok(KeptProgram::of(self.bound(cx.st, params, |b| bind_program(b, stmt, frame()))?)) };
         routine.program((cx.st, self), || {
             // Bound as a statement kept is, so a binding that reads the
             // statement's instant is noted, and not kept.
             let binding = params.keeping();
-            let program = self.bound(cx.st, &binding, |b| bind_program(b, stmt, frame))?;
+            let program = self.bound(cx.st, &binding, |b| bind_program(b, stmt, frame()))?;
             Ok((program, binding.held()))
         })
     }
@@ -186,24 +189,39 @@ impl Session {
         params: &mut Params,
         routine: &KeptRoutine,
     ) -> Result<Completion> {
-        let run = |frame: &mut Params| {
+        marked(cx, atomic(body), || {
             if matches!(body, SqlStatement::Control(_) | SqlStatement::Signal(_)) {
                 let _compiling = self.compiling(cx.st, cx.tx.id);
-                return self.control_kept(cx, body, frame, Some(routine));
+                return self.control_kept(cx, body, params, Some(routine));
             }
-            self.run_statement(cx, body, frame, None)
+            self.run_statement(cx, body, params, None)
+        })
+    }
+
+    /// \[DESIGN\] The body of a procedure, a compound statement, ATOMIC if
+    /// `atomic`, whose program `kept` is compiled, run in `cx` over
+    /// `frame`, the whole frame of the program with its parameters' values
+    /// first. It runs as `run_body` runs it, with no frame made of
+    /// another's values and none copied back (RULES.md D940).
+    ///
+    /// # Errors
+    ///
+    /// The body's; SQLCODE -910 if `kept` is not compiled.
+    pub(in crate::db) fn run_framed(&self, cx: StatementContext<'_>, kept: &KeptProgram, frame: &mut Params, atomic: bool) -> Result<()> {
+        let Some(compiled) = kept.compiled() else {
+            return Err(SqlError::new(Code::Api, "[DESIGN] a program run over its frame is compiled"));
         };
-        if !atomic(body) {
-            return run(params);
-        }
-        let mark = cx.tx.mark()?;
-        match run(params) {
-            Ok(done) => {
-                cx.tx.release_mark(mark);
-                Ok(done)
-            }
-            Err(e) => Err(cx.st.undo_to(cx.tx, mark, &e).err().unwrap_or(e)),
-        }
+        marked(cx, atomic, || {
+            let _compiling = self.compiling(cx.st, cx.tx.id);
+            compiled::run_compiled((self, cx), (kept, compiled), frame).map(|_| Completion::Success)
+        })
+        .map(drop)
+    }
+
+    /// Whether the session runs `kept`, a procedure's body, compiled in
+    /// `st` (RULES.md D841).
+    pub(in crate::db) fn runs_compiled(&self, st: &State, kept: &KeptProgram) -> bool {
+        compiled::compiled_procedures(st, self) && kept.compiled().is_some()
     }
 
     /// `program` run over `frame` in `cx`, the session its host.
@@ -213,6 +231,22 @@ impl Session {
     /// An exception no handler of it handles.
     pub(in crate::db) fn run_hosted(&self, cx: StatementContext<'_>, program: &Program, frame: &mut Params) -> Result<Ended> {
         run_program(program, frame, &mut SessionHost::within(self, cx, None))
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §4.41.5] What `run` gives in `cx`: undone alone
+/// if it fails, if it is `atomic`.
+fn marked(cx: StatementContext<'_>, atomic: bool, run: impl FnOnce() -> Result<Completion>) -> Result<Completion> {
+    if !atomic {
+        return run();
+    }
+    let mark = cx.tx.mark()?;
+    match run() {
+        Ok(done) => {
+            cx.tx.release_mark(mark);
+            Ok(done)
+        }
+        Err(e) => Err(cx.st.undo_to(cx.tx, mark, &e).err().unwrap_or(e)),
     }
 }
 

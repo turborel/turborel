@@ -593,6 +593,9 @@ verification approach DO-178C expects (§8).
 | D912 | A point change makes its candidate row of the row it read |
 | D913 | A compiled program's row of values is evaluated over the frame's slots where they hold values of their types |
 | D914 | A compiled program appends in place where it assigns an array its own concatenation with one element |
+| D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
+| D941 | An execution's values that hold no large object are taken as given, not read for locators |
+| D942 | A point change whose increments may be reserved reserves them where it reads its row |
 
 ### The project
 
@@ -16493,6 +16496,96 @@ elements to the longer array, moved. An array that is null, full or
 not of its type is assigned as bound. That keeps the null result, the
 null element dropped past the maximum cardinality, and the error of any
 other element there [§9.2 GR3b xxii 2].
+#### D940. A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots
+
+A prepared CALL kept its binding (D793), its procedure's text was read
+once (D406) and its body ran compiled (D841). Each execution still did
+around the body what a first execution does. It filled a VALUES plan
+with its arguments and evaluated it as a row. It built the procedure's
+scope from the catalog's description, parameter by parameter, and
+copied it to look for the program. It looked the procedure up by its
+specific name and compared its text. It made a frame of the arguments,
+copied that into a second frame with the variables, and copied the
+parameters back after. The body's own statements aside, that was most
+of what a short procedure cost.
+
+Now the binding holds the procedure's scope, made as the CALL is bound,
+and how each parameter takes its value where every argument is a `?` of
+the parameter's type or a constant (`routines/call.rs`, `Given`). Once
+an execution has run the CALL as any is run, the session keeps beside
+that binding the body's program as it keeps it, whether the body is
+ATOMIC and runs at a savepoint level of its own, the owner its context
+runs as, and a frame (`routines/direct.rs`). An execution that finds the
+same binding kept takes them and runs the compiled program over the
+frame. Each `?` is cast to its parameter's type, as a kept plan's slot
+is filled, and assigned to the parameter's slot. Each variable's slot is
+set to the null value. The output parameters are read from the frame.
+No plan is filled, no row is evaluated, no scope is built, and the frame
+is neither made nor copied.
+
+The binding found kept was kept with the definitions, authorization,
+schema, time zone and settings that hold now (D45). The program was kept
+with those that held when the session took it beside the binding, and
+the binding was kept with them too. So the program is the one a lookup
+would find now. A CALL bound again is another binding and finds nothing
+beside it, and runs as any CALL until it is kept in turn. The session
+keeps this for a fixed number of bindings and forgets the oldest.
+
+A value cast to its parameter's type with no warning is assigned to that
+type unchanged where the type is an exact number, a character string, a
+truth value, a date, or an array of one of these. The cast gave it the
+type's scale, length or cardinality already. Such a value is not
+assigned again, so an array is copied once. A value of another type is
+assigned after its cast as before.
+
+Everything else runs as any CALL does and gives what it gave. That is an
+argument that is an expression or reads a table, an output parameter
+whose target is no `?`, a body that is one statement, a program not
+compiled or not kept, and an execution whose argument's cast raises a
+warning or an exception. Such an execution has run nothing when it turns
+to the general path, so the condition raised is that path's own. The
+general path itself now takes the scope from the binding and builds a
+program's frame of scopes only when it binds the program.
+
+#### D941. An execution's values that hold no large object are taken as given, not read for locators
+
+Each execution of a prepared statement read its values for large objects
+sent by their locators (`db/lobs.rs`), which made a copy of every value,
+arrays element by element. It then made a second copy of them all only
+to count them.
+
+Now the values are looked at first (`prepared/locators.rs`). A large
+object, a structured value, and an array, multiset or row that holds one
+at any depth are read for locators as before. Where there is none, the
+values are copied once into the execution's parameters. The count is
+checked without a copy. The values an execution runs with are the same.
+
+#### D942. A point change whose increments may be reserved reserves them where it reads its row
+
+A compiled program's UPDATE by a whole unique key runs straight on its
+table (D841), but one whose increments may be reserved (D452, D849) was
+handed to the general path, which alone took reservations. TPROC-C's
+Payment adds to the warehouse's and the district's year to date this
+way, so its two cheapest changes were its dearest. The general path
+collected the row, noted it for the statement's end and gave it to the
+delta table's collector to be read back.
+
+Now the point change reserves the increments itself
+(`write/direct.rs`, `escrowed`). It takes the locks the general path
+takes, reads the row by its point read, makes the candidate row,
+derives the increments from it and reserves them by the same
+`State::reserve_row`, guarding the same columns. The statement ends as
+a point change that wrote no row ends. The delta table's row is the
+candidate row, which shows the columns read and the sums not yet
+applied, as the general path's collector held it. Nothing is written
+until the transaction commits.
+
+What is reserved, what is guarded, what waits for it and when it is
+applied are those of D452 and D849 unchanged. A reservation that is not
+taken hands the change to the general path as before. That is a row
+changed since it was read, a sum that would leave the column's type, or
+an increment that is not what made the candidate row. The general path
+then reserves or writes it as it always did.
 
 ## 2. Project layout
 
