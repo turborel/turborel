@@ -290,6 +290,9 @@ pub(super) struct Versions {
     statuses: Arc<Statuses>,
     /// Commits whose versions here are not all stamped yet (`stamps.rs`).
     unstamped: Mutex<Vec<Unstamped>>,
+    /// How many `unstamped` holds, stored under its lock: a settle of a
+    /// table with none queued takes no lock (RULES.md D870).
+    queued: AtomicUsize,
     /// The most rows of a transaction's reads, or writes, tracked one by
     /// one (TRANSACTIONS.TRACKED_ROWS), and the bytes of its changes held
     /// (TRANSACTIONS.HELD_BYTES); and the store's defaults of them.
@@ -318,6 +321,7 @@ impl Versions {
             collected: AtomicU64::default(),
             statuses,
             unstamped: Mutex::default(),
+            queued: AtomicUsize::default(),
             tracked,
             held,
             base: bounds,
@@ -345,6 +349,14 @@ impl Versions {
         let areas = self.work.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         // Its lists hold row ids and timestamps, no values.
         ListSpace { limit: self.held(), batch: DEFAULT_SPILL_BATCH, areas, types: TypeRegistry::default() }
+    }
+
+    /// Where a list that will never hold more than `bytes` spills: nowhere
+    /// while they are within the bytes held, as it never would, so the
+    /// work areas, which every session shares, are not taken (RULES.md
+    /// D870); else as `space`.
+    fn space_within(&self, bytes: usize) -> ListSpace {
+        if bytes <= self.held() { ListSpace::default() } else { self.space() }
     }
 }
 

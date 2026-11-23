@@ -76,7 +76,7 @@ pub const SYSTEM_VERSIONED: [Mutation; 34] = [
         package: Package::Core,
         breaks: "a row updated keeps its start [§15.14 GR10a iii 1 C II]",
         file: "src/txn/write.rs",
-        original: "stamp.put(row);",
+        original: "stamp.put(row.to_mut());",
         replacement: "let _ = (stamp, row);",
         integration: &["system_versioned::a_row_written_is_stamped_15_11"],
         unit: &[],

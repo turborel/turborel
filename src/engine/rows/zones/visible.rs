@@ -8,11 +8,11 @@ use std::ops::Bound;
 
 use super::super::version::{Maker, Version};
 use super::super::{RowTable, key};
-use super::{Map, SAMPLED, ZONE_ROWS, Zone, Zones, joined, past, zone_at};
+use super::{SAMPLED, Slot, ZONE_ROWS, Zone, Zones, joined, past, zone_at};
 use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::RowId;
-use crate::sync::{lock_builtin, read};
+use crate::sync::lock_builtin;
 use crate::txn::Timestamp;
 
 /// What a zone's rows show of whether every reader sees them alone.
@@ -43,7 +43,7 @@ impl Zones {
     /// Whether every row of the zone of row `id` is visible to every reader
     /// (see the module's documentation).
     pub(in crate::engine::rows) fn visible(&self, id: RowId) -> bool {
-        read(&self.map).is_ok_and(|map| map.visible.get(zone_at(id)).is_some_and(|flag| flag.load(AtomicOrdering::Acquire)))
+        self.slots.get(zone_at(id)).is_some_and(|slot| slot.visible.load(AtomicOrdering::Acquire))
     }
 
     /// The rows of the zones whose rows every reader sees alone, summed,
@@ -55,29 +55,29 @@ impl Zones {
     /// reader's, as a write the reader sees would have cleared it.
     pub(in crate::engine::rows) fn settled(&self) -> (u64, Vec<(RowId, Option<RowId>)>) {
         let mut ranges = Vec::new();
-        let Ok(map) = read(&self.map) else { return (0, vec![(0, None)]) };
         let mut rows = 0_u64;
-        for (at, slot) in map.zones.iter().enumerate() {
-            let zone = lock_builtin(slot);
-            if map.visible.get(at).is_some_and(|flag| flag.load(AtomicOrdering::Acquire)) {
+        let zones = self.slots.len();
+        for (at, slot) in self.slots.first(zones).enumerate() {
+            let zone = lock_builtin(&slot.zone);
+            if slot.visible.load(AtomicOrdering::Acquire) {
                 rows = rows.saturating_add(u64::from(zone.rows));
             } else {
                 joined(&mut ranges, at);
             }
         }
-        past(&mut ranges, &map);
+        past(&mut ranges, zones);
         (rows, ranges)
     }
 
     /// The share of the zones visible to every reader, of `SAMPLED` at
     /// most, evenly apart; none of no zone.
     pub(in crate::engine::rows) fn visible_share(&self) -> f64 {
-        let Ok(map) = read(&self.map) else { return 0.0_f64 };
-        let step = map.visible.len().div_ceil(SAMPLED).max(1);
+        let zones = self.slots.len();
+        let step = zones.div_ceil(SAMPLED).max(1);
         let (mut all, mut seen) = (0_u32, 0_u32);
-        for flag in map.visible.iter().step_by(step) {
+        for slot in self.slots.first(zones).step_by(step) {
             all = all.saturating_add(1);
-            seen = seen.saturating_add(u32::from(flag.load(AtomicOrdering::Acquire)));
+            seen = seen.saturating_add(u32::from(slot.visible.load(AtomicOrdering::Acquire)));
         }
         if all == 0 { 0.0_f64 } else { f64::from(seen) / f64::from(all) }
     }
@@ -87,13 +87,12 @@ impl Zones {
     /// unsettled again once none is left.
     pub(in crate::engine::rows) fn superseded(&self, id: RowId, added: bool) {
         let at = zone_at(id);
-        let left = read(&self.map).ok().and_then(|map| {
-            let count = map.pending.get(at)?;
-            Some(if added {
-                count.fetch_add(1, AtomicOrdering::AcqRel).saturating_add(1)
+        let left = self.slots.get(at).map(|slot| {
+            if added {
+                slot.pending.fetch_add(1, AtomicOrdering::AcqRel).saturating_add(1)
             } else {
-                count.fetch_sub(1, AtomicOrdering::AcqRel).saturating_sub(1)
-            })
+                slot.pending.fetch_sub(1, AtomicOrdering::AcqRel).saturating_sub(1)
+            }
         });
         if left == Some(0) {
             self.unsettle(id);
@@ -103,9 +102,8 @@ impl Zones {
     /// Marks the zone of row `id` unsettled, to be settled again.
     pub(in crate::engine::rows) fn unsettle(&self, id: RowId) {
         let at = zone_at(id);
-        let Ok(map) = read(&self.map) else { return };
-        let Some(slot) = map.zones.get(at) else { return };
-        let mut zone = lock_builtin(slot);
+        let Some(slot) = self.slots.get(at) else { return };
+        let mut zone = lock_builtin(&slot.zone);
         if !zone.unsettled {
             zone.unsettled = true;
             self.unsettled.fetch_add(1, AtomicOrdering::AcqRel);
@@ -114,18 +112,17 @@ impl Zones {
 }
 
 impl RowTable {
-    /// Settles `zone`, zone `at` of `map`, under its lock, its rows showing
+    /// Settles `zone`, the zone of `slot`, under its lock, its rows showing
     /// `seen`: visible if they are and none of their superseded versions is
     /// left to collect; left unsettled of a commit too recent; else not
     /// visible, until collection or a write unsettles it. Whether settled.
-    pub(super) fn settle(&self, (map, at): (&Map, usize), zone: &mut Zone, seen: Seen) -> bool {
+    pub(super) fn settle(&self, slot: &Slot, zone: &mut Zone, seen: Seen) -> bool {
         if seen == Seen::Recent {
             return false;
         }
-        let collected = map.pending.get(at).is_some_and(|p| p.load(AtomicOrdering::Acquire) == 0);
-        if let Some(flag) = map.visible.get(at) {
-            flag.store(seen == Seen::Visible && collected, AtomicOrdering::Release);
-        }
+        let collected = slot.pending.load(AtomicOrdering::Acquire) == 0;
+        let flag = &slot.visible;
+        flag.store(seen == Seen::Visible && collected, AtomicOrdering::Release);
         zone.unsettled = false;
         self.zones.unsettled.fetch_sub(1, AtomicOrdering::AcqRel);
         true

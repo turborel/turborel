@@ -3,9 +3,10 @@
 //! past splits, and changes it in place or splits it, posting the split up
 //! the tree (`tree.rs`, §5).
 
+use super::here::Here;
 use super::node::{self, CHILD, Node};
 use super::{BLinkTree, Path, Slot, Split, Target};
-use crate::disk::buffer::Owned as NodeLock;
+use crate::disk::buffer::{Owned as NodeLock, PageMut};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::Near;
@@ -35,7 +36,8 @@ pub enum Update {
 pub(super) enum Written {
     /// Nothing: the key was present for an insert, absent for a replace.
     Refused,
-    /// The change: the value replaced, if any, and the leaf the entry is in.
+    /// The change: the value a `Mode::Replace` replaced, and the leaf the
+    /// entry is in.
     Done(Option<Vec<u8>>, PageId),
 }
 
@@ -47,17 +49,15 @@ impl BLinkTree {
     /// The buffer pool's errors; SQLCODE -916 if a node is malformed.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         let _guard = self.epochs.guard();
-        let (_, value) =
-            self.descend(Target::Key(key), 0, &mut Path { tallied: true, ..Path::default() }, |leaf| match leaf.search(key)? {
-                Ok(at) => Ok(Some(leaf.entry(at)?.1.to_vec())),
-                Err(_) => Ok(None),
-            })?;
+        let (_, value) = self.descend(Target::Key(key), 0, &mut Path { tallied: true, ..Path::default() }, |leaf| value_of(leaf, key))?;
         Ok(value)
     }
 
     /// \[DESIGN\] As `get`, for a write over the value found
-    /// (`replace_found`), which then starts from the leaf this descent
-    /// reached (RULES.md D446).
+    /// (`replace_found`), which then starts from the leaf this read
+    /// reached (RULES.md D446). A table's row is read from the leaf noted
+    /// for it, if that leaf answers, with no descent (`near.rs`, RULES.md
+    /// D853): the read of the row before its update noted it.
     ///
     /// # Errors
     ///
@@ -65,16 +65,16 @@ impl BLinkTree {
     pub fn get_for_write(&self, key: &[u8]) -> Result<Option<(Vec<u8>, Descended)>> {
         let _guard = self.epochs.guard();
         let stamp = self.epochs.stamp();
+        if let Some((leaf, value)) = self.at_noted(key, |leaf| value_of(leaf, key))? {
+            return Ok(value.map(|value| (value, Descended { path: Path::default(), leaf: PageId(leaf), stamp })));
+        }
         let mut path = Path { tallied: true, ..Path::default() };
-        let (leaf, value) = self.descend(Target::Key(key), 0, &mut path, |leaf| match leaf.search(key)? {
-            Ok(at) => Ok(Some(leaf.entry(at)?.1.to_vec())),
-            Err(_) => Ok(None),
-        })?;
+        let (leaf, value) = self.descend(Target::Key(key), 0, &mut path, |leaf| value_of(leaf, key))?;
         path.tallied = false;
         Ok(value.map(|value| (value, Descended { path, leaf, stamp })))
     }
 
-    /// As `replace_if`, from where `get_for_write`'s descent reached: the
+    /// As `replace_if`, from where `get_for_write`'s read reached: the
     /// leaf it found is still in the tree while no leaf was retired since
     /// (`reclaim.rs`), split or not, which the write moves right across;
     /// else a descent of its own.
@@ -178,29 +178,33 @@ impl BLinkTree {
 
     /// The rest of `delete`, from `leaf`, reached by `path`, which may have
     /// split since it was read; only if the value is `expected`, if given.
+    /// The leaf is searched, the value compared and the entry removed
+    /// under one latch (`here.rs`).
     pub(super) fn delete_from(&self, path: &Path, leaf: PageId, key: &[u8], expected: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
         let mut held = self.lock(leaf)?;
-        let found = self.move_right(&mut held, key, |node| match node.search(key)? {
-            Ok(at) => Ok(Some((at, node.entry(at)?.1.to_vec()))),
-            Err(_) => Ok(None),
-        })?;
-        let Some((at, old)) = found.filter(|(_, old)| expected.is_none_or(|e| e == *old)) else { return Ok(None) };
-        self.remove_at(path, held, at)?;
+        let page = self.latched_covering(&mut held, key)?;
+        let node = Node::parse(&page)?;
+        let Ok(at) = node.search(key)? else { return Ok(None) };
+        let old = node.value(at)?;
+        if expected.is_some_and(|expected| expected != old) {
+            return Ok(None);
+        }
+        let old = old.to_vec();
+        self.removed(path, held, page, (key, at))?;
         Ok(Some(old))
     }
 
-    /// Removes entry `at` of the leaf `held`, reached by `path`; takes the
-    /// leaf out, its entries merged into its right neighbour, if that
-    /// leaves it empty or sparse (`merge.rs`), once its lock is released.
-    fn remove_at(&self, path: &Path, held: NodeLock<'_>, at: usize) -> Result<()> {
+    /// Removes entry `at`, of `key`, of the leaf `held`, latched for
+    /// writing as `page`, reached by `path`; takes the leaf out, its
+    /// entries merged into its right neighbour, if that leaves it empty or
+    /// sparse (`merge.rs`), once its latch and its lock are released.
+    fn removed<'a>(&'a self, path: &Path, held: NodeLock<'a>, mut page: PageMut<'a>, (key, at): (&[u8], usize)) -> Result<()> {
         let leaf = held.id;
-        let sparse = {
-            let mut page = self.pool.write_owned(&held)?;
-            node::remove(&mut page, at)?;
-            self.underfull(&Node::parse(&page)?)
-        };
+        node::remove(&mut page, at)?;
+        let sparse = self.underfull(&Node::parse(&page)?);
+        drop(page);
         drop(held);
-        if sparse { self.unlink(leaf, path) } else { Ok(()) }
+        if sparse { self.unlink((leaf, key), path) } else { Ok(()) }
     }
 
     /// Changes `key`'s entry as `change` says, given its value, or none if
@@ -231,28 +235,32 @@ impl BLinkTree {
         let leaf = self.leaf_for_write(key, &mut path)?;
         let mut held = self.lock(leaf)?;
         let begins = key.get(..prefix).unwrap_or(key);
-        let (found, alone) = self.move_right(&mut held, key, |node| {
-            let found = match node.search(key)? {
-                Ok(at) => Ok((at, node.entry(at)?.1.to_vec())),
-                Err(at) => Err(at),
+        // Searched, shown to `change` where it lies, and changed under one
+        // latch (`here.rs`).
+        let mut page = self.latched_covering(&mut held, key)?;
+        let (found, alone, update) = {
+            let node = Node::parse(&page)?;
+            let found = node.search(key)?;
+            let old = match found {
+                Ok(at) => Some(node.value(at)?),
+                Err(_) => None,
             };
-            let (before, after) = match &found {
-                Ok((at, _)) => (at.checked_sub(1), at.saturating_add(1)),
-                Err(at) => (at.checked_sub(1), *at),
-            };
-            let shares = |at: usize| node.key(at).map(|k| k.starts_with(begins));
-            let none_before = before.map(shares).transpose()?.is_some_and(|s| !s);
-            let none_after = if after < node.len() { !shares(after)? } else { node.high.is_none_or(|h| !h.starts_with(begins)) };
-            Ok((found, none_before && none_after))
-        })?;
-        let (slot, value) = match (change(found.as_ref().ok().map(|(_, old)| old.as_slice()))?, found) {
+            (found, alone_at(&node, found, begins)?, change(old)?)
+        };
+        let (slot, value) = match (update, found) {
             (Update::Keep, _) | (Update::Remove, Err(_)) => return Ok(alone),
-            (Update::Remove, Ok((at, _))) => return self.remove_at(&path, held, at).map(|()| alone),
-            (Update::Put(value), Ok((at, _))) => (Slot::Replace(at), value),
+            (Update::Remove, Ok(at)) => return self.removed(&path, held, page, (key, at)).map(|()| alone),
+            (Update::Put(value), Ok(at)) => (Slot::Replace(at), value),
             (Update::Put(value), Err(at)) => (Slot::Insert(at), value),
         };
         self.fits(key, &value)?;
-        self.place(&path, held, (key, &value), slot).map(|_| alone)
+        let copy = self.change_latched(&held, &mut page, (key, &value), slot)?;
+        drop(page);
+        let splits = match copy {
+            Some(copy) => self.split(held.id, &copy, (key, &value), slot)?,
+            None => Vec::new(),
+        };
+        self.posted(&path, held, key, splits).map(|_| alone)
     }
 
     /// The leaf a writer of `key` locks, `path` the way to it: its page
@@ -310,40 +318,30 @@ impl BLinkTree {
 
     /// The rest of `write`, from `leaf`, reached by `path`: either may be
     /// out of date, the leaf split or the tree grown since they were read.
+    /// The leaf is searched and changed under one latch (`here.rs`); one
+    /// that no longer covers `key` is moved right from, and the leaf
+    /// reached is written the same way.
     pub(super) fn write_from(&self, path: &Path, leaf: PageId, (key, value): (&[u8], &[u8]), mode: Mode<'_>) -> Result<Written> {
         let mut held = self.lock(leaf)?;
-        let replace = !matches!(mode, Mode::Insert);
-        let mut past_the_end = false;
-        let found = self.move_right(&mut held, key, |node| match node.search(key)? {
-            Ok(at) => Ok(Ok((at, if replace { node.entry(at)?.1.to_vec() } else { Vec::new() }))),
-            Err(at) => {
-                past_the_end = node.level == 0 && node.right.is_none() && at == node.len();
-                Ok(Err(at))
-            }
-        })?;
-        let (slot, old) = match (found, mode) {
-            (Ok((at, old)), Mode::Replace) => (Slot::Replace(at), Some(old)),
-            (Ok((at, old)), Mode::ReplaceIf(expected)) => {
-                if old != expected {
-                    return Ok(Written::Refused);
+        loop {
+            match self.write_here(&held, (key, value), mode)? {
+                Here::Elsewhere => self.move_right(&mut held, key, |_| Ok(()))?,
+                Here::Refused => return Ok(Written::Refused),
+                Here::Done(old, past_the_end, splits) => {
+                    let into = self.posted(path, held, key, splits)?;
+                    if past_the_end {
+                        self.note_edge(into);
+                    }
+                    return Ok(Written::Done(old, into));
                 }
-                (Slot::Replace(at), Some(old))
             }
-            (Err(at), Mode::Insert) => (Slot::Insert(at), None),
-            (Ok(_), Mode::Insert) | (Err(_), Mode::Replace | Mode::ReplaceIf(_)) => return Ok(Written::Refused),
-        };
-        let into = self.place(path, held, (key, value), slot)?;
-        if past_the_end {
-            self.note_edge(into);
         }
-        Ok(Written::Done(old, into))
     }
 
-    /// Makes `slot`'s change in the leaf `held`, reached by `path`, and
-    /// posts the splits it causes up the tree. The leaf the entry is in:
-    /// the right page of the highest separator it is past, if any.
-    pub(super) fn place<'a>(&'a self, path: &Path, held: NodeLock<'a>, (key, value): (&[u8], &[u8]), slot: Slot) -> Result<PageId> {
-        let splits = self.change(&held, key, value, slot)?;
+    /// Posts `splits`, those a change of `key` in the leaf `held` caused,
+    /// up the tree from `path`. The leaf the entry is in: the right page
+    /// of the highest separator it is past, if any.
+    fn posted<'a>(&'a self, path: &Path, held: NodeLock<'a>, key: &[u8], splits: Vec<Split>) -> Result<PageId> {
         let leaf = splits
             .iter()
             .filter(|s| key > s.separator.as_slice())
@@ -373,8 +371,32 @@ impl BLinkTree {
     }
 }
 
-/// \[DESIGN\] Where `BLinkTree::get_for_write`'s descent found a key: the
-/// path to its leaf, the leaf, and the tree's stamp then.
+/// Whether no entry beside the place `found` of a key in `node` begins
+/// with `begins`: not if the place is first in the node, the node before
+/// beyond reach, nor if it is last and the node's high key begins with
+/// them (`BLinkTree::update_alone`).
+fn alone_at(node: &Node<'_>, found: std::result::Result<usize, usize>, begins: &[u8]) -> Result<bool> {
+    let (before, after) = match found {
+        Ok(at) => (at.checked_sub(1), at.saturating_add(1)),
+        Err(at) => (at.checked_sub(1), at),
+    };
+    let shares = |at: usize| node.key(at).map(|k| k.starts_with(begins));
+    let none_before = before.map(shares).transpose()?.is_some_and(|s| !s);
+    let none_after = if after < node.len() { !shares(after)? } else { node.high.is_none_or(|h| !h.starts_with(begins)) };
+    Ok(none_before && none_after)
+}
+
+/// The value of `key` in `leaf`, copied, if it is there.
+fn value_of(leaf: &Node<'_>, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    match leaf.search(key)? {
+        Ok(at) => Ok(Some(leaf.value(at)?.to_vec())),
+        Err(_) => Ok(None),
+    }
+}
+
+/// \[DESIGN\] Where `BLinkTree::get_for_write` found a key: the path to
+/// its leaf, none if the leaf was the one noted for its row, the leaf, and
+/// the tree's stamp then.
 pub struct Descended {
     pub(super) path: Path,
     pub(super) leaf: PageId,

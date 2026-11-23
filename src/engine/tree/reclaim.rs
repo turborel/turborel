@@ -25,6 +25,9 @@
 //! a page taken out in epoch e is freed once the epoch is e + 2, when every
 //! operation that began before it was taken out has ended.
 //!
+//! A thread that makes many operations on one tree pins it, and is counted
+//! once for all of them (`pin.rs`).
+//!
 //! Reads that start from a leaf remembered from the last read (`near.rs`)
 //! rely on two orderings here. A leaf is marked deleted, under its lock,
 //! before its page is retired, so a leaf read not deleted is still in the
@@ -42,6 +45,9 @@ use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::sync::{lock_builtin, thread_stripe};
 
+/// The epochs made so far, so each has a number of its own.
+static MADE: AtomicU64 = AtomicU64::new(1);
+
 /// \[DESIGN\] Stripes of the epoch counters: more than the threads that use
 /// a tree at once, so they seldom share one.
 const STRIPES: usize = 64;
@@ -53,6 +59,8 @@ struct Stripe([AtomicU64; 2]);
 
 /// The epochs of a tree, and the pages taken out of it, to free.
 pub(crate) struct Epochs {
+    /// Its number, its own among the process's trees (`pin.rs`).
+    number: u64,
     current: AtomicU64,
     under_way: Box<[Stripe]>,
     retired: Mutex<Vec<(u64, PageId)>>,
@@ -82,6 +90,7 @@ impl Drop for Guard<'_> {
 impl Epochs {
     pub(crate) fn new() -> Epochs {
         Epochs {
+            number: MADE.fetch_add(1, Ordering::Relaxed),
             current: AtomicU64::new(0),
             under_way: (0..STRIPES).map(|_| Stripe::default()).collect(),
             retired: Mutex::new(Vec::new()),
@@ -105,9 +114,15 @@ impl Epochs {
         }
     }
 
-    /// An operation guarded until the guard is dropped.
-    pub(super) fn guard(&self) -> Guard<'_> {
+    /// An operation counted until the guard is dropped, whether or not
+    /// the thread has the tree pinned (`pin.rs`).
+    pub(super) fn guarded(&self) -> Guard<'_> {
         Guard { epochs: self, entered: self.enter() }
+    }
+
+    /// Its number, never 0.
+    pub(super) fn number(&self) -> u64 {
+        self.number
     }
 
     /// Counts the operation `entered` ended.
@@ -165,19 +180,19 @@ impl Epochs {
 }
 
 impl BLinkTree {
-    /// Takes leaf `leaf`, emptied or left sparse by a delete, out of the
-    /// tree, its entries merged into its right neighbour, if its left and
-    /// right neighbours have the same parent, `path`'s last, and the
-    /// entries fit (`merge.rs`); with no lock held.
+    /// Takes leaf `leaf`, emptied or left sparse by a delete of `key`, out
+    /// of the tree, its entries merged into its right neighbour, if its
+    /// left and right neighbours have the same parent, `path`'s last, and
+    /// the entries fit (`merge.rs`); with no lock held.
     /// Then frees the pages no operation may hold any more, keeping those
     /// its file fails to free (`free_freeable`).
     ///
     /// # Errors
     ///
     /// The buffer pool's errors; SQLCODE -916 if a node is malformed.
-    pub(super) fn unlink(&self, leaf: PageId, path: &Path) -> Result<()> {
+    pub(super) fn unlink(&self, (leaf, key): (PageId, &[u8]), path: &Path) -> Result<()> {
         if let Some(&parent) = path.stack.last() {
-            self.unlink_under(leaf, parent)?;
+            self.unlink_under((leaf, key), parent)?;
         }
         self.free_freeable();
         Ok(())
@@ -214,24 +229,27 @@ impl BLinkTree {
     /// The child left of `leaf` under `parent`, and `leaf`'s entry, if
     /// `leaf` is one of its entries' children: not its first; and the
     /// child of the entry after, its right neighbour's, if it has one.
-    fn around(&self, parent: PageId, leaf: PageId) -> Result<Option<(PageId, usize, PageId)>> {
+    /// The entry is found by `key`, one of the leaf's range, as a descent
+    /// finds a child, not by a walk of the parent's entries, which a
+    /// delete from a sparse leaf that cannot merge made at every delete.
+    fn around(&self, parent: PageId, (leaf, key): (PageId, &[u8])) -> Result<Option<(PageId, usize, PageId)>> {
         let page = self.pool.read(self.file, parent.0)?;
         let node = Node::parse(&page)?;
         if node.level != 1 || node.deleted {
             return Ok(None);
         }
-        for at in 0..node.len() {
-            if node::child_of(node.entry(at)?.1)? != leaf {
-                continue;
-            }
-            let left = match at.checked_sub(1) {
-                Some(before) => node::child_of(node.entry(before)?.1)?,
-                None => node.first_child(),
-            };
-            let Some(after) = at.checked_add(1).filter(|&after| after < node.len()) else { return Ok(None) };
-            return Ok(Some((left, at, node::child_of(node.entry(after)?.1)?)));
+        // The entries below `key`: the last of them has its child.
+        let below = node.search(key)?.unwrap_or_else(|at| at);
+        let Some(at) = below.checked_sub(1) else { return Ok(None) };
+        if node::child_of(node.entry(at)?.1)? != leaf {
+            return Ok(None);
         }
-        Ok(None)
+        let left = match at.checked_sub(1) {
+            Some(before) => node::child_of(node.entry(before)?.1)?,
+            None => node.first_child(),
+        };
+        let Some(after) = Some(below).filter(|&after| after < node.len()) else { return Ok(None) };
+        Ok(Some((left, at, node::child_of(node.entry(after)?.1)?)))
     }
 
     /// Whether `left`, `leaf` and `right` are neighbours in that order,
@@ -255,14 +273,14 @@ impl BLinkTree {
 
     /// `unlink`'s work under `parent`: nothing if a check fails. The leaf's
     /// entries, if it has any left, go to its right neighbour first.
-    fn unlink_under(&self, leaf: PageId, parent: PageId) -> Result<()> {
-        let Some((left, _, right)) = self.around(parent, leaf)? else { return Ok(()) };
+    fn unlink_under(&self, (leaf, key): (PageId, &[u8]), parent: PageId) -> Result<()> {
+        let Some((left, _, right)) = self.around(parent, (leaf, key))? else { return Ok(()) };
         if matches!(self.merging(leaf, right, false)?, Merging::Full) {
             return Ok(());
         }
         // Bottom to top, left to right, as every writer locks.
         let _locks = (self.lock(left)?, self.lock(leaf)?, self.lock(right)?, self.lock(parent)?);
-        let Some((still_left, at, still_right)) = self.around(parent, leaf)? else { return Ok(()) };
+        let Some((still_left, at, still_right)) = self.around(parent, (leaf, key))? else { return Ok(()) };
         if still_left != left || still_right != right || !self.linked((left, leaf, right))? {
             return Ok(());
         }

@@ -157,7 +157,7 @@ impl State {
     /// gives `table` holds in each registered geometry column a value of
     /// the column's system (`geometry::registered`), and \[EXTENSION\] of a
     /// partition, is one its bounds hold.
-    fn check_written(&self, table: &QualifiedName, write: &Write) -> Result<()> {
+    fn check_written(&self, table: &QualifiedName, write: &Write<'_>) -> Result<()> {
         match write {
             Write::Update(row) => {
                 crate::geometry::registered::check_row(&*self.catalog, table, row)?;
@@ -172,7 +172,7 @@ impl State {
     /// [X3.135-1986 §8.11, §8.12] Replaces row `id` with `row`, as `insert_row`
     /// inserts, waiting for a transaction changing it to end (RULES.md D28).
     pub(crate) fn update_row(&self, tx: &Txn, table: &QualifiedName, id: RowId, row: &Row) -> Result<()> {
-        self.change_row(tx, (table, id), (Write::Update(row.clone()), false), None).map(|_| ())
+        self.change_row(tx, (table, id), (Write::Update(Cow::Borrowed(row)), false), None).map(|_| ())
     }
 
     /// [X3.135-1986 §8.4, §8.5] Deletes row `id`, as `update_row` replaces it.
@@ -192,7 +192,7 @@ impl State {
         row: Option<&Row>,
         recheck: Recheck<'_>,
     ) -> Result<Option<Row>> {
-        let write = row.map_or(Write::Delete, |row| Write::Update(row.clone()));
+        let write = row.map_or(Write::Delete, |row| Write::Update(Cow::Borrowed(row)));
         self.change_row(tx, (table, id), (write, false), Some(recheck))
     }
 
@@ -201,7 +201,7 @@ impl State {
     /// kept waiting by the reservations of others, whose increments add to
     /// the same columns as its own and are applied over it.
     pub(crate) fn fold_row(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), row: &Row, recheck: Recheck<'_>) -> Result<Option<Row>> {
-        self.change_row(tx, (table, id), (Write::Update(row.clone()), true), Some(recheck))
+        self.change_row(tx, (table, id), (Write::Update(Cow::Borrowed(row)), true), Some(recheck))
     }
 
     /// `write` of row `id`, tried again as long as another transaction's
@@ -213,7 +213,7 @@ impl State {
         &self,
         tx: &Txn,
         (table, id): (&QualifiedName, RowId),
-        (mut write, fold): (Write, bool),
+        (mut write, fold): (Write<'_>, bool),
         mut recheck: Option<Recheck<'_>>,
     ) -> Result<Option<Row>> {
         self.check_written(table, &write)?;
@@ -222,15 +222,13 @@ impl State {
         // stamped, and of a system-versioned table, kept as it was.
         let stamp = self.stamp_of(tx, table)?;
         if let (Some(stamp), Write::Update(row)) = (&stamp, &mut write) {
-            stamp.put(row);
+            stamp.put(row.to_mut());
         }
         // The version it rechecked, and its turn behind the row's earlier
         // waiters (RULES.md D442).
         let (mut seen, mut tries, mut turn): (Option<(Timestamp, Row)>, usize, Option<super::row_waits::Turn>) = (None, 0, None);
         loop {
-            if let Write::Update(row) = &mut write {
-                self.keep_lobs(tx, table, Some(id), row)?;
-            }
+            self.keep_written(tx, (table, id), &mut write)?;
             let write_once = || {
                 // After any wait for a lock: a checkpoint never waits on a waiter.
                 let _gate = self.tx.gate.enter();
@@ -266,7 +264,7 @@ impl State {
                 Next::Over(committed, Some(row)) => {
                     let Some(check) = check else { return Err(e) };
                     write = match check(&row)? {
-                        Again::Update(row) => Write::Update(row),
+                        Again::Update(row) => Write::Update(Cow::Owned(row)),
                         Again::Delete => Write::Delete,
                         Again::Skip => return Ok(None),
                     };
@@ -279,6 +277,18 @@ impl State {
                 }
             }
         }
+    }
+
+    /// Makes each large object of the row `write` gives row `id` of `table`
+    /// one the table keeps for it (`keep_lobs`). The row is copied only
+    /// then, as an insert's is (`insert_row`), and any other is written as
+    /// the statement holds it.
+    fn keep_written(&self, tx: &Txn, (table, id): (&QualifiedName, RowId), write: &mut Write<'_>) -> Result<()> {
+        let Write::Update(row) = write else { return Ok(()) };
+        if !row.iter().any(Value::needs_keeping) {
+            return Ok(());
+        }
+        self.keep_lobs(tx, table, Some(id), row.to_mut())
     }
 
     /// \[DESIGN\] RULES.md D454: what a writer refused at row `id` of
@@ -362,14 +372,14 @@ impl State {
         &self,
         tx: &Txn,
         (table, id): (&QualifiedName, RowId),
-        (write, system): (&Write, Option<&Stamp>),
+        (write, system): (&Write<'_>, Option<&Stamp>),
         seen: Option<&(Timestamp, Row)>,
     ) -> Result<(Row, Option<QualifiedName>)> {
         let storage = self.storage_of(table)?;
         // Borrowed: the engine encodes it, and the caller keeps it for its
         // index entries and its log record, with no copy made (RULES.md D417).
         let new = match write {
-            Write::Update(row) => Some(row),
+            Write::Update(row) => Some(&**row),
             Write::Delete => None,
         };
         // The row replaced, as the write found it, not read before it
@@ -486,9 +496,11 @@ impl State {
     }
 }
 
-/// A row's change as a statement writes it.
-enum Write {
-    Update(Row),
+/// A row's change as a statement writes it: its row borrowed from the
+/// statement, and copied only if the write changes it, for a system-time
+/// period's stamp, a value the table keeps apart, or a recheck's row.
+enum Write<'a> {
+    Update(Cow<'a, Row>),
     Delete,
 }
 
@@ -513,6 +525,18 @@ pub(crate) type Recheck<'a> = &'a mut dyn FnMut(&Row) -> Result<Again>;
 /// an engine whose answers disagree, never for a row in demand, so READ
 /// COMMITTED waits until its lock timeout or a deadlock (RULES.md D454).
 const MOST_CONFLICTS: usize = 64;
+
+/// Notes in `noted` each row of `rows` that was alone, and takes out each
+/// that was not.
+fn note_rows(noted: &mut HashSet<RowId>, rows: &mut dyn Iterator<Item = (RowId, bool)>) {
+    for (row, alone) in rows {
+        if alone {
+            noted.insert(row);
+        } else {
+            noted.remove(&row);
+        }
+    }
+}
 
 impl Txn {
     /// The row it wrote of form `form`'s change to the kept totals of
@@ -554,17 +578,14 @@ impl Txn {
     /// As `note_alone`.
     pub(crate) fn note_alone_rows(&self, index: &str, rows: &mut dyn Iterator<Item = (RowId, bool)>) -> Result<()> {
         let mut state = self.state()?;
-        if !state.alone.contains_key(index) {
-            state.alone.insert(index.to_owned(), HashSet::new());
+        // Found by one hash of its name; the name is copied only the first time.
+        if let Some(noted) = state.alone.get_mut(index) {
+            note_rows(noted, rows);
+            return Ok(());
         }
-        let Some(noted) = state.alone.get_mut(index) else { return Ok(()) };
-        for (row, alone) in rows {
-            if alone {
-                noted.insert(row);
-            } else {
-                noted.remove(&row);
-            }
-        }
+        let mut noted = HashSet::new();
+        note_rows(&mut noted, rows);
+        state.alone.insert(index.to_owned(), noted);
         Ok(())
     }
 

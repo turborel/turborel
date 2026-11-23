@@ -24,7 +24,7 @@ use crate::log::Lsn;
 use crate::spill::ListItem;
 
 /// The bytes of a change, or of garbage, beside the entry it holds.
-const FIXED: usize = 48;
+pub(super) const FIXED: usize = 48;
 
 impl ListItem for Change {
     fn bytes(&self) -> usize {

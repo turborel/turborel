@@ -32,14 +32,15 @@
 
 use std::cmp::Ordering;
 
-use super::hints;
 use super::node::Node;
-use super::{BLinkTree, Path, Target};
+use super::{BLinkTree, Path, Target, hints, leaves};
 use crate::error::Result;
 use crate::storage::Near;
 
 /// \[DESIGN\] The misses in a row after which a scan stops trying its leaf:
-/// its keys are not side by side, and each try costs a page read.
+/// its keys are not side by side, and each try costs a page read. Only a
+/// read the leaf remembered answers ends the row, so what keeps a `Near`
+/// across reads of rows far apart stops trying for good.
 const MOST_MISSES: u8 = 8;
 /// \[DESIGN\] The leaves a read tries before it descends: the one it knows
 /// and its right neighbour, where a scan's next key goes when it leaves one.
@@ -141,21 +142,35 @@ impl BLinkTree {
     /// Whether `key` is in the tree, if the leaf noted for its row answers,
     /// or one right of it within `HOPS` links.
     fn hinted(&self, key: &[u8], stamp: u64, near: &mut Near) -> Result<Option<bool>> {
+        let (bytes, at) = (&mut near.bytes, &mut near.at);
+        let Some((leaf, found)) = self.at_noted(key, |node| copied(node, key, (bytes, at)))? else { return Ok(None) };
+        // The misses stay as they are: the leaf remembered did not answer,
+        // so the reads are not side by side, and a hint that answers says
+        // nothing else. Cleared here, reads of rows far apart kept trying
+        // the leaf of the last and its neighbour before every hint.
+        near.leaf = Some((leaf, stamp));
+        Ok(Some(found))
+    }
+
+    /// What `at` finds in the leaf for `key`, and that leaf, if the leaf
+    /// noted for `key`'s row is it, or leads to it within `HOPS` links;
+    /// none if the tree is no table's, no leaf is noted, or the one noted
+    /// may not be trusted. The caller is in its epoch.
+    pub(super) fn at_noted<R>(&self, key: &[u8], at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<Option<(u64, R)>> {
         let Some(mut id) = self.row_of(key).and_then(hints::leaf_of) else { return Ok(None) };
-        let Some(mut page) = self.pool.read_resident(self.file, id)? else { return Ok(None) };
+        // From the thread's copy of the leaf, if it keeps one (`leaves.rs`).
+        let Some(mut page) = leaves::read_resident(&self.pool, (self.file, id))? else { return Ok(None) };
         for hop in 0..=HOPS {
             let right = {
                 // Of no use, rather than malformed: it may be any page.
-                let Ok(node) = Node::parse(&page) else { return Ok(None) };
+                let Ok(node) = page.node() else { return Ok(None) };
                 if hop == 0 && !trusted(&node, self.meta.0, key)? {
                     return Ok(None);
                 }
                 if answers(&node, key)? {
                     self.tally.lookup();
                     self.counters.hinted.add();
-                    near.misses = 0;
-                    near.leaf = Some((id, stamp));
-                    return copied(&node, key, (&mut near.bytes, &mut near.at)).map(Some);
+                    return at(&node).map(|found| Some((id, found)));
                 }
                 node.right.filter(|_| node.level == 0 && (node.deleted || !node.covers(key)))
             };
@@ -163,7 +178,7 @@ impl BLinkTree {
             drop(page);
             super::count(&self.counters.right_moves);
             id = right.0;
-            page = self.pool.read(self.file, id)?;
+            page = leaves::read(&self.pool, (self.file, id), None)?;
         }
         Ok(None)
     }

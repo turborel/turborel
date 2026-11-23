@@ -461,8 +461,6 @@ type Found<'a> = (&'a str, &'a Arc<dyn Index>, &'a IndexDesc);
 /// its description, and the partition's id its entries carry.
 type Global = (Arc<dyn Index>, IndexDesc, u64);
 
-/// The entries of `failed`, each the position in `found` of its index and
-/// its key, as owed (`txn/owed.rs`).
 /// \[DESIGN\] RULES.md D795: whether a collection that `left` a table
 /// (garbage left, none left, or not collected as it is gone) changes
 /// nothing shared, its lock `noted` as awaiting already or not. A table
@@ -475,6 +473,8 @@ fn unchanged(left: Option<bool>, noted: Option<bool>) -> bool {
     matches!((left, noted), (Some(true), Some(true)) | (None, Some(false)))
 }
 
+/// The entries of `failed`, each the position in `found` of its index and
+/// its key, as owed (`txn/owed.rs`).
 fn owed_entries(found: &[Found<'_>], failed: Vec<(usize, Key)>) -> Vec<Entry> {
     let owed =
         |(at, key)| found.get(at).map(|&(name, index, _): &Found<'_>| Entry { name: name.to_owned(), index: Arc::clone(index), key });

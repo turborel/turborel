@@ -7,7 +7,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the row path whose removal must fail their tests.
-pub const ROW_PATH: [Mutation; 7] = [
+pub const ROW_PATH: [Mutation; 9] = [
     Mutation {
         name: "row-path-update-images-swapped",
         package: Package::Core,
@@ -77,5 +77,25 @@ pub const ROW_PATH: [Mutation; 7] = [
         replacement: "    let mut reads: Vec<usize> = indexes.take(0).flat_map(IndexDesc::reads).collect();",
         integration: &["kept_entries::a_key_changed_and_back_is_found_by_each_snapshot"],
         unit: &[],
+    },
+    Mutation {
+        name: "row-path-listed-unordered",
+        package: Package::Core,
+        breaks: "a read of listed columns gives a column the record lacks no value, so the values after it are out of their places",
+        file: "src/engine/record/listed.rs",
+        original: "let value = if i < self.types.len() { self.value_in(bytes, i, fetch) } else { Ok(Value::Null) };",
+        replacement: "let value = if i < self.types.len() { self.value_in(bytes, i, fetch) } else { continue };",
+        integration: &[],
+        unit: &["engine::record::tests::listed_columns_are_appended_in_their_order"],
+    },
+    Mutation {
+        name: "row-path-count-one-way",
+        package: Package::Core,
+        breaks: "a table's count of rows only rises, a deletion counted as a row more",
+        file: "src/engine/rows/counted.rs",
+        original: "stripe.0.fetch_add(if up { by } else { by.saturating_neg() }, Ordering::Relaxed);",
+        replacement: "stripe.0.fetch_add(by, Ordering::Relaxed);",
+        integration: &[],
+        unit: &["engine::rows::counted::tests::a_count_moved_by_threads_at_once_sums_exactly"],
     },
 ];

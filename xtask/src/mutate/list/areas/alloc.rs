@@ -97,7 +97,7 @@ pub const ALLOC: [Mutation; 11] = [
         package: Package::Core,
         breaks: "zones writes keep due never rest while a call finds as many due as it sums up, so the maintenance thread sums them up over and over",
         file: "src/engine/rows/zones/summed.rs",
-        original: "        if self.swept(looked, map.zones.len()) || due.len() < MOST_SUMMED {",
+        original: "        if self.swept(looked, zones) || due.len() < MOST_SUMMED {",
         replacement: "        if due.len() < MOST_SUMMED {",
         integration: &[],
         unit: &["engine::rows::zones::rested::zones_kept_due_rest_after_a_pass_over_every_zone"],

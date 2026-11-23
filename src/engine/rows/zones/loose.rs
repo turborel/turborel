@@ -27,6 +27,12 @@ pub(super) fn bit(place: usize) -> u64 {
     1_u64.checked_shl(shift).unwrap_or(0)
 }
 
+/// The bit of the column kept at `place` alone, none of one past a word's
+/// bits, which `bit` gives the last together.
+fn own_bit(place: usize) -> u64 {
+    u32::try_from(place).ok().and_then(|shift| 1_u64.checked_shl(shift)).unwrap_or(0)
+}
+
 /// \[DESIGN\] Whether each of a zone's `bounds` is still reached once a
 /// row's value `was` is replaced by `now`, none of a deletion: a bound
 /// `was` lies strictly inside of, or one `now` passes, as the zone is
@@ -41,6 +47,28 @@ fn reached((least, greatest): &(Value, Value), was: &Value, now: Option<&Value>)
 }
 
 impl Zone {
+    /// Widens it to hold `values`, those of the `columns` kept, of a row
+    /// written over a version that held the same value in each column of
+    /// `unchanged`, a bit each by its place. A zone known holds its rows'
+    /// newest versions, so the value replaced lies within its bounds, and
+    /// a column that keeps it is not compared with them again: an update
+    /// costs the comparisons of the columns it changed.
+    pub(super) fn hold_changed<'v>(&mut self, columns: usize, values: impl Iterator<Item = &'v Value>, unchanged: u64) {
+        let skipped = if self.known { unchanged } else { 0 };
+        if self.bounds.len() < columns {
+            self.bounds.resize(columns, None);
+            self.nulls.resize(columns, false);
+        }
+        let held = self.bounds.iter_mut().zip(self.nulls.iter_mut()).zip(values).enumerate();
+        for (_, ((bounds, null), v)) in held.filter(|&(place, _)| skipped & own_bit(place) == 0) {
+            if v.is_null() {
+                *null = true;
+            } else {
+                widened(bounds, v);
+            }
+        }
+    }
+
     /// Widens it to hold `v`, a value of the column kept at `place`, of
     /// `columns` kept.
     pub(super) fn hold_one(&mut self, columns: usize, place: usize, v: &Value) {
@@ -70,24 +98,31 @@ impl Zones {
     /// one, or each bound is still reached (`reached`), so the one null, if
     /// any, is still there too. A column not loose has each bound reached
     /// by a row's newest version, as `reached` relies on. A zone keeping no
-    /// column has no bound to narrow.
-    pub(super) fn loosened(&self, zone: &Zone, row: Option<&Row>, replaced: Replaced<'_>) -> u64 {
+    /// column has no bound to narrow. With them, the columns whose replaced
+    /// value is the new one (`Zone::hold_changed`).
+    pub(super) fn loosened(&self, zone: &Zone, row: Option<&Row>, replaced: Replaced<'_>) -> (u64, u64) {
         if self.kept.is_empty() {
-            return 0;
+            return (0, 0);
         }
-        let old = match replaced {
-            Replaced::Nothing => return 0,
-            Replaced::Unknown => return ALL,
-            Replaced::Row(old) => old,
+        let (old, within) = match replaced {
+            Replaced::Nothing => return (0, 0),
+            Replaced::Unknown => return (ALL, 0),
+            Replaced::Row(old) => (old, true),
+            Replaced::Outside(old) => (old, false),
         };
-        let places = self.kept.iter().zip(&zone.bounds).enumerate();
-        let loosened = places.filter(|&(place, (&c, bounds))| {
+        let (mut loose, mut unchanged) = (0_u64, 0_u64);
+        for (place, (&c, bounds)) in self.kept.iter().zip(&zone.bounds).enumerate() {
             let was = old.get(c).unwrap_or(&Value::Null);
             let now = row.and_then(|r| r.get(c));
             let same = now.is_some_and(|now| (was.is_null() && now.is_null()) || compare(was, now) == Some(Ordering::Equal));
-            zone.loose & bit(place) == 0 && !same && !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now))
-        });
-        loosened.fold(0_u64, |loose, (place, _)| loose | bit(place))
+            if same && within {
+                unchanged |= own_bit(place);
+            }
+            if zone.loose & bit(place) == 0 && !same && !bounds.as_ref().is_some_and(|bounds| reached(bounds, was, now)) {
+                loose |= bit(place);
+            }
+        }
+        (loose, unchanged)
     }
 
     /// Makes `summed`, the sum up of the columns `loose` of `zone`, the
