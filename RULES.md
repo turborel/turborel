@@ -587,6 +587,7 @@ verification approach DO-178C expects (§8).
 | D891 | A table's rows in an index range past the greatest value its statistics saw are at most the index's estimate of the range |
 | D940 | A prepared CALL found kept runs its procedure's compiled program over a frame the session keeps, its arguments assigned to their slots |
 | D941 | An execution's values that hold no large object are taken as given, not read for locators |
+| D942 | A point change whose increments may be reserved reserves them where it reads its row |
 
 ### The project
 
@@ -15995,6 +15996,33 @@ object, a structured value, and an array, multiset or row that holds one
 at any depth are read for locators as before. Where there is none, the
 values are copied once into the execution's parameters. The count is
 checked without a copy. The values an execution runs with are the same.
+
+#### D942. A point change whose increments may be reserved reserves them where it reads its row
+
+A compiled program's UPDATE by a whole unique key runs straight on its
+table (D841), but one whose increments may be reserved (D452, D849) was
+handed to the general path, which alone took reservations. TPROC-C's
+Payment adds to the warehouse's and the district's year to date this
+way, so its two cheapest changes were its dearest. The general path
+collected the row, noted it for the statement's end and gave it to the
+delta table's collector to be read back.
+
+Now the point change reserves the increments itself
+(`write/direct.rs`, `escrowed`). It takes the locks the general path
+takes, reads the row by its point read, makes the candidate row,
+derives the increments from it and reserves them by the same
+`State::reserve_row`, guarding the same columns. The statement ends as
+a point change that wrote no row ends. The delta table's row is the
+candidate row, which shows the columns read and the sums not yet
+applied, as the general path's collector held it. Nothing is written
+until the transaction commits.
+
+What is reserved, what is guarded, what waits for it and when it is
+applied are those of D452 and D849 unchanged. A reservation that is not
+taken hands the change to the general path as before. That is a row
+changed since it was read, a sum that would leave the column's type, or
+an increment that is not what made the candidate row. The general path
+then reserves or writes it as it always did.
 
 #### D890. A join weighs its probes by the rows of the index range its left operand reads, where the statistics estimate more
 
