@@ -366,14 +366,24 @@ impl Session {
         params: &mut Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<Completion> {
-        if let Some(p) = Session::rust_procedure(cx.st, call) {
-            return self.rust_call(cx, &*p, call, params);
-        }
-        let (bound, kept) = self.call_bound(cx.st, call, params, keeping)?;
         // [DESIGN] RULES.md D940: a prepared CALL found kept runs straight.
-        if kept && self.call_direct(cx, &bound, params)?.is_some() {
+        // Its binding is of a procedure of an SQL routine body, kept with
+        // the functions registered as they are now, so none written in
+        // Rust is of its name.
+        let found = keeping.map(Keeping::plan).transpose()?.flatten();
+        let found = if let Some(KeptPlan::Call(bound)) = found { Some(bound) } else { None };
+        if let Some(bound) = &found
+            && self.call_direct(cx, bound, params)?.is_some()
+        {
             return Ok(Completion::Success);
         }
+        if let (None, Some(p)) = (&found, Session::rust_procedure(cx.st, call)) {
+            return self.rust_call(cx, &*p, call, params);
+        }
+        let (bound, kept) = match found {
+            Some(bound) => (bound, true),
+            None => self.call_bound(cx.st, call, params, keeping)?,
+        };
         let done = self.call_general(cx, &bound, params, kept)?;
         if let Some(k) = keeping.filter(|_| kept) {
             self.keep_call(cx, &bound, k);
@@ -417,10 +427,10 @@ impl Session {
 }
 
 impl Session {
-    /// `call` bound with `params`; of a prepared statement, as it keeps it,
-    /// bound once with its `?`s slots unless the binding holds a value
-    /// (RULES.md D793), and then whether its arguments' slots are to be
-    /// filled.
+    /// `call`, which its statement keeps no binding of, bound with
+    /// `params`; of a prepared statement, kept, bound with its `?`s slots
+    /// unless the binding holds a value (RULES.md D793), and then whether
+    /// its arguments' slots are to be filled.
     ///
     /// # Errors
     ///
@@ -432,9 +442,6 @@ impl Session {
         params: &Params,
         keeping: Option<&Keeping<'_>>,
     ) -> Result<(Arc<BoundCall>, bool)> {
-        if let Some(KeptPlan::Call(bound)) = keeping.map(Keeping::plan).transpose()?.flatten() {
-            return Ok((bound, true));
-        }
         let Some(k) = keeping else { return Ok((Arc::new(self.bound(st, params, |b| State::bind_call(b, call))?), false)) };
         let binding = params.keeping();
         let bound = Arc::new(self.bound(st, &binding, |b| State::bind_call(b, call))?);

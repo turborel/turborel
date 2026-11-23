@@ -16336,7 +16336,9 @@ Everything else runs as any CALL does and gives what it gave. That is an
 argument that is an expression or reads a table, an output parameter
 whose target is no `?`, a body that is one statement, a program not
 compiled or not kept, and an execution whose argument's cast raises a
-warning or an exception. Such an execution has run nothing when it turns
+warning or an exception. A binding found kept is of a procedure with an
+SQL routine body, so a procedure written in Rust is looked for only
+where none is found. Such an execution has run nothing when it turns
 to the general path, so the condition raised is that path's own. The
 general path itself now takes the scope from the binding and builds a
 program's frame of scopes only when it binds the program.
