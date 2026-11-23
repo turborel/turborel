@@ -16,7 +16,7 @@
 
 use super::{ObjectRows, Written};
 use crate::catalog::ColumnDefault;
-use crate::db::assignment::candidate;
+use crate::db::assignment::{candidate, candidate_of};
 use crate::db::escrow::reserving;
 use crate::db::integrity::Straight;
 use crate::db::prepared::Keeping;
@@ -48,10 +48,11 @@ pub(in crate::db) enum Pointed {
 /// As `update_rows` and `delete_rows`, and the statement's end.
 pub(in crate::db) fn point_change(
     (session, cx): (&Session, StatementContext<'_>),
-    (w, straight, delete, shown): (Written, &Straight, bool, u64),
+    (mut w, straight, delete, shown): (Written, &Straight, bool, u64),
 ) -> Result<std::result::Result<Pointed, Written>> {
     let StatementContext { st, tx } = cx;
-    let ObjectRows::Point(kept, reads) = &w.rows else { return Ok(Err(w)) };
+    let placed = if let ObjectRows::Point(_, _, placed) = &mut w.rows { placed.take() } else { None };
+    let ObjectRows::Point(kept, reads, _) = &w.rows else { return Ok(Err(w)) };
     let Some(point) = kept.point(st) else { return Ok(Err(w)) };
     if !delete && reserving(st, tx, &w, shown).is_some() {
         return Ok(Err(w));
@@ -61,7 +62,12 @@ pub(in crate::db) fn point_change(
     for t in reads.iter().chain(straight.set_tables()) {
         st.read_lock(tx, t)?;
     }
-    let Some((id, seen)) = point.entry(st, tx.id, w.slots.as_deref().unwrap_or_default())? else {
+    // Its probe as its plan placed it, if it did (RULES.md D911).
+    let found = match placed {
+        Some(probe) => point.entry_under(st, tx.id, std::borrow::Cow::Owned(probe))?,
+        None => point.entry(st, tx.id, w.slots.as_deref().unwrap_or_default())?,
+    };
+    let Some((id, seen)) = found else {
         // Of a catalog with triggers, its statement ends with no row
         // changed, as `update_rows` ends it.
         if st.catalog.any_triggers() {
@@ -74,7 +80,7 @@ pub(in crate::db) fn point_change(
     // What its write needs of its table, found once (RULES.md D872).
     let writing = st.writing(&w.bound.table)?;
     let at = (&writing, id);
-    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, &seen), straight.set())? };
+    let rows = if delete { deleted(cx, (&w, &hosted), at)? } else { updated(cx, (&w, &hosted), (at, seen), straight.set())? };
     let wrote = rows.as_ref().map(|_| id);
     // The row an UPDATE wrote, as it holds it (RULES.md D880).
     let held = rows.as_ref().and_then(|(_, new)| new.as_ref());
@@ -101,10 +107,11 @@ fn deleted(
 fn updated(
     cx: StatementContext<'_>,
     (w, hosted): (&Written, &Hosted<'_>),
-    (at, seen): ((&Writing<'_>, RowId), &Row),
+    (at, seen): ((&Writing<'_>, RowId), Row),
     set: Option<u64>,
 ) -> Result<Option<(Row, Option<Row>)>> {
-    let new = candidate(w, seen, ("ISO/IEC 9075:1992 §13.10 GR8", hosted))?;
+    // The candidate row is made of the row seen itself (RULES.md D912).
+    let new = candidate_of(w, seen, ("ISO/IEC 9075:1992 §13.10 GR8", hosted))?;
     // A row another transaction changed is written in the version it
     // committed, if it is still one to change, its values computed from it.
     let mut recomputed = None;

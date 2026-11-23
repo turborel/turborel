@@ -46,9 +46,20 @@ pub(in crate::db) fn written(
     (plan, reads): (&Arc<Kept>, Arc<[QualifiedName]>),
     slots: Slots,
 ) -> Result<Written> {
+    // [DESIGN] RULES.md D911: a point read's probe is placed once, here.
+    // Placed, each of its values raised nothing, so they place it
+    // (`Kept::places`), and its read looks under the probe so placed.
+    if let Some(point) = plan.point(st)
+        && let Ok(probe) = point.placed(&slots)
+    {
+        let probe = probe.into_owned();
+        return Ok(Written::pointed(w, (Arc::clone(plan), reads), slots).probing(probe));
+    }
     if !plan.places(&slots) {
         return Written::slotted(w, None, slots);
     }
+    // One whose placing fails by a value that is not one of those that
+    // may raise is placed again by its read, which raises it there.
     if plan.point(st).is_some() {
         return Ok(Written::pointed(w, (Arc::clone(plan), reads), slots));
     }
