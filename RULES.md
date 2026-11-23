@@ -592,6 +592,10 @@ verification approach DO-178C expects (§8).
 | D912 | A point change makes its candidate row of the row it read |
 | D913 | A compiled program's row of values is evaluated over the frame's slots where they hold values of their types |
 | D914 | A compiled program appends in place where it assigns an array its own concatenation with one element |
+| D915 | A record is made of another record's bytes where an update sets some of its columns |
+| D916 | The row store writes an update told the columns it sets as a patch of the row's newest version |
+| D917 | A point UPDATE reads of its row the columns it needs alone and holds the values it sets |
+| D918 | A delta table's select list reads the columns of the CASE result its frame's values choose |
 
 ### The project
 
@@ -16450,6 +16454,124 @@ elements to the longer array, moved. An array that is null, full or
 not of its type is assigned as bound. That keeps the null result, the
 null element dropped past the maximum cardinality, and the error of any
 other element there [§9.2 GR3b xxii 2].
+
+#### D915. A record is made of another record's bytes where an update sets some of its columns
+
+A row's record was always encoded from the row whole (D31). An update
+of one number in a row of many strings decoded every string into a
+value of its own and encoded each again, to write bytes that were
+already in the record it replaced.
+
+Every column of a record is found from the format alone. So
+`RecordFormat::patched` (`record/patched.rs`) makes the record of the
+row after from the record of the row before and the values of the
+columns set. It copies the header, the null bitmap, the fixed part and
+the ends, sets or clears the null bit of each column set, and writes
+its fixed field, zeros for NULL. If a column set is of varying width
+it builds the ends and the variable bytes again, the bytes of each
+column kept copied as they lie and those of each column set written by
+the encoder that writes them in a whole record, so a CHARACTER string
+loses its trailing spaces there too. No column kept is decoded.
+
+The record made is, byte for byte, the one `encode_spilling` writes of
+the same row, which a unit test holds for every kind of column. Where
+that cannot be so, no record is made and the caller encodes the row
+whole. That is a record that keeps a value out of line, whose
+reference a whole write stores again. It is a record not of this
+format, such as a sealed one. And it is a record the spill would not
+keep whole once changed, with a value past the threshold or longer
+than the most a row may take.
+
+#### D916. The row store writes an update told the columns it sets as a patch of the row's newest version
+
+`TableStorage::replace_set` (D875) took the row after whole. It now
+also takes a patch (`storage::Patch`), if its caller holds only the
+values of the columns set, and the row then keeps every other column
+as the table holds it.
+
+An update's log record holds the row after whole (D475), and only the
+table holds the columns the update did not set. So the patch carries
+an image for the table to fill (`storage::AfterImage`), the values of
+the row after in column order, each as the log's codec writes it, and
+where those of the columns set lie. The log record is made of the
+image and of the values those columns had before
+(`log::record::put_update_record_image`), and is the bytes the record
+of the two rows whole would be.
+
+The row store's write reads the row's newest version before it writes,
+to check it against what another transaction wrote. Told the columns
+set, it makes the new record of that version's record (D915) and
+writes it over the version it read, which the tree replaces only if it
+is still the entry (`mvcc/patch.rs`, `write_found`). A write succeeds
+only over the version its transaction sees, so the record patched is
+the one a whole encode of the row the statement read would give. The
+version's header, the version before it in the undo store, the change
+noted for rollback and the counts are those of `replace_set` as it
+was. The zone is widened by the columns it keeps, decoded of the new
+record, as the caller holds no other value. The image is made of the
+new record too (`record/image.rs`). Each value is decoded and written
+by the codec, but a character string, the one kind whose value is an
+allocation of its own, which is written from the record's bytes, a
+CHARACTER one with the spaces its record leaves out.
+
+A record not made so is written as before, the row read whole, given
+the columns set (`Patch::whole`) and encoded, its image that of the
+row whole. That is a table
+whose rows are sealed (D30) or hold large objects, whose owners a
+write finds in the row (D79), a frozen row, a write outside any
+transaction, and the records D915 does not make. The trait's default
+does the same for an engine that is not the row store, so every engine
+gives the row the same values.
+
+#### D917. A point UPDATE reads of its row the columns it needs alone and holds the values it sets
+
+A compiled program's point UPDATE (D841) read its row whole, as its
+write took the whole row after. With D916 its write takes the values
+set, so the statement reads of the row only what it uses.
+
+Those are the columns its SET values read, the columns it sets, the
+columns its table's index keys read, and the columns its caller reads
+of the row written, a delta table's select list (D918). The read asks
+its table for them alone (`PointRead::entry_reading`) and gets a row
+of the table's width with every other column null. The candidate row
+(D912), the row constraints and the index entries all read columns
+of that list, and the log record is made of the image the table gives
+of the row after (D916) and the columns set of the row before (D875),
+so each gives what it gave of the row whole. An UPDATE that sets a column
+of an index key is patched too. Its row holds every column of every
+key, so the new entry is made of it, and the old one is kept for the
+versions that still have it (D443).
+
+A statement is read and written so only where nothing reads another
+column (`Straight::inputs`, `Writing::patched`). Its SET values read
+the row alone, with no subquery, routine or sequence generator. It has
+no generated column. Its row constraints are NOT NULL, each of a
+column it sets. Its table has no system-time period, no partition and
+no registered spatial column, each index's key columns have a bit, and
+its engine undoes its own changes and keeps versions (D875). Any other
+statement reads its row whole and writes as before. A row another
+transaction changed first is rechecked and written from the version
+committed, whole, as before (D29).
+
+#### D918. A delta table's select list reads the columns of the CASE result its frame's values choose
+
+`SELECT CASE d WHEN 1 THEN c1 ... WHEN 10 THEN c10 END INTO v FROM
+FINAL TABLE (UPDATE ...)` reads one of ten columns, chosen by a
+variable. The columns its select list reads were taken as all ten, so
+D917 would decode ten strings to give one.
+
+A CASE gives the result of its first WHEN that is true and evaluates
+no other [ISO/IEC 9075:1992 §6.9 GR2]. Before the row is read,
+`compiled/change/read.rs` judges each WHEN whose condition is of
+constants and the frame's values alone, cast, negated or in
+arithmetic, and takes the columns of the result the CASE will give.
+Such a condition reads no table, draws no value, runs no routine and
+raises no warning, and it is judged with no session behind it, so
+judging it twice shows nowhere. A condition of any other shape, or one
+that fails, leaves the CASE reading all its columns, and the error is
+raised where the select list is evaluated. The list so found is only
+what the point UPDATE reads of its row. Whether an increment may be
+reserved (D849) still goes by all the columns the list may read.
 
 ## 2. Project layout
 
