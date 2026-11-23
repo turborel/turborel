@@ -146,6 +146,15 @@ pub trait TableStorage: Send + Sync {
     fn get_near(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, _near: &mut Near) -> Result<Option<Row>> {
         columns.map_or_else(|| self.get(tx, id), |columns| self.get_columns(tx, id, columns))
     }
+    /// \[DESIGN\] As `get_near` of `columns`, their values alone, in their order, appended to the row held beside `near`: whether
+    /// the row is there, the row held as it was if not (RULES.md D862). Default: `get_near`'s row, its columns picked out.
+    ///
+    /// # Errors
+    ///
+    /// As `get`.
+    fn get_listed(&self, tx: TxId, id: RowId, columns: &[usize], (near, out): (&mut Near, &mut Row)) -> Result<bool> {
+        Ok(rows::listed(self.get_near(tx, id, Some(columns), near)?, columns, out))
+    }
     /// Every live row, once each, with its id. The rows have every column at its position, but only those in `columns` need hold their
     /// value: the others may hold anything (a column layout leaves them NULL), and callers do not read them (RULES.md D31). A row the
     /// engine cannot read is an error item, after which the scan may end. The scan holds what it reads (`self`), so it can outlive the call
@@ -517,10 +526,8 @@ pub trait TableStorage: Send + Sync {
     fn statistics_wanted(&self) -> bool {
         false
     }
-    /// \[DESIGN\] Does some of the work due (`maintenance_due`), of rows
-    /// committed at or before `horizon`, before every snapshot; on the
-    /// database's maintenance thread, or, `now`, when it is asked to
-    /// (`Database::maintain`), work it spaces in time done at once; never two
+    /// \[DESIGN\] Does some of the work due (`maintenance_due`), of rows committed at or before `horizon`, before every snapshot; on the
+    /// database's maintenance thread, or, `now`, when it is asked to (`Database::maintain`), work it spaces in time done at once; never two
     /// calls at once: whether it did any, for it to be called again.
     ///
     /// # Errors
@@ -529,23 +536,16 @@ pub trait TableStorage: Send + Sync {
     fn maintain(&self, _horizon: Timestamp, _now: bool) -> Result<bool> {
         Ok(false)
     }
-    /// Every version a new index needs an entry for, with its row id,
-    /// `columns` holding its values as for `scan`, among those made by
-    /// transactions committed at or before `as_of`: each committed version
-    /// a transaction reading at or after `horizon` may still read, and each
-    /// version `gc` will report removed that none can. An index holds one
-    /// entry per version, which `gc` takes back (`Index`), so it must have
-    /// been given one. Default: the rows as read outside any transaction,
-    /// for an engine that keeps no versions.
+    /// Every version a new index needs an entry for, with its row id, `columns` holding its values as for `scan`, among those made by
+    /// transactions committed at or before `as_of`: each committed version a transaction reading at or after `horizon` may still read, and
+    /// each version `gc` will report removed that none can. An index holds one entry per version, which `gc` takes back (`Index`), so it
+    /// must have been given one. Default: the rows as read outside any transaction, for an engine that keeps no versions.
     fn versions(self: Arc<Self>, _horizon: Timestamp, _as_of: Timestamp, columns: &[usize]) -> Rows {
         self.scan(NO_TRANSACTION, columns)
     }
-    /// \[DESIGN\] Makes each large object of `row`, about to be inserted
-    /// by `tx`, or to replace row `replacing`, one the table keeps for it
-    /// (RULES.md D79): by default, as it is. An engine keeping large objects
-    /// copies one it does not keep for that row into objects of its own,
-    /// handing `log` each object's id and body with what keeps it, a chunk
-    /// at a time, to keep and log at once.
+    /// \[DESIGN\] Makes each large object of `row`, about to be inserted by `tx`, or to replace row `replacing`, one the table keeps for it
+    /// (RULES.md D79): by default, as it is. An engine keeping large objects copies one it does not keep for that row into objects of its
+    /// own, handing `log` each object's id and body with what keeps it, a chunk at a time, to keep and log at once.
     ///
     /// # Errors
     ///

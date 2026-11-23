@@ -558,6 +558,9 @@ verification approach DO-178C expects (§8).
 | D849 | An increment through a delta table whose select list shows none of the columns it adds to is reserved, and guards what the list shows |
 | D850 | A statement whose completion is told only as its transaction ends leaves its row locks with no wait for what it rests on |
 | D851 | A row whose writer ended is not kept for a waiter not yet running, unless that waiter was overtaken once already |
+| D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
+| D861 | A table's count of rows is kept by stripe, a thread moving its own |
+| D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 
 ### The project
@@ -15452,6 +15455,77 @@ A waiter does not spin. The waits measured were long where no core was
 free, and a spinning waiter would take a core from the thread it waits
 for.
 
+#### D860. A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing
+
+A table's zones (D31) were vectors behind one lock shared by readers,
+taken to be written only as zones were added. Every row written took it
+to find its zone, every commit took it once for each version it
+superseded, and every entry an index-only scan read took it to read its
+zone's flag (D34). A lock shared by readers still writes its own word
+as each reader comes and goes, so every session using a table passed
+that one cache line to the next. A write also took the lock of the
+table's sealing twice and counted its pipeline, and a commit took the
+locks of how the table freezes rows and of its directory of groups,
+though the table sealed nothing and froze nothing. Each write set its
+zone's flag of visibility and its segment's flag of change whether or
+not they were set already.
+
+The zones are now a sequence that only grows, in chunks each twice as
+long as the one before, so no zone moves and one is found by loads alone
+(`rows/zones/grown.rs`). A zone is still locked alone to be changed.
+Zones are added by one thread at a time, and a zone is given only once
+it is filled. A scan takes the number of zones once, and reads the rows
+of any zone added after as it reads those past the last. A table's
+zones are read from its pages once, as it opens.
+
+A table that passes its rows through no encoding says so in a flag set
+with its pipeline, and one that has never frozen rows nor held a group
+in a flag that is never set again once clear. A write and a commit read
+those flags and take no lock. A flag of a zone or a segment is written
+only if it is to change. A save clears a segment's flag before it reads
+the segment's zones, so a change it did not read finds the flag clear.
+
+A write over a row's newest version compares each value it keeps with
+the one replaced, to know which columns it may leave loose (D770). A
+zone known holds its rows' newest versions, so a column the write keeps
+is not compared with the zone's bounds again. A table that has frozen
+rows or held a group is left out, as its zones are of its tree's rows
+alone and the version replaced may have been read from a group.
+
+#### D861. A table's count of rows is kept by stripe, a thread moving its own
+
+A table's count of rows (D31) was one word, added to by every insert and
+taken from by every deletion, so sessions inserting into one table at
+once passed its cache line from one to the next for each row.
+
+The count is now kept by stripe (`rows/counted.rs`), 16 of them, each on
+cache lines of its own, as a structure's tally of its reads is (D35). A
+thread moves the stripe it is given (`sync::thread_stripe`), up or down,
+so a stripe may be below zero while the sum is not. The count is the
+stripes' sum, read by the planner, the statistics and a checkpoint. A
+checkpoint reads it with writers held, so the count it saves is exact
+as before. A sum read while rows are written counts each of them or not,
+as a single word read then did.
+
+#### D862. A read by row id gives the columns listed alone, in their order, into a row its caller keeps
+
+A read of some columns of a row (`TableStorage::get_columns`, D31) gives
+a row of the table's degree, the other columns null (D751). Of a table
+of twenty columns read for two, it makes a vector of twenty values for
+each row, and the caller then picks its two out.
+
+`RowTable::get_listed` appends the values of the columns listed, in the
+order listed, to a row the caller holds, and nothing else
+(`record/listed.rs`). With the `Near` of `get_near`, which holds the
+bytes read, given beside that row, a caller reading row after row allocates only what the
+values themselves own. A column the record lacks is null, as D751 has
+it. A column listed twice is given twice. The read is noted as
+`get_columns` notes it.
+
+A record is checked once as it is decoded, whole or in part, not once
+for each column. Each column is found from the format alone, as before:
+a column of fixed width at its offset, one of varying width between two
+ends.
 #### D870. A commit takes a table's shared lists and the work areas only for what it left there
 
 A transaction validated, committed and settled in every table it had

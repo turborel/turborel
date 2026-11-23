@@ -48,8 +48,7 @@ fn summed(table: &RowTable) {
 /// Has `edit` change the zone of row `id` of `table`, and gives back what
 /// it gives.
 fn with_zone<T>(table: &RowTable, id: RowId, edit: impl FnOnce(&mut Zone) -> T) -> T {
-    let map = table.zones.map.read().unwrap();
-    edit(&mut lock_builtin(&map.zones[zone_at(id)]))
+    edit(&mut lock_builtin(&table.zones.slots.get(zone_at(id)).unwrap().zone))
 }
 
 /// The bounds of column `place` of the zone of row `id`, as numbers.

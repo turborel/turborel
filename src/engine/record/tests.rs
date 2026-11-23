@@ -290,3 +290,21 @@ fn records_kept_whole_are_written_in_line() {
     assert_eq!(refused.err().map(|e| e.code), Some(Code::Api));
     assert_eq!(out, [9_u8], "nothing of the refused record left");
 }
+
+/// Verifies: [DESIGN] RULES.md D862: the columns listed are appended in
+/// the order listed, one named twice given twice, one the record lacks
+/// NULL, after what the row already held; no other column is given; and a
+/// record of another format leaves the row as it was.
+#[test]
+fn listed_columns_are_appended_in_their_order() {
+    let format = RecordFormat::new(&types());
+    let mut bytes = Vec::new();
+    format.encode(&row(), &mut bytes).unwrap();
+    let mut out = vec![exact(7, 0)];
+    format.decode_listed_with(&bytes, &[9, 3, 5, 1, 3, 40], &mut not_fetched, &mut out).unwrap();
+    let whole = row();
+    let expected = vec![exact(7, 0), whole[9].clone(), whole[3].clone(), Value::Null, whole[1].clone(), whole[3].clone(), Value::Null];
+    assert_eq!(shown(&out), shown(&expected));
+    assert_eq!(format.decode_listed_with(&[9, 9], &[0], &mut not_fetched, &mut out).err().map(|e| e.code), Some(Code::Corrupt));
+    assert_eq!(out.len(), 7, "as it was");
+}
