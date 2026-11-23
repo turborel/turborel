@@ -5,6 +5,7 @@
 //! collected by the maintenance job's pass.
 
 use std::thread;
+use std::time::{Duration, Instant};
 
 use turborel::db::Database;
 use turborel::threads::JobPolicy;
@@ -141,6 +142,23 @@ fn the_maintenance_pass_is_asked_for_after_each() {
         db.run_due().unwrap();
         assert_eq!(db.index_entries("T_X").unwrap(), 1, "round {round}: collected by the pass");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D920, D55: under JOBS.POLICY AUTOMATIC the
+/// maintenance job's thread makes the pass once its second is up, with no
+/// other transaction: the one commit's garbage, no batch due, is collected.
+#[test]
+fn the_maintenance_thread_collects_a_quiet_table_after_its_time() {
+    let db = busy(1);
+    db.maintain().unwrap();
+    let w = db.session("APP");
+    w.run("UPDATE T SET X = 1 WHERE ID = 0").unwrap();
+    w.commit().unwrap();
+    let began = Instant::now();
+    while db.index_entries("T_X").unwrap() > 1 && began.elapsed() < Duration::from_secs(30) {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(db.index_entries("T_X").unwrap(), 1, "collected by the job's thread");
 }
 
 /// Verifies: [DESIGN] RULES.md D451, D920: a quiet table, no transaction

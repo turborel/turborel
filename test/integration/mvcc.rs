@@ -371,6 +371,7 @@ fn older_versions_of_a_kept_database_are_on_disk() {
         writer.run(&format!("UPDATE T SET V = '{round:x>90}'")).unwrap();
         writer.commit().unwrap();
     }
+    db.maintain().unwrap();
     let kept = undo_segments(&dir);
     assert!(kept < held, "taken back once no reader needs them: {kept} of {held}");
     drop((writer, reader));

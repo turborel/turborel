@@ -9,6 +9,7 @@ use std::cell::OnceCell;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use super::kept::{key_reads, needs_row};
 use super::owed::{Entry, Owed};
@@ -324,12 +325,31 @@ impl Transactions {
     /// has been asked for since the last began. It counts as asked from
     /// now.
     pub(crate) fn ask_pass(&self) -> bool {
-        self.awaiting.load(Ordering::Acquire) && !self.pass_asked.swap(true, Ordering::AcqRel)
+        let asks = self.awaiting.load(Ordering::Acquire) && !self.pass_asked.swap(true, Ordering::AcqRel);
+        if asks {
+            *lock_builtin(&self.pass_since) = Some(Instant::now());
+        }
+        asks
+    }
+
+    /// \[DESIGN\] How long until the pass asked for is to be made (RULES.md
+    /// D920), `after` from when it was asked for: zero if that has passed,
+    /// none if no pass is asked for. The maintenance job runs at once for
+    /// the maintenance noted, as nearly every commit of a busy table notes
+    /// some, and a pass made with each run would be a collection at every
+    /// commit again, on its thread.
+    pub(crate) fn pass_wait(&self, after: Duration) -> Option<Duration> {
+        if !self.pass_asked.load(Ordering::Acquire) {
+            return None;
+        }
+        let waited = lock_builtin(&self.pass_since).map_or(after, |since| since.elapsed());
+        Some(after.saturating_sub(waited))
     }
 
     /// The pass begins: an end that leaves a table awaiting from now asks
     /// for another.
     fn pass_begun(&self) {
+        *lock_builtin(&self.pass_since) = None;
         self.pass_asked.store(false, Ordering::Release);
     }
 }

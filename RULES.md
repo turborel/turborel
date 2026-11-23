@@ -16391,21 +16391,24 @@ What a batch leaves is collected by the maintenance job
 (`db/maintenance.rs`). An end that leaves a table awaiting asks for the
 job a second later, once until its pass begins. The pass collects every
 table awaiting as far as the horizon lets, due or not, waiting for a
-collection under way, and then does the maintenance noted.
+collection under way, and then does the maintenance noted. A run of the
+job before the second is up, as for maintenance a commit noted, makes
+no pass: commits of a busy table note maintenance nearly every time, and
+a pass with each run would be a collection at every commit again, on the
+job's thread.
 `Database::maintain` does the same at once. Under JOBS.POLICY MANUAL the
 program's `run_due` runs the pass, and under PAUSED it waits for the
 policy to change, a batch that comes due being collected meanwhile.
 
 The bound is 64 commits past a table's earliest garbage, the bound D451
 chose for a busy table. A sweep of it on the in-repo order entry bench
-at one session, over 1, 4, 16, 64, 256 and 1024 commits, showed a
-commit's time fall by about a quarter at every value against a
-collection at each end, and no difference between the values beyond the
-spread of the runs: what a commit saves is the collection of its own
-garbage at its own end and the walk of the tables awaiting, not the size
-of the batch. So the bound stays the one rule for quiet and busy tables,
-and the versions held stay bounded by it. The sweep's figures are in the
-commit that made the change.
+at one session, over 1, 4, 16, 64, 256 and 1024 commits, counted the
+allocations a commit makes, which no load on the machine moves. They
+fall from 1 to 4 to 16 to 64 and are level from there, and a commit's
+time follows them within the spread of the runs, about a sixth under a
+collection at each end. A larger batch saves nothing more and holds more
+versions, so the bound stays the one rule for quiet and busy tables. The
+sweep's figures are in the commit that made the change.
 
 The semantics hold for these reasons.
 
