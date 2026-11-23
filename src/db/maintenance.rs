@@ -107,7 +107,7 @@ pub(super) fn maintained(db: &Database) -> Result<Option<Duration>> {
     // Looked at again once the pass's second is up, or a second later for
     // a table still due, whichever comes first.
     let again = st.tx.maintenance_due().then_some(AGAIN);
-    Ok([pass.filter(|wait| !wait.is_zero()), again].into_iter().flatten().min())
+    Ok([pass.filter(|due| !due.is_zero()), again].into_iter().flatten().min())
 }
 
 impl State {
