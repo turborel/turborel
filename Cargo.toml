@@ -105,6 +105,11 @@ path = "bench/tree.rs"
 harness = false
 
 [[bench]]
+name = "fetch"
+path = "bench/fetch.rs"
+harness = false
+
+[[bench]]
 name = "joins"
 path = "bench/joins.rs"
 harness = false
