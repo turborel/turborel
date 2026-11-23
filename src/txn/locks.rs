@@ -464,7 +464,7 @@ impl State {
 }
 
 /// Takes `lk`, the lock of `table`, in `mode` for `tx` (`State::acquire`).
-fn acquire_lock(tx: &Txn, table: &QualifiedName, lk: &Arc<TableLock>, mode: LockMode) -> Result<()> {
+pub(super) fn acquire_lock(tx: &Txn, table: &QualifiedName, lk: &Arc<TableLock>, mode: LockMode) -> Result<()> {
     // [DESIGN] RULES.md D442: a shared hold in a stripe, while no exclusive
     // request blocks them.
     let fast = if mode == LockMode::Shared { lk.fast.try_shared(tx) } else { None };

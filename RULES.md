@@ -570,6 +570,7 @@ verification approach DO-178C expects (§8).
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
+| D872 | A statement's writes of a table resolve it once |
 
 ### The project
 
@@ -15760,6 +15761,37 @@ Bookkeeping of ended transactions goes from the thread as it next keeps
 one. The storage trait is unchanged. A handle the coordinator passes
 down would avoid the thread's list, and needs every engine's methods to
 take it.
+
+#### D872. A statement's writes of a table resolve it once
+
+The coordinator's row writes took a table's name. For every row an
+update looked the name up about eighteen times, in the map of storages,
+the map of locks and the catalog, for its capabilities, its lock, its
+generation, its seal and its indexes, whose key columns it worked out
+again each time. It then took the transaction's own lock five times to
+find its first-time work already done.
+
+A `Writing` (`txn/writing.rs`) holds what those lookups gave, found once
+in the definitions a statement reads, which it borrows, so it cannot
+outlive them. `State::writing` makes one, and `insert_row_in`,
+`update_row_in`, `delete_row_in`, `rewrite_row_in` and `index_add_in`
+take it. The entry points that take a name make one for their row, so
+their callers are unchanged and a caller writing many rows of a table
+holds one for all of them.
+
+What a write does in its transaction the first time is the policy's
+check of its persistence, the table's lock, the joining of the engine
+and the statement's savepoint there. A write through a `Writing` asks
+the transaction whether all of that is done (`Txn::prepared`), read from
+the transaction's own bookkeeping under its lock taken once. Nothing is
+remembered in the `Writing` or beside the bookkeeping. A statement's
+end, a mark undone and a savepoint gone back to each take savepoints out
+of the bookkeeping, and a flag kept apart would have to be cleared by
+every one of them. The checks that only the lock and the engine's
+capabilities decide, damage, the table's generation and a change of its
+definitions, are made at every write as before. A table whose changes
+the log does not hold is prepared in full at every write, as the
+policy's refusals of it depend on the setting as it stands.
 
 ## 2. Project layout
 

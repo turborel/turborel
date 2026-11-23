@@ -4,7 +4,9 @@
 
 use std::sync::Arc;
 
-use super::{Concurrency, Joined, LockMode, Policy, Reading, TxCapabilities, Txn, Undo};
+use super::locks::acquire_lock;
+use super::writing::Writing;
+use super::{Concurrency, Joined, LockMode, Policy, Reading, TableLock, TxCapabilities, Txn, Undo};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
@@ -37,8 +39,8 @@ impl State {
     }
 
     /// Refuses any use of a damaged table (RULES.md D19).
-    fn check_damaged(&self, table: &QualifiedName) -> Result<()> {
-        if self.lock_of(table)?.is_damaged() {
+    fn check_damaged(table: &QualifiedName, lock: &TableLock) -> Result<()> {
+        if lock.is_damaged() {
             return Err(SqlError::new(Code::Damaged, format!("[DESIGN] {table} is damaged: a change to it could not be undone")));
         }
         Ok(())
@@ -84,8 +86,9 @@ impl State {
         for child in self.catalog.partitioning().children(table) {
             self.lock_to_read(tx, &child.table, mode)?;
         }
-        self.check_damaged(table)?;
-        self.lock_of(table)?.check_generation(table, self.generation_of(table), tx)?;
+        let lock = self.lock_of(table)?;
+        Self::check_damaged(table, lock)?;
+        lock.check_generation(table, self.generation_of(table), tx)?;
         let caps = self.capabilities(table)?;
         self.check_isolation(table, caps)?;
         match caps.concurrency {
@@ -104,23 +107,39 @@ impl State {
         if tx.state()?.joined.iter().any(|j| j.is(&storage)) {
             return Ok(());
         }
-        let joined = Joined { table: name, storage };
+        let native = storage.capabilities().undo == Undo::Native;
+        Self::begin_in(tx, &Joined { table: name, storage }, native)
+    }
+
+    /// Begins `tx` in the engine of `joined`, which then joins it; of an
+    /// engine that undoes its own changes, `native`, with a savepoint for
+    /// each the transaction has.
+    fn begin_in(tx: &Txn, joined: &Joined, native: bool) -> Result<()> {
         joined.storage.begin(tx.id, tx.snapshot())?;
         if tx.reading != Reading::Serializable {
             joined.storage.read_mode(tx.id, tx.read_mode())?;
         }
         tx.state()?.joined.push(joined.clone());
-        if self.capabilities(table)?.undo == Undo::Native {
-            tx.joined_after_savepoints(&joined);
+        if native {
+            tx.joined_after_savepoints(joined);
         }
         Ok(())
     }
 
     /// Before changing a table: policy, lock, participant and savepoint bookkeeping.
     pub(crate) fn prepare_write(&self, tx: &Txn, table: &QualifiedName) -> Result<()> {
-        self.check_damaged(table)?;
-        self.lock_of(table)?.check_generation(table, self.generation_of(table), tx)?;
-        let caps = self.capabilities(table)?;
+        self.prepare_in(tx, &self.writing(table)?)
+    }
+
+    /// As `prepare_write`, of the table of `writing`. What only its lock
+    /// and its engine's capabilities decide is judged at every write. What
+    /// the transaction does the first time it writes the table, or the
+    /// first time in a statement, is done only if its bookkeeping does not
+    /// show it done (`Txn::prepared`, RULES.md D872).
+    pub(crate) fn prepare_in(&self, tx: &Txn, writing: &Writing<'_>) -> Result<()> {
+        let (table, lock, caps) = (writing.table(), writing.lock, writing.caps);
+        Self::check_damaged(table, lock)?;
+        lock.check_generation(table, writing.generation, tx)?;
         self.check_isolation(table, caps)?;
         if caps.undo == Undo::Unsupported && self.policy() == Policy::Strict {
             return Err(SqlError::new(
@@ -131,33 +150,45 @@ impl State {
                 ),
             ));
         }
+        if !lock.changed_after(self.generation) && tx.prepared(writing)? {
+            return Ok(());
+        }
+        self.prepare_first(tx, writing)
+    }
+
+    /// What a write of the table of `writing` does in `tx` the first time,
+    /// and the first time in a statement: the policy's check of its
+    /// persistence, its lock, its joining of the engine, and the
+    /// statement's savepoint there.
+    fn prepare_first(&self, tx: &Txn, writing: &Writing<'_>) -> Result<()> {
+        let (table, lock, caps, storage) = (writing.table(), writing.lock, writing.caps, writing.storage);
         self.check_persistence(tx, table, caps.persistence)?;
         tx.state()?.wrote = true;
-        let storage = self.storage_of(table)?;
         // An engine that isolates transactions itself lets its writers share
         // the table's lock with each other, but not with `create_index`, which
         // must see no uncommitted change (`Database::create_index`).
         let mode = if caps.concurrency == Concurrency::Coordinator { LockMode::Exclusive } else { LockMode::Shared };
-        self.acquire(tx, table, mode)?;
+        acquire_lock(tx, table, lock, mode)?;
         // Holding the lock, the statement may write only if its snapshot
         // knows every index the table has (RULES.md D27).
-        if self.lock_of(table)?.changed_after(self.generation) {
+        if lock.changed_after(self.generation) {
             return Err(SqlError::new(
                 Code::Conflict,
                 format!("[DESIGN] the definitions of {table} changed after the statement began; run it again"),
             ));
         }
         // An index published from here on dooms the transaction instead.
-        tx.wrote_under(table, self.lock_of(table)?, self.generation)?;
-        if caps.undo == Undo::Native || caps.concurrency != Concurrency::Coordinator {
-            self.join(tx, table)?;
+        tx.wrote_under(table, lock, self.generation)?;
+        let native = caps.undo == Undo::Native;
+        if writing.joins() && !tx.state()?.joined.iter().any(|j| j.is(storage)) {
+            Self::begin_in(tx, &Joined { table: Arc::clone(writing.shared_name()), storage: Arc::clone(storage) }, native)?;
         }
         // Only the transaction's own session touches its bookkeeping, so it
         // is the same before and after the engine's `savepoint`.
-        let needs_savepoint = caps.undo == Undo::Native && !tx.state()?.statement_savepoints.iter().any(|(j, _)| j.is(storage));
+        let needs_savepoint = native && !tx.state()?.statement_savepoints.iter().any(|(j, _)| j.is(storage));
         if needs_savepoint {
             let sp = storage.savepoint(tx.id);
-            tx.state()?.statement_savepoints.push((Joined { table: Arc::new(table.clone()), storage: Arc::clone(storage) }, sp));
+            tx.state()?.statement_savepoints.push((Joined { table: Arc::clone(writing.shared_name()), storage: Arc::clone(storage) }, sp));
         }
         Ok(())
     }
