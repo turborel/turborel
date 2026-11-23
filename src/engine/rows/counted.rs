@@ -37,38 +37,38 @@ struct Stripe(AtomicI64);
 /// \[DESIGN\] A count of rows moved by every insert and deletion (RULES.md
 /// D861): kept by stripe, a thread moving its own, so sessions writing one
 /// table do not pass one word between them; summed as it is read. Its
-/// methods are named and called as an atomic's, their orderings not used.
+/// methods are named and called as an atomic's.
 pub(super) struct Live {
     stripes: Box<[Stripe]>,
 }
 
 impl Live {
-    fn new() -> Live {
+    pub(in crate::engine::rows) fn new() -> Live {
         Live { stripes: (0..STRIPES).map(|_| Stripe::default()).collect() }
     }
 
     /// Moves the thread's stripe by `rows`, up or down.
-    fn moved(&self, rows: usize, up: bool) {
+    fn moved(&self, (rows, up): (usize, bool), order: Ordering) {
         let by = i64::try_from(rows).unwrap_or(i64::MAX);
         if let Some(stripe) = self.stripes.get(thread_stripe(STRIPES)) {
-            stripe.0.fetch_add(if up { by } else { by.saturating_neg() }, Ordering::Relaxed);
+            stripe.0.fetch_add(if up { by } else { by.saturating_neg() }, order);
         }
     }
 
     /// Counts `rows` more.
-    pub(in crate::engine::rows) fn fetch_add(&self, rows: usize, _: Ordering) {
-        self.moved(rows, true);
+    pub(in crate::engine::rows) fn fetch_add(&self, rows: usize, order: Ordering) {
+        self.moved((rows, true), order);
     }
 
     /// Counts `rows` fewer.
-    pub(in crate::engine::rows) fn fetch_sub(&self, rows: usize, _: Ordering) {
-        self.moved(rows, false);
+    pub(in crate::engine::rows) fn fetch_sub(&self, rows: usize, order: Ordering) {
+        self.moved((rows, false), order);
     }
 
     /// The count: the stripes' sum, none below zero. A move made as it is
-    /// summed is counted or not.
-    pub(in crate::engine::rows) fn load(&self, _: Ordering) -> usize {
-        let sum = self.stripes.iter().fold(0_i64, |sum, stripe| sum.wrapping_add(stripe.0.load(Ordering::Relaxed)));
+    /// summed is counted or not. `order` is one a load takes.
+    pub(in crate::engine::rows) fn load(&self, order: Ordering) -> usize {
+        let sum = self.stripes.iter().fold(0_i64, |sum, stripe| sum.wrapping_add(stripe.0.load(order)));
         usize::try_from(sum).unwrap_or(0)
     }
 

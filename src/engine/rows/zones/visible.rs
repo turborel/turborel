@@ -2,7 +2,7 @@
 //! reader sees a zone's rows alone, for index-only scans (RULES.md D34):
 //! the flags readers look at, and how a sum up settles them.
 
-use std::sync::atomic::Ordering as AtomicOrdering;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use std::ops::Bound;
 
@@ -39,10 +39,24 @@ impl Seen {
     }
 }
 
+/// Takes one from `count`, unless it is none: what it was.
+fn take_one(count: &AtomicU64) -> Option<u64> {
+    let mut now = count.load(AtomicOrdering::Acquire);
+    loop {
+        let less = now.checked_sub(1)?;
+        match count.compare_exchange_weak(now, less, AtomicOrdering::AcqRel, AtomicOrdering::Acquire) {
+            Ok(_) => return Some(now),
+            Err(seen) => now = seen,
+        }
+    }
+}
+
 impl Zones {
     /// Whether every row of the zone of row `id` is visible to every reader
     /// (see the module's documentation).
     pub(in crate::engine::rows) fn visible(&self, id: RowId) -> bool {
+        // Asked of a table cold: not visible, and kept from now on.
+        self.warm();
         self.slots.get(zone_at(id)).is_some_and(|slot| slot.visible.load(AtomicOrdering::Acquire))
     }
 
@@ -54,6 +68,7 @@ impl Zones {
     /// exactly the rows its flag was set for; its rows are then every
     /// reader's, as a write the reader sees would have cleared it.
     pub(in crate::engine::rows) fn settled(&self) -> (u64, Vec<(RowId, Option<RowId>)>) {
+        self.warm();
         let mut ranges = Vec::new();
         let mut rows = 0_u64;
         let zones = self.slots.len();
@@ -86,16 +101,33 @@ impl Zones {
     /// if `added`, else collected, with its index entries: the zone
     /// unsettled again once none is left.
     pub(in crate::engine::rows) fn superseded(&self, id: RowId, added: bool) {
+        if added {
+            self.supersede(id);
+            return;
+        }
+        // Taken from its zone's count if that has one, else from those
+        // counted while the table was cold (`zones/cold.rs`).
+        let pending = self.slots.get(zone_at(id)).map(|slot| &slot.pending);
+        let taken = pending.and_then(take_one);
+        match taken {
+            Some(1) => self.unsettle(id),
+            Some(_) => {}
+            None => self.owed.fetch_sub(1, AtomicOrdering::SeqCst),
+        }
+    }
+
+    /// Counts a version of row `id` superseded: for the table while it is
+    /// cold, else for its zone.
+    fn supersede(&self, id: RowId) {
+        if self.owe() {
+            return;
+        }
         let at = zone_at(id);
-        let left = self.slots.get(at).map(|slot| {
-            if added {
-                slot.pending.fetch_add(1, AtomicOrdering::AcqRel).saturating_add(1)
-            } else {
-                slot.pending.fetch_sub(1, AtomicOrdering::AcqRel).saturating_sub(1)
-            }
-        });
-        if left == Some(0) {
-            self.unsettle(id);
+        if self.slots.get(at).is_none() {
+            self.grow_to(at);
+        }
+        if let Some(slot) = self.slots.get(at) {
+            slot.pending.fetch_add(1, AtomicOrdering::AcqRel);
         }
     }
 
@@ -117,7 +149,9 @@ impl RowTable {
     /// left to collect; left unsettled of a commit too recent; else not
     /// visible, until collection or a write unsettles it. Whether settled.
     pub(super) fn settle(&self, slot: &Slot, zone: &mut Zone, seen: Seen) -> bool {
-        if seen == Seen::Recent {
+        // Nor while versions superseded before the table was warm are
+        // left, which no zone counts (`zones/cold.rs`).
+        if seen == Seen::Recent || self.zones.owing() {
             return false;
         }
         let collected = slot.pending.load(AtomicOrdering::Acquire) == 0;

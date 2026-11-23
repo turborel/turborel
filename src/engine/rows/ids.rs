@@ -115,7 +115,9 @@ impl RowTable {
     /// A new row id.
     pub(super) fn next_id(&self) -> Result<RowId> {
         self.blocks.next(|| {
-            let start = self.next.fetch_add(BLOCK, Ordering::AcqRel);
+            // In one order with the zones' warming, which reads the ids given
+            // (`zones/cold.rs`).
+            let start = self.next.fetch_add(BLOCK, Ordering::SeqCst);
             let last = start.checked_add(BLOCK - 1).filter(|&last| last < RowId::MAX);
             let last = last.ok_or_else(|| SqlError::new(Code::Unsupported, "[DESIGN] the table has given every row id"))?;
             self.reserve_past(last)?;

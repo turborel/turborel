@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::loose::{ALL, bit};
 use super::summed::{HOT, MOST_WAIT, REST, nanos};
-use super::tests::{TYPES, files, row};
+use super::tests::{TYPES, files, row, warmed};
 use super::{Replaced, SAMPLED, ZONE_ROWS, Zone, Zones, zone_at};
 use crate::engine::rows::{RowTable, TableOptions};
 use crate::index::Probe;
@@ -35,7 +35,7 @@ fn pair(a: i128, b: i128) -> Row {
 
 /// A table of `PAIRS`, of a row `(n, n)` for each `n` of `values`: the ids.
 fn pairs(values: std::ops::Range<i128>) -> (Arc<RowTable>, Vec<RowId>) {
-    let table = Arc::new(RowTable::create(&files(), &PAIRS, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files(), &PAIRS, TableOptions::default()).unwrap()));
     let ids = values.map(|n| table.insert(NO_TRANSACTION, pair(n, n)).unwrap()).collect();
     (table, ids)
 }
@@ -125,7 +125,7 @@ fn a_hot_zone_waits_twice_as_long_each_time() {
 #[test]
 fn a_hot_table_is_not_summed_up_at_every_pass() {
     let zones = 4_usize;
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap()));
     let rows = u64::try_from(zones).unwrap().checked_mul(ZONE_ROWS).unwrap();
     let ids: Vec<RowId> = (0..rows).map(|n| table.insert(NO_TRANSACTION, row(i128::from(n))).unwrap()).collect();
     let mut firsts: Vec<RowId> = ids.clone();
@@ -256,6 +256,7 @@ fn bounds_of(table: &RowTable, id: RowId, place: usize) -> Option<(Value, Value)
 /// Zones of one row each, the row of zone `k` holding `k`, `count` of them.
 fn one_a_zone(count: usize) -> Zones {
     let zones = Zones::new(&TYPES, true, None);
+    zones.begin_warm();
     for k in 0..count {
         let n = i128::try_from(k).unwrap();
         zones.widen(u64::try_from(k).unwrap().checked_mul(ZONE_ROWS).unwrap(), Some(&row(n)), Replaced::Nothing);

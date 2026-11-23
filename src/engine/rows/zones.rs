@@ -62,10 +62,11 @@
 //! zone takes a few bytes of each row.
 
 use std::cmp::Ordering;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use super::counted::Live;
 use crate::engine::record::RecordFormat;
 use crate::storage::{Conjunct, Conjunction, Row, RowId};
 use crate::sync::lock_builtin;
@@ -157,6 +158,13 @@ pub(super) struct Zones {
     growing: Mutex<()>,
     /// Zones made for row ids below this are not known until summed up.
     unknown_below: AtomicU64,
+    /// Whether zones are kept: not until one is asked for
+    /// (`zones/cold.rs`, RULES.md D863).
+    warm: AtomicBool,
+    /// The table's row ids given so far: one past them.
+    given: Arc<AtomicU64>,
+    /// The versions superseded while the table was cold, not yet collected.
+    owed: Live,
     /// The zones stale or not known.
     stale: AtomicUsize,
     /// The zones unsettled.
@@ -271,6 +279,9 @@ impl Zones {
             dirty: Grown::default(),
             growing: Mutex::new(()),
             unknown_below: AtomicU64::new(0),
+            warm: AtomicBool::new(false),
+            given: Arc::default(),
+            owed: Live::new(),
             stale: AtomicUsize::new(0),
             unsettled: AtomicUsize::new(0),
             next_sum: AtomicUsize::new(0),
@@ -281,6 +292,12 @@ impl Zones {
             directory: place.as_ref().map_or(0, |p| p.directory.0),
             place: Mutex::new(place),
         }
+    }
+
+    /// The zones, of a table whose row ids given so far are below `given`.
+    pub(super) fn over(mut self, given: Arc<AtomicU64>) -> Zones {
+        self.given = given;
+        self
     }
 
     /// The page listing the pages they are saved in, 0 for none.
@@ -335,7 +352,11 @@ impl Zones {
     /// row's version it `replaced` taken out of it: its columns marked
     /// loose that this may leave wider than its rows (`Zones::loosened`).
     /// The zone is found with no lock, and locked alone (RULES.md D860).
+    /// Of a table cold, nothing is done (`zones/cold.rs`).
     pub(super) fn widen(&self, id: RowId, row: Option<&Row>, replaced: Replaced<'_>) {
+        if self.cold() {
+            return;
+        }
         let at = zone_at(id);
         if self.slots.get(at).is_none() {
             self.grow_to(at);
@@ -388,6 +409,11 @@ impl Zones {
         let all = vec![(0, None)];
         let (Some(conditions), false) = (conditions, self.kept.is_empty()) else { return all };
         let tests = prepared(conditions, &self.kept);
+        if tests.iter().all(|test| matches!(test, Test::Any)) {
+            return all;
+        }
+        // Asked by a scan they may prune for: kept from now on.
+        self.warm();
         let mut ranges: Vec<(RowId, Option<RowId>)> = Vec::new();
         // Of the zones there are now: a row of one added meanwhile is past them.
         let zones = self.slots.len();
@@ -528,6 +554,7 @@ fn passes(zone: &Zone, tests: &[Test<'_>]) -> bool {
     })
 }
 
+mod cold;
 mod grown;
 mod loose;
 mod saved;

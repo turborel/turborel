@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::tests::{TYPES, files, row};
+use super::tests::{TYPES, files, row, warmed};
 use super::{MOST_SUMMED, ZONE_ROWS};
 use crate::engine::rows::{RowTable, TableOptions};
 use crate::storage::{RowId, TableStorage};
@@ -12,7 +12,7 @@ use crate::txn::NO_TRANSACTION;
 
 /// A table of `zones` zones, each full of rows: the ids of its rows.
 fn table_of(zones: usize) -> (Arc<RowTable>, Vec<RowId>) {
-    let table = Arc::new(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
+    let table = Arc::new(warmed(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap()));
     let rows = u64::try_from(zones).unwrap().checked_mul(ZONE_ROWS).unwrap();
     let ids = (0..rows).map(|n| table.insert(NO_TRANSACTION, row(i128::from(n))).unwrap()).collect();
     (table, ids)

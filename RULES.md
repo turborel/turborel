@@ -569,6 +569,7 @@ verification approach DO-178C expects (§8).
 | D860 | A table's zones are found with no lock, and a write to a table that freezes no row reads no lock of its freezing or sealing |
 | D861 | A table's count of rows is kept by stripe, a thread moving its own |
 | D862 | A read by row id gives the columns listed alone, in their order, into a row its caller keeps |
+| D863 | A table's zones are kept cold until a scan or a read asks them |
 | D870 | A commit takes a table's shared lists and the work areas only for what it left there |
 | D871 | A thread keeps the bookkeeping it last found of a transaction in a table |
 | D872 | A statement's writes of a table resolve it once |
@@ -15964,6 +15965,51 @@ none twice (D814). It is counted as a scan from a key is, a lookup in the
 tree's tally and each leaf read noted for EXPLAIN ANALYZE (D621). The
 caller's function runs under a latch, so it may not use the tree nor
 wait, as a scan's visitor may not (D350).
+
+#### D863. A table's zones are kept cold until a scan or a read asks them
+
+Every write to a table kept its zone (D31): it found the zone, locked
+it, compared the values it changed with the zone's bounds, and widened
+them. A table written and read by key alone paid that for zones nothing
+read. An order entry's tables are of that kind.
+
+A table of the row store now keeps no zone until one is asked for
+(`rows/zones/cold.rs`). While it is cold a write makes no zone, takes no
+lock of one, and decodes nothing for one. A cold table has no zone, so a
+scan reads every block of its row ids and no row of it counts as
+visible to every reader (D34): an index-only scan reads the row, which
+is always right. No zone is narrower than its rows, as none is there.
+
+The first scan told a condition of a column kept, the first read that
+asks whether a row is visible to all, and the first count of its rows warm
+the table. Warming makes a zone not known for every block of row ids
+given so far, and the maintenance thread sums them up as it does a
+table's opened (D770, D771). Until a zone is summed up it prunes
+nothing. From the warming on, every write keeps its zone as before, and
+a zone made for row ids given after it is known from its first row. A
+table stays warm while it is open. The planner's question of the share
+a scan reads (`scan_share`) does not warm a table, and is answered all.
+
+A write that found the table cold had its row in the tree, and its id
+given, before it looked. Warming sets the table warm and then reads the
+ids given, under the lock zones are added under, each in one order with
+the writes' reads of them. So that row's zone is one not known, and is
+summed up from the tree.
+
+A commit counts the versions it supersedes for their zones, so no zone
+is settled visible while one is left with its index entries (D34). A
+cold table has no zone to count them, so they are counted for the table,
+by stripe. Once it is warm no zone is settled visible until that count
+is none. A version collected is taken from its zone's count if that has
+one, else from the table's, so the two together are the versions left.
+
+A table opened is warm if its last checkpoint saved zones, which only a
+warm table has: they are read, and recovery widens them (D31). Any other
+table opens cold, with no zone to sum up, so opening a database no
+longer has every table's zones summed up behind it. Opening cold a
+table whose zones were saved would leave zones on its pages that no
+write keeps, for a later opening to trust. A table of the column store
+is warm from its first row, as its scans read its tree by zone.
 
 ## 2. Project layout
 

@@ -113,7 +113,13 @@ impl RowTable {
         // A column store table's zones are of its tree's rows alone, so a scan
         // skips the tree's blocks as it does frozen chunks; kept in memory
         // only, as its rows are soon frozen (`rows/frozen/batches.rs`).
-        let zones = Arc::new(Zones::new(types, true, place));
+        let next = Arc::new(AtomicU64::new(reserved));
+        let zones = Arc::new(Zones::new(types, true, place).over(Arc::clone(&next)));
+        // A table of the column store reads by zone from the first; any
+        // other keeps none until one is asked for (`zones/cold.rs`).
+        if options.columns.is_some() {
+            zones.begin_warm();
+        }
         if zones.directory() != 0 {
             files.note_zones(&zones)?;
         }
@@ -131,7 +137,7 @@ impl RowTable {
             tree,
             format: RecordFormat::new(types),
             spill,
-            next: AtomicU64::new(reserved),
+            next,
             blocks: IdBlocks::new(),
             reserved: AtomicU64::new(reserved),
             reserving: Mutex::new(()),

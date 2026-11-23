@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of zone maintenance, in the order they run.
-pub const ZONES: [Mutation; 13] = [
+pub const ZONES: [Mutation; 16] = [
     Mutation {
         name: "zone-stale-inside",
         package: Package::Core,
@@ -140,5 +140,35 @@ pub const ZONES: [Mutation; 13] = [
         replacement: "            if same {",
         integration: &[],
         unit: &["engine::rows::frozen::tests::thawed::a_frozen_row_changed_is_held_by_its_zone_in_the_columns_it_keeps"],
+    },
+    Mutation {
+        name: "zone-cold-written",
+        package: Package::Core,
+        breaks: "zone maintenance: a write to a table nothing prunes on makes and widens its zone all the same",
+        file: "src/engine/rows/zones.rs",
+        original: "        if self.cold() {\n            return;\n        }\n        let at = zone_at(id);",
+        replacement: "        let at = zone_at(id);",
+        integration: &[],
+        unit: &["engine::rows::zones::cold::tests::a_cold_tables_writes_touch_no_zone"],
+    },
+    Mutation {
+        name: "zone-warmed-known",
+        package: Package::Core,
+        breaks: "zone maintenance: a table warmed takes the zones of the rows written while it was cold as known, so a scan skips them",
+        file: "src/engine/rows/zones/cold.rs",
+        original: "        self.unknown_below.fetch_max(below, Ordering::SeqCst);\n        let zones = usize::try_from(below.div_ceil(ZONE_ROWS)).unwrap_or(usize::MAX);",
+        replacement: "        let zones = 0_usize.min(usize::try_from(below).unwrap_or(0));",
+        integration: &[],
+        unit: &["engine::rows::zones::cold::tests::a_table_warmed_prunes_once_summed_up"],
+    },
+    Mutation {
+        name: "zone-owed-forgotten",
+        package: Package::Core,
+        breaks: "index-only scans: a zone is settled visible while a version superseded before the table was warm, and its entries, are uncollected",
+        file: "src/engine/rows/zones/cold.rs",
+        original: "        self.owed.load(Ordering::SeqCst) > 0",
+        replacement: "        self.owed.load(Ordering::SeqCst) > usize::MAX.saturating_sub(1)",
+        integration: &[],
+        unit: &["engine::rows::zones::cold::tests::versions_superseded_cold_keep_zones_unsettled_until_collected"],
     },
 ];

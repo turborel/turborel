@@ -124,7 +124,7 @@ pub struct RowTable {
     format: RecordFormat,
     spill: Spill,
     /// The first row id of the next block to give (`rows/ids.rs`).
-    next: AtomicU64,
+    next: Arc<AtomicU64>,
     /// The threads' blocks of row ids.
     blocks: IdBlocks,
     /// Row ids below this may have been given, as the meta page records.
@@ -229,7 +229,7 @@ impl TableStorage for RowTable {
     /// Puts row `id` back, or replaces it if it is there; ids given from
     /// now on are past it.
     fn restore(&self, tx: TxId, id: RowId, row: Row) -> Result<()> {
-        self.next.fetch_max(id.saturating_add(1), Ordering::AcqRel);
+        self.next.fetch_max(id.saturating_add(1), Ordering::SeqCst);
         // A thread's block may hold the id: blocks are taken past it now.
         self.blocks.clear();
         self.reserve_past(id)?;
@@ -417,6 +417,10 @@ impl TableStorage for RowTable {
     }
     fn reconfigure(&self, desc: &TableDesc) {
         self.frozen.reconfigure(options::columns_of(desc, self.frozen.columns()));
+        // Of the column store from now on, it reads by zone (`zones/cold.rs`).
+        if self.frozen.columns().is_some() {
+            self.zones.warm();
+        }
         self.sealing.rename(&options::encodings_of(desc));
         self.gathered.reconfigure(desc);
         self.versions.reconfigure(desc);

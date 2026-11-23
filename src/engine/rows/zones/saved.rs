@@ -199,15 +199,18 @@ impl Zones {
     /// Reads the zones saved, of a table opened whose rows' ids are below
     /// `below`: those of ids no segment holds not known until summed up;
     /// of a table that keeps no column, a zone of each block of them. Each
-    /// unsettled, its visibility kept in memory alone.
+    /// unsettled, its visibility kept in memory alone. A table cold whose
+    /// last checkpoint saved no zone stays cold, and none is made
+    /// (`zones/cold.rs`).
     ///
     /// # Errors
     ///
     /// The buffer pool's; SQLCODE -916 if a segment is malformed.
     pub(in crate::engine::rows) fn load(&self, below: RowId) -> Result<()> {
-        let mut loaded = Vec::new();
+        let (mut loaded, mut saved) = (Vec::new(), false);
         if let Some(place) = lock(&self.place)?.as_mut().filter(|_| !self.kept.is_empty()) {
             place.segments = segments_of(&place.pool.read(place.file, place.directory.0)?)?;
+            saved = !place.segments.is_empty();
             for (segment, page) in place.segments.iter().enumerate() {
                 let zones = self.segment(place, *page)?;
                 let first = segment.saturating_mul(SEGMENT_ZONES);
@@ -215,6 +218,13 @@ impl Zones {
                 loaded.extend(zones);
             }
         }
+        // A table whose last checkpoint saved no zone was cold then, or
+        // held no row: it opens cold, none read and none to sum up
+        // (`zones/cold.rs`).
+        if !saved && self.cold() {
+            return Ok(());
+        }
+        self.begin_warm();
         let count = usize::try_from(below.div_ceil(ZONE_ROWS)).unwrap_or(usize::MAX).max(loaded.len());
         loaded.resize_with(count, || Zone::empty(false));
         for zone in &mut loaded {

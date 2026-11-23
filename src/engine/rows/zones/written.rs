@@ -29,6 +29,9 @@ impl RowTable {
     /// SQLCODE -916 if `replaced` is not a version or its record is
     /// malformed: the zone is then widened as over a version not known.
     pub(in crate::engine::rows) fn widen_past(&self, id: RowId, row: Option<&Row>, replaced: Option<&[u8]>) -> Result<()> {
+        if self.zones.cold() {
+            return Ok(());
+        }
         let kept = &self.zones.kept;
         let version = replaced.map(Version::parse).transpose().map(|v| v.filter(|v| !v.deleted && !kept.is_empty()));
         let old = version.and_then(|v| v.map(|v| self.decode(id, v.record, Some(kept))).transpose());
@@ -40,6 +43,9 @@ impl RowTable {
     /// back in its tree, as a write widens it once written: a zone summed
     /// up while the version was not the row's newest holds it again.
     pub(in crate::engine::rows) fn widen_to(&self, id: RowId, version: &[u8]) -> Result<()> {
+        if self.zones.cold() {
+            return Ok(());
+        }
         let version = Version::parse(version)?;
         let row = if version.deleted { None } else { Some(self.decode(id, version.record, Some(&self.zones.kept))?) };
         self.zones.widen(id, row.as_ref(), Replaced::Unknown);
@@ -53,7 +59,7 @@ impl RowTable {
 mod tests {
     use std::sync::atomic::Ordering;
 
-    use super::super::tests::{TYPES, files, row};
+    use super::super::tests::{TYPES, files, row, warmed};
     use crate::engine::rows::{RowTable, TableOptions, key};
     use crate::error::Code;
     use crate::index::Probe;
@@ -68,7 +74,7 @@ mod tests {
     /// are refused (SQLCODE -916), it is stale.
     #[test]
     fn a_zone_is_widened_over_a_version_as_stored() {
-        let table = RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap();
+        let table = warmed(RowTable::create(&files(), &TYPES, TableOptions::default()).unwrap());
         let ids: Vec<u64> = (1..=5).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
         let stale = || table.zones.stale.load(Ordering::Acquire) > 0;
         let reads = |n: i128| {

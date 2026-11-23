@@ -176,7 +176,7 @@ impl RowTable {
     /// it, if it is not kept: ids given from now on are past it.
     pub(in crate::engine::rows) fn apply_object(&self, id: u64, body: &[u8]) -> Result<()> {
         self.reserve_past(id)?;
-        self.next.fetch_max(id.saturating_add(1), std::sync::atomic::Ordering::AcqRel);
+        self.next.fetch_max(id.saturating_add(1), std::sync::atomic::Ordering::SeqCst);
         self.blocks.clear();
         if self.lobs.make_tree()? {
             self.write_meta()?;
