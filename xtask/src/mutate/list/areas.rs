@@ -287,7 +287,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's and the routine
 /// debugger's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 23] {
+fn closing() -> [&'static [Mutation]; 24] {
     [
         &call_modes::CALL_MODES,
         &exports::EXPORTS,
