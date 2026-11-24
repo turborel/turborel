@@ -82,8 +82,8 @@ The table's schema is its user's.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the table's schema |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the table's schema |
 | 22000 | -301 | CHUNKER is no chunking CHUNK_TEXT reads |
 | 0A000 | -900 | A column is not of a type its part indexes, or one column is named and no MODEL |
 
@@ -118,7 +118,7 @@ CREATE HYBRID VECTOR INDEX HELP_M ON HELP (BODY, EMB) PARAMETERS (MODEL WORDS);
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): a hybrid index of a MODEL indexes its text column alone, and embeds it
+turborel: SQLCODE -103 (SQLSTATE 42000): a hybrid index of a MODEL indexes its text column alone, and embeds it
 ```
 
 ## STANDARD

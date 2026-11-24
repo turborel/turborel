@@ -25,10 +25,10 @@ pub const SERVER_READ_ONLY: &str = "SERVER_READ_ONLY";
 const YES: &str = "YES";
 /// \[DESIGN\] The role REPLICAS shows of the group's primary.
 const PRIMARY: &str = "PRIMARY";
-/// \[DESIGN\] The SQLSTATE classes of a table that does not exist, as a
+/// \[DESIGN\] The SQLSTATE class of a table that does not exist, as a
 /// server alone answers `ROLE_QUERY`: of a syntax error or access rule
-/// violation, of a direct SQL statement or another.
-const NO_SUCH_TABLE_CLASSES: [&str; 2] = ["2A", "42"];
+/// violation [ISO/IEC 9075-2:2023 §24.1].
+const NO_SUCH_TABLE_CLASS: &str = "42";
 
 /// What a server is, to a connection's session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +63,7 @@ pub(crate) fn role_of(answer: Result<Outcome>) -> Result<Role> {
         Ok(Outcome::Rows { rows, .. }) => rows,
         Ok(Outcome::Done(_)) => Vec::new(),
         Err(failure) => {
-            if NO_SUCH_TABLE_CLASSES.iter().any(|class| failure.sqlstate.starts_with(class)) {
+            if failure.sqlstate.starts_with(NO_SUCH_TABLE_CLASS) {
                 return Ok(Role::ReadWrite);
             }
             return Err(failure);
@@ -112,7 +112,7 @@ mod tests {
     }
 
     /// Verifies: [DESIGN] RULES.md D201, D57: a server alone, which has
-    /// no REPLICAS (class 2A or 42), takes changes; of a replica, PRIMARY is
+    /// no REPLICAS (class 42), takes changes; of a replica, PRIMARY is
     /// read-write, BACKUP or UNKNOWN read-only; no row, as a session not
     /// the owner's sees, is unknown; another failure is the query's.
     #[test]

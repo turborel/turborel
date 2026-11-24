@@ -69,7 +69,7 @@ fn fetched_into_and_copied_between_descriptor_areas_20_13() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §20.13 SR2, GR3, GR4, §5.4
 /// SR11, §20.6 GR7b, GR7e] in a component procedure, each refused: FETCH
-/// other than NEXT, as a PTF cursor is NO SCROLL (SQLCODE -103, 2A000);
+/// other than NEXT, as a PTF cursor is NO SCROLL (SQLCODE -103, 42000);
 /// a name of no PTF cursor (34000) or descriptor area (33000), a null name
 /// (34000) and a name not a character string (SQLCODE -103); targets fewer
 /// than the cursor's columns (07002) and a descriptor area not describing them
@@ -80,11 +80,11 @@ fn component_statements_refused_20_13() {
     let db = defined();
     let a = db.session("A");
     let refused = |name: &str, body: &str| fulfilled(&a, name, body).unwrap_err();
-    assert_eq!(refused("BACKWARD", "FETCH PRIOR FROM PTF CU INTO K, N;"), "2A000");
+    assert_eq!(refused("BACKWARD", "FETCH PRIOR FROM PTF CU INTO K, N;"), "42000");
     assert_eq!(refused("NO_CURSOR", "FETCH NEXT FROM PTF 'NOPE' INTO K, N;"), "34000");
     assert_eq!(refused("NO_AREA", "COPY PTF 'NOPE' TO PTF RR;"), "33000");
     assert_eq!(refused("NULL_NAME", "FETCH NEXT FROM PTF X INTO K, N;"), "34000");
-    assert_eq!(refused("NUMBER_NAME", "SET V = 1; FETCH NEXT FROM PTF V INTO K, N;"), "2A000");
+    assert_eq!(refused("NUMBER_NAME", "SET V = 1; FETCH NEXT FROM PTF V INTO K, N;"), "42000");
     assert_eq!(refused("FEWER", "FETCH NEXT FROM PTF CU INTO K;"), "07002");
     assert_eq!(refused("UNDESCRIBED", "FETCH NEXT FROM PTF CU INTO SQL DESCRIPTOR PTF RR;"), "07008");
     assert_eq!(refused("NO_ITEM", "COPY PTF CR VALUE 9 (DATA) TO PTF RR VALUE 1;"), "07009");

@@ -35,7 +35,7 @@ SELECT ID FROM STAFF WHERE NAME = 5;
 --------------
             2
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): CHARACTER VARYING(30) and NUMERIC(1,0) are not comparable [ISO/IEC 9075:1992 §8.2 SR1, SR3] (at character 27)
+turborel: SQLCODE -103 (SQLSTATE 42000): CHARACTER VARYING(30) and NUMERIC(1,0) are not comparable [ISO/IEC 9075:1992 §8.2 SR1, SR3] (at character 27)
 ```
 
 Barbara's null salary is neither above 7000 nor not.
@@ -523,7 +523,7 @@ OK
             1
             2
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): IS DOCUMENT tests an XML value, not a value of INTEGER [ISO/IEC 9075-14:2006 draft §8.3 SR1] (at character 27)
+turborel: SQLCODE -103 (SQLSTATE 42000): IS DOCUMENT tests an XML value, not a value of INTEGER [ISO/IEC 9075-14:2006 draft §8.3 SR1] (at character 27)
 ```
 
 ## Search conditions

@@ -86,8 +86,8 @@ fn vector_ordering_and_casts() {
         ),
         "0,0"
     );
-    assert_eq!(state(&a, "SELECT V FROM T ORDER BY V"), "2A000");
-    assert_eq!(state(&a, "VALUES ST_VECTOR(1e0, 2e0) < ST_VECTOR(1e0, 2e0)"), "2A000");
+    assert_eq!(state(&a, "SELECT V FROM T ORDER BY V"), "42000");
+    assert_eq!(state(&a, "VALUES ST_VECTOR(1e0, 2e0) < ST_VECTOR(1e0, 2e0)"), "42000");
     assert_eq!(one(&a, "VALUES CAST(ST_VECTOR(1e0, 2e0) AS VARCHAR(64))"), "VECTOR (1 2)");
     assert_eq!(one(&a, "VALUES CAST(ST_VECTOR(1e0, 2e0) AS VARBINARY(29))"), "0165000000000000000000F03F0000000000000040");
     assert_eq!(one(&a, "VALUES CAST(X'0165000000000000000000F03F0000000000000040' AS ST_VECTOR)"), "VECTOR (1 2)");
@@ -119,7 +119,7 @@ fn placements_nurbs_points_and_knots() {
     assert_eq!(one(&a, "VALUES (NEW ST_KNOT(1e0, 2).ST_VALUE(), NEW ST_KNOT(1e0, 2).ST_MULTIPLICITY(3).ST_MULTIPLICITY())"), "1E0,3");
     assert_eq!(one(&a, "VALUES (NEW ST_KNOT(), NEW ST_KNOT().ST_VALUE(2e0))"), "NEW ST_KNOT(),(NEW ST_KNOT()).ST_VALUE(2e0)");
     assert_eq!(state(&a, "VALUES NEW ST_KNOT().ST_VALUE(CAST(NULL AS DOUBLE PRECISION))"), "2FF03");
-    assert_eq!(state(&a, "VALUES NEW ST_KNOT(1e0, 2) = NEW ST_KNOT(1e0, 2)"), "2A000");
+    assert_eq!(state(&a, "VALUES NEW ST_KNOT(1e0, 2) = NEW ST_KNOT(1e0, 2)"), "42000");
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §18.1.1 to §18.1.26]

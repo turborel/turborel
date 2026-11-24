@@ -68,8 +68,8 @@ The graph's schema is its user's, who holds SELECT on each element table.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken; the message names the condition, as GRF-0012 ([Appendix A](../../appendix/a-sqlstate.md)) |
-| 2A000 | -104 | Its user does not own the graph's schema, or lacks SELECT on an element table |
+| 42000 | -103 | A rule above is broken; the message names the condition, as GRF-0012 ([Appendix A](../../appendix/a-sqlstate.md)) |
+| 42000 | -104 | Its user does not own the graph's schema, or lacks SELECT on an element table |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -102,7 +102,7 @@ OK
  PERSON                                                       | NAMED
  TOWN                                                         | TOWN
 (4 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): GRF-0011 label NAMED has other properties on element table TOWN than on PERSON (R4.4) (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): GRF-0011 label NAMED has other properties on element table TOWN than on PERSON (R4.4) (at character 21)
 OK
 ```
 
@@ -124,7 +124,7 @@ OK
 --------------------------------------------------------------+--------------------------------------------------------------
  FRIENDS                                                      | NO
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): KEY (ID) of ANN.CITY is no PRIMARY KEY or UNIQUE key of NOT NULL columns, as ENFORCED MODE needs (R4.3) (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): KEY (ID) of ANN.CITY is no PRIMARY KEY or UNIQUE key of NOT NULL columns, as ENFORCED MODE needs (R4.3) (at character 21)
 OK
 OK
  PROPERTY_GRAPH_NAME                                          | IS_VALID

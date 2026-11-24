@@ -115,9 +115,9 @@ and EXECUTE on each routine it invokes.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist |
-| 2A000 | -102 | The definition is not well formed |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or the owner lacks a privilege the body needs |
+| 42000 | -102 | The definition is not well formed |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema, or the owner lacks a privilege the body needs |
 | 0A000 | -900 | A feature not supported is used |
 | 25000 | -917 | The transaction is READ ONLY |
 
@@ -194,9 +194,9 @@ CREATE PROCEDURE ENDED () MODIFIES SQL DATA COMMIT;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the body of ANN.SNEAKY possibly modifies SQL-data, and it is READS SQL DATA (IA075) [ISO/IEC 9075-2:2023 §11.60 SR23c]
-turborel: SQLCODE -103 (SQLSTATE 2A000): schema ANN has procedure PLACE of 2 parameters already, of specific name ANN.PLACE_11 [ISO/IEC 9075-2:2023 §11.60 SR20a] (at character 17)
-turborel: SQLCODE -103 (SQLSTATE 2A000): an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, savepoint's statement, a statement of a PTF data area or a function's RETURN (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23]
+turborel: SQLCODE -103 (SQLSTATE 42000): the body of ANN.SNEAKY possibly modifies SQL-data, and it is READS SQL DATA (IA075) [ISO/IEC 9075-2:2023 §11.60 SR23c]
+turborel: SQLCODE -103 (SQLSTATE 42000): schema ANN has procedure PLACE of 2 parameters already, of specific name ANN.PLACE_11 [ISO/IEC 9075-2:2023 §11.60 SR20a] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 42000): an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, savepoint's statement, a statement of a PTF data area or a function's RETURN (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23]
 ```
 
 ## STANDARD

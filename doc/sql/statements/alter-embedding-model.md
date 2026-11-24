@@ -48,9 +48,9 @@ The model's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not of the form above |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the model's schema |
+| 42000 | -102 | The statement is not of the form above |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the model's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -77,7 +77,7 @@ ALTER EMBEDDING MODEL WORDS WITH (DIMENSIONS = 16);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): VEC-0031 ALTER EMBEDDING MODEL keeps the shape of ANN.WORDS's vectors (at character 22)
+turborel: SQLCODE -103 (SQLSTATE 42000): VEC-0031 ALTER EMBEDDING MODEL keeps the shape of ANN.WORDS's vectors (at character 22)
 ```
 
 ## STANDARD

@@ -67,9 +67,9 @@ The database's owner's alone.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open; REPLICATION MEMBERS, this node is a backup, or was removed from the group |
-| 2A000 | -102 | OWNER, TO or the identifier is not written; REPLICATION, MEMBERS or the literal is not written |
-| 2A000 | -103 | There is no such user; a member is named by no number, by 0, twice, or at no host and port |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -102 | OWNER, TO or the identifier is not written; REPLICATION, MEMBERS or the literal is not written |
+| 42000 | -103 | There is no such user; a member is named by no number, by 0, twice, or at no host and port |
+| 42000 | -104 | Its user is not the database's owner |
 | TB910 | -910 | REPLICATION MEMBERS of a database kept by no group of replicas |
 
 ## EXAMPLES
@@ -81,7 +81,7 @@ ALTER DATABASE OWNER TO nope;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no user NOPE to own the database (at character 24)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no user NOPE to own the database (at character 24)
 ```
 
 The members of the group, asked of a database kept by no group, here,
@@ -102,7 +102,7 @@ ALTER DATABASE REPLICATION MEMBERS '1=db1.example.com,2=db2.example.com:7423';
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): RULES.md D57: in REPLICATION MEMBERS, '1=db1.example.com' has no host:port (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 42000): RULES.md D57: in REPLICATION MEMBERS, '1=db1.example.com' has no host:port (at character 35)
 ```
 
 Handed on to BOB, ANN owns it no more:
@@ -122,7 +122,7 @@ ALTER DATABASE OWNER TO ann;
 ```
 
 ```
-turborel: SQLCODE -104 (SQLSTATE 2A000): only the database's owner runs ALTER DATABASE, and ANN is not it
+turborel: SQLCODE -104 (SQLSTATE 42000): only the database's owner runs ALTER DATABASE, and ANN is not it
 ```
 
 ## STANDARD

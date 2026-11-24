@@ -28,7 +28,7 @@ OK
 ----------------------
                     0
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): table SHOP.STAFF is not defined [X3.135-1986 §5.4 SR5] (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): table SHOP.STAFF is not defined [X3.135-1986 §5.4 SR5] (at character 21)
 
 ----------------------
                     1
@@ -106,7 +106,7 @@ SELECT STAFF.NAME FROM STAFF S;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): column NAME is ambiguous; qualify it [X3.135-1986 §5.7 SR3b] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): column NAME is ambiguous; qualify it [X3.135-1986 §5.7 SR3b] (at character 7)
  NAME                           | NAME
 --------------------------------+--------------------------------
  Ada                            | Engineering
@@ -115,7 +115,7 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): column NAME is ambiguous; qualify it [X
 --------------------------------
  Engineering
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): no table or correlation name STAFF is in scope [X3.135-1986 §5.7 SR3a] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): no table or correlation name STAFF is in scope [X3.135-1986 §5.7 SR3a] (at character 7)
 ```
 
 In the third, DEPT is the column of STAFF, the subquery's own table, and

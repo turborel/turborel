@@ -67,9 +67,9 @@ The routine's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | No `<drop behavior>` is written |
-| 2A000 | -103 | There is no such routine, or a rule above is broken |
-| 2A000 | -104 | Its user does not own the routine's schema |
+| 42000 | -102 | No `<drop behavior>` is written |
+| 42000 | -103 | There is no such routine, or a rule above is broken |
+| 42000 | -104 | Its user does not own the routine's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -86,10 +86,10 @@ SELECT * FROM DOUBLES;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): routine ANN.DOUBLED is not of the <routine type> named [ISO/IEC 9075-2:2023 §10.6 SR4] (at character 15)
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.DOUBLES invokes routine ANN.DOUBLED: drop it with CASCADE [ISO/IEC 9075-2:2023 §11.62 SR4c] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): routine ANN.DOUBLED is not of the <routine type> named [ISO/IEC 9075-2:2023 §10.6 SR4] (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.DOUBLES invokes routine ANN.DOUBLED: drop it with CASCADE [ISO/IEC 9075-2:2023 §11.62 SR4c] (at character 14)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.DOUBLES is not defined [X3.135-1986 §5.4 SR5] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.DOUBLES is not defined [X3.135-1986 §5.4 SR5] (at character 14)
 ```
 
 ## STANDARD

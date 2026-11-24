@@ -170,7 +170,7 @@ fn set_schema_qualifies_unqualified_names_16_2() {
         ("SET SCHEMA 'SELECT'", "3F000"),
         ("SET SCHEMA ''", "3F000"),
         ("SET SCHEMA 'ELSEWHERE.APP'", "3D000"),
-        ("SET SCHEMA 5", "2A000"),
+        ("SET SCHEMA 5", "42000"),
     ] {
         assert_eq!(state(&s, sql), sqlstate, "{sql}");
     }

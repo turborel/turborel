@@ -51,8 +51,8 @@ The database's owner creates roles, and so does each user it allows by
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | The session's user may not create a role |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | The session's user may not create a role |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -67,7 +67,7 @@ COMMIT;
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): BOB is a user's authorization identifier [ISO/IEC 9075-2:2023 §12.4 SR1] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): BOB is a user's authorization identifier [ISO/IEC 9075-2:2023 §12.4 SR1] (at character 12)
 OK
 ```
 
@@ -78,7 +78,7 @@ CREATE ROLE AUDITOR;
 ```
 
 ```
-turborel: SQLCODE -104 (SQLSTATE 2A000): BOB may not create a role, which the database's owner and each user it allows by ALTER USER ... CREATE ROLE may [ISO/IEC 9075-2:2023 §12.4 AR1] (at character 12)
+turborel: SQLCODE -104 (SQLSTATE 42000): BOB may not create a role, which the database's owner and each user it allows by ALTER USER ... CREATE ROLE may [ISO/IEC 9075-2:2023 §12.4 AR1] (at character 12)
 ```
 
 Then ANN runs `ALTER USER BOB CREATE ROLE`, and BOB's CREATE ROLE AUDITOR

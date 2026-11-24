@@ -134,9 +134,9 @@ The table's schema is its user's.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the table's schema |
-| 2A000 | -102 | An ORGANIZATION, a QUANTIZATION or an ALTER INDEX action is not one of those above |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the table's schema |
+| 42000 | -102 | An ORGANIZATION, a QUANTIZATION or an ALTER INDEX action is not one of those above |
 | 22000 | -301 | A row's vector is not of norm 1, and an index of its column has NORMALIZED ON |
 
 ## EXAMPLES
@@ -254,7 +254,7 @@ CREATE VECTOR INDEX DOCS_IVF ON DOCS (EMBEDDING)
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the index is of one type: ivf or hnsw (at character 107)
+turborel: SQLCODE -103 (SQLSTATE 42000): the index is of one type: ivf or hnsw (at character 107)
 ```
 
 ## STANDARD

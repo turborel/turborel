@@ -16,6 +16,7 @@ mod client_sync;
 mod commit_path;
 mod commit_stamps;
 mod compiled;
+mod conditions;
 mod cost_model;
 #[path = "count.rs"]
 mod count;
@@ -158,7 +159,7 @@ fn first() -> [&'static [Mutation]; 29] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 47] {
+fn second() -> [&'static [Mutation]; 48] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -170,6 +171,7 @@ fn second() -> [&'static [Mutation]; 47] {
         &super::patterns::PATTERNS,
         &super::merge::MERGE,
         &super::diagnostics::DIAGNOSTICS,
+        &conditions::CONDITIONS,
         &super::triggers::TRIGGERS,
         &super::routines::ROUTINES,
         &super::overloading::OVERLOADING,

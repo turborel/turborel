@@ -41,8 +41,8 @@ Its schema's owner.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | No such collation, or, with RESTRICT, a view, constraint or generation expression names it |
-| 2A000 | -104 | Its user does not own the collation's schema |
+| 42000 | -103 | No such collation, or, with RESTRICT, a view, constraint or generation expression names it |
+| 42000 | -104 | Its user does not own the collation's schema |
 | 23000 | -201 | A constraint no longer holds of a table's rows |
 
 ## EXAMPLES
@@ -64,7 +64,7 @@ OK
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.V names collation ANN.TIGHT, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.44 SR4] (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.V names collation ANN.TIGHT, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.44 SR4] (at character 15)
 OK
 
 ----------------------
@@ -74,7 +74,7 @@ OK
 ----------------------
                     1
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): no collation ANN.TIGHT that a definition made [ISO/IEC 9075-2:2023 §10.7 SR1] (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): no collation ANN.TIGHT that a definition made [ISO/IEC 9075-2:2023 §10.7 SR1] (at character 15)
 ```
 
 ## STANDARD

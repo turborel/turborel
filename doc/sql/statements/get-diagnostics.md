@@ -154,8 +154,8 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | An item's name is not one of those above |
-| 2A000 | -103 | A target is not a parameter declared, or not of a type its item may be assigned to; ALL's target is not a character string |
+| 42000 | -102 | An item's name is not one of those above |
+| 42000 | -103 | A target is not a parameter declared, or not of a type its item may be assigned to; ALL's target is not a character string |
 | 35000 | -301 | There is no condition of the number |
 | 0Z002 | -301 | STACKED where no handler is active |
 | 22003 | -301 | A number too large for its target |
@@ -191,10 +191,10 @@ s.execute("GET DIAGNOSTICS N = TRANSACTIONS_COMMITTED", &mut p)?;
 Refused:
 
 ```
-GET DIAGNOSTICS X = NUMBER                              -103 (2A000): parameter X is not declared [X3.135-1986 §7.3 SR3]
-GET DIAGNOSTICS N = NOPE                                -102 (2A000): expected a <statement information item name>, found NOPE
-GET DIAGNOSTICS N = MORE                                -103 (2A000): a CHARACTER VARYING(32767) item cannot be assigned to N (NUMERIC(9,0)) [ISO/IEC 9075-2:2023 §23.1 SR1, §9.1 SR3]
-GET DIAGNOSTICS N = ALL                                 -103 (2A000): target N of ALL is NUMERIC(9,0), not a character string [ISO/IEC 9075-2:2023 §23.1 SR2]
+GET DIAGNOSTICS X = NUMBER                              -103 (42000): parameter X is not declared [X3.135-1986 §7.3 SR3]
+GET DIAGNOSTICS N = NOPE                                -102 (42000): expected a <statement information item name>, found NOPE
+GET DIAGNOSTICS N = MORE                                -103 (42000): a CHARACTER VARYING(32767) item cannot be assigned to N (NUMERIC(9,0)) [ISO/IEC 9075-2:2023 §23.1 SR1, §9.1 SR3]
+GET DIAGNOSTICS N = ALL                                 -103 (42000): target N of ALL is NUMERIC(9,0), not a character string [ISO/IEC 9075-2:2023 §23.1 SR2]
 GET DIAGNOSTICS CONDITION 5 STATE = RETURNED_SQLSTATE   -301 (35000): there is no condition 5: the area holds 1 [ISO/IEC 9075:1992 §18.1 GR2]
 ```
 

@@ -37,7 +37,7 @@ None.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3B001 | -917 | No savepoint of that name is established at the current savepoint level |
-| 2A000 | -103 | It is the action of a trigger |
+| 42000 | -103 | It is the action of a trigger |
 | 09000 | -917 | A procedure a trigger's action calls runs it (SQLSTATE 0W000) |
 
 ## EXAMPLES

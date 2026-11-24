@@ -46,9 +46,9 @@ role it has set, or to a role applicable for that role.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | There is no such role |
+| 42000 | -103 | There is no such role |
 | 2B000 | -103 | The role owns a schema; or, with RESTRICT, it granted a privilege or a role, or something would be abandoned |
-| 2A000 | -104 | No identifier the session has enabled holds the role WITH ADMIN OPTION |
+| 42000 | -104 | No identifier the session has enabled holds the role WITH ADMIN OPTION |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -85,7 +85,7 @@ SELECT NAME FROM ANN.STAFF;
 ```
 
 ```
-turborel: SQLCODE -104 (SQLSTATE 2A000): CAROL has no SELECT privilege on ANN.STAFF [X3.135-1986 §5.25 SR1; X3.135-1986 §6.6 SR3] (at character 17)
+turborel: SQLCODE -104 (SQLSTATE 42000): CAROL has no SELECT privilege on ANN.STAFF [X3.135-1986 §5.25 SR1; X3.135-1986 §6.6 SR3] (at character 17)
 ```
 
 ## STANDARD

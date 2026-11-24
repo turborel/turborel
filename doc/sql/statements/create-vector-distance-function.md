@@ -69,9 +69,9 @@ on it.
 
 | SQLSTATE | SQLCODE | Raised when |
 |---|---|---|
-| 2A000 | -103 | a parameter is not VECTOR, or there are not two; a property or format is written twice or unknown; the body is no number or has a query; the name is a metric's |
+| 42000 | -103 | a parameter is not VECTOR, or there are not two; a property or format is written twice or unknown; the body is no number or has a query; the name is a metric's |
 | 0A000 | -900 | another language than SQL |
-| 2A000 | -104 | VECTOR_DISTANCE by the function, by a user who holds no EXECUTE on it |
+| 42000 | -104 | VECTOR_DISTANCE by the function, by a user who holds no EXECUTE on it |
 
 ## EXAMPLES
 
@@ -107,8 +107,8 @@ CREATE VECTOR DISTANCE FUNCTION COSINE (A VECTOR, B VECTOR) RETURNS FLOAT64 LANG
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): a distance function has two parameters, each VECTOR (at character 47)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a distance function is named as no metric is, and COSINE is one (at character 32)
+turborel: SQLCODE -103 (SQLSTATE 42000): a distance function has two parameters, each VECTOR (at character 47)
+turborel: SQLCODE -103 (SQLSTATE 42000): a distance function is named as no metric is, and COSINE is one (at character 32)
 ```
 
 ## STANDARD

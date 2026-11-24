@@ -9,7 +9,7 @@ shows a warning or an error with both, what is wrong, and, in brackets,
 the rule of the standard that says so:
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 14)
 ```
 
 The SQLCODE says the kind: -101 to -104 a statement not written right,

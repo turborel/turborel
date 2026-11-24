@@ -72,7 +72,7 @@ fn refused(s: &Session, sql: &str, (code, state, cited): (Code, &str, &str)) {
 
 /// The Syntax Rule `cited` broken (SQLCODE -103).
 fn syntax(cited: &str) -> (Code, &str, &str) {
-    (Code::SyntaxRule, "2A000", cited)
+    (Code::SyntaxRule, "42000", cited)
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.18 SR10, SR10l iii, §14.15 SR7]
@@ -101,7 +101,7 @@ fn methods_and_attributes_are_bound_9_18() {
 fn a_dynamic_argument_chooses_one_method_or_none_9_18() {
     let (_db, a) = methods();
     let e = a.prepare("SELECT P.M(?) FROM T").err().unwrap();
-    assert_eq!((e.code, e.sqlstate().as_str()), (Code::SyntaxRule, "37000"), "{e}");
+    assert_eq!((e.code, e.sqlstate().as_str()), (Code::SyntaxRule, "42000"), "{e}");
     assert!(e.to_string().contains("more than one method M of A.PT is alike [ISO/IEC 9075-2:2023 §9.18 SR10, §9.6]"), "{e}");
     let p = a.prepare("SELECT P.N(?) FROM T").unwrap();
     let mut c = a.open_prepared(&p, &[Value::Exact(Decimal::new(5, 0))]).unwrap();
@@ -117,7 +117,7 @@ fn a_dynamic_argument_chooses_one_method_or_none_9_18() {
 fn observers_mutators_and_methods_need_execute_9_18() {
     let (db, a) = methods();
     let b = db.session("B");
-    let privilege = |cited| (Code::Privilege, "2A000", cited);
+    let privilege = |cited| (Code::Privilege, "42000", cited);
     let x = "no EXECUTE is held on the method of attribute X of A.PT [ISO/IEC 9075-2:2023 §9.18 SR6]";
     refused(&b, "SELECT P.X FROM A.T", privilege(x));
     refused(&b, "UPDATE A.T SET P.X = 3", privilege(x));

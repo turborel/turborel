@@ -252,14 +252,14 @@ mod tests {
     fn failures_are_told_as_verbosity_says() {
         let failure = Failure {
             sqlcode: -103,
-            sqlstate: "2A000".into(),
+            sqlstate: "42000".into(),
             message: "no".into(),
             rule: Some("X".into()),
             position: Some(10),
             active: false,
             diagnostics: None,
         };
-        assert_eq!(told(&failure, Verbosity::Terse, ""), "SQLCODE -103 (SQLSTATE 2A000): no");
+        assert_eq!(told(&failure, Verbosity::Terse, ""), "SQLCODE -103 (SQLSTATE 42000): no");
         assert_eq!(told(&failure, Verbosity::Default, ""), failure.to_string());
         let sql = "SELECT 1\nFROM NOPE";
         assert_eq!(told(&failure, Verbosity::Verbose, sql), format!("{failure}\nline 2: FROM NOPE\n        ^"));

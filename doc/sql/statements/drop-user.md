@@ -40,8 +40,8 @@ The database's owner's alone.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -103 | There is no such user, or it is the database's owner |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -103 | There is no such user, or it is the database's owner |
+| 42000 | -104 | Its user is not the database's owner |
 
 ## EXAMPLES
 
@@ -54,7 +54,7 @@ DROP USER ANN;
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN owns the database: give it another owner first (at character 10)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN owns the database: give it another owner first (at character 10)
 ```
 
 ## STANDARD

@@ -42,7 +42,7 @@ schema.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | It is not the body of a function, or its type is not one the result type stores |
+| 42000 | -103 | It is not the body of a function, or its type is not one the result type stores |
 | 22001 | -301 | Its value is too long for the result type |
 | 22003 | -301 | Its value is out of the result type's range |
 
@@ -63,8 +63,8 @@ OK
 -------------+--------------
          3.5 |         NULL
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a <return statement> shall be contained in the <SQL routine body> of an SQL-invoked function [ISO/IEC 9075-2:2023 §16.2 SR1] (at character 0)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a <return statement> shall be contained in the <SQL routine body> of an SQL-invoked function [ISO/IEC 9075-2:2023 §16.2 SR1] (at character 40)
+turborel: SQLCODE -103 (SQLSTATE 42000): a <return statement> shall be contained in the <SQL routine body> of an SQL-invoked function [ISO/IEC 9075-2:2023 §16.2 SR1] (at character 0)
+turborel: SQLCODE -103 (SQLSTATE 42000): a <return statement> shall be contained in the <SQL routine body> of an SQL-invoked function [ISO/IEC 9075-2:2023 §16.2 SR1] (at character 40)
 ```
 
 ## STANDARD

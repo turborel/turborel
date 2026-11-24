@@ -37,7 +37,7 @@ None.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 2H000 | -301 | The value names no collation, or the collation was dropped since |
-| 2A000 | -103 | The value is not a character string |
+| 42000 | -103 | The value is not a character string |
 | 0A000 | -900 | FOR names another character set |
 
 ## EXAMPLES

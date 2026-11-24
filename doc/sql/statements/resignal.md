@@ -56,8 +56,8 @@ Those of the item values.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | It is not well formed |
+| 42000 | -103 | A rule above is broken |
 | 0K000 | -301 | No handler is executing |
 | *the condition's* | *its own* | Not handled outside, the condition raised again |
 

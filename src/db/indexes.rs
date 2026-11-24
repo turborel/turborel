@@ -234,7 +234,7 @@ const TEMPORARY_METHODS: [&str; 8] =
 ///
 /// # Errors
 ///
-/// It is of another method, 2A000.
+/// It is of another method, 42000.
 fn temporary_method(qn: &QualifiedName, method: &str) -> Result<()> {
     if crate::index::vector::is_vector_method(method) || TEMPORARY_METHODS.contains(&method) {
         return Ok(());

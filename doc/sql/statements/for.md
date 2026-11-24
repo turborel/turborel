@@ -59,8 +59,8 @@ SELECT on what the query reads, and those of the statements.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | It is not well formed |
+| 42000 | -103 | A rule above is broken |
 | TB920 | -920 | It is cancelled |
 
 ## EXAMPLES
@@ -153,10 +153,10 @@ BEGIN FOR SELECT QTY FROM STOCK DO COMMIT; END FOR; END;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the statements of a FOR shall not LEAVE its <for loop variable name> S [ISO/IEC 9075-4:2006 draft §14.13 SR8] (at character 46)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the statements of a FOR shall not OPEN, FETCH or CLOSE its cursor C2 [ISO/IEC 9075-4:2006 draft §14.13 SR10] (at character 54)
-turborel: SQLCODE -103 (SQLSTATE 2A000): column 1 of the FOR statement's query has no name of its own [ISO/IEC 9075-4:2006 draft §14.13 SR5] (at character 6)
-turborel: SQLCODE -103 (SQLSTATE 2A000): an ATOMIC compound statement or a FOR holds no COMMIT or ROLLBACK [ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9] (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 42000): the statements of a FOR shall not LEAVE its <for loop variable name> S [ISO/IEC 9075-4:2006 draft §14.13 SR8] (at character 46)
+turborel: SQLCODE -103 (SQLSTATE 42000): the statements of a FOR shall not OPEN, FETCH or CLOSE its cursor C2 [ISO/IEC 9075-4:2006 draft §14.13 SR10] (at character 54)
+turborel: SQLCODE -103 (SQLSTATE 42000): column 1 of the FOR statement's query has no name of its own [ISO/IEC 9075-4:2006 draft §14.13 SR5] (at character 6)
+turborel: SQLCODE -103 (SQLSTATE 42000): an ATOMIC compound statement or a FOR holds no COMMIT or ROLLBACK [ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9] (at character 35)
 ```
 
 ## STANDARD

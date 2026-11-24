@@ -94,7 +94,7 @@ Those the statement prepared needs.
 | 07008 | -921 | A descriptor area's COUNT is less than 0 or more than its occurrences (rules 4, 5) |
 | 07006 | -921 | A value's type is not cast to its parameter's or item's (rules 4, 5) |
 | 33000 | -921 | No descriptor area of the name is allocated |
-| 2A000 | -103 | INTO in the USING clause, or USING in the INTO clause (rule 6) |
+| 42000 | -103 | INTO in the USING clause, or USING in the INTO clause (rule 6) |
 | 21000 | -811 | A single SELECT gives more than one row |
 | 02000 | 100 | Not an error: no data, the single SELECT gave no row |
 

@@ -123,7 +123,7 @@ or error with its SQLCODE, SQLSTATE and message, and where in the
 statement it is:
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 14)
 OK, with a warning: SQLSTATE 01007
 ```
 

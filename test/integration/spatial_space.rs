@@ -181,8 +181,8 @@ fn set_operations_of_empty_operands_5_1_17() {
 fn geometry_routines_check_their_arguments_5_1() {
     let (_db, a) = session();
     let p = "ST_GEOMFROMTEXT('POINT (1 2)')";
-    assert_eq!(state(&a, &format!("VALUES ST_UNION({p}, {p}, {p})")), "2A000");
-    assert_eq!(state(&a, &format!("VALUES ST_DISTANCE({p}, 'x')")), "2A000");
+    assert_eq!(state(&a, &format!("VALUES ST_UNION({p}, {p}, {p})")), "42000");
+    assert_eq!(state(&a, &format!("VALUES ST_DISTANCE({p}, 'x')")), "42000");
     assert_eq!(one(&a, &format!("ST_DISTANCE({p}, CAST(NULL AS ST_GEOMETRY)) IS NULL")), "TRUE");
     assert_eq!(one(&a, &format!("ST_BUFFER({p}, CAST(NULL AS DOUBLE PRECISION)) IS NULL")), "TRUE");
 }

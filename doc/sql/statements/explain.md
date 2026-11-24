@@ -150,7 +150,7 @@ data change, those the statement needs.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The query refers to a table or column that does not exist, or is otherwise invalid |
+| 42000 | -103 | The query refers to a table or column that does not exist, or is otherwise invalid |
 | 42000 | -104 | Its user lacks a privilege the query needs |
 | any | any | EXPLAIN ANALYZE raises any exception the query or data change raises as it runs |
 

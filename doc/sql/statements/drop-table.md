@@ -49,9 +49,9 @@ The table's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | No `<drop behavior>` is written |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the table's schema |
+| 42000 | -102 | No `<drop behavior>` is written |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the table's schema |
 | 24000 | -501 | A cursor of the transaction reads the table |
 | 25000 | -917 | The transaction is READ ONLY |
 | TB911 | -911 | Another transaction holds a lock on the table |
@@ -70,11 +70,11 @@ DROP TABLE DEPT;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): constraint ANN.EMP_FOREIGN1 of ANN.EMP refers to ANN.DEPT, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.18 SR4] (at character 11)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.EMP is read by view ANN.ENG, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.18 SR4] (at character 11)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.ENG is a view, not a base table [ISO/IEC 9075:1992 §11.18 SR2] (at character 11)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.NOPE is not defined [ISO/IEC 9075:1992 §11.18 SR1] (at character 11)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected CASCADE or RESTRICT, found end of statement (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): constraint ANN.EMP_FOREIGN1 of ANN.EMP refers to ANN.DEPT, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.18 SR4] (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.EMP is read by view ANN.ENG, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.18 SR4] (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.ENG is a view, not a base table [ISO/IEC 9075:1992 §11.18 SR2] (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.NOPE is not defined [ISO/IEC 9075:1992 §11.18 SR1] (at character 11)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected CASCADE or RESTRICT, found end of statement (at character 15)
 ```
 
 With CASCADE, EMP stays, without its foreign key:

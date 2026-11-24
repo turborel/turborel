@@ -252,8 +252,8 @@ EXPLAIN SELECT JT.* FROM PURCHASES P,
 | 2203A and the path language's other SQLSTATEs | -301 | ERROR ON ERROR, of a row pattern in strict mode that finds no member or element |
 | 22034, 22035, 2203F, 2203G, 22018 | -301 | of a column ERROR ON EMPTY or ERROR ON ERROR, as of JSON_VALUE |
 | 22001 | -301 | of a formatted column whose text is longer than its type |
-| 2A000 | -103 | a Syntax Rule broken: a column of a type it does not take, a formatted column of a character string type without FORMAT JSON, a quotes behavior with a wrapper WITH, a column path that names a variable, a path name or column name written twice, a PLAN that names a path not once or joins it to a path it is not nested in, NESTED COLUMNS of no name with a PLAN, or JSON_TABLE in a CHECK constraint |
-| 2A000 | -102 | DEFAULT as a formatted column's behavior |
+| 42000 | -103 | a Syntax Rule broken: a column of a type it does not take, a formatted column of a character string type without FORMAT JSON, a quotes behavior with a wrapper WITH, a column path that names a variable, a path name or column name written twice, a PLAN that names a path not once or joins it to a path it is not nested in, NESTED COLUMNS of no name with a PLAN, or JSON_TABLE in a CHECK constraint |
+| 42000 | -102 | DEFAULT as a formatted column's behavior |
 
 ## Standard
 

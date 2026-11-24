@@ -105,7 +105,7 @@ None.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 33000 | -921 | No area of the name is allocated (rule 1) |
-| 2A000 | -103 | A value not of its field's type (rules 2, 3), or a field not set or set twice (rule 5) |
+| 42000 | -103 | A value not of its field's type (rules 2, 3), or a field not set or set twice (rule 5) |
 | 0700E | -921 | LEVEL out of the order the items take (rule 4) |
 | 0700D | -921 | DATA of a row or of an array's element (rule 6) |
 | 07009 | -921 | The item number is not from 1 to the occurrences (rule 2) |
@@ -142,7 +142,7 @@ SET DESCRIPTOR 'STAFF' COUNT = 1;
 ```
 turborel: SQLCODE -301 (SQLSTATE 22005): CHARACTER(6) does not match the type the item describes [ISO/IEC 9075:1992 §17.5 GR5, §17.1 SR2]
 turborel: SQLCODE -921 (SQLSTATE 07009): item 4 is not of 1 to 3, the area's occurrences [ISO/IEC 9075:1992 §17.5 GR2]
-turborel: SQLCODE -103 (SQLSTATE 2A000): NAME is not set here, or is set twice [ISO/IEC 9075-2:2023 §20.5 SR3] (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 42000): NAME is not set here, or is set twice [ISO/IEC 9075-2:2023 §20.5 SR3] (at character 35)
 turborel: SQLCODE -921 (SQLSTATE 33000): no SQL descriptor area 'STAFF' is allocated [ISO/IEC 9075:1992 §17.5 GR1]
 ```
 

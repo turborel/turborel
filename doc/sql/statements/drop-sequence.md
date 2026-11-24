@@ -41,8 +41,8 @@ The owner of the generator's schema.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | No such generator; or, with RESTRICT, a trigger or routine draws from it |
-| 2A000 | -104 | Its user does not own the generator's schema |
+| 42000 | -103 | No such generator; or, with RESTRICT, a trigger or routine draws from it |
+| 42000 | -104 | Its user does not own the generator's schema |
 
 ## EXAMPLES
 
@@ -56,8 +56,8 @@ DROP SEQUENCE S CASCADE;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no sequence generator ANN.S [ISO/IEC 9075-2:2023 §6.14 SR3] (at character 7)
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no sequence generator ANN.S [ISO/IEC 9075-2:2023 §11.74 SR2] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no sequence generator ANN.S [ISO/IEC 9075-2:2023 §6.14 SR3] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no sequence generator ANN.S [ISO/IEC 9075-2:2023 §11.74 SR2] (at character 14)
 ```
 
 Of a generator a trigger draws from:
@@ -83,7 +83,7 @@ OK
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): the triggered action of trigger ANN.LOGGED draws from sequence generator ANN.S, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.74 SR3] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): the triggered action of trigger ANN.LOGGED draws from sequence generator ANN.S, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.74 SR3] (at character 14)
 OK
 OK
  TRIGGER_NAME

@@ -36,7 +36,7 @@ The user owns the function's schema.
 ## ERRORS
 
 As [DROP ROUTINE](drop-routine.md)'s. Under RESTRICT, a definition
-that names the function is SQLSTATE 2A000 (SQLCODE -103).
+that names the function is SQLSTATE 42000 (SQLCODE -103).
 
 ## EXAMPLES
 

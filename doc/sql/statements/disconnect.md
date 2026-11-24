@@ -41,7 +41,7 @@ None.
 |---|---|---|
 | 08003 | -919 | There is no such connection |
 | 25000 | -917 | A connection ended has a transaction active |
-| 2A000 | -102 | The name is not a character string literal |
+| 42000 | -102 | The name is not a character string literal |
 | 0A000 | -900 | Run by a session of an embedded database |
 | 01002 | 0 | Not an error: a connection's ending failed; it is ended all the same |
 

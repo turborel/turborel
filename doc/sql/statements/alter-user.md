@@ -45,9 +45,9 @@ The database's owner's alone.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -102 | PASSWORD, its literal, or CREATE ROLE is not written |
-| 2A000 | -103 | There is no such user |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -102 | PASSWORD, its literal, or CREATE ROLE is not written |
+| 42000 | -103 | There is no such user |
+| 42000 | -104 | Its user is not the database's owner |
 | TB910 | -910 | An embedded database has no credentials plug-in |
 
 ## EXAMPLES
@@ -61,7 +61,7 @@ ALTER USER NOPE PASSWORD 'x';
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no user NOPE (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no user NOPE (at character 11)
 ```
 
 Who may create roles:
@@ -75,7 +75,7 @@ ALTER USER BOB NO;
 ```
 OK
 OK
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected CREATE ROLE, found end of statement (at character 17)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected CREATE ROLE, found end of statement (at character 17)
 ```
 
 ## STANDARD
