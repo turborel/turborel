@@ -4166,6 +4166,12 @@ The ID is from INFORMATION_SCHEMA.CONNECTIONS. The server reaches them through
 a `ServedConnections` it registers (`Database::set_served_connections`). CANCEL
 is no key word.
 
+### Debugging routines
+
+| Facility | Behaviour |
+|---|---|
+| DEBUG | A privilege of a routine beside EXECUTE (RULES.md D1000), granted and revoked by the rules of ISO/IEC 9075-2:2023 §12.2 and §12.7 that EXECUTE is, kept in the routine's descriptor and a checkpoint's snapshot, shown in ROUTINE_PRIVILEGES. The owner holds it by owning the routine (D1001). ALL PRIVILEGES stays EXECUTE alone (D1002). DEBUG is no key word. |
+
 ### Replication
 
 Neither standard has this (RULES.md D57). It runs outside a transaction, by

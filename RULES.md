@@ -622,6 +622,9 @@ verification approach DO-178C expects (§8).
 | D956 | An integer of an integer column is written as its key with no anchor made of it |
 | D960 | A character string of at most 32 octets is held in its value, a longer one in a buffer its clones share |
 | D961 | A binary string of at most 22 octets is held in its value, a longer one in a buffer its clones share |
+| D1000 | DEBUG is a routine's privilege of its own, granted and revoked as EXECUTE is |
+| D1001 | The owner of a routine holds DEBUG on it by owning it, as the owner of a domain holds USAGE |
+| D1002 | ALL PRIVILEGES on a routine stays EXECUTE alone |
 
 ### The project
 
@@ -17423,6 +17426,48 @@ instant, zone and precision, an interval its units and qualifier, a
 truth value itself. A large object, a value of the JSON type, an
 array, a multiset, a row, a structured value and an XML value were
 already shared by count.
+
+#### D1000. DEBUG is a routine's privilege of its own, granted and revoked as EXECUTE is
+
+The routine debugger lets one session stop another's routine and read
+its parameters and variables. That reads the data the routine was given,
+so it needs a privilege, and none of the standard's says it. EXECUTE
+lets its holder run a routine, not watch another's run of it.
+
+DEBUG is an `<action>` of GRANT and REVOKE *(extension)*, written beside
+EXECUTE or alone, on a routine named as ROUTINE, FUNCTION or PROCEDURE,
+by its name, its parameters' types or its specific name. It is read as
+a word, not a reserved key word, so no name written before it is lost.
+A routine's descriptor keeps it in a list of its own beside EXECUTE's
+(`SqlRoutineDesc.debug`), written in the catalog's bytes after EXECUTE's
+and so in a checkpoint's snapshot; the log holds the statement's text,
+as of any GRANT. Granting needs it held with grant option, else the
+warning 01007; a revoke takes the grants named and, by the rule of
+§12.7 GR9, those made by a grant option it takes, refused with RESTRICT
+(2B000). It abandons no definition, as none needs DEBUG to bind.
+ROUTINE_PRIVILEGES shows each grant with PRIVILEGE_TYPE DEBUG, and
+dropping a role or a user takes its grants as it takes EXECUTE's. Of a
+table, a module or another object it is refused (SQLCODE -103).
+
+#### D1001. The owner of a routine holds DEBUG on it by owning it, as the owner of a domain holds USAGE
+
+The owner's EXECUTE is a grant from `_SYSTEM`, made as the routine is
+defined, grantable only if its body needs nothing it holds without
+grant option [ISO/IEC 9075-2:2023 §11.60 GR1]. DEBUG needs no such rule.
+A grant from `_SYSTEM` would also put a row in ROUTINE_PRIVILEGES for
+every routine, changing what the view shows of every database. So the
+owner holds DEBUG with grant option by owning the routine's schema
+(`catalog::usage_held`), the list keeps only grants, and the view shows
+only what was granted.
+
+#### D1002. ALL PRIVILEGES on a routine stays EXECUTE alone
+
+ALL PRIVILEGES is every privilege its grantor may grant on the object
+[§12.3]. Were DEBUG among them, a statement of the standard would grant
+and revoke what the standard does not define, and ROUTINE_PRIVILEGES
+would show rows a database of the standard's privileges never had. So
+ALL PRIVILEGES on a routine grants and revokes EXECUTE, and DEBUG is
+granted and revoked only by name.
 
 ## 2. Project layout
 

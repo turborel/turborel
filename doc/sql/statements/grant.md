@@ -38,6 +38,7 @@ GRANT: give privileges, or roles
     | USAGE
     | UNDER
     | EXECUTE
+    | DEBUG
 
 <object name> ::=
       [ TABLE ] <table name>
@@ -79,6 +80,7 @@ module *(extension)*:
 | TRIGGER | define a trigger on the table, in a schema of its own (see [CREATE TRIGGER](create-trigger.md)) |
 | USAGE | use the domain: define a column of it, CAST to it; use the collation: name it in COLLATE; use the sequence generator: take its values by NEXT VALUE FOR; use the distinct type: name it as a column's type or a CAST's; use the registered XML Schema: name it in a type of XMLSCHEMA, XMLVALIDATE or IS VALID, validate by it without naming it, or import it in CREATE XML SCHEMA; use the registered XQuery module: import it in a query or in CREATE XQUERY MODULE |
 | EXECUTE | invoke the function, by name or by a CAST to or from its distinct type; run the procedure by CALL; invoke the method; invoke each routine of the module |
+| DEBUG | *(extension)* debug the function's or the procedure's executions in another session (see [GRANT DEBUG](grant-debug.md)) |
 
 SELECT WITH HIERARCHY OPTION on a typed table is SELECT on each of its
 subtables too, present and to come, and lets its holder name the table
@@ -101,7 +103,8 @@ defines the attribute. A subtype's inherited attribute is read and set
 by the same grants.
 INSERT, UPDATE or REFERENCES without columns is the privilege on the
 table and on each of its columns, and on each column added to it later.
-ALL PRIVILEGES is every privilege its user may grant on the object.
+ALL PRIVILEGES is every privilege its user may grant on the object, of
+a routine EXECUTE alone, not DEBUG.
 PUBLIC is every authorization identifier, present and to come.
 
 The privileges granted are those its user holds with grant option: the
@@ -145,7 +148,7 @@ MODULE_PRIVILEGES show the privileges.
    session's default schema.
 2. Of a domain, a collation, a sequence generator, a type, a
    registered XML Schema or a registered XQuery module, USAGE alone is
-   granted, and of a routine or a
+   granted, of a routine EXECUTE or DEBUG alone, and of a
    module EXECUTE alone. Neither is granted of a table. No privilege is granted of a module's routine.
 3. A routine's name designates exactly one routine of its routine type,
    counting the functions of distinct types. A name alone of overloads
@@ -306,9 +309,10 @@ implementation [§4.7.1], and XML SCHEMA is turborel's, granted as on a
 sequence generator; so is XQUERY MODULE, of the XQuery modules turborel
 registers. GRANT of roles is
 ISO/IEC 9075-2:2023 §12.5 (Feature T331), and GRANTED BY §12.8 (T332).
+DEBUG is turborel's *(extension)*.
 
 ## SEE ALSO
 
-[REVOKE](revoke.md), [CREATE SCHEMA](create-schema.md),
+[REVOKE](revoke.md), [GRANT DEBUG](grant-debug.md), [CREATE SCHEMA](create-schema.md),
 [CREATE USER](create-user.md), [CREATE ROLE](create-role.md),
 [SET ROLE](set-role.md)

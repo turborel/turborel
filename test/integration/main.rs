@@ -110,6 +110,7 @@ mod damage;
 mod datetimes;
 mod ddl;
 mod dead_entries;
+mod debug_privileges;
 mod decfloat;
 mod decoded;
 mod decorrelation;

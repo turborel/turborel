@@ -18,6 +18,9 @@ const HIERARCHY: &str = "HIERARCHY";
 const UNDER: &str = "UNDER";
 /// TRIGGER, an `<action>` [ISO/IEC 9075-2:2023 §12.3].
 const TRIGGER: &str = "TRIGGER";
+/// \[EXTENSION\] DEBUG, an `<action>` of a routine (RULES.md D1000): a
+/// word, not a reserved one, so no name written before it is lost.
+const DEBUG: &str = "DEBUG";
 
 /// What ON `<object name>` names: the name, what it names, a routine's
 /// `<data type list>` if written, and a method's type.
@@ -99,7 +102,8 @@ impl Parser {
     /// INSERT \[(`<privilege column list>`)\] | UPDATE \[(`<grant column
     /// list>`)\] | REFERENCES \[(`<privilege column list>`)\] | USAGE
     /// [ISO/IEC 9075:1992 §10.3] | EXECUTE | UNDER | TRIGGER [ISO/IEC
-    /// 9075-2:2023 §12.3], a method list's designators put in `methods`.
+    /// 9075-2:2023 §12.3] | DEBUG \[EXTENSION\], a method list's
+    /// designators put in `methods`.
     fn action(&mut self, methods: &mut Vec<RoutineDesignator>) -> Result<Action> {
         if self.is_kw(kw::SELECT) && matches!(self.peek_at(1), Tok::Delimiter(delim::LEFT_PAREN)) {
             self.advance();
@@ -128,6 +132,9 @@ impl Parser {
         }
         if self.accept_word(TRIGGER) {
             return Ok(Action::Trigger);
+        }
+        if self.accept_word(DEBUG) {
+            return Ok(Action::Debug);
         }
         let made = if self.accept_kw(kw::INSERT) {
             Action::Insert

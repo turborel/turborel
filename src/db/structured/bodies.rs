@@ -72,6 +72,7 @@ impl State {
             horizon: Horizon::default(),
             sequences: Vec::new(),
             execute: Vec::new(),
+            debug: Vec::new(),
             created: self.next_created(),
             // [§11.60 GR5] its own, not its specification's [GR4].
             stamps: Stamps::at(self.stamp),

@@ -7,6 +7,7 @@
 mod altered;
 mod backup;
 mod commands;
+mod debugging;
 mod delta;
 mod embedding;
 mod explain;

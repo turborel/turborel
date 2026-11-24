@@ -100,6 +100,7 @@ impl State {
             horizon: Horizon::default(),
             sequences: Vec::new(),
             execute: Vec::new(),
+            debug: Vec::new(),
             created,
             // [§11.60 GR5]
             stamps: Stamps::at(self.stamp),

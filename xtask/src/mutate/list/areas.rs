@@ -19,6 +19,7 @@ mod compiled;
 mod cost_model;
 #[path = "count.rs"]
 mod count;
+mod debugger;
 mod declared_types;
 mod write_costs;
 // The decode kernels' mutations, beside the areas as `list.rs` holds no
@@ -328,8 +329,8 @@ fn plugins() -> [&'static [Mutation]; 9] {
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
 /// the memory budget's,
 /// the command-line client's, replication's, the server's, the native protocol's, the client library's,
-/// join enumeration's and the standard's gaps a benchmark found.
-fn last() -> [&'static [Mutation]; 48] {
+/// join enumeration's, the standard's gaps a benchmark found and the routine debugger's.
+fn last() -> [&'static [Mutation]; 49] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -379,5 +380,6 @@ fn last() -> [&'static [Mutation]; 48] {
         &super::client::CLIENT,
         &joins::JOINS,
         &super::std_gaps::STD_GAPS,
+        &debugger::DEBUGGER,
     ]
 }

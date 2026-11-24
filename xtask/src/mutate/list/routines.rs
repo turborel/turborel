@@ -231,8 +231,8 @@ pub const ROUTINES: [Mutation; 22] = [
         package: Package::Core,
         breaks: "a REVOKE of EXECUTE from another takes the owner's EXECUTE from _SYSTEM too",
         file: PRIVILEGES,
-        original: "desc.execute.retain(|u| u.grantor == SYSTEM_GRANTOR || kept.execute_of(sole(&*self.catalog, &u.grantor)).1);",
-        replacement: "desc.execute.retain(|u| (u.grantor == SYSTEM_GRANTOR && false) || kept.execute_of(sole(&*self.catalog, &u.grantor)).1);",
+        original: ".retain(|u| u.grantor == SYSTEM_GRANTOR || privilege.of(&*self.catalog, &kept, sole(&*self.catalog, &u.grantor)).1);",
+        replacement: ".retain(|u| (u.grantor == SYSTEM_GRANTOR && false) || privilege.of(&*self.catalog, &kept, sole(&*self.catalog, &u.grantor)).1);",
         integration: &[
             "routines_privileges::execute_is_granted_and_revoked_12_3",
             "routines_privileges::all_privileges_on_a_routine_is_execute_12_3",
