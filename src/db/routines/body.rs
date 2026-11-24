@@ -230,18 +230,7 @@ impl State {
             access = DataAccess::Reads;
         }
         within(desc, access)?;
-        // [§11.60 SR16e] What the parameter defaults name and invoke, which
-        // a CALL evaluates, not the body: no part of its access.
-        for t in named_by_values(defaults::default_values(definition), &desc.schema) {
-            if !reads.contains(&t) {
-                reads.push(t);
-            }
-        }
-        for s in defaulted.into_inner() {
-            if !invocations.contains(&s) {
-                invocations.push(s);
-            }
-        }
+        defaults_named((definition, &desc.schema), defaulted, (&mut reads, &mut invocations));
         let grantable = self.execute_grantable((&owner, desc.module_name()), &reads, &invocations);
         let mut sequences = drawn.into_inner();
         sequences.sort();
@@ -315,5 +304,26 @@ fn within(desc: &SqlRoutineDesc, access: DataAccess) -> Result<()> {
         (DataAccess::Contains, DataAccess::Contains)
         | (DataAccess::Reads, DataAccess::Contains | DataAccess::Reads)
         | (DataAccess::Modifies, DataAccess::Contains | DataAccess::Reads | DataAccess::Modifies) => Ok(()),
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §11.60 SR16e] Adds to `reads` the tables and views
+/// the parameter defaults of `definition`, of schema `schema`, name, and
+/// to `invocations` the routines `defaulted` noted they invoke, each once:
+/// what a CALL evaluates, not the body, so no part of its access.
+fn defaults_named(
+    (definition, schema): (&RoutineDefinition, &str),
+    defaulted: Invoked,
+    (reads, invocations): (&mut Vec<QualifiedName>, &mut Vec<QualifiedName>),
+) {
+    for t in named_by_values(defaults::default_values(definition), schema) {
+        if !reads.contains(&t) {
+            reads.push(t);
+        }
+    }
+    for s in defaulted.into_inner() {
+        if !invocations.contains(&s) {
+            invocations.push(s);
+        }
     }
 }

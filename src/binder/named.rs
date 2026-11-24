@@ -50,12 +50,12 @@ pub(crate) fn placed(parameters: &[(&str, bool)], names: &[Option<String>]) -> O
     if parameters.len() < names.len() {
         return None;
     }
-    let named = names.iter().any(Option::is_some);
-    if named && names.iter().flatten().any(|n| parameters.iter().all(|(p, _)| p != n)) {
+    let by_name = names.iter().any(Option::is_some);
+    if by_name && names.iter().flatten().any(|n| parameters.iter().all(|(p, _)| p != n)) {
         return None;
     }
     let at = |(k, (p, _)): (usize, &(&str, bool))| {
-        if named { names.iter().position(|n| n.as_deref() == Some(*p)) } else { (k < names.len()).then_some(k) }
+        if by_name { names.iter().position(|n| n.as_deref() == Some(*p)) } else { (k < names.len()).then_some(k) }
     };
     let places: Vec<Option<usize>> = parameters.iter().enumerate().map(at).collect();
     places.iter().zip(parameters).all(|(place, (_, defaulted))| place.is_some() || *defaulted).then_some(places)
