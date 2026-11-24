@@ -155,12 +155,12 @@ fn a_user_sees_the_columns_it_holds_a_privilege_on() {
 
 /// Verifies: [ISO/IEC 9075:1992 §21.1]; [DESIGN] RULES.md D990: the view
 /// cannot be written: a DELETE from it, by the database's owner, is
-/// refused for want of the privilege (SQLSTATE 2A000, SQLCODE -104).
+/// refused for want of the privilege (SQLSTATE 42000, SQLCODE -104).
 #[test]
 fn the_view_cannot_be_written() {
     let (db, _clock) = owned();
     let err = db.session("OWNER").run("DELETE FROM INFORMATION_SCHEMA.COLUMN_STATISTICS").unwrap_err();
-    assert_eq!((err.code, err.sqlstate().as_str(), err.sqlcode()), (Code::Privilege, "2A000", -104), "{err}");
+    assert_eq!((err.code, err.sqlstate().as_str(), err.sqlcode()), (Code::Privilege, "42000", -104), "{err}");
 }
 
 /// Verifies: [DESIGN] RULES.md D992: INDEX_STATISTICS shows the distinct
