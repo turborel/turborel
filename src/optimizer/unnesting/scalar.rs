@@ -67,7 +67,7 @@ pub(super) fn joined(cond: &Cond, input: &LogicalPlan, ctx: &RuleContext<'_>) ->
 /// and raising nothing, each of its uses among `conjuncts` such a
 /// comparison.
 fn joinable(conjuncts: &[Cond], sub: &Subquery, ctx: &RuleContext<'_>) -> bool {
-    let raises = pure::plan_raises(&sub.plan, &ctx.db.functions);
+    let raises = pure::plan_raises(&sub.plan, ctx);
     if !sub.outer.is_empty() || !sub.plan.one_row_at_most() || raises || !pure::plan_pure(&sub.plan) {
         return false;
     }

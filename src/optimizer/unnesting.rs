@@ -147,14 +147,14 @@ fn unnested(node: &Node<'_>, found: &Found, ctx: &RuleContext<'_>) -> Option<Log
     // scalar subquery at its second, unless it is a grouping of one row,
     // while IN, SOME and ALL read every row (RULES.md D15).
     let outer_raises = found.sub.outer.iter().any(Expr::can_raise);
-    let plan_raises = || pure::plan_raises(&found.sub.plan, functions);
+    let plan_raises = || pure::plan_raises(&found.sub.plan, ctx);
     let stops = !target.whole && plan_raises();
     if !pure || stops || (found.conditional && (outer_raises || plan_raises())) {
         return None;
     }
     let simple = match target.how {
         How::Quantified { .. } => None,
-        How::Exists | How::Value => simple::pulled(&target.sub, functions),
+        How::Exists | How::Value => simple::pulled(&target.sub, ctx),
     };
     // EXISTS of a grouping of no grouping columns has a row of every
     // binding, which no default says.

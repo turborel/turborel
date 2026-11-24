@@ -15,8 +15,17 @@
 //! at least as long as the longest literal of its operand's values [GR5a
 //! iv, GR5b iii 4]. Anything else is judged as `Expr::can_raise` judges it,
 //! and a column of no known type as of no exact type.
+//!
+//! A column a grouping computes has the bound its set function gives it
+//! (`raises/totals.rs`, RULES.md D1060), and a subquery is judged by
+//! whoever asks, who may know its plan better than `Subquery::can_raise`
+//! does (`Judge`).
 
-use super::{Cond, Expr, LogicalPlan, Slot};
+mod totals;
+
+pub use totals::{ROW_DIGITS, set_function_type, total_fits};
+
+use super::{Cond, Expr, LogicalPlan, Slot, Subquery};
 use crate::catalog::Catalog;
 use crate::value::{ArithOp, DataType, Decimal, MAX_EXACT_PRECISION, Value, bound_of, constant_prefix};
 
@@ -33,31 +42,62 @@ pub const MAX_JUDGED_DEPTH: usize = 256;
 /// (`value/cast.rs`).
 const LITERAL_EXTRA: u32 = 3;
 
+/// What a judgment reads beside the expression it judges.
+#[derive(Clone, Copy)]
+pub struct Judge<'a> {
+    /// The declared types of the columns.
+    pub types: Types<'a>,
+    /// Whether a subquery can raise an exception condition as it runs for
+    /// a row, its outer expressions apart, which are judged with the
+    /// expression that holds them. Its second argument says the subquery
+    /// stands for one row, which it raises of two [ISO/IEC 9075:1992 §7.11
+    /// GR1].
+    pub subquery: &'a dyn Fn(&Subquery, bool) -> bool,
+}
+
+/// How a subquery is judged where no more is known of it, of one row
+/// taken as raising, of any as its plan raises (`Subquery::can_raise`).
+fn subquery_raises(s: &Subquery, one: bool) -> bool {
+    one || s.can_raise()
+}
+
 /// Whether evaluating `e` can raise an exception condition, its columns of
 /// the declared types `types` gives, as the module says.
 pub fn can_raise_typed(e: &Expr, types: Types<'_>) -> bool {
-    expr_raises(e, types, 0)
+    expr_raises(e, &Judge { types, subquery: &subquery_raises }, 0)
+}
+
+/// `can_raise_typed`, each subquery judged as `judge` says.
+pub fn can_raise_judged(e: &Expr, judge: &Judge<'_>) -> bool {
+    expr_raises(e, judge, 0)
+}
+
+/// `cond_can_raise_typed`, each subquery judged as `judge` says.
+pub fn cond_can_raise_judged(c: &Cond, judge: &Judge<'_>) -> bool {
+    cond_raises(c, judge, 0)
 }
 
 /// Whether evaluating `c` can raise an exception condition, its columns of
 /// the declared types `types` gives: as `Cond::can_raise` judges it, each
 /// expression judged by `can_raise_typed`.
 pub fn cond_can_raise_typed(c: &Cond, types: Types<'_>) -> bool {
-    cond_raises(c, types, 0)
+    cond_raises(c, &Judge { types, subquery: &subquery_raises }, 0)
 }
 
 /// `cond_can_raise_typed` at nesting `depth`.
-fn cond_raises(c: &Cond, types: Types<'_>, depth: usize) -> bool {
+fn cond_raises(c: &Cond, judge: &Judge<'_>, depth: usize) -> bool {
     if depth > MAX_JUDGED_DEPTH {
         return true;
     }
     let deeper = depth.saturating_add(1);
-    let own = match c {
-        Cond::Like(_, Expr::Const(pattern), None) => constant_prefix(pattern, None).is_none(),
-        Cond::Like(_, Expr::Const(pattern), Some(Expr::Const(escape))) => constant_prefix(pattern, Some(escape)).is_none(),
-        Cond::Like(..) | Cond::Quantified(_, _, super::Quantifier::One, _) => true,
-        Cond::Or(a, b) | Cond::And(a, b) => cond_raises(a, types, deeper) || cond_raises(b, types, deeper),
-        Cond::Not(a) | Cond::Is(a, ..) => cond_raises(a, types, deeper),
+    let (own, one) = match c {
+        Cond::Like(_, Expr::Const(pattern), None) => (constant_prefix(pattern, None).is_none(), false),
+        Cond::Like(_, Expr::Const(pattern), Some(Expr::Const(escape))) => (constant_prefix(pattern, Some(escape)).is_none(), false),
+        Cond::Like(..) => (true, false),
+        // A comparison with one row, which a subquery of two raises.
+        Cond::Quantified(_, _, super::Quantifier::One, _) => (false, true),
+        Cond::Or(a, b) | Cond::And(a, b) => (cond_raises(a, judge, deeper) || cond_raises(b, judge, deeper), false),
+        Cond::Not(a) | Cond::Is(a, ..) => (cond_raises(a, judge, deeper), false),
         Cond::Const(_)
         | Cond::Compare(..)
         | Cond::Distinct(..)
@@ -67,10 +107,10 @@ fn cond_raises(c: &Cond, types: Types<'_>, depth: usize) -> bool {
         | Cond::Quantified(..)
         | Cond::Match { .. }
         | Cond::In(..)
-        | Cond::Value(_) => false,
+        | Cond::Value(_) => (false, false),
     };
-    let mut raises = own || c.subqueries().iter().any(|s| s.can_raise());
-    own_exprs(c, &mut |e| raises = raises || expr_raises(e, types, deeper));
+    let mut raises = own || c.subqueries().iter().any(|s| (judge.subquery)(s, one));
+    own_exprs(c, &mut |e| raises = raises || expr_raises(e, judge, deeper));
     raises
 }
 
@@ -93,22 +133,23 @@ fn own_exprs<'a>(c: &'a Cond, f: &mut dyn FnMut(&'a Expr)) {
 }
 
 /// `can_raise_typed` at nesting `depth`.
-fn expr_raises(e: &Expr, types: Types<'_>, depth: usize) -> bool {
+fn expr_raises(e: &Expr, judge: &Judge<'_>, depth: usize) -> bool {
     if depth > MAX_JUDGED_DEPTH {
         return true;
     }
-    let deeper = depth.saturating_add(1);
+    let (deeper, types) = (depth.saturating_add(1), judge.types);
     let mut parts = false;
-    e.for_each_child(&mut |child| parts = parts || expr_raises(child, types, deeper));
+    e.for_each_child(&mut |child| parts = parts || expr_raises(child, judge, deeper));
     match e {
         Expr::Arith(a, op, b) => parts || !arith_safe((a, *op, b), types, deeper),
         Expr::Cast(x, to) => parts || !widens(x, to, types, deeper),
         // A `?` cut by its cast warns as it is evaluated (RULES.md D391), as
         // `Expr::can_raise` says.
-        Expr::Domain(..) | Expr::Subquery(..) | Expr::NextValue(_) | Expr::Invoked(_) | Expr::Warned(..) => true,
+        Expr::Domain(..) | Expr::NextValue(_) | Expr::Invoked(_) | Expr::Warned(..) => true,
+        Expr::Subquery(s, _) => parts || (judge.subquery)(s, true),
         Expr::Call(f, _) => parts || (!f.0.raise_free() && (!f.0.index_predicate() || !f.0.deterministic())),
-        Expr::Truth(c) => cond_raises(c, types, deeper),
-        Expr::Case(whens, _) => parts || whens.iter().any(|(c, _)| cond_raises(c, types, deeper)),
+        Expr::Truth(c) => cond_raises(c, judge, deeper),
+        Expr::Case(whens, _) => parts || whens.iter().any(|(c, _)| cond_raises(c, judge, deeper)),
         Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::SortKey(..) => parts,
     }
 }
@@ -161,7 +202,7 @@ fn string_within(x: &Expr, types: Types<'_>) -> Option<(u32, crate::value::CharU
 /// The precision and scale `e`'s exact values are within, if it is of an
 /// exact type whose values the module's rules bound: a column of one, an
 /// exact constant, a negation, or a sum, difference or product within
-/// `MAX_EXACT_PRECISION` digits; or a CAST to one.
+/// `MAX_EXACT_PRECISION` digits; a CAST to one; or a CASE of such results.
 fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
     if depth > MAX_JUDGED_DEPTH {
         return None;
@@ -179,12 +220,12 @@ fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
         Expr::Cast(_, DataType::Exact { precision, scale, .. })
         | Expr::Dynamic(Slot { data_type: DataType::Exact { precision, scale, .. }, .. }) => Some((*precision, *scale)),
         Expr::Arith(a, op, b) => arith_shape((a, *op, b), types, deeper),
+        Expr::Case(whens, otherwise) => case_shape(whens.iter().map(|(_, result)| result).chain([&**otherwise]), types, deeper),
         Expr::Const(_)
         | Expr::Cast(..)
         | Expr::Call(..)
         | Expr::Outer(..)
         | Expr::Dynamic(_)
-        | Expr::Case(..)
         | Expr::Domain(..)
         | Expr::SortKey(..)
         | Expr::Subquery(..)
@@ -193,6 +234,20 @@ fn exact_shape(e: &Expr, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
         | Expr::Invoked(_)
         | Expr::Warned(..) => None,
     }
+}
+
+/// The precision and scale the values of a CASE of `results` are within,
+/// one of which it gives [ISO/IEC 9075:1992 §6.9 GR2]: the most digits
+/// before the point and the most after it of any, a null constant apart,
+/// which bounds nothing; none if a result is not bounded, or all are null.
+fn case_shape<'a>(results: impl Iterator<Item = &'a Expr>, types: Types<'_>, depth: usize) -> Option<(u32, u32)> {
+    let mut widest = None;
+    for result in results.filter(|r| !matches!(r, Expr::Const(Value::Null))) {
+        let (p, s) = exact_shape(result, types, depth)?;
+        let (whole, scale) = widest.map_or((p.saturating_sub(s), s), |(w, held): (u32, u32)| (w.max(p.saturating_sub(s)), held.max(s)));
+        widest = Some((whole, scale));
+    }
+    widest.map(|(whole, scale)| (whole.saturating_add(scale), scale)).filter(|(p, _)| *p <= MAX_EXACT_PRECISION)
 }
 
 /// The precision and scale of `a op b`'s values, if exact and within
@@ -232,8 +287,18 @@ fn column_type(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: 
             column_type(input, *c, catalog, deeper)
         }
         LogicalPlan::Values { types, .. } => types.get(column).cloned(),
-        LogicalPlan::Aggregate { .. }
-        | LogicalPlan::Distinct { .. }
+        // A grouping column is its input's, and a set function's values
+        // are within what its argument's bound them to.
+        LogicalPlan::Aggregate { groups, aggs, seeds, input, .. } => {
+            if !seeds.is_empty() {
+                return None;
+            }
+            match column.checked_sub(groups.len()) {
+                Some(n) => totals::result_type(aggs.get(n)?, &|c| column_type(input, c, catalog, deeper), deeper),
+                None => column_type(input, *groups.get(column)?, catalog, deeper),
+            }
+        }
+        LogicalPlan::Distinct { .. }
         | LogicalPlan::SetOp { .. }
         | LogicalPlan::System { .. }
         | LogicalPlan::Sort { .. }

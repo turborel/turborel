@@ -69,7 +69,7 @@ fn semi_joined(node: &Node<'_>, cond: &Cond, found: &Found, ctx: &RuleContext<'_
     let catalog = &*ctx.db.catalog;
     // Every row of the subquery may go unread, and its bindings are hashed.
     let plain = sub.outer.iter().all(|o| typed::plain_key(o, input, catalog));
-    let raises = sub.outer.iter().any(Expr::can_raise) || pure::plan_raises(&sub.plan, &ctx.db.functions);
+    let raises = sub.outer.iter().any(Expr::can_raise) || pure::plan_raises(&sub.plan, ctx);
     let pure = sub.outer.iter().all(super::expr_pure) && pure::plan_pure(&sub.plan);
     if !plain || raises || !pure {
         return None;
@@ -82,7 +82,7 @@ fn semi_joined(node: &Node<'_>, cond: &Cond, found: &Found, ctx: &RuleContext<'_
     if let Some((on, right, _)) = direct(sub, w) {
         return Some(LogicalPlan::SemiJoin { anti, cond: on, left: Box::new(left), right: Box::new(right) });
     }
-    let bound = simple::pulled(sub, &ctx.db.functions).filter(|b| b.defaults.is_none());
+    let bound = simple::pulled(sub, ctx).filter(|b| b.defaults.is_none());
     let bound = bound.or_else(|| domain::pushed(sub, input))?;
     keyed((anti, bound), left, w)
 }

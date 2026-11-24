@@ -661,6 +661,9 @@ verification approach DO-178C expects (§8).
 | D1034 | A connection learns its own ID by a Debug request, so Ready keeps its first form |
 | D1035 | The client's debugger is methods of its connection, the events kept in it until read |
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
+| D1060 | SUM and AVG of exact values whose sum the declared types keep within 38 digits raise nothing, so their subqueries are unnested as COUNT's are |
+| D1061 | A WHERE conjunct over both operands of an outer join that is never true of a null operand makes the join the join it is |
+| D1062 | A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null |
 
 ### The project
 
@@ -9435,10 +9438,11 @@ columns becomes a grouping by the keys, its value over no rows given
 where the join finds no row. A HAVING over it is not pulled through.
 
 The subquery is then computed for values no outer row has, so no part of
-it may raise (D15). Its set functions may be COUNT, MAX and MIN alone,
-which cannot raise on arguments that cannot. Every other subquery takes
-the general case (D312), which evaluates it for the outer rows'
-bindings and no others.
+it may raise (D15). Its set functions may be COUNT, MAX and MIN, which
+cannot raise on arguments that cannot, and SUM and AVG of exact values
+whose sum the declared types keep within 38 digits (D1060). Every other
+subquery takes the general case (D312), which evaluates it for the outer
+rows' bindings and no others.
 
 #### D315. A quantified comparison is EXISTS where unknown is false, and counted where it is not
 
@@ -18105,6 +18109,127 @@ name is read as SQL reads an identifier, folded to upper case unless
 quoted. A breakpoint is shown by the specific name of the routine it
 is in, as the engine keeps it, so an overloaded name's breakpoints
 are told apart.
+
+### Subquery plans
+
+#### D1060. SUM and AVG of exact values whose sum the declared types keep within 38 digits raise nothing, so their subqueries are unnested as COUNT's are
+
+Unnesting asks of each subquery whether running it can raise an error
+(D15, D311, D314). Its answer took every arithmetic operator and every
+set function but COUNT, MAX and MIN as able to. A correlated subquery of
+SUM or AVG was therefore never pulled up by its equalities (D314). It
+took the general case (D312), which reads the outer rows a second time
+for the domain of bindings and joins the subquery's table with it before
+grouping. IN and EXISTS of a subquery that held such a subquery were
+not made semi joins (D541).
+
+The answer is now typed (`optimizer/unnesting/pure.rs`,
+`logical/raises.rs`). A condition or expression of a plan is judged by
+the declared types of the columns it reads, as filter pushdown judges
+one (D373). A set function is judged so too
+(`logical/raises/totals.rs`). SUM judges its sum once, finished, against
+38 digits, and keeps it on the way in 128 bits (D15). A statement reads
+fewer than 2^63 rows, the bound COUNT already rests on (D552), and 2^63
+has 19 digits. The sum of exact values of precision p therefore has at
+most p + 19 digits at their scale. While p + 19 is at most 38 the sum
+fits finished, and fits the 128 bits on the way, as 10^38 is less than
+2^127. AVG keeps the same sum, and its mean has its values' digits
+before the point and two more after it, so it fits as well. SUM and AVG
+of such an argument raise nothing. Of an approximate argument, an
+interval, a wider exact one, or a column whose type is not known, they
+are taken as raising, as before.
+
+A column a grouping computes has a type for this judgment. A grouping
+column has its input column's type. A SUM has p + 19 digits, an AVG
+p + 2 digits at scale s + 2, MAX and MIN their argument's type and COUNT
+its result's. So `0.2 * AVG(Q)` over a column of 15 digits is known to
+fit, and the projection over the grouping raises nothing.
+
+A scalar subquery inside the plan judged was taken as raising, for the
+cardinality error of a second row. It is now judged by its own plan. One
+whose shape gives one row at most, an ungrouped set function's, raises
+what that plan raises, judged the same way. Any other still counts as
+raising.
+
+The effect is on plans alone. A subquery such as
+`(SELECT 0.2 * AVG(Q) FROM L WHERE L.K = P.K)` is grouped once by K and
+joined to the outer rows on K. A subquery whose sum could pass 38 digits
+keeps the general case, and is computed for the outer rows' bindings
+and no others, so a key no outer row has raises nothing (D15).
+
+#### D1061. A WHERE conjunct over both operands of an outer join that is never true of a null operand makes the join the join it is
+
+`push_filter_into_outer_join` made an outer join inner when a WHERE
+conjunct over the columns of the operand given nulls alone was not true
+of nulls. It evaluated that conjunct once on a row of nulls. A conjunct
+over both operands' columns, as `T.A < U.B` is, was left, since the
+preserved operand's values are not known. A LEFT join filtered by such
+a comparison stayed an outer join, which no join order moves and no
+parallel pipeline probes. The join an unnested scalar subquery makes
+(D313) is the common case, as its comparison reads the outer row and the
+subquery's value.
+
+Such a conjunct is now bounded instead of evaluated
+(`optimizer/outer/rejecting.rs`). The rules that make a value null and a
+condition unknown whatever else it reads give the truth values it may
+have while one operand's columns are all null. A column of that operand
+is null. Monadic minus, arithmetic and CAST of a null are null. A
+comparison or LIKE of a null is unknown, and IS NULL of one is true.
+AND, OR, NOT and IS follow their truth tables over the sets of values
+their operands may have. A CASE is the result of its first WHEN that can
+only be true, passing over a WHEN that cannot be true, and is null if
+every result it may still give is null. Anything else may be any value.
+A conjunct that cannot be true is never true of the rows the join gives
+nulls, so the join gives none that the WHERE keeps, and it is made the
+inner join, or of a FULL join the join preserving the other operand.
+
+A rule that moves an outer join onto the one operand of a product its
+condition reads leaves the WHERE clause over the product. The join
+unnesting makes is moved so, onto the table its keys come from. The same
+bound is therefore applied to an outer join that is an operand of the
+product a WHERE filters (`optimizer/outer/within.rs`). Each row of the
+product holds one row of the join, so a conjunct never true of the
+join's null rows keeps none of them there either.
+
+The bound is sound and not complete. A function call is not looked
+into, so `COALESCE(U.B, 0)` keeps the outer join, as it must. The value
+an unnested COUNT has of no row is 0, given by a CASE, and that CASE is
+seen to give a value, so its join stays outer as well. As before, the
+rule applies only to a WHERE condition that cannot raise (D15). That is
+now judged by the declared types of the join's columns, as a filter
+pushed into a product is (D373), so `T.A < U.B + 1` over INTEGER columns
+moves as well.
+
+#### D1062. A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null
+
+A hash join's runtime filter goes down its probe side through each
+operator that passes the column on and raises no error (D369, D600). A
+row the filter drops below an operator is never evaluated there, so the
+operator must be one that cannot raise (D15). The executor judged that
+by `Expr::can_raise`, which takes every arithmetic operator as able to
+raise, and it took a grouping of SUM or AVG as able to overflow. The
+join that unnesting makes of a subquery of SUM or AVG (D1060) has a
+grouping of the whole inner table on one side, under a projection such
+as `0.2 * AVG(Q)`. No filter reached that grouping, so it grouped every
+row of the table to keep the few groups the other side has keys for.
+
+The executor now judges both by the declared types
+(`exec/batch/typed.rs`). The type of a column of a physical plan is
+found through scans, filters, projections of columns, inner hash joins
+and groupings, as D1060 types a logical plan's. A projection passes a
+filter of a column it moves when none of its expressions can raise by
+those types. A grouping takes a filter of a grouping column when each of
+its set functions is COUNT, MIN or MAX, or a SUM or AVG whose sum the
+types keep within 38 digits. Any other SUM or AVG keeps every row, as
+before.
+
+A set function of a column warns of a null it eliminates [ISO/IEC
+9075-2:2023 §10.9 GR4b], so a grouping of one judged the filter itself,
+above its scan, to warn of a null in a row the filter dropped (D600).
+The scan then read and decoded every row. A column declared NOT NULL has
+no null to eliminate and no warning to keep. When every column the set
+functions take is such a column, the filter is told to the grouping's
+scans, which judge it before they decode the other columns.
 
 ## 2. Project layout
 

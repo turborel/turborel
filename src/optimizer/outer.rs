@@ -4,10 +4,15 @@
 //! outer join whose null rows the WHERE clause rejects made the join it is
 //! then.
 
+mod rejecting;
+mod within;
+
 use super::raising::guarded;
 use super::{Rule, RuleContext, wrap};
 use crate::exec::{NoSubqueries, eval_cond};
-use crate::logical::{Cond, LogicalPlan, OuterJoin, Truth, cond_columns, map_cond_columns, plan_has_outer, split_and};
+use crate::logical::{
+    Cond, LogicalPlan, OuterJoin, Truth, cond_can_raise_typed, cond_columns, map_cond_columns, plan_column_type, plan_has_outer, split_and,
+};
 use crate::value::Value;
 
 /// See [`super::CONSTANT_FOLDING`].
@@ -25,7 +30,11 @@ pub const PUSH_FILTER_INTO_OUTER_JOIN: &str = "push_filter_into_outer_join";
 ///   true when they are null keeps none of the rows a preserved operand
 ///   gives with nulls: the join is the inner join, or, of a FULL join, the
 ///   outer join preserving the other operand. That conjunct is evaluated
-///   here once, on nulls.
+///   here once, on nulls. So does a conjunct over both operands' columns
+///   that is never true while the other's are null, whatever the
+///   preserved operand's are, as a comparison of a column of each is
+///   (`outer/rejecting.rs`, RULES.md D1061), and so where the join is an
+///   operand of the product the WHERE filters (`outer/within.rs`).
 /// * An ON conjunct of a LEFT or RIGHT join over the columns of the operand
 ///   that supplies nulls alone: a row of that operand it is not true of
 ///   matches no row, as if it were not there.
@@ -47,13 +56,23 @@ impl Rule for PushFilterIntoOuterJoin {
     fn name(&self) -> &'static str {
         PUSH_FILTER_INTO_OUTER_JOIN
     }
-    fn apply(&self, plan: &LogicalPlan, _ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
+    fn apply(&self, plan: &LogicalPlan, ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
         match plan {
             LogicalPlan::Filter { cond, input } => {
-                let LogicalPlan::OuterJoin { kind, cond: on, left, right } = &**input else { return None };
-                if cond.can_raise() {
+                // Judged by the declared types of the join's columns, as a
+                // filter pushed into a product is (RULES.md D373).
+                let catalog = &*ctx.db.catalog;
+                let raises = || cond.can_raise() && cond_can_raise_typed(cond, &|c| plan_column_type(input, c, catalog));
+                if !matches!(**input, LogicalPlan::OuterJoin { .. } | LogicalPlan::Product { .. }) || raises() {
                     return None;
                 }
+                let LogicalPlan::OuterJoin { kind, cond: on, left, right } = &**input else {
+                    // An outer join that is an operand of the product filtered (`within.rs`).
+                    let mut conjuncts = Vec::new();
+                    split_and(cond.clone(), &mut conjuncts);
+                    let made = within::made(&conjuncts, input, (0, 0))?;
+                    return Some(LogicalPlan::Filter { cond: cond.clone(), input: Box::new(made) });
+                };
                 let join = Join { kind: *kind, on, left, right };
                 // An ON that can raise is applied to every row of the
                 // product [§7.5 GR1c]: the preserved operand is not filtered first.
@@ -122,6 +141,33 @@ fn rejects_nulls(c: &Cond, width: usize) -> bool {
     matches!(eval_cond(c, &nulls, &NoSubqueries), Ok(Truth::False | Truth::Unknown))
 }
 
+/// The join an outer join of `kind` is once the rows it gives nulls for
+/// its left operand, or for its right, are known to be kept by no WHERE
+/// conjunct: an outer join of the kind left, or, for none, the inner
+/// join. None if neither is known, so it is as it was.
+fn left_of(kind: OuterJoin, no_left_nulls: bool, no_right_nulls: bool) -> Option<Option<OuterJoin>> {
+    if !no_left_nulls && !no_right_nulls {
+        return None;
+    }
+    let keeps_left = kind.keeps_left() && !no_right_nulls;
+    let keeps_right = kind.keeps_right() && !no_left_nulls;
+    Some(match (keeps_left, keeps_right) {
+        (true, true) => Some(OuterJoin::Full),
+        (true, false) => Some(OuterJoin::Left),
+        (false, true) => Some(OuterJoin::Right),
+        (false, false) => None,
+    })
+}
+
+/// The join `kind` of the operands `left` and `right` on `on`: an outer
+/// join, or, for none, the inner join, the filter over their product.
+fn joined(kind: Option<OuterJoin>, on: Cond, (left, right): (Box<LogicalPlan>, Box<LogicalPlan>)) -> LogicalPlan {
+    match kind {
+        Some(kind) => LogicalPlan::OuterJoin { kind, cond: on, left, right },
+        None => LogicalPlan::Filter { cond: on, input: Box::new(LogicalPlan::Product { left, right }) },
+    }
+}
+
 impl Join<'_> {
     fn width(&self) -> usize {
         self.left.width()
@@ -130,11 +176,7 @@ impl Join<'_> {
     /// The join `kind` of these operands: an outer join on `on`, or, for
     /// none, the inner join, the filter over their product.
     fn of(&self, kind: Option<OuterJoin>, left: LogicalPlan, right: LogicalPlan) -> LogicalPlan {
-        let (on, left, right) = (self.on.clone(), Box::new(left), Box::new(right));
-        match kind {
-            Some(kind) => LogicalPlan::OuterJoin { kind, cond: on, left, right },
-            None => LogicalPlan::Filter { cond: on, input: Box::new(LogicalPlan::Product { left, right }) },
-        }
+        joined(kind, self.on.clone(), (Box::new(left), Box::new(right)))
     }
 
     /// The join `cond` filters, made the join it is if a conjunct over one
@@ -144,21 +186,16 @@ impl Join<'_> {
         let mut conjuncts = Vec::new();
         split_and(cond.clone(), &mut conjuncts);
         let width = self.left.width().saturating_add(self.right.width());
-        let rejected = |s: Side| conjuncts.iter().any(|c| side(c, self.width()) == Some(s) && rejects_nulls(c, width));
+        let lw = self.width();
+        // A conjunct of one operand's columns is evaluated on nulls; one of
+        // both's is bounded, the other operand's values not known
+        // (`rejecting.rs`).
+        let bounded = |c: &Cond, s: Side| rejecting::never_true(c, &|column| (column < lw) == (s == Side::Left));
+        let rejected = |s: Side| conjuncts.iter().any(|c| (side(c, lw) == Some(s) && rejects_nulls(c, width)) || bounded(c, s));
         // The operands given nulls: the right by LEFT and FULL, the left by RIGHT and FULL.
         let (left_nulls, right_nulls) = (self.kind.keeps_right(), self.kind.keeps_left());
         let (no_left_nulls, no_right_nulls) = (left_nulls && rejected(Side::Left), right_nulls && rejected(Side::Right));
-        if !no_left_nulls && !no_right_nulls {
-            return None;
-        }
-        let keeps_left = self.kind.keeps_left() && !no_right_nulls;
-        let keeps_right = self.kind.keeps_right() && !no_left_nulls;
-        let kind = match (keeps_left, keeps_right) {
-            (true, true) => Some(OuterJoin::Full),
-            (true, false) => Some(OuterJoin::Left),
-            (false, true) => Some(OuterJoin::Right),
-            (false, false) => None,
-        };
+        let kind = left_of(self.kind, no_left_nulls, no_right_nulls)?;
         Some(wrap(self.of(kind, self.left.clone(), self.right.clone()), conjuncts))
     }
 

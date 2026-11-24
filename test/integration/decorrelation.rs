@@ -5,6 +5,7 @@
 mod functions;
 mod mark;
 mod semi;
+mod totals;
 mod tpch;
 
 use turborel::db::{Database, Session};

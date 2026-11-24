@@ -133,32 +133,39 @@ fn tpch_subqueries_are_unnested() {
     }
 }
 
-/// Verifies: [X3.135-1986 §5.21 GR3] (RULES.md D310, D312) a join whose
-/// WHERE has a correlated scalar subquery of a set function, as TPC-H
-/// queries 2 and 17 write it, keeps its equality a join once the
+/// Verifies: [X3.135-1986 §5.21 GR3] (RULES.md D310, D312, D1060) a join
+/// whose WHERE has a correlated scalar subquery of a set function, as
+/// TPC-H queries 2 and 17 write it, keeps its equality a join once the
 /// subquery is unnested, not a product of its tables, with the rows it
-/// has nested.
+/// has nested: of a column whose sum may pass an exact number's digits,
+/// by the domain of bindings, and of one of few digits, by a grouping
+/// joined with no domain and no product.
 #[test]
 fn a_join_beside_a_correlated_subquery_stays_a_join() {
-    let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION J CREATE TABLE P (K INTEGER, B CHAR(2)) CREATE TABLE L (K INTEGER, Q INTEGER, M INTEGER)")
+    for (quantity, by_domain) in [("DECIMAL(38, 0)", true), ("INTEGER", false)] {
+        let db = Database::new();
+        db.schema(&format!(
+            "CREATE SCHEMA AUTHORIZATION J CREATE TABLE P (K INTEGER, B CHAR(2)) CREATE TABLE L (K INTEGER, Q {quantity}, M INTEGER)"
+        ))
         .unwrap();
-    let s = db.session("J");
-    let parts: Vec<String> = (0..200).map(|k| format!("({k}, 'B{}')", k % 4)).collect();
-    s.run(&format!("INSERT INTO P VALUES {}", parts.join(", "))).unwrap();
-    let lines: Vec<String> = (0..2000).map(|n| format!("({}, {}, {n})", (n * 7) % 200, (n * 13) % 50)).collect();
-    s.run(&format!("INSERT INTO L VALUES {}", lines.join(", "))).unwrap();
-    s.commit().unwrap();
-    let q = "SELECT COUNT(*) FROM P, L WHERE P.K = L.K AND P.B = 'B1' AND L.Q < (SELECT AVG(L2.Q) FROM L L2 WHERE L2.K = P.K)";
-    let plan = s.explain(q, &turborel::params::Params::new()).unwrap();
-    let physical = plan.split("-- physical:").nth(1).unwrap();
-    assert!(unnested(&s, q), "{plan}");
-    let joined = physical.contains("HashJoin L.K = P.K") || physical.contains("HashJoin P.K = L.K");
-    // A product is left only of D's rows with the one row that says L has any.
-    let lines: Vec<&str> = physical.lines().collect();
-    let products = lines.iter().enumerate().filter(|(_, l)| l.contains("Cartesian product"));
-    let guarded = products.clone().all(|(i, _)| lines.get(i + 2).is_some_and(|l| l.trim() == "Distinct"));
-    assert!(joined && guarded && products.count() == 2, "{plan}");
-    let (on, off) = both(&db, &s, q);
-    assert_eq!(on, off);
+        let s = db.session("J");
+        let parts: Vec<String> = (0..200).map(|k| format!("({k}, 'B{}')", k % 4)).collect();
+        s.run(&format!("INSERT INTO P VALUES {}", parts.join(", "))).unwrap();
+        let lines: Vec<String> = (0..2000).map(|n| format!("({}, {}, {n})", (n * 7) % 200, (n * 13) % 50)).collect();
+        s.run(&format!("INSERT INTO L VALUES {}", lines.join(", "))).unwrap();
+        s.commit().unwrap();
+        let q = "SELECT COUNT(*) FROM P, L WHERE P.K = L.K AND P.B = 'B1' AND L.Q < (SELECT AVG(L2.Q) FROM L L2 WHERE L2.K = P.K)";
+        let plan = s.explain(q, &turborel::params::Params::new()).unwrap();
+        let physical = plan.split("-- physical:").nth(1).unwrap();
+        assert!(unnested(&s, q), "{plan}");
+        let joined = physical.contains("HashJoin L.K = P.K") || physical.contains("HashJoin P.K = L.K");
+        // A product is left only of D's rows with the one row that says L has any.
+        let lines: Vec<&str> = physical.lines().collect();
+        let products = lines.iter().enumerate().filter(|(_, l)| l.contains("Cartesian product"));
+        let guarded = products.clone().all(|(i, _)| lines.get(i + 2).is_some_and(|l| l.trim() == "Distinct"));
+        assert!(joined && guarded && products.count() == if by_domain { 2 } else { 0 }, "{plan}");
+        assert_eq!(physical.contains("TRAILING_SPACES"), by_domain, "{plan}");
+        let (on, off) = both(&db, &s, q);
+        assert_eq!(on, off);
+    }
 }

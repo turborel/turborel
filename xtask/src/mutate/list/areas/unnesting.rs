@@ -4,7 +4,10 @@
 //! counted as SOME, a conditional subquery that can raise unnested, OFFSET
 //! kept for its own row, and functions inlined that are not deterministic
 //! or that leave a parameter unread, and a join beside a
-//! subquery left a product.
+//! subquery left a product. Of D1060, a SUM taken as never raising, the
+//! rows a sum is of left uncounted, a grouping's SUM typed as its
+//! argument, a scalar subquery of any number of rows taken as raising
+//! nothing, and a CASE bounded by its first result.
 
 use super::super::{Mutation, Package};
 
@@ -17,8 +20,17 @@ const JOINED: &str = "decorrelation::tpch::a_join_beside_a_correlated_subquery_s
 /// The test of inlined functions.
 const INLINED: &str = "decorrelation::functions::functions_are_inlined_and_unnested";
 
+/// The test of a SUM that can overflow kept to the outer rows' keys.
+const OVERFLOW: &str = "decorrelation::totals::a_sum_that_can_overflow_is_computed_for_the_outer_keys_alone";
+/// The test of the sums the declared types keep within their digits.
+const FITS: &str = "logical::raises::totals::tests::sums_fit_while_their_digits_and_the_rows_do";
+/// The test of the types of a grouping's columns.
+const GROUPED: &str = "logical::raises::totals::tests::a_grouping_s_columns_are_typed_by_their_set_functions";
+/// The test of a subquery that holds a scalar subquery.
+const HELD: &str = "decorrelation::totals::a_subquery_holding_a_sum_s_subquery_is_a_semi_join";
+
 /// The mutations of unnesting and inlining.
-pub const UNNESTING: [Mutation; 12] = [
+pub const UNNESTING: [Mutation; 17] = [
     Mutation {
         name: "unnest-two-rows-pass",
         package: Package::Core,
@@ -138,5 +150,55 @@ pub const UNNESTING: [Mutation; 12] = [
         replacement: "let (side, other, keys) = if read.is_empty() && read.iter().all(|&c| c < lw) {",
         integration: &[JOINED],
         unit: &[],
+    },
+    Mutation {
+        name: "unnest-sum-never-raises",
+        package: Package::Core,
+        breaks: "a subquery of a SUM that can overflow is pulled up, and raises of a key no outer row has (D1060, D15)",
+        file: "src/optimizer/unnesting/pure.rs",
+        original: "Some(Standard::Sum | Standard::Avg) => !total_fits(a, judge.types),",
+        replacement: "Some(Standard::Sum | Standard::Avg) => false,",
+        integration: &[OVERFLOW],
+        unit: &[],
+    },
+    Mutation {
+        name: "sum-fits-rows-uncounted",
+        package: Package::Core,
+        breaks: "a sum is bounded by its values' digits alone, not those of the rows it is of too (D1060)",
+        file: "src/logical/raises/totals.rs",
+        original: "is_some_and(|(p, _)| p.saturating_add(ROW_DIGITS) <= MAX_EXACT_PRECISION)",
+        replacement: "is_some_and(|(p, _)| p <= MAX_EXACT_PRECISION)",
+        integration: &[OVERFLOW],
+        unit: &[FITS],
+    },
+    Mutation {
+        name: "grouping-sum-typed-as-argument",
+        package: Package::Core,
+        breaks: "a grouping's SUM column is typed as its argument, so arithmetic on it is taken to fit (D1060)",
+        file: "src/logical/raises/totals.rs",
+        original: "exact((p.saturating_add(ROW_DIGITS), s)).or_else(|| Some(a.result.clone()))",
+        replacement: "exact((p, s)).or_else(|| Some(a.result.clone()))",
+        integration: &[],
+        unit: &[GROUPED],
+    },
+    Mutation {
+        name: "unnest-scalar-subquery-of-any-rows",
+        package: Package::Core,
+        breaks: "a scalar subquery that may give two rows is taken as raising nothing (D1060)",
+        file: "src/optimizer/unnesting/pure.rs",
+        original: "let subquery = |s: &Subquery, one: bool| (one && !s.plan.one_row_at_most()) || judged(&s.plan, ctx, deeper);",
+        replacement: "let subquery = |s: &Subquery, one: bool| (one && s.outer.len() > usize::MAX) || judged(&s.plan, ctx, deeper);",
+        integration: &[HELD],
+        unit: &[],
+    },
+    Mutation {
+        name: "case-bounded-by-first-result",
+        package: Package::Core,
+        breaks: "a CASE is bounded by its first result alone, not the widest of them (D1060)",
+        file: "src/logical/raises.rs",
+        original: "|(w, held): (u32, u32)| (w.max(p.saturating_sub(s)), held.max(s))",
+        replacement: "|(w, held): (u32, u32)| (w, held.max(s))",
+        integration: &[],
+        unit: &["logical::raises::tests::a_case_is_bounded_by_its_widest_results"],
     },
 ];
