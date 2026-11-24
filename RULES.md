@@ -664,6 +664,7 @@ verification approach DO-178C expects (§8).
 | D1040 | An index join is read direct as nested point reads only by a unique index |
 | D1041 | A filter goes below a projection only if each of its expressions is deterministic |
 | D1042 | COPY DESCRIPTOR with TYPE copies a reference type's SCOPE components, each a character string |
+| D1043 | A slow statement's text is withheld only while an encryption is in use, not for a compression of the spill areas |
 
 ### The project
 
@@ -18162,6 +18163,20 @@ numeric target for one and then failed to assign it its name, and one
 not set read as 0. They are now copied with the other type components,
 read into a character string, and read as an empty string where not
 set, as a type's other names are.
+
+#### D1043. A slow statement's text is withheld only while an encryption is in use, not for a compression of the spill areas
+
+A slow statement is told without its text while anything of the
+database is encrypted, so no value meant for an encrypted table reaches
+a log in the clear (D40, D48). The test was whether the spill areas'
+pipeline had any stage (`db/slow.rs`). SPILL.ENCODINGS naming a
+compression alone gave it one, so a database with nothing encrypted lost
+the text of every slow statement.
+
+The test is now whether that pipeline holds an encryption
+(`Pipeline::confidential`). It does while the database's files or a
+table are encrypted, whose encryption the spill areas take (D48), or
+while SPILL.ENCODINGS names one itself.
 
 ## 2. Project layout
 

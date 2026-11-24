@@ -105,7 +105,7 @@ SET DATABASE DIAGNOSTICS.SLOW_STATEMENT_MS = 50;
 ```
 
 A statement's text is told as its session gave it, values written in it
-included; but while anything of the database is encrypted, its files or
-a table ([Encryption](07-encryption.md)), a slow statement is told by
+included; but while anything of the database is encrypted, its files, a
+table or its spill areas ([Encryption](07-encryption.md)), a slow statement is told by
 who ran it and its time alone, `"statement":null`, so no value meant for
 an encrypted table reaches the log in the clear.

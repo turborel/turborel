@@ -9,7 +9,7 @@
 use super::super::{Mutation, Package};
 
 /// Each fix of the review, taken back, which its test must then fail.
-pub const REVIEW_FIXES: [Mutation; 3] = [
+pub const REVIEW_FIXES: [Mutation; 4] = [
     Mutation {
         name: "direct-join-by-a-key-not-unique",
         package: Package::Core,
@@ -38,6 +38,16 @@ pub const REVIEW_FIXES: [Mutation; 3] = [
         original: "    DescriptorItem::ScopeCatalog,\n    DescriptorItem::ScopeSchema,\n    DescriptorItem::ScopeName,\n];",
         replacement: "    DescriptorItem::Type,\n    DescriptorItem::Type,\n    DescriptorItem::Type,\n];",
         integration: &["ptf_statements::a_reference_types_scope_is_copied_with_its_type_20_6"],
+        unit: &[],
+    },
+    Mutation {
+        name: "slow-text-withheld-for-a-compression",
+        package: Package::Core,
+        breaks: "a slow statement loses its text while the spill areas are compressed and nothing is encrypted",
+        file: "src/db/slow.rs",
+        original: "    let text = (!st.spill_encodings().confidential()).then(text);",
+        replacement: "    let text = st.spill_encodings().stages().is_empty().then(text);",
+        integration: &["diagnostics::a_slow_statement_is_told_with_its_text_while_spills_are_only_compressed"],
         unit: &[],
     },
 ];
