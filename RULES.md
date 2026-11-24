@@ -662,6 +662,7 @@ verification approach DO-178C expects (§8).
 | D1035 | The client's debugger is methods of its connection, the events kept in it until read |
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
 | D1040 | An index join is read direct as nested point reads only by a unique index |
+| D1041 | A filter goes below a projection only if each of its expressions is deterministic |
 
 ### The project
 
@@ -18124,6 +18125,26 @@ pairs of four left rows and the direct read four.
 The join is now taken only of an index that is unique
 (`join/indexed/direct.rs`). Any other is the executor's, whose probe
 gives every row of the key.
+
+#### D1041. A filter goes below a projection only if each of its expressions is deterministic
+
+`PushFilterThroughProject` moves a filter below a projection with each
+column of its condition replaced by the projection's expression for it
+(D35). The expression is then evaluated once for the condition and again
+for the projection's row. The rule asked only that neither the condition
+nor an expression could raise an error (D15). A function call was taken
+as able to raise, so none was replaced. Since then a function may say
+that no call of it raises (`ScalarFunction::raise_free`), and a call of
+one is replaced. One that is also not deterministic gave the condition
+one value and the row another. A filter of a derived table's column
+equal to 2, the column a call counting its calls, gave a row whose
+column was 4.
+
+The rule now also asks that every expression of the projection is
+deterministic and changes nothing (`unnesting::expr_pure`), as
+unnesting asks of what it evaluates again (D317). It asks it of all of
+them, read by the condition or not, as each is evaluated of fewer rows
+once the filter is below.
 
 ## 2. Project layout
 
