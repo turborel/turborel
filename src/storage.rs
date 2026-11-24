@@ -337,8 +337,11 @@ pub trait TableStorage: Send + Sync {
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         None
     }
-    /// Gathers the statistics `statistics` gives anew, now. Default:
-    /// nothing to gather.
+    /// The passes that gathered them, for the database to note when one was made (COLUMN_STATISTICS, RULES.md D991). Default: none.
+    fn statistics_passes(&self) -> u64 {
+        0
+    }
+    /// Gathers the statistics `statistics` gives anew, now. Default: nothing to gather.
     ///
     /// # Errors
     ///

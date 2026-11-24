@@ -64,7 +64,7 @@ fn types_named_4_9_2() {
     let expected = ["K,INTEGER,NULL,NULL,NULL,10", "L,ARRAY,NULL,NULL,NULL,NULL", "P,USER-DEFINED,TURBOREL,A,MONEY,NULL"];
     assert_eq!(query(&a, columns), expected);
     let elements = "SELECT OBJECT_NAME, DATA_TYPE, UDT_CATALOG, UDT_SCHEMA, UDT_NAME, DTD_IDENTIFIER \
-                    FROM INFORMATION_SCHEMA.ELEMENT_TYPES WHERE OBJECT_TYPE = 'TABLE'";
+                    FROM INFORMATION_SCHEMA.ELEMENT_TYPES WHERE OBJECT_TYPE = 'TABLE' AND OBJECT_SCHEMA = 'A'";
     assert_eq!(query(&a, elements), ["T,USER-DEFINED,TURBOREL,A,MONEY,3.1"]);
 }
 

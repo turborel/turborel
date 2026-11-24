@@ -150,11 +150,14 @@ impl State {
         if lock.collection_held() || lock.changed_after(self.generation) {
             return Ok(false);
         }
+        let passes = storage.statistics_passes();
         let mut worked = storage.maintain(self.tx.horizon(), now)?;
         if worked {
             // When it was last compacted (RULES.md D522).
             lock.stamp(self.clock.now(), true);
         }
+        // When its statistics were last gathered (RULES.md D991).
+        lock.gathered((storage.statistics_passes() != passes).then(|| self.clock.now()));
         let mut failed = None;
         for index in self.indexes_of(table) {
             match index.maintain() {

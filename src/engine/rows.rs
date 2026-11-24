@@ -369,24 +369,24 @@ impl TableStorage for RowTable {
         if self.frozen.columns().is_some() { self.frozen_read_share(conditions) } else { self.zones.share(conditions) }
     }
 
-    /// 8.6 of a table the buffer pool holds, more as it holds less of it,
-    /// shared with the other tables and indexes of its file, to 72; more
-    /// by the share of the rows frozen, each a page a column
-    /// (`rows/frozen.rs`).
+    /// 8.6 of a table the buffer pool holds, more as it holds less of it, shared with the other tables and indexes of its file,
+    /// to 72; more by the share of the rows frozen, each a page a column (`rows/frozen.rs`).
     fn fetch_cost(&self) -> f64 {
         self.frozen_fetch_cost()
     }
 
-    /// 63.4 while its file's pages past the pool fit the system's cache,
-    /// more as they do not, to 5891.4 (`rows/frozen.rs`).
+    /// 63.4 while its file's pages past the pool fit the system's cache, more as they do not, to 5891.4 (`rows/frozen.rs`).
     fn miss_cost(&self) -> f64 {
         self.page_missed_cost()
     }
 
-    /// A table opened has none until the database's maintenance gathers
-    /// them, due once first asked for (`rows/stats.rs`).
+    /// A table opened has none until the database's maintenance gathers them, due once first asked for (`rows/stats.rs`).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
+    }
+
+    fn statistics_passes(&self) -> u64 {
+        self.gathered.passes()
     }
 
     fn statistics_wanted(&self) -> bool {
