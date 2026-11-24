@@ -299,7 +299,7 @@ fn cut(seen: Seen, code: Code) -> bool {
     }
 }
 
-/// Values seen as `a` and as `b`, seen together; none if not alike.
+/// Values seen as `first` and as `second`, seen together; none if not alike.
 pub(super) fn joined(first: Seen, second: Seen) -> Option<Seen> {
     Some(match (first, second) {
         (Seen::Nothing, seen) | (seen, Seen::Nothing) => seen,

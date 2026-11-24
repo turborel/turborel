@@ -1,7 +1,8 @@
 //! A bounded small input can replace repeated spatial index probes with
 //! one visible table scan. Cost estimates choose work only, never results.
-//! Capacity or memory refusal resumes the existing probe iterator without
-//! rereading the buffered input. Exact predicates and ON residuals remain.
+//! Memory refusal resumes the existing probe iterator without rereading
+//! the buffered input. An input that outgrows the work area is spilled
+//! (`adaptive/spilled.rs`). Exact predicates and ON residuals remain.
 
 mod held;
 mod observed;

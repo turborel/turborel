@@ -558,7 +558,7 @@ fn current(row: usize, part: &mut Partition, peers: &mut Peers) -> Result<Curren
 }
 
 /// [ISO/IEC 9075-2:2023 §9.23 SR5, §6.10 GR1a] The value of the rank
-/// function or NTILE `kind`, of `count`, of `current`, a row of a
+/// function or NTILE `kind`, of `tiles`, of `current`, a row of a
 /// partition of `len` rows: NTILE the tile of the row, null of a count
 /// null; ROW_NUMBER its
 /// place, RANK 1 plus the rows before its peers, DENSE_RANK 1 plus the

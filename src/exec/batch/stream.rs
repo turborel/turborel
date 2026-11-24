@@ -557,8 +557,8 @@ pub(super) fn pick(batch: Batch, picks: &[usize]) -> Batch {
     Batch { columns, rows: batch.rows }
 }
 
-/// A scan's batches (`scanned`), its columns `deferred` leaves unread
-/// given late (RULES.md D361), told the bound of a sort above if it has
+/// A scan's batches (`TableStorage::scan_batches`), its columns `deferred`
+/// leaves unread given late (RULES.md D361), told the bound of a sort above if it has
 /// one (D379) and the ranges of the runtime filters it is told as
 /// conjuncts, then judged by each of those filters, no row of them
 /// filtered by the condition yet (RULES.md D369).
