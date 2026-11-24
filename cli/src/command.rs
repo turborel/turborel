@@ -128,6 +128,9 @@ pub enum Command {
     NoTee,
     /// `\delimiter [TEXT]` sets what ends a statement, a semicolon if none.
     Delimiter(Option<String>),
+    /// \[EXTENSION\] `\debug WORD [ARGUMENT...]` drives the session this
+    /// connection debugs (`command/debug.rs`).
+    Debug(DebugCommand),
 }
 
 /// The name of the command in `text`, the line after its `\`, and the
@@ -225,5 +228,7 @@ pub fn seconds(text: &str) -> Result<Duration, String> {
 #[cfg(test)]
 mod tests;
 
+mod debug;
 mod parse;
+pub use debug::DebugCommand;
 pub use parse::{AUTO, parse};

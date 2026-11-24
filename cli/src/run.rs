@@ -10,6 +10,7 @@
 
 mod buffer;
 mod commands;
+mod debugging;
 mod files;
 mod output;
 mod session;

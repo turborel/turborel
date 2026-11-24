@@ -92,3 +92,48 @@ fn intervals_are_read_in_seconds() {
     assert!(seconds("-1").is_err());
     assert!(seconds("1.x").is_err());
 }
+
+/// Verifies: [EXTENSION] RULES.md D1036: `\debug` reads a word and its
+/// arguments, each call's: a breakpoint's kind, name and line, its
+/// condition the rest of the line as typed, quotes and all; a step into
+/// unless over or out is given; a wait's seconds; and refuses no word, a
+/// word it does not know, a line not above 0, a kind it does not know, and
+/// arguments where none are taken.
+#[test]
+fn debug_reads_its_words() {
+    let debug = |line: &str| match read(line) {
+        Ok(Command::Debug(asked)) => Ok(asked),
+        Ok(other) => panic!("{other:?}"),
+        Err(e) => Err(e),
+    };
+    assert_eq!(debug("debug id"), Ok(DebugCommand::Id));
+    assert_eq!(debug("debug attach 3"), Ok(DebugCommand::Attach(3)));
+    assert_eq!(
+        debug("debug BREAK procedure ann.raise 4  N = 'it''s' AND M > 1"),
+        Ok(DebugCommand::Break {
+            kind: turborel_client::debug::Kind::Procedure,
+            name: "ann.raise".into(),
+            line: 4,
+            condition: Some("N = 'it''s' AND M > 1".into())
+        })
+    );
+    let trigger = debug("debug break trigger T 1").unwrap();
+    assert_eq!(trigger, DebugCommand::Break { kind: turborel_client::debug::Kind::Trigger, name: "T".into(), line: 1, condition: None });
+    assert_eq!(debug("debug step"), Ok(DebugCommand::Resume(turborel_client::debug::Action::Into)));
+    assert_eq!(debug("debug step out"), Ok(DebugCommand::Resume(turborel_client::debug::Action::Out)));
+    assert_eq!(debug("debug continue"), Ok(DebugCommand::Resume(turborel_client::debug::Action::Continue)));
+    assert_eq!(debug("debug wait 1.5"), Ok(DebugCommand::Wait(Some(Duration::from_millis(1500)))));
+    assert_eq!(debug("debug wait"), Ok(DebugCommand::Wait(None)));
+    assert_eq!(debug("debug clear 2"), Ok(DebugCommand::Clear(2)));
+    for wrong in [
+        "debug",
+        "debug fly",
+        "debug break procedure P 0",
+        "debug break view V 1",
+        "debug stack now",
+        "debug step sideways",
+        "debug attach x",
+    ] {
+        assert!(debug(wrong).is_err(), "{wrong}");
+    }
+}

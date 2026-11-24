@@ -16,6 +16,8 @@ use turborel_client::export::ExportFormat;
 use turborel_client::import::{self, Cause, Delimited, Import, ImportError, Imported, Rejected};
 use turborel_client::{Canceller, Column, Failure, Notice, Timing};
 
+use super::debugging::debugged;
+use crate::command::DebugCommand;
 use crate::timing::ServerTime;
 
 /// The SQLSTATE class of a warning [ISO/IEC 9075:1992 §22.1].
@@ -120,6 +122,17 @@ pub trait Statements {
     ///
     /// Why the import stopped, and what of it was kept.
     fn import(&mut self, source: &mut FileSource, how: &Import, rejected: &mut dyn FnMut(Rejected)) -> Result<Imported, ImportError>;
+
+    /// \[EXTENSION\] What `\debug` asks, of the current connection, as
+    /// lines, null values written as `null` (RULES.md D1036).
+    ///
+    /// # Errors
+    ///
+    /// The debugger's call's failure, as the server reports it; SQLCODE
+    /// -900 of what serves no debugger.
+    fn debug(&mut self, _asked: &DebugCommand, _null: &str) -> Result<String, Failure> {
+        Err(Failure::from(&SqlError::new(Code::Unsupported, "[EXTENSION] what this run's statements go to serves no debugger")))
+    }
 }
 
 /// An import's failure `failure` before it began, so nothing kept.
@@ -327,6 +340,10 @@ impl<S: Read + Write> Statements for Connection<S> {
     fn import(&mut self, source: &mut FileSource, how: &Import, mut rejected: &mut dyn FnMut(Rejected)) -> Result<Imported, ImportError> {
         import::import(self, source, how, &mut rejected)
     }
+
+    fn debug(&mut self, asked: &DebugCommand, null: &str) -> Result<String, Failure> {
+        debugged(self, asked, null)
+    }
 }
 
 impl<C: Connector> Statements for Agent<C> {
@@ -399,5 +416,9 @@ impl<C: Connector> Statements for Agent<C> {
 
     fn import(&mut self, source: &mut FileSource, how: &Import, mut rejected: &mut dyn FnMut(Rejected)) -> Result<Imported, ImportError> {
         import::import(self.current().map_err(unbegun)?, source, how, &mut rejected)
+    }
+
+    fn debug(&mut self, asked: &DebugCommand, null: &str) -> Result<String, Failure> {
+        debugged(self.current()?, asked, null)
     }
 }
