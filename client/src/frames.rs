@@ -11,7 +11,7 @@ use turborel_protocol::compress::{COMPRESSED, compress_frames, decompress};
 use turborel_protocol::{Failure, HEADER, Reply, Request};
 
 use crate::connection::{Connection, Result};
-use crate::timeouts::io_failed;
+use crate::timeouts::{io_failed, uninterrupted};
 
 /// \[DESIGN\] The most of a reply's body reserved before its bytes
 /// arrive; past it, the buffer grows as they do.
@@ -44,7 +44,7 @@ impl<S: Read + Write> Connection<S> {
             bytes
         };
         let stream = self.stream.get_mut();
-        let sent = stream.write_all(bytes).and_then(|()| stream.flush());
+        let sent = stream.write_all(bytes).and_then(|()| uninterrupted(|| stream.flush()));
         sent.map_err(|e| self.lost_by(io_failed("send", &e)))
     }
 

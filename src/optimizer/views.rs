@@ -5,6 +5,7 @@
 //! view's own filters and tables, and a filter on grouping columns goes on
 //! below the grouping (`PushHavingIntoWhere`).
 
+use super::unnesting::expr_pure;
 use super::{Rule, RuleContext};
 use crate::logical::{Cond, Expr, LogicalPlan, map_cond_exprs};
 
@@ -18,9 +19,10 @@ pub const PUSH_FILTER_THROUGH_DISTINCT: &str = "push_filter_through_distinct";
 /// row for each row of its input, so the filter keeps the same rows. Only
 /// when neither the condition nor any expression of the projection can
 /// raise an error, as the expressions are then evaluated on fewer rows
-/// (RULES.md D15). A function call can (`Expr::can_raise`), so none is
-/// substituted, nor evaluated twice, which a nondeterministic one must not
-/// be.
+/// (RULES.md D15), and every expression of the projection gives the same
+/// value of a row each time. A call that raises nothing is substituted
+/// (`Expr::can_raise`), and so evaluated again for the condition, which
+/// one that is not deterministic must not be (D1041).
 pub struct PushFilterThroughProject;
 
 impl Rule for PushFilterThroughProject {
@@ -30,7 +32,7 @@ impl Rule for PushFilterThroughProject {
     fn apply(&self, plan: &LogicalPlan, _ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
         let LogicalPlan::Filter { cond, input } = plan else { return None };
         let LogicalPlan::Project { exprs, input: rows } = &**input else { return None };
-        if cond.can_raise() || exprs.iter().any(Expr::can_raise) {
+        if cond.can_raise() || exprs.iter().any(Expr::can_raise) || !exprs.iter().all(expr_pure) {
             return None;
         }
         let pushed = map_cond_exprs(cond.clone(), &|e| substitute(e, exprs));
@@ -129,6 +131,26 @@ mod tests {
         }
     }
 
+    /// A function that raises nothing, deterministic if `.0`.
+    struct Quiet(bool);
+    impl ScalarFunction for Quiet {
+        fn name(&self) -> &'static str {
+            "QUIET"
+        }
+        fn return_type(&self, _: &[DataType]) -> crate::error::Result<DataType> {
+            Ok(DataType::Exact { precision: 1, scale: 0, spelled: Spelled::Numeric })
+        }
+        fn call(&self, _: &[Value]) -> crate::error::Result<Value> {
+            Ok(Value::Null)
+        }
+        fn raise_free(&self) -> bool {
+            true
+        }
+        fn deterministic(&self) -> bool {
+            self.0
+        }
+    }
+
     fn one() -> Expr {
         Expr::Const(Value::Exact(Decimal::new(1, 0)))
     }
@@ -176,6 +198,22 @@ mod tests {
         assert!(applied(&PushFilterThroughProject, equals_one(Expr::Column(0)), project(vec![arith.clone()])).is_none(), "can raise");
         assert!(applied(&PushFilterThroughProject, equals_one(arith), project(vec![Expr::Column(0)])).is_none(), "can raise");
         assert!(applied(&PushFilterThroughProject, equals_one(Expr::Column(0)), |rows| LogicalPlan::Distinct { input: rows }).is_none());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1041, `PushFilterThroughProject`: a
+    /// filter goes below a projection of a call that raises nothing and is
+    /// deterministic, and stays above one of a call that raises nothing
+    /// and is not, which the filter pushed would evaluate again, for
+    /// another value than the projection gives.
+    #[test]
+    fn a_filter_stays_above_a_projection_not_deterministic() {
+        let project = |exprs: Vec<Expr>| move |input| LogicalPlan::Project { exprs: exprs.clone(), input };
+        let quiet = |deterministic: bool| Expr::Call(ScalarRef(Arc::new(Quiet(deterministic))), vec![Expr::Column(0)]);
+        assert!(!quiet(false).can_raise() && !quiet(true).can_raise());
+        assert!(applied(&PushFilterThroughProject, equals_one(Expr::Column(0)), project(vec![quiet(true)])).is_some());
+        assert!(applied(&PushFilterThroughProject, equals_one(Expr::Column(0)), project(vec![quiet(false)])).is_none());
+        let beside = project(vec![Expr::Column(0), quiet(false)]);
+        assert!(applied(&PushFilterThroughProject, equals_one(Expr::Column(0)), beside).is_none(), "the projection's, read or not");
     }
 
     /// Verifies: [DESIGN] RULES.md D35, `PushFilterThroughDistinct`: a

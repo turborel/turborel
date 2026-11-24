@@ -239,6 +239,39 @@ fn a_join_by_a_whole_unique_key_is_read_as_its_plan_reads() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1040: an inner join that probes every
+/// column of an index that is not unique pairs a left row with each row
+/// of its key, so it is no direct read, which stops at a key's first
+/// row, and is the executor's; the same join by a unique index of the
+/// same column is one.
+#[test]
+fn a_join_by_a_whole_key_not_unique_pairs_every_row_of_the_key() {
+    let (_db, a) = filled();
+    a.run("CREATE TABLE M (A INTEGER NOT NULL, B INTEGER NOT NULL)").unwrap();
+    let rows: Vec<String> = (0..=1800_i64).map(|b| format!("({}, {b})", b % 600)).collect();
+    a.run(&format!("INSERT INTO M VALUES {}", rows.join(", "))).unwrap();
+    a.commit().unwrap();
+    a.run("CREATE INDEX M_A ON M (A)").unwrap();
+    a.commit().unwrap();
+    let sql = "SELECT T.K, M.B FROM T, M WHERE T.W = 1 AND T.D = 3 AND T.K < 5 AND M.A = T.K";
+    let (st, plan) = planned(&a, sql);
+    let mut join = &plan;
+    while let Plan::Project { input, .. } | Plan::Filter { input, .. } = join {
+        join = input;
+    }
+    let Plan::IndexJoin { index, .. } = join else { panic!("an index join: {plan:?}") };
+    assert_eq!(&**index, "M_A");
+    let (through, direct) = both(&a, sql, None);
+    assert_eq!(through.len(), 12, "three rows of each of four keys: {through:?}");
+    assert_eq!(direct, None, "no direct read: {plan:?}");
+    assert!(RangeRead::of(&plan, &st).is_none());
+    a.run("CREATE TABLE M1 (A INTEGER NOT NULL UNIQUE, B INTEGER NOT NULL)").unwrap();
+    a.run("INSERT INTO M1 SELECT A, B FROM M WHERE B < 600").unwrap();
+    a.commit().unwrap();
+    let (by_executor, by_unique) = both(&a, &sql.replace("M.", "M1.").replace(", M ", ", M1 "), None);
+    assert_eq!((by_unique.expect("read direct"), by_executor.len()), (by_executor.clone(), 4));
+}
+
 /// Verifies: [DESIGN] RULES.md D932: a left row with a null for a column
 /// of the key probes nothing, as in the join, so the probed index counts
 /// a search for each left row with a value alone.

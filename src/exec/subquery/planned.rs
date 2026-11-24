@@ -83,18 +83,29 @@ pub(super) struct KeptRun {
     /// How its subquery is decorrelated, if it can be, found the first
     /// time a runner asks (`probed.rs`).
     decorrelated: OnceLock<Option<Arc<Decorrelated>>>,
+    /// Whether its plan is one probe of a whole unique key, found the
+    /// first time a runner asks (`probed.rs`, RULES.md D1046).
+    probe: OnceLock<bool>,
 }
 
 impl KeptRun {
     /// `plan`, the physical plan of `slotted`, kept.
     fn of(slotted: Slotted, plan: Plan) -> Planned {
-        Planned::Kept(Arc::new(KeptRun { slotted, plan, point: OnceLock::new(), decorrelated: OnceLock::new() }))
+        let (point, decorrelated, probe) = (OnceLock::new(), OnceLock::new(), OnceLock::new());
+        Planned::Kept(Arc::new(KeptRun { slotted, plan, point, decorrelated, probe }))
     }
 
     /// How `subquery`, whose plan it keeps, is decorrelated, if it can be
     /// (`Subquery::decorrelated`), found once.
     pub(super) fn decorrelated(&self, subquery: &Subquery) -> Option<Arc<Decorrelated>> {
         self.decorrelated.get_or_init(|| subquery.decorrelated().map(Arc::new)).clone()
+    }
+
+    /// Whether its plan is one probe of a whole unique key in `st`
+    /// (`physical::keepable`), as a plan kept at its first run is, and
+    /// one learned over its runs need not be (RULES.md D1046).
+    pub(super) fn probes(&self, st: &crate::db::State) -> bool {
+        *self.probe.get_or_init(|| keepable(&self.plan, st))
     }
 
     /// Whether `outer` are values its slots take (`Slotted::fits`).

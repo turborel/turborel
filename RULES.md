@@ -661,6 +661,14 @@ verification approach DO-178C expects (§8).
 | D1034 | A connection learns its own ID by a Debug request, so Ready keeps its first form |
 | D1035 | The client's debugger is methods of its connection, the events kept in it until read |
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
+| D1040 | An index join is read direct as nested point reads only by a unique index |
+| D1041 | A filter goes below a projection only if each of its expressions is deterministic |
+| D1042 | COPY DESCRIPTOR with TYPE copies a reference type's SCOPE components, each a character string |
+| D1043 | A slow statement's text is withheld only while an encryption is in use, not for a compression of the spill areas |
+| D1044 | An IVF directory whose write fails frees the pages it made |
+| D1045 | A range join is costed as a plan of no order |
+| D1046 | A correlated subquery stays probed past its runs only if its kept plan is one probe of a whole unique key |
+| D1047 | A read, a write, an accept or a connect a signal interrupts is made again, and is no failure of a connection |
 
 ### The project
 
@@ -18105,6 +18113,147 @@ name is read as SQL reads an identifier, folded to upper case unless
 quoted. A breakpoint is shown by the specific name of the routine it
 is in, as the engine keeps it, so an overloaded name's breakpoints
 are told apart.
+
+### Defects a review of comments found
+
+#### D1040. An index join is read direct as nested point reads only by a unique index
+
+A direct read takes an inner index join whose probe fixes every column
+of an index (D932), and reads each left row's probe as a point read
+does. The read stops at the first row it finds with the key, as a
+unique key has one row at most. The join was taken of any index whose
+every column the probe fixed, and `Direct::of` never asked whether the
+index was unique. A kept query joining a range's rows with a table by
+an index that is not unique, on all its columns, gave each left row its
+key's first row alone. Of three rows a key, the executor gave twelve
+pairs of four left rows and the direct read four.
+
+The join is now taken only of an index that is unique
+(`join/indexed/direct.rs`). Any other is the executor's, whose probe
+gives every row of the key.
+
+#### D1041. A filter goes below a projection only if each of its expressions is deterministic
+
+`PushFilterThroughProject` moves a filter below a projection with each
+column of its condition replaced by the projection's expression for it
+(D35). The expression is then evaluated once for the condition and again
+for the projection's row. The rule asked only that neither the condition
+nor an expression could raise an error (D15). A function call was taken
+as able to raise, so none was replaced. Since then a function may say
+that no call of it raises (`ScalarFunction::raise_free`), and a call of
+one is replaced. One that is also not deterministic gave the condition
+one value and the row another. A filter of a derived table's column
+equal to 2, the column a call counting its calls, gave a row whose
+column was 4.
+
+The rule now also asks that every expression of the projection is
+deterministic and changes nothing (`unnesting::expr_pure`), as
+unnesting asks of what it evaluates again (D317). It asks it of all of
+them, read by the condition or not, as each is evaluated of fewer rows
+once the filter is below.
+
+#### D1042. COPY DESCRIPTOR with TYPE copies a reference type's SCOPE components, each a character string
+
+COPY DESCRIPTOR with TYPE sets the target item's type components to the
+source's, SCOPE_CATALOG, SCOPE_SCHEMA and SCOPE_NAME among them
+[ISO/IEC 9075-2:2023 §20.6 GR7h iii 2]. The list of components copied
+(`dynamic/ptf.rs`) was written when there were no reference types and
+left the three out, so an item copied from one describing REF(PERSON)
+SCOPE PEOPLE named its referenced type and no scope.
+
+The three are also character strings [§20.1 Table 29]. They were not
+among the fields `is_text` names, so GET DESCRIPTOR took only an exact
+numeric target for one and then failed to assign it its name, and one
+not set read as 0. They are now copied with the other type components,
+read into a character string, and read as an empty string where not
+set, as a type's other names are.
+
+#### D1043. A slow statement's text is withheld only while an encryption is in use, not for a compression of the spill areas
+
+A slow statement is told without its text while anything of the
+database is encrypted, so no value meant for an encrypted table reaches
+a log in the clear (D40, D48). The test was whether the spill areas'
+pipeline had any stage (`db/slow.rs`). SPILL.ENCODINGS naming a
+compression alone gave it one, so a database with nothing encrypted lost
+the text of every slow statement.
+
+The test is now whether that pipeline holds an encryption
+(`Pipeline::confidential`). It does while the database's files or a
+table are encrypted, whose encryption the spill areas take (D48), or
+while SPILL.ENCODINGS names one itself.
+
+#### D1044. An IVF directory whose write fails frees the pages it made
+
+`lists::write_directory` makes the directory's pages and then writes
+each. It freed the pages made when making one failed, and not when a
+write of one failed, as its page could not be held or read back. Its
+callers free only the pages it returns, so those pages stayed in use
+with nothing referring to them.
+
+Both steps now fail through one place that frees every page made
+(`engine/ivf/lists.rs`). A free that fails still leaks its page alone,
+as before.
+
+#### D1045. A range join is costed as a plan of no order
+
+Join enumeration keeps the cheapest plan of each order of a set's rows
+(D303). A range join was offered with its left operand's order
+(`enumerate/methods.rs`), and its plan gives rows in no order
+(`physical/range/planned.rs`), as the plan made of it says
+(`ranged.rs`). The rows were right, as a sort is added by the order of
+the plan made. The costs were not. A range join stood as the plan of an
+order it does not give, in place of the nested loop or the join that
+does, and was chosen for an ORDER BY or a merge join at a cost without
+the sort it then needed.
+
+A range join is now offered as a plan of no order.
+
+#### D1046. A correlated subquery stays probed past its runs only if its kept plan is one probe of a whole unique key
+
+D790 keeps a subquery probed past EXECUTOR.DECORRELATE_AFTER_RUNS while
+its probes, each weighed as `PROBE_ROWS` rows, come to fewer than its
+build's rows, if its run is one probe of a whole unique key. The test
+was that its plan was kept (`subquery/probed.rs`). A plan is kept at
+once if it is such a probe, and also once it is learned over its runs
+(D675), which any plan may be when the setting is `MOST_LEARNING_RUNS`
+or more. A learned plan that reads many rows a run, a range of an index
+or a whole table, was weighed as one descent and stayed probed for
+many times the runs it should have.
+
+The runner now asks the kept plan whether it is one probe of a whole
+unique key (`physical::keepable`), found once and kept with the plan.
+A subquery whose kept plan is any other is decorrelated after the
+setting's runs, as D790 says.
+
+#### D1047. A read, a write, an accept or a connect a signal interrupts is made again, and is no failure of a connection
+
+A call that waits in the system under a timeout returns
+`ErrorKind::Interrupted` when a signal reaches its thread, or when its
+process is frozen and thawed, with nothing read, written or lost. The
+standard library's `read_exact`, `write_all` and `read_to_end` make the
+call again. A single `read`, `fill_buf`, `flush` or connect does not.
+The client's Terminate waits for the server's close by one `fill_buf`
+under its read timeout, and reported "cannot receive: Interrupted
+system call" (SQLSTATE 08006) for a server that had answered nothing
+wrong.
+
+Every such call is now made again while it is interrupted. In the
+client that is `timeouts::uninterrupted`, around Terminate's wait for
+the close, the debugger's wait for an event, the flush after a
+request's bytes and after a Cancel's, the TLS handshake's steps, and a
+connect by TCP or by a local socket, which makes its socket anew. In
+the server the thread that reads and writes a connection itself already
+made an interrupted read or write again (`native/wire.rs`), and now its
+flush too, which over TLS writes the session's last records. An accept
+that is interrupted is asked again at once, with no failure told and no
+backoff, for clients (`server.rs`) and for the members of a cluster
+(`replication/net.rs`).
+
+The reads and writes through the runtime are of sockets that do not
+block, which wait nowhere a signal could interrupt, and the replication
+crate reads and writes no socket itself. A wait made again begins its
+timeout again, so a call interrupted waits at most its timeout after
+the last signal.
 
 ## 2. Project layout
 
