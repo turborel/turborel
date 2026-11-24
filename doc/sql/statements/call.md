@@ -18,10 +18,18 @@ CALL is read as a word, not a key word.
 
 CALL runs a procedure defined by [CREATE PROCEDURE](create-procedure.md)
 with an argument for each of its parameters. A procedure named without
-a schema is of the session's default schema.
+a schema is of the session's default schema. An argument may be named,
+`K => 1`, and then every one is.
 
 An argument of an IN parameter is a value expression, whose value is
-stored in the parameter's type. An argument of an OUT or INOUT parameter
+stored in the parameter's type, or NULL, the null value. DEFAULT as an
+argument of an IN or INOUT parameter gives it the default value its
+procedure declares, or the null value if it declares none. A parameter
+past the arguments written, or one no named argument names, takes its
+default value so, and must have one. An INOUT parameter given DEFAULT
+has no target, so its value out goes nowhere. A default is evaluated
+with the other arguments, as the owner of the procedure's schema, so a
+caller with EXECUTE alone may take a default that reads a table. An argument of an OUT or INOUT parameter
 is a target: a host or embedded variable, a parameter of the procedure
 whose body the CALL is, an SQL variable of a compound statement the
 CALL is in, or, in a BEFORE row trigger, a column of its new transition
@@ -51,8 +59,8 @@ PARAMETER_ORDINAL_POSITION and the PARAMETER_SPECIFIC fields, the
 embedded library's and the client library's `parameters` as each
 `DynamicParameter`'s `mode` and `ordinal`, and `procedure` the specific
 name. Several `?` marks of one IN argument, as `CALL P(? + ?)`, each have
-that parameter's mode and position. Of procedures of one name, the one
-of as many parameters as the CALL has arguments describes them.
+that parameter's mode and position. A parameter left to its default
+holds no `?`, and the others keep their own positions.
 
 The body runs as the owner of the procedure's schema, of that schema,
 with a diagnostics area of its own, within the CALL statement: all it
@@ -87,16 +95,17 @@ as PARAMETER_NAME, PARAMETER_MODE and PARAMETER_ORDINAL_POSITION.
 
 ## RULES
 
-1. There is a procedure of the name with as many parameters as there
-   are arguments. Procedures of one name each have another number of
-   parameters, so it is the one invoked. A `?` argument of an IN
+1. A procedure of the name takes the arguments: it has at least as
+   many parameters, each one past those written, or named by none, has
+   a default value, and each name names one of its parameters. Of those
+   that take them, of the schema first in the path, the one of fewest
+   parameters is invoked. Procedures of one name each have another
+   number of parameters, so it is one alone. A `?` argument of an IN
    parameter takes the parameter's type.
 2. Each argument is as its parameter's mode allows, and its type is one
-   its parameter's or its target's takes.
-3. NULL or DEFAULT as an argument of an IN parameter, and DEFAULT of an
-   INOUT one, are of Features T522 and T523, not supported (SQLCODE
-   -900).
-4. A BEFORE trigger's action calls no procedure that possibly changes
+   its parameter's or its target's takes. An OUT parameter takes a
+   target alone, an INOUT one a target or DEFAULT.
+3. A BEFORE trigger's action calls no procedure that possibly changes
    SQL-data, nor does a function's body that changes none.
 
 ## PRIVILEGES
@@ -112,7 +121,7 @@ EXECUTE on the procedure.
 | 42000 | -104 | Its user holds no EXECUTE on the procedure |
 | 22001 | -301 | A value is too long for a parameter or a target |
 | 22003 | -301 | A value is out of the range of a parameter or a target |
-| 0A000 | -900 | A feature not supported is used, or the nesting limit is passed |
+| 0A000 | -900 | The nesting limit is passed |
 | 07007 | -921 | EXECUTE of a CALL whose `?`s take outputs has no INTO |
 
 A statement of the body that fails fails the CALL with its SQLSTATE.
@@ -153,17 +162,42 @@ OK
 (2 rows)
 ```
 
-An argument refused, and one too large for its parameter:
+A procedure of a default value, taken by DEFAULT, by an argument left
+out and by a name not named:
+
+```sql
+CREATE PROCEDURE RESTOCK (IN WHICH INTEGER, IN N INTEGER DEFAULT 5) MODIFIES SQL DATA
+  UPDATE STOCK SET QUANTITY = QUANTITY + N WHERE ITEM = WHICH;
+CALL RESTOCK(1, DEFAULT);
+CALL RESTOCK(2);
+CALL RESTOCK(WHICH => 2);
+SELECT * FROM STOCK ORDER BY ITEM;
+```
+
+```
+OK
+OK
+OK
+OK
+         ITEM |     QUANTITY
+--------------+--------------
+            1 |           12
+            2 |           14
+(2 rows)
+```
+
+An argument refused, an argument left out of no default, and one too
+large for its parameter:
 
 ```sql
 CALL LEFT_OF(1, 5);
-CALL TAKE(1, DEFAULT);
+CALL TAKE(1);
 CALL TAKE(99999999999, 1);
 ```
 
 ```
 turborel: SQLCODE -103 (SQLSTATE 42000): the argument of parameter N of procedure ANN.LEFT_OF shall be a target specification [ISO/IEC 9075-2:2023 §9.18 SR9h iii 1]
-turborel: SQLCODE -900 (SQLSTATE 0A000): NULL or DEFAULT as an argument of an input parameter of CALL is of Feature T522, not supported [ISO/IEC 9075-2:2023 §10.4 CR6] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): no procedure ANN.TAKE takes 1 arguments, each parameter past them of a default value; those of the name have 2 parameters [ISO/IEC 9075-2:2023 §9.18 SR9b]
 turborel: SQLCODE -301 (SQLSTATE 22003): 99999999999 does not fit INTEGER without losing leading digits [ISO/IEC 9075-2:2023 §9.18 GR4c i; ISO/IEC 9075:1992 §9.2 GR3k]
 ```
 
@@ -176,13 +210,16 @@ CALL LEFT_OF(2, ?);
 ```
             N
 --------------
-            4
+           14
 (1 row)
 ```
 
 ## STANDARD
 
-ISO/IEC 9075-2:2023 §16.1, §9.18, §10.4, Feature T321-04. A `?` of an
+ISO/IEC 9075-2:2023 §16.1, §9.18, §10.4, Feature T321-04. NULL and
+DEFAULT as arguments, and arguments left out to their defaults, are of
+Features T522 and T523 [§10.4 CR6, CR7, §9.18 SR9h i]; named arguments
+of Feature T521. A `?` of an
 OUT or INOUT parameter is an output dynamic parameter [§20.7 GR7a,
 SR5a], described [§20.10], each `?` with its parameter's mode and
 position [§20.10 GR7e], and put where EXECUTE's `<result using

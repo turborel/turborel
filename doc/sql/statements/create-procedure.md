@@ -15,7 +15,10 @@ CREATE PROCEDURE: define an SQL-invoked procedure
     [ <routine characteristic> ]...
     <SQL procedure statement>
 
-<SQL parameter declaration> ::= [ IN | OUT | INOUT ] <parameter name> <data type>
+<SQL parameter declaration> ::=
+    [ IN | OUT | INOUT ] <parameter name> <data type> [ DEFAULT <parameter default> ]
+
+<parameter default> ::= <value expression> | NULL
 
 <routine characteristic> ::=
       LANGUAGE SQL
@@ -46,6 +49,15 @@ is assigned to its argument, a target. INOUT does both. In the body, a
 parameter is named by its name, or by the procedure's name and its
 name, and SELECT INTO, GET DIAGNOSTICS and a nested CALL may assign one
 of OUT or INOUT.
+
+An IN or INOUT parameter may have a default value, `DEFAULT 5`, a value
+expression or NULL. A CALL that writes DEFAULT for it, leaves it out
+past the arguments it writes, or names no argument for it gives it that
+value. The default is bound as the procedure is defined, as its body is,
+and evaluated as the CALL's arguments are. It sees none of the
+procedure's parameters. A table, column or routine it names is dropped
+only with CASCADE, which drops the procedure. INFORMATION_SCHEMA.PARAMETERS
+shows its text as PARAMETER_DEFAULT.
 
 A target of SELECT INTO, or the argument of a nested CALL's OUT or
 INOUT parameter, may be one element of a parameter's array, `P[i]`. Its
@@ -89,7 +101,8 @@ it.
 2. No other procedure of the name in the schema has as many
    parameters. Procedures of one name, overloads, are told apart by
    their number of parameters alone, and CALL invokes the one of as many
-   parameters as it has arguments.
+   parameters that takes its arguments, the one of fewest if several do,
+   whatever their defaults.
 3. The specific name, if written, is of the procedure's schema, and no
    routine of the schema has it.
 4. Each characteristic is written at most once, and the SQL-data access
@@ -101,9 +114,11 @@ it.
    dynamic parameter, and is no RETURN, nor holds one. A body of
    CONTAINS SQL reads no table, and one of READS SQL DATA changes none,
    counting every statement a program holds.
-6. LANGUAGE is SQL. Any other language, SQL SECURITY, a parameter's
-   default and DYNAMIC RESULT SETS above 0 are not supported.
-7. The transaction is not READ ONLY.
+6. A parameter's default is of IN or INOUT, of a type its parameter
+   takes as a stored value, and holds no host or dynamic parameter.
+7. LANGUAGE is SQL. Any other language, SQL SECURITY and DYNAMIC RESULT
+   SETS above 0 are not supported.
+8. The transaction is not READ ONLY.
 
 ## PRIVILEGES
 
@@ -199,6 +214,29 @@ turborel: SQLCODE -103 (SQLSTATE 42000): schema ANN has procedure PLACE of 2 par
 turborel: SQLCODE -103 (SQLSTATE 42000): an SQL routine body is an INSERT, UPDATE, DELETE, MERGE, SELECT INTO, CALL, GET DIAGNOSTICS, SQL control statement, SIGNAL, RESIGNAL, savepoint's statement, a statement of a PTF data area or a function's RETURN (IA078) [ISO/IEC 9075-2:2023 §11.60 SR23f, SR23g; ISO/IEC 9075-4:2006 draft §11.60 SR23]
 ```
 
+A procedure of defaults, and defaults refused:
+
+```sql
+CREATE PROCEDURE ORDER_ONE (IN ID INTEGER, IN QUANTITY INTEGER DEFAULT 1) MODIFIES SQL DATA
+  INSERT INTO ORDERS VALUES (ID, QUANTITY);
+CALL ORDER_ONE(3);
+SELECT * FROM ORDERS WHERE ID = 3;
+CREATE PROCEDURE WRONG (IN ID INTEGER DEFAULT 'one') CONTAINS SQL DELETE FROM ORDERS;
+CREATE PROCEDURE NONE_OUT (OUT N INTEGER DEFAULT 0) READS SQL DATA
+  SELECT COUNT(*) INTO N FROM ORDERS;
+```
+
+```
+OK
+OK
+           ID |     QUANTITY
+--------------+--------------
+            3 |            1
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 42000): the <parameter default> of parameter ID (INTEGER) is a CHARACTER(3), which cannot be stored in it [ISO/IEC 9075-2:2023 §11.60 SR16e i, §9.2 SR2]
+turborel: SQLCODE -103 (SQLSTATE 42000): an output SQL parameter has no <parameter default> [ISO/IEC 9075-2:2023 §11.60 SR16e ii] (at character 41)
+```
+
 ## STANDARD
 
 ISO/IEC 9075-2:2023 §11.60, §9.18, §4.35, Feature T321 (subfeatures 02
@@ -207,7 +245,9 @@ element specification>` of §6.4, Feature S097. A body of a control
 statement is ISO/IEC 9075-4:2006 draft §11.2, Feature P002. NEW
 SAVEPOINT LEVEL is Feature T272 [§11.60 SR9j, SR9k, SR9l, GR3k], a
 procedure of it establishing a savepoint level as it is invoked and
-destroying it as it returns [§9.18 GR7, GR15]. SQL-86 and SQL-92 have no
+destroying it as it returns [§9.18 GR7, GR15]. A parameter's default is
+Feature T522 of an IN parameter and T523 of an INOUT one [§11.60 CR32,
+CR33, SR16e]. SQL-86 and SQL-92 have no
 SQL-invoked routines.
 
 ## SEE ALSO

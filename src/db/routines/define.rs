@@ -205,11 +205,13 @@ impl State {
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 SR16] The SQL parameters of `r`, each
-    /// IN unless written otherwise [SR16d], of its declared type.
+    /// IN unless written otherwise [SR16d], of its declared type, with its
+    /// `<parameter default>` if one [GR3c vi].
     fn parameters(&self, r: &RoutineDefinition, (schema, owner): (&str, &str)) -> Result<Vec<SqlParameter>> {
         let declared = |p: &ParameterDeclaration| {
             let (data_type, generic) = self.ptf_parameter(&p.data_type, (schema, owner)).or_at(p.at)?;
-            Ok(SqlParameter { name: p.name.clone(), data_type, mode: p.mode.unwrap_or(ParameterMode::In), generic })
+            let (mode, default) = (p.mode.unwrap_or(ParameterMode::In), p.default.as_ref().map(|d| d.text.clone()));
+            Ok(SqlParameter { name: p.name.clone(), data_type, mode, generic, default })
         };
         r.parameters.iter().map(declared).collect()
     }

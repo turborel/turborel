@@ -45,8 +45,10 @@ fn column(name: &str) -> ColumnDesc {
 /// returning INTEGER, deterministic and of CONTAINS SQL, its body RETURN
 /// `value`; EXECUTE granted to no one.
 fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc {
-    let parameters =
-        params.iter().map(|(n, t)| SqlParameter { name: (*n).into(), data_type: ty(t), mode: ParameterMode::In, generic: None }).collect();
+    let parameters = params
+        .iter()
+        .map(|(n, t)| SqlParameter { name: (*n).into(), data_type: ty(t), mode: ParameterMode::In, generic: None, default: None })
+        .collect();
     let declared: Vec<String> = params.iter().map(|(n, t)| format!("{n} {t}")).collect();
     SqlRoutineDesc {
         method: None,
@@ -328,7 +330,7 @@ fn execute_is_required() {
     let owned = database(vec![procedure("P")]);
     let params = Params::new();
     let name = TableName { auth: Some("S".into()), ident: "P".into(), at: 0 };
-    let as_of = |auth: &'static str, db: &State| resolve_procedure(Context::new(db, auth, &params), &name, 0);
+    let as_of = |auth: &'static str, db: &State| resolve_procedure(Context::new(db, auth, &params), &name, &[]);
     let e = failure(as_of("R", &owned));
     assert_eq!((e.code, e.rule.as_deref()), (Code::Privilege, Some("ISO/IEC 9075-2:2023 §9.18 SR6")));
     assert!(as_of("S", &owned).is_ok());
@@ -356,16 +358,16 @@ fn unqualified_name_is_of_the_default_schema() {
     let name = TableName { auth: None, ident: "P".into(), at: 0 };
     let noted = Invoked::default();
     let cx = Context { schema: "S", invoked: Some(&noted), ..Context::new(&st, "S", &params) };
-    let found = resolve_procedure(cx, &name, 0).unwrap();
+    let found = resolve_procedure(cx, &name, &[]).unwrap();
     assert_eq!(found.specific, qn("S", "P"));
     assert!(Arc::ptr_eq(&found, &st.catalog.routine_shared(&qn("S", "P")).unwrap()), "shared");
     assert_eq!(*noted.borrow(), vec![qn("S", "P")]);
     let elsewhere = Context { schema: "R", ..cx };
-    let absent = failure(resolve_procedure(elsewhere, &name, 0));
+    let absent = failure(resolve_procedure(elsewhere, &name, &[]));
     assert_eq!((absent.code, absent.rule.as_deref()), (Code::SyntaxRule, Some("ISO/IEC 9075-2:2023 §9.18 SR9e")));
     let function = TableName { auth: None, ident: "F".into(), at: 0 };
-    assert_eq!(failure(resolve_procedure(cx, &function, 0)).rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.18 SR9e"));
-    let more = failure(resolve_procedure(cx, &name, 2));
+    assert_eq!(failure(resolve_procedure(cx, &function, &[])).rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.18 SR9e"));
+    let more = failure(resolve_procedure(cx, &name, &[None, None]));
     assert_eq!(more.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.18 SR9b"));
     assert!(more.msg.contains("have 0"), "{}", more.msg);
 }

@@ -145,8 +145,8 @@ pub use ptf::{
 pub use references::{MatchType, References, ReferentialAction};
 pub use roles::{Grantor, RoleStatement, SetRole};
 pub use routines::{
-    CallStatement, DataAccess, ParameterDeclaration, ParameterMode, ReturnStatement, RoutineDefinition, RoutineDesignator, RoutineKind,
-    RoutineType, SqlArgument,
+    CallStatement, DataAccess, ParameterDeclaration, ParameterDefault, ParameterMode, ReturnStatement, RoutineDefinition,
+    RoutineDesignator, RoutineKind, RoutineType, SqlArgument,
 };
 pub use schema::{
     AlterDomain, AlterDomainAction, AssertionDefinition, Check, CheckLevels, CollationDefinition, Collection, ColumnConstraint,

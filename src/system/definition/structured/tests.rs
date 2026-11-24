@@ -58,7 +58,7 @@ fn method(name: &str, specific: &str, parameters: Vec<SqlParameter>, returns: &D
 
 /// An input parameter `name` of type `t`.
 fn parameter(name: &str, t: &DataType) -> SqlParameter {
-    SqlParameter { name: name.to_owned(), data_type: t.clone(), mode: ParameterMode::In, generic: None }
+    SqlParameter { name: name.to_owned(), data_type: t.clone(), mode: ParameterMode::In, generic: None, default: None }
 }
 
 /// A structured type `name`, of no attribute, method or supertype.
