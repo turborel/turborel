@@ -76,7 +76,7 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         // A top-N's first rows, few, made batches (D380).
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }).then(|| layout(input, db)).flatten(),
         // Rows made row by row, gathered (RULES.md D600).
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => told::layout(plan, db),
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => told::gathered_layout(plan, db),
         Plan::Append { .. } => {
             let mut held = None;
             for operand in appended(plan) {
@@ -152,7 +152,7 @@ fn parallel_layout(input: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     if let Plan::Window { window, .. } = input {
         return windowed_layout(window, db);
     }
-    crate::exec::parallel::pipelined(input).then(|| layout(input, db)).flatten()
+    if crate::exec::parallel::pipelined(input) { layout(input, db) } else { told::part_layout(input) }
 }
 
 /// [ISO/IEC 9075-2:2023 §7.15] The layout of a window over batches: every
@@ -386,9 +386,9 @@ fn made_of(plan: &Plan) -> Batched {
 /// As `open`.
 fn parallel_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Parallel(p) = plan else { return Err(crate::exec::broken("a part run in parallel is not one")) };
-    // A window's whole partitions computed on the part's threads (D560).
-    if matches!(p.input, Plan::Window { .. }) {
-        return crate::exec::window::window_batches_on(p.input, (db, tx), p.degree);
+    // A part that is no pipeline: a window's, or a grouping's (`told.rs`).
+    if !crate::exec::parallel::pipelined(&p.input) {
+        return told::part_batches(*p, (db, tx));
     }
     // A part whose batches hold no layout of its own is read as its plan.
     let Some(shape) = layout(&p.input, db) else { return batches_with(p.input, (db, tx), deferred) };

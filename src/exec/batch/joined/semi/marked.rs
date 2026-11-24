@@ -37,16 +37,15 @@ use super::super::super::stream::{self, Batches, Kept};
 use super::super::held::{TABLE_ROW_BYTES, dense_wanted};
 use super::super::{gathered, in_order, left_late_batches};
 use super::Parts;
+use super::pairing::Pairing;
 use crate::error::Result;
 use crate::exec::parallel::{Held, each_morsel, pipelined};
 use crate::exec::table::{Hashing, JoinTable, KEYSET_MAX, KeyHashes, RuntimeFilter, Seed, keys_equal};
 use crate::exec::work::Work;
-use crate::exec::{Db, Runner, broken, eval_cond, execute};
-use crate::logical::{Cond, Truth, cond_columns};
+use crate::exec::{Db, Runner, broken, execute};
 use crate::physical::{JoinKey, Plan, SemiJoin, SemiMethod};
 use crate::storage::{BATCH_ROWS, Batch, Column, Row};
 use crate::txn::TxId;
-use crate::value::Value;
 
 /// What a semi join that builds its left gives: its batches, or, its
 /// left past the work area, what the join that builds its right is made
@@ -81,15 +80,6 @@ struct HeldLeft {
 enum LeftRead {
     Held(Box<HeldLeft>),
     Rest(Batches),
-}
-
-/// How a right row is matched with a held one beyond their keys: the
-/// condition, and of each column it reads, its place in the pair's row,
-/// whether it is the right's, and the vector that holds it.
-struct Pairing {
-    cond: Option<Cond>,
-    reads: Vec<(usize, bool, usize)>,
-    width: usize,
 }
 
 /// What marks the held rows: they, the place of each key's right column
@@ -222,44 +212,6 @@ impl HeldLeft {
     /// Whether held row `p` is marked.
     fn marked(&self, p: usize) -> bool {
         self.marks.get(p).is_some_and(|mark| mark.load(Ordering::Relaxed))
-    }
-}
-
-impl Pairing {
-    /// How the pairs of a join on `cond` beyond its keys are matched, of
-    /// operands of `widths` whose batches hold `left` and `right`.
-    fn of(cond: Option<Cond>, (left, right): (&[usize], &[usize]), widths: (usize, usize)) -> Result<Pairing> {
-        let mut columns = Vec::new();
-        if let Some(c) = &cond {
-            cond_columns(c, &mut columns);
-        }
-        columns.sort_unstable();
-        columns.dedup();
-        let held = |c: usize, of: &[usize]| {
-            of.iter().position(|&h| h == c).ok_or_else(|| broken("a column of a join's condition its operand's batch lacks"))
-        };
-        let reads = columns
-            .into_iter()
-            .map(|c| match c.checked_sub(widths.0) {
-                Some(r) => Ok((c, true, held(r, right)?)),
-                None => Ok((c, false, held(c, left)?)),
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Pairing { cond, reads, width: widths.0.saturating_add(widths.1) })
-    }
-
-    /// Whether the condition is true of the pair of row `p` of `left`
-    /// and row `r` of `right`, of a row of the columns it reads made in
-    /// `scratch` [ISO/IEC 9075:1992 §7.5 GR1c].
-    fn keeps(&self, (left, p): (&Batch, usize), (right, r): (&Batch, usize), (scratch, runner): (&mut Row, &Runner)) -> Result<bool> {
-        let Some(cond) = &self.cond else { return Ok(true) };
-        scratch.resize(self.width, Value::Null);
-        for &(slot, of_right, at) in &self.reads {
-            if let Some(value) = scratch.get_mut(slot) {
-                *value = if of_right { right.cell(at, r).to_value() } else { left.cell(at, p).to_value() };
-            }
-        }
-        Ok(eval_cond(cond, scratch, runner)? == Truth::True)
     }
 }
 

@@ -61,6 +61,8 @@ pub(super) fn outweighs(db: &State, plan: &Plan, rows: usize, (morsel, degree): 
 /// projection, as the optimizer estimates them, if the statistics count
 /// each of its columns; none of a grouping by no column, one group.
 fn groups_of(db: &State, plan: &Plan) -> Option<f64> {
+    // A HAVING condition over a grouping is a part with it (RULES.md D1073).
+    let plan = if let Plan::Filter { input, .. } = plan { input } else { plan };
     if let Plan::Aggregate { groups, est, input, .. } = plan {
         return (!groups.is_empty() && groups.iter().all(|&c| counted(db, input, c))).then_some(*est);
     }

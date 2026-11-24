@@ -17,6 +17,10 @@
 //! area.
 
 mod marked;
+mod pairing;
+mod step;
+
+pub(in crate::exec) use step::SemiStep;
 
 use std::sync::Arc;
 

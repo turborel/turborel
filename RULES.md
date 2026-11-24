@@ -663,7 +663,11 @@ verification approach DO-178C expects (§8).
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
 | D1070 | A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows |
 | D1071 | A hashed semi join of streams read row by row is made of its batches |
+| D1072 | A join reads a grouping by batch whatever its set functions, and a grouping run in parallel too |
+| D1073 | A HAVING condition that cannot raise is judged by its grouping's part |
 | D1074 | A LIKE pattern of no `_` is matched by its pieces, each searched for as a substring |
+| D1075 | A hashed semi join's or antijoin's probe is a step of its left operand's pipeline |
+| D1076 | A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline |
 
 ### The project
 
@@ -18159,6 +18163,35 @@ rows made of them. Its operands are read by batch, and by morsels where
 D1070 says so. The rows are the row path's, in the left's order where
 one is asked.
 
+#### D1072. A join reads a grouping by batch whatever its set functions, and a grouping run in parallel too
+
+A stream gathered a grouping's rows into batches only if the grouping
+took runtime filters, one of COUNT, MIN and MAX (D600). A join over any
+other grouping, as one of SUM, had an operand that gave no batches, so
+the whole join ran a row at a time, its other operand's table read row
+by row and told no filter. A grouping not streamed is now gathered
+whatever its set functions (`exec/batch/told.rs`), and so is a grouping
+that is a part run in parallel, alone or under its HAVING condition
+(D1073), its rows made by the part's threads. A grouping of SUM or AVG
+still takes no filter to its input (D15, D600). A filter told it is
+judged of the batches it gives.
+
+#### D1073. A HAVING condition that cannot raise is judged by its grouping's part
+
+A grouping run in parallel gave every group to the statement's thread,
+which merged the partitions' groups in the order of their first rows
+(D293) and then judged the HAVING condition of each. Of a grouping of
+many groups few of which the condition keeps, that thread did most of
+the work. A filter over a grouping not streamed is now a part with it
+(`physical/parallel.rs`) if its condition cannot raise and a worker can
+evaluate it alone. The thread that finishes a partition's groups judges
+the condition of each (`exec/parallel/grouped.rs`), and only the groups
+kept are ordered and merged. The condition raises nothing, so the order
+it is judged in shows nowhere (D15). One that can raise stays above the
+part, judged in the groups' order. The part gives way as the grouping
+alone does (D298), to the filter over the grouping run alone. EXPLAIN
+ANALYZE counts the part by its filter (D378).
+
 #### D1074. A LIKE pattern of no `_` is matched by its pieces, each searched for as a substring
 
 A pattern was matched a specifier at a time, and at each character
@@ -18175,6 +18208,45 @@ after it. A piece is whole characters, so it is searched for among the
 value's bytes. A pattern with `_` is matched as before. The rows are
 those the standard's rule gives [X3.135-1986 §5.14 GR5], as a test
 compares the two matchers over patterns and values.
+
+#### D1075. A hashed semi join's or antijoin's probe is a step of its left operand's pipeline
+
+A pipeline run in parallel ended at every join but an inner hash join
+(D292). So a semi join or an antijoin that builds its right, the smaller
+operand, was probed on the statement's thread, and so ran the grouping
+over it. Its probe is now a step of its left operand's pipeline
+(`exec/parallel/pipeline.rs`), as an inner join's is. The right operand
+is built once for every morsel (`exec/batch/joined/shared.rs`). Each
+batch of a morsel keeps the rows a built row matches, or of an antijoin
+those none matches, selected (`exec/batch/joined/semi/step.rs`), and a
+pipeline read a row at a time judges each row so. The first built row
+that matches decides. A left row of a null key matches nothing. A semi
+join tells its left's scans its keys' runtime filters, an antijoin none
+(D369). The rows a morsel keeps and their order are the serial join's,
+so the part gives the plan's rows in its order (D290). A join whose
+condition beyond its keys a worker cannot evaluate alone ends its
+pipeline as before. One planned to build its left is no step: its right
+is the part (D1070).
+
+#### D1076. A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline
+
+A LEFT outer join ended every pipeline (D292), so the join and the
+grouping over it ran on the statement's thread, as the count of each
+customer's orders did. A LEFT join that matches on its keys alone, with
+no condition beyond them and none of an operand's own (D15), is now a
+step of its left operand's pipeline (`exec/parallel/pipeline.rs`). Its
+right operand is built once for every morsel, and each left row is
+joined with the built rows of its key, or with nulls if none has it
+(`exec/batch/joined/shared/outer.rs`), which depends on no other
+morsel. A morsel gives the rows the serial join gives of its rows, in
+their order, so the part gives the plan's rows in its order (D290). The
+join tells its left no runtime filter, as it gives every left row. Its
+built operand, and that of a semi join that is a step (D1075), is a part
+run in parallel by its rows alone, its morsels gathered by batch into
+the join's table, so a condition of its own, as a LIKE, is judged on the
+part's threads. A LEFT join with a condition beyond its keys, and a
+RIGHT or FULL join, whose unmatched right rows no one morsel knows, end
+their pipelines as before.
 
 ## 2. Project layout
 

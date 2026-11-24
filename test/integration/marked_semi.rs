@@ -1,9 +1,10 @@
-//! \[DESIGN\] Semi joins and antijoins that build their left operand, read
-//! by batch (RULES.md D1070, `exec/batch/joined/semi/marked.rs`): each
-//! gives the rows it gives row by row on one thread, and the rows its
-//! subquery gives unnested another way, of either engine, with its right
-//! operand read by morsels on several threads or by one, with and without
-//! runtime filters, and past the work area.
+//! \[DESIGN\] Semi joins and antijoins read by batch and by morsels
+//! (RULES.md D1070, D1071, D1075): one that builds its left operand
+//! (`exec/batch/joined/semi/marked.rs`) and one that builds its right as
+//! a step of its left's pipeline (`exec/batch/joined/semi/step.rs`) each
+//! give the rows they give row by row on one thread, and the rows their
+//! subquery gives unnested another way, of either engine, with and
+//! without runtime filters, and past the work area.
 
 use turborel::db::{Database, Session};
 use turborel::optimizer::SEMI_JOINS;
@@ -161,5 +162,50 @@ fn a_semi_join_under_a_sort_is_made_of_its_batches() {
         exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
         set(&a, &["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"]);
         assert_eq!(rows(&a, sql), alone, "{sql}");
+    }
+}
+
+/// The shapes whose right operand is the smaller, so it is built and the
+/// left's pipeline probes it, `{o}` and `{l}` the tables: EXISTS and NOT
+/// EXISTS of a line's order, few orders kept; EXISTS with a condition
+/// beyond the key, unknown of a null S; and NOT EXISTS on a second key.
+const STEPS: [&str; 4] = [
+    "SELECT S, COUNT(*), SUM(A) FROM {l} WHERE EXISTS (SELECT * FROM {o} WHERE {o}.K = {l}.K AND {o}.D < 100) GROUP BY S",
+    "SELECT COUNT(*), SUM(A), COUNT(K) FROM {l} WHERE NOT EXISTS (SELECT * FROM {o} WHERE {o}.K = {l}.K AND {o}.D < 100)",
+    "SELECT COUNT(*), SUM(B) FROM {l} WHERE EXISTS (SELECT * FROM {o} WHERE {o}.K = {l}.K AND {o}.G <> {l}.S AND {o}.D < 200)",
+    "SELECT COUNT(*), SUM(B) FROM {l} WHERE NOT EXISTS (SELECT * FROM {o} WHERE {o}.K = {l}.K AND {o}.G = {l}.S AND {o}.D < 200)",
+];
+
+/// Verifies: [X3.135-1986 §5.17 GR2, GR3] (RULES.md D1075) a hashed semi
+/// join or antijoin is a step of its left operand's pipeline, inside the
+/// part run in parallel as EXPLAIN shows, and its morsels keep the rows
+/// the join keeps row by row on one thread and its subquery keeps
+/// unnested with no semi join: a left row of a null key matches nothing,
+/// and a condition beyond the keys unknown of a pair does not match it;
+/// read by batch, and a row at a time with EXECUTOR.BATCHES off.
+#[test]
+fn a_hashed_semi_join_is_a_step_of_its_lefts_pipeline() {
+    let (db, a) = tables();
+    for (o, l) in [("O", "L"), ("OW", "LW")] {
+        for shape in STEPS {
+            let sql = shape.replace("{o}", o).replace("{l}", l);
+            set(&a, &["SET EXECUTOR.DEGREE = 1", "SET EXECUTOR.BATCHES = 'OFF'"]);
+            let alone = rows(&a, &sql);
+            assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+            set_rule(&db, SEMI_JOINS, false);
+            assert_eq!(rows(&a, &sql), alone, "with no semi join: {sql}");
+            set_rule(&db, SEMI_JOINS, true);
+            set(&a, &["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"]);
+            assert_eq!(rows(&a, &sql), alone, "by morsels, a row at a time: {sql}");
+            exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+            let shown = physical(&a, &sql);
+            let part = shown.find("Parallel  (degree=4)");
+            let join = shown.find("HashSemiJoin").or_else(|| shown.find("HashAntiJoin"));
+            assert!(part.zip(join).is_some_and(|(part, join)| part < join), "{sql}\n{shown}");
+            assert_eq!(rows(&a, &sql), alone, "by morsels: {sql}");
+            exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
+            assert_eq!(rows(&a, &sql), alone, "with no runtime filter: {sql}");
+            exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'ON'").unwrap();
+        }
     }
 }

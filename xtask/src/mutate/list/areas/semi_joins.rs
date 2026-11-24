@@ -2,8 +2,8 @@
 //! D541): the rows a built left keeps, the right rows a hashed join
 //! holds, the conflict rule that lets an inner join reassociate over one,
 //! NOT IN's exact truth with nulls, and the set functions and joins the
-//! reduction to semi joins takes, and the marks of a left built by batch
-//! (D1070).
+//! reduction to semi joins takes, the marks of a left built by batch
+//! (D1070), and a hashed join's probe as a step of a pipeline (D1075).
 
 use super::super::{Mutation, Package};
 
@@ -14,8 +14,11 @@ const MATCHED: &str = "decorrelation::semi::semi_joins_match_the_subqueries";
 /// its subquery (RULES.md D1070).
 const BUILT_LEFT: &str = "marked_semi::a_built_left_gives_the_rows_of_its_subquery";
 
+/// The test of a hashed semi join as a step of a pipeline (RULES.md D1075).
+const STEP: &str = "marked_semi::a_hashed_semi_join_is_a_step_of_its_lefts_pipeline";
+
 /// Mechanisms whose removal must fail the semi join requirements.
-pub const SEMI_JOINS: [Mutation; 10] = [
+pub const SEMI_JOINS: [Mutation; 13] = [
     Mutation {
         name: "semi-built-left-keeps-matched",
         package: Package::Core,
@@ -103,7 +106,7 @@ pub const SEMI_JOINS: [Mutation; 10] = [
         name: "semi-marked-unknown-pair-marks",
         package: Package::Core,
         breaks: "a right row marks a held row of its key though the condition beyond the keys is unknown of the pair",
-        file: "src/exec/batch/joined/semi/marked.rs",
+        file: "src/exec/batch/joined/semi/pairing.rs",
         original: "Ok(eval_cond(cond, scratch, runner)? == Truth::True)",
         replacement: "Ok(eval_cond(cond, scratch, runner)? != Truth::False)",
         integration: &[BUILT_LEFT],
@@ -117,6 +120,36 @@ pub const SEMI_JOINS: [Mutation; 10] = [
         original: "if degree < 2 || depth >= MAX_DEPTH {",
         replacement: "if degree < usize::MAX || depth >= MAX_DEPTH {",
         integration: &[BUILT_LEFT],
+        unit: &[],
+    },
+    Mutation {
+        name: "semi-step-antijoin-keeps-matched",
+        package: Package::Core,
+        breaks: "an antijoin that is a step of a pipeline's batches keeps the rows a built row matches",
+        file: "src/exec/batch/joined/semi/step.rs",
+        original: ".filter(|&(_, found)| found != self.anti)",
+        replacement: ".filter(|&(_, found)| found)",
+        integration: &[STEP],
+        unit: &[],
+    },
+    Mutation {
+        name: "semi-step-row-ignores-condition",
+        package: Package::Core,
+        breaks: "a semi join that is a step of a pipeline read row by row matches a pair by its keys alone",
+        file: "src/exec/parallel/pipeline.rs",
+        original: "runner)? == Truth::True,\n                None => true,",
+        replacement: "runner).is_ok(),\n                None => true,",
+        integration: &[STEP],
+        unit: &[],
+    },
+    Mutation {
+        name: "semi-step-no-stream",
+        package: Package::Core,
+        breaks: "a hashed semi join's probe is no step of its left's pipeline, so no part holds it",
+        file: "src/physical/parallel.rs",
+        original: "(s.method == SemiMethod::Hash && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream(&s.left)).flatten()",
+        replacement: "(s.method == SemiMethod::Nested && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream(&s.left)).flatten()",
+        integration: &[STEP],
         unit: &[],
     },
 ];

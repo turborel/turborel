@@ -2,10 +2,14 @@
 //! a plan the executor runs by morsels on several threads at once
 //! (`exec/parallel.rs`), each marked `Parallel` with its degree, as EXPLAIN
 //! shows it. A part is a pipeline, the reads of tables and the filters,
-//! projections and hash joins' probes over them, read as one stream; or
+//! projections, hash joins' probes, LEFT joins' probes on their keys
+//! alone (RULES.md D1076) and hashed semi joins' and antijoins' probes
+//! (RULES.md D1075) over them, read as one stream; or
 //! one of the operators that end a pipeline, over one: a grouping whose
 //! set functions keep states that merge, DISTINCT, a sort, window
-//! functions of a partitioning, and UNION, EXCEPT and INTERSECT. A
+//! functions of a partitioning, and UNION, EXCEPT and INTERSECT; or a
+//! filter that cannot raise over such a grouping, its HAVING condition,
+//! judged of each group by the part's threads (RULES.md D1073). A
 //! grouping or DISTINCT streamed over rows in its keys' order is no such
 //! part, as its order would be lost among the threads (RULES.md D550).
 //!
@@ -34,7 +38,7 @@ use std::sync::OnceLock;
 use super::{Plan, SemiMethod};
 use crate::db::State;
 use crate::index::Probe;
-use crate::logical::{AggCall, Cond, Expr, SetOp};
+use crate::logical::{AggCall, Cond, Expr, OuterJoin, SetOp};
 use crate::settings::{EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS};
 
 /// \[DESIGN\] How deep a plan is walked for its parts (RULES.md R-CF-6):
@@ -169,13 +173,15 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
     *plan = Plan::Parallel(Box::new(Parallel { degree, input }));
 }
 
-/// \[DESIGN\] (RULES.md D1070) Marks `right`, the right operand of a semi
-/// join that builds its left: a stream of rows enough is a part run in
-/// parallel, though a serial scan by batch would serve a reader of its
-/// rows better (`by_batch`), as its morsels' batches mark the left's held
-/// rows on the threads that read them and no row is made of them
-/// (`exec/batch/joined/semi/marked.rs`); any other is walked as any
-/// input.
+/// \[DESIGN\] (RULES.md D1070, D1075, D1076) Marks `right`, the right
+/// operand of a semi join that builds its left, or the operand a semi
+/// join or a LEFT join that is a step of a pipeline builds: a stream of
+/// rows enough is a part run in parallel, though a serial scan by batch
+/// would serve a reader of its rows better (`by_batch`), as its morsels'
+/// batches mark the left's held rows, or are gathered into the join's
+/// table, on the threads that read them, and no row is made of them
+/// (`exec/batch/joined/semi/marked.rs`, `exec/parallel/probe.rs`); any
+/// other is walked as any input.
 fn marking(asked: Asked<'_>, right: &mut Plan, depth: usize) {
     let degrees = super::Degrees { most: asked.most, morsel: asked.morsel, least: asked.least };
     let degree = stream(right).map_or(1, |rows| degrees.degree(rows));
@@ -198,6 +204,14 @@ fn outside(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
         outside(asked, left, deeper);
         return walk(asked, right, deeper);
     }
+    if let Plan::SemiJoin(s) = plan {
+        outside(asked, &mut s.left, deeper);
+        return marking(asked, &mut s.right, deeper);
+    }
+    if let Plan::OuterJoin { left, right, .. } = plan {
+        outside(asked, left, deeper);
+        return marking(asked, right, deeper);
+    }
     plan.each_input(&mut |input| outside(asked, input, deeper));
 }
 
@@ -209,7 +223,7 @@ fn filtered(plan: &Plan) -> bool {
     if let Plan::Project { input, .. } | Plan::HashJoin { left: input, .. } = plan {
         return filtered(input);
     }
-    matches!(plan, Plan::Filter { .. })
+    matches!(plan, Plan::Filter { .. } | Plan::SemiJoin(_))
 }
 
 /// The rows a part rooted at `plan` reads, if it is one.
@@ -221,6 +235,13 @@ fn rooted(plan: &Plan) -> Option<usize> {
     }
     if let Plan::Distinct { input, streamed: false, .. } = plan {
         return stream(input);
+    }
+    // A HAVING condition over a grouping that is a part is judged of each
+    // group by the part's threads (RULES.md D1073).
+    if let Plan::Filter { cond, input, .. } = plan
+        && matches!(**input, Plan::Aggregate { streamed: false, .. })
+    {
+        return (calm_cond(cond) && !cond.can_raise()).then(|| rooted(input)).flatten();
     }
     if let Plan::Sort { input, most, .. } = plan {
         return most.is_none_or(|m| !m.ties).then(|| stream(input)).flatten();
@@ -253,6 +274,16 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
     }
     if let Plan::HashJoin { left, .. } = plan {
         return stream(left);
+    }
+    // A LEFT join's probe on its keys alone is a step of its left's
+    // pipeline (RULES.md D1076).
+    if let Plan::OuterJoin { kind: OuterJoin::Left, left, keys, cond: None, own: None, .. } = plan {
+        return (!keys.is_empty()).then(|| stream(left)).flatten();
+    }
+    // A hashed semi join's or antijoin's probe is a step of its left's
+    // pipeline (RULES.md D1075).
+    if let Plan::SemiJoin(s) = plan {
+        return (s.method == SemiMethod::Hash && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream(&s.left)).flatten();
     }
     let Plan::Append { left, right, .. } = plan else { return None };
     Some(stream(left)?.saturating_add(stream(right)?))
