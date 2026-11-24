@@ -42,11 +42,8 @@ impl Session {
     /// data change statement.
     pub fn explain(&self, sql: &str, params: &Params) -> Result<String> {
         let call = self.enter()?;
-        let planned = if analyzed::changes(sql)? {
-            self.unrun_change(call.state(), sql, params)
-        } else {
-            self.planned(call.state(), sql, params)
-        };
+        let planned =
+            if analyzed::changes(sql)? { self.unrun_change(call.state(), sql, params) } else { self.planned(call.state(), sql, params) };
         self.db.maintain_if_due();
         planned
     }

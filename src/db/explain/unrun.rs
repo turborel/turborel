@@ -19,10 +19,10 @@ use std::fmt::Write;
 use std::sync::Arc;
 
 use self::effects::Changes;
+use super::super::dynamic::Name;
 use super::super::merge::joined_rows;
 use super::super::routines::{compiled_procedures, evaluates, runs_straight};
 use super::super::triggers::{Event, instead_for};
-use super::super::dynamic::Name;
 use super::super::{Session, State, api, plan, plan_written, rule};
 use super::changed::label_of;
 use super::with_plugin_calls;

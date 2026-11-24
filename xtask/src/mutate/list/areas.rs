@@ -3,7 +3,6 @@
 mod altered_tables;
 mod analyze;
 mod analyze_more;
-mod explain_unrun;
 mod batches;
 mod btree;
 mod budget;
@@ -11,6 +10,7 @@ mod bulk;
 mod char_strings;
 mod checkpoint;
 mod checkpoint_cost;
+mod explain_unrun;
 mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;

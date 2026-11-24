@@ -107,11 +107,15 @@ fn each_searched_change_shows_its_plan_and_what_it_would_do() {
     assert!(shown(&s, CHANGES[3]).contains("\n-- maintains: C_W [btree]\n"), "{}", shown(&s, CHANGES[3]));
     let rekeyed = shown(&s, CHANGES[4]);
     assert!(rekeyed.contains("  Filter P.V > 1  (est. rows=1)\n    SeqScan ANN.P"), "{rekeyed}");
-    assert!(rekeyed.contains("\n-- maintains: ANN.P.UNIQUE1 [btree]\n-- cascades: ON UPDATE SET NULL to ANN.C by ANN.C_FOREIGN1\n"), "{rekeyed}");
+    assert!(
+        rekeyed.contains("\n-- maintains: ANN.P.UNIQUE1 [btree]\n-- cascades: ON UPDATE SET NULL to ANN.C by ANN.C_FOREIGN1\n"),
+        "{rekeyed}"
+    );
     assert!(rekeyed.ends_with("\n-- point path: none\n"), "{rekeyed}");
     let deleted = shown(&s, CHANGES[5]);
     assert!(deleted.starts_with("-- physical:\nDelete from ANN.P\n  IndexScan ANN.P"), "{deleted}");
-    let cascaded = "\n-- cascades: ON DELETE CASCADE to ANN.C by ANN.C_FOREIGN1\n-- trigger: ANN.C_GONE, AFTER DELETE FOR EACH STATEMENT on ANN.C\n";
+    let cascaded =
+        "\n-- cascades: ON DELETE CASCADE to ANN.C by ANN.C_FOREIGN1\n-- trigger: ANN.C_GONE, AFTER DELETE FOR EACH STATEMENT on ANN.C\n";
     assert!(deleted.contains(cascaded), "{deleted}");
 }
 
@@ -128,7 +132,8 @@ fn a_merge_an_insert_of_a_query_and_a_view_its_trigger_takes_are_shown() {
     let merged = shown(&s, CHANGES[7]);
     assert!(merged.starts_with("-- physical:\nMerge into ANN.P\n  Sort row id\n"), "{merged}");
     assert!(merged.contains("LeftOuterJoin P.K = C.K"), "{merged}");
-    let effects = "\n-- maintains: ANN.P.UNIQUE1 [btree]\n-- trigger: ANN.P_SET, AFTER UPDATE OF V FOR EACH ROW on ANN.P\n-- point path: none\n";
+    let effects =
+        "\n-- maintains: ANN.P.UNIQUE1 [btree]\n-- trigger: ANN.P_SET, AFTER UPDATE OF V FOR EACH ROW on ANN.P\n-- point path: none\n";
     assert!(merged.ends_with(effects), "{merged}");
     assert_eq!(
         shown(&s, CHANGES[8]),
@@ -159,9 +164,16 @@ fn the_point_path_is_the_one_a_prepared_statement_or_procedure_runs() {
     assert_eq!(point("UPDATE Q SET V = 0 WHERE K = 2"), both);
     assert_eq!(point("DELETE FROM Q WHERE K = 2"), both);
     assert_eq!(point(CHANGES[1]), "-- point path: its rows written straight in a procedure");
-    assert_eq!(point("INSERT INTO Q VALUES (9, 9)"), "-- point path: its values evaluated, with no plan, its rows written straight in a procedure");
+    assert_eq!(
+        point("INSERT INTO Q VALUES (9, 9)"),
+        "-- point path: its values evaluated, with no plan, its rows written straight in a procedure"
+    );
     let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
-    let params = Params::new().declare("KK", integer.clone(), Value::Exact(Decimal::new(2, 0))).declare("NV", integer, Value::Exact(Decimal::new(0, 0)));
+    let params = Params::new().declare("KK", integer.clone(), Value::Exact(Decimal::new(2, 0))).declare(
+        "NV",
+        integer,
+        Value::Exact(Decimal::new(0, 0)),
+    );
     let text = s.explain("UPDATE Q SET V = NV WHERE K = KK", &params).unwrap();
     assert!(text.contains("IndexScan ANN.Q using ANN.Q.UNIQUE1") && text.ends_with(&format!("{both}\n")), "{text}");
     s.run("SET EXECUTOR.COMPILED_PROCEDURES = 'OFF'").unwrap();
@@ -298,8 +310,8 @@ fn explain_needs_the_privileges_preparing_needs() {
 }
 
 /// Verifies: [EXTENSION] RULES.md D980: EXPLAIN of a change of a table
-/// not defined is refused as binding it is, SQLCODE -103 (SQLSTATE
-/// 2A000), by the library and as a direct statement.
+/// not defined is refused as binding it is, SQLCODE -103, by the
+/// library and as a direct statement.
 #[test]
 fn a_change_of_no_table_is_refused() {
     let db = filled(Database::new());

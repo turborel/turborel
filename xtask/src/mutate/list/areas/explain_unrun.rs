@@ -94,7 +94,7 @@ pub const EXPLAIN_UNRUN: [Mutation; 12] = [
         breaks: "an UPDATE of no referenced column is shown cascading",
         file: "src/db/explain/unrun/effects.rs",
         original: "fk.referenced.iter().any(|c| columns.contains(c))",
-        replacement: "!fk.referenced.is_empty()",
+        replacement: "(!fk.referenced.is_empty())",
         integration: &[SEARCHED],
         unit: &[],
     },

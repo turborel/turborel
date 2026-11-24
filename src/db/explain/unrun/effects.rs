@@ -61,7 +61,8 @@ pub(super) fn shown(st: &State, changes: &Changes, text: &mut String) {
 fn maintained(st: &State, changes: &Changes) -> Vec<String> {
     let table = &changes.table;
     let before = changes.events.iter().any(|(e, c)| {
-        *e == Event::Update && activated(st, (table, *e, c)).iter().any(|t| matches!((t.time, t.level), (ActionTime::Before, TriggerLevel::Row)))
+        *e == Event::Update
+            && activated(st, (table, *e, c)).iter().any(|t| matches!((t.time, t.level), (ActionTime::Before, TriggerLevel::Row)))
     });
     let writes = |reads: &[usize], global: bool| {
         changes.events.iter().any(|(e, c)| *e != Event::Update || global || before || reads.iter().any(|r| c.contains(r)))
@@ -85,7 +86,11 @@ fn cascaded(st: &State, (table, event, columns): &Change) -> Vec<(String, Change
             let Some((verb, action)) = acted(fk, *event, columns) else { continue };
             let Some(word) = writes(action) else { continue };
             let deletes = matches!((event, action), (Event::Delete, ReferentialAction::Cascade));
-            let next = if deletes { (child.name.clone(), Event::Delete, Vec::new()) } else { (child.name.clone(), Event::Update, fk.columns.clone()) };
+            let next = if deletes {
+                (child.name.clone(), Event::Delete, Vec::new())
+            } else {
+                (child.name.clone(), Event::Update, fk.columns.clone())
+            };
             found.push((format!("-- cascades: ON {verb} {word} to {} by {name}", child.name), next));
         }
     }
