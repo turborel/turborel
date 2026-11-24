@@ -1,7 +1,7 @@
 //! \[EXTENSION\] Plans kept between executions of a prepared statement
 //! (RULES.md D45).
 //!
-//! A query, an INSERT, a CALL, and a searched or positioned UPDATE or DELETE keep
+//! A query, an INSERT, a MERGE, a CALL, and a searched or positioned UPDATE or DELETE keep
 //! their text parsed and their plan bound, each `?` a slot (`Expr::Dynamic`): each
 //! execution fills the slots with its values (`logical/dynamic.rs`), then
 //! rewrites and plans the plan, so the access paths are chosen by its values and
@@ -355,7 +355,7 @@ impl Keeping<'_> {
     /// with `params`' values for its slots to read where they are
     /// (RULES.md D610), if its paths follow no value
     /// (`physical::keepable`) or it learned them, and no table it reads has
-    /// moved since (`moved`); else, while it learns, planned with its
+    /// moved since (`Learnt::now`); else, while it learns, planned with its
     /// values.
     ///
     /// # Errors

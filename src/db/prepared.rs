@@ -133,8 +133,8 @@ impl Prepared {
     /// \[DESIGN\] How many plans its executions, its clones' too, made: one
     /// kept while what it was made with holds, another each time that
     /// changed, and one for each execution whose plan holds a value it read
-    /// (RULES.md D45). Only a query, an INSERT, and a searched or
-    /// positioned UPDATE or DELETE make one.
+    /// (RULES.md D45). Only a query, an INSERT, a MERGE, a CALL, and a
+    /// searched or positioned UPDATE or DELETE make one.
     pub fn plans_made(&self) -> u64 {
         self.plans.made()
     }
