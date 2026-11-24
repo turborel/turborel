@@ -53,9 +53,9 @@ The database's owner alone.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -104 | Its user is not the database's owner |
 | 25000 | -917 | A transaction is active |
-| 2A000 | -103 | There is no such setting, or it is fixed once the database is created |
+| 42000 | -103 | There is no such setting, or it is fixed once the database is created |
 | 22000 | -301 | The value is not of the setting's kind or range, or names what is not registered |
 
 ## EXAMPLES
@@ -89,7 +89,7 @@ SET DATABASE STATEMENT.TIMEOUT_MS = 1;
 ```
 
 ```
-turborel: SQLCODE -104 (SQLSTATE 2A000): only the database's owner runs SET DATABASE, and BOB is not it
+turborel: SQLCODE -104 (SQLSTATE 42000): only the database's owner runs SET DATABASE, and BOB is not it
 ```
 
 ## STANDARD

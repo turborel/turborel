@@ -63,10 +63,10 @@ The schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | No `<drop behavior>` is written |
+| 42000 | -102 | No `<drop behavior>` is written |
 | 3F000 | -103 | There is no such schema, or a catalog other than the one there is is named |
-| 2A000 | -103 | RESTRICT, and the schema holds something |
-| 2A000 | -104 | Its user does not own the schema |
+| 42000 | -103 | RESTRICT, and the schema holds something |
+| 42000 | -104 | Its user does not own the schema |
 | 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
 
@@ -83,7 +83,7 @@ DROP SCHEMA NOPE CASCADE;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): schema SHOP holds SHOP.ITEMS, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.2 SR3] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): schema SHOP holds SHOP.ITEMS, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.2 SR3] (at character 12)
 OK
 OK
  SCHEMA_NAME
@@ -100,7 +100,7 @@ DROP SCHEMA ANN CASCADE;
 ```
 
 ```
-turborel: SQLCODE -104 (SQLSTATE 2A000): schema ANN is owned by ANN, not BOB [ISO/IEC 9075:1992 §11.2 AR1] (at character 12)
+turborel: SQLCODE -104 (SQLSTATE 42000): schema ANN is owned by ANN, not BOB [ISO/IEC 9075:1992 §11.2 AR1] (at character 12)
 ```
 
 ## STANDARD

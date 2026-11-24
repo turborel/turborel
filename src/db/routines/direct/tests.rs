@@ -275,7 +275,7 @@ fn a_binding_bound_again_finds_nothing_kept() {
         "the body of then, and the one made anew: {gave:?}"
     );
     assert!(gave.iter().any(|row| row == "11,3") && gave.iter().any(|row| row == "14,2"), "the schema's own: {gave:?}");
-    assert!(gave.iter().any(|row| row == "23,2") && gave.iter().any(|g| g.starts_with("error 2A000")), "EXECUTE revoked: {gave:?}");
+    assert!(gave.iter().any(|row| row == "23,2") && gave.iter().any(|g| g.starts_with("error 42000")), "EXECUTE revoked: {gave:?}");
 }
 
 /// Verifies: [DESIGN] RULES.md D940, [ISO/IEC 9075-2:2023 §4.41.5, §9.18

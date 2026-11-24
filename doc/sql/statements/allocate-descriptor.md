@@ -54,7 +54,7 @@ None.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 33000 | -921 | The name is not an identifier, or an area of it is allocated (rule 1) |
-| 2A000 | -103 | The occurrences are not exact with scale 0 (rule 2), or the name not a character string |
+| 42000 | -103 | The occurrences are not exact with scale 0 (rule 2), or the name not a character string |
 | 07009 | -921 | The occurrences are less than 1, or more than 1,000 (rule 2) |
 | 0A000 | -900 | The session holds 64 areas (rule 3) |
 

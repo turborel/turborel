@@ -71,7 +71,7 @@ The server's: the user proves who it is, as the server asks.
 | 08002 | -919 | A connection of the name is established |
 | 08001 | -919 | The server cannot be reached |
 | 08004 | -919 | The server refuses the connection |
-| 2A000 | -102 | A name is not a character string literal |
+| 42000 | -102 | A name is not a character string literal |
 | 0A000 | -900 | Run by a session of an embedded database |
 
 ## EXAMPLES
@@ -120,7 +120,7 @@ turborel: SQLCODE -919 (SQLSTATE 2E000): 'localhost:7492' is not an <identifier>
 turborel: SQLCODE -919 (SQLSTATE 08001): cannot connect: Connection refused (os error 61) [ISO/IEC 9075:1992 §15.1 GR10, GR11]
 turborel: SQLCODE -919 (SQLSTATE 2E000): 'bad name' is not an <identifier> [ISO/IEC 9075:1992 §15.1 GR6]
 turborel: SQLCODE -104 (SQLSTATE 28000): '1x' is not an <authorization identifier> [ISO/IEC 9075:1992 §15.1 GR3]
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected a <literal>, found OWNERDB (at character 31)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected a <literal>, found OWNERDB (at character 31)
 ```
 
 The text of an error the system gives, as "Connection refused (os error

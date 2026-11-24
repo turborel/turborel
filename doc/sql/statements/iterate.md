@@ -40,7 +40,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -103 | A rule above is broken |
 
 ## EXAMPLES
 
@@ -80,8 +80,8 @@ BEGIN ITERATE NOWHERE; END;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): ITERATE B names no iterated statement it is in [ISO/IEC 9075-4:2006 draft §14.8 SR1] (at character 17)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ITERATE NOWHERE names no iterated statement it is in [ISO/IEC 9075-4:2006 draft §14.8 SR1] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): ITERATE B names no iterated statement it is in [ISO/IEC 9075-4:2006 draft §14.8 SR1] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 42000): ITERATE NOWHERE names no iterated statement it is in [ISO/IEC 9075-4:2006 draft §14.8 SR1] (at character 14)
 ```
 
 ## STANDARD

@@ -103,7 +103,7 @@ ROLLBACK;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): cannot assign a ST_GEOMETRY value to column SPOT (ST_POINT(0)) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075:1992 §9.2 SR2] (at character 40)
+turborel: SQLCODE -103 (SQLSTATE 42000): cannot assign a ST_GEOMETRY value to column SPOT (ST_POINT(0)) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075:1992 §9.2 SR2] (at character 40)
 OK
            ID | ROUTE_TYPE                       | IS_LINE
 --------------+----------------------------------+---------
@@ -149,7 +149,7 @@ ROLLBACK;
 
 ```
 turborel: SQLCODE -301 (SQLSTATE 22000): invalid geometry: SRID 4326 does not match the column's required SRID 0
-turborel: SQLCODE -103 (SQLSTATE 2A000): GEOMETRY accepts at most one parameter: an SRID from 0 to 2147483647 (at character 36)
+turborel: SQLCODE -103 (SQLSTATE 42000): GEOMETRY accepts at most one parameter: an SRID from 0 to 2147483647 (at character 36)
 OK
 ```
 
@@ -180,7 +180,7 @@ SELECT DISTINCT SHAPE FROM PLACES;
 -----------
  different
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): DISTINCT compares values of ST_GEOMETRY, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65, ST_ORDERINGEQUALS) [ISO/IEC 9075-2:2023 §9.12 SR3]
+turborel: SQLCODE -103 (SQLSTATE 42000): DISTINCT compares values of ST_GEOMETRY, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.65, ST_ORDERINGEQUALS) [ISO/IEC 9075-2:2023 §9.12 SR3]
 ```
 
 ## Routines
@@ -284,7 +284,7 @@ OK
 --------------+--------------------------+--------------------------------------------------------------
             2 |                      3E0 | "TURBOREL"."INFORMATION_SCHEMA"."ST_MULTIPOINT"
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ST_Geometry and its supertypes have no method ST_X of 0 arguments [ISO/IEC 9075-2:2023 §9.18 SR10b, §9.19 SR3] (at character 52)
+turborel: SQLCODE -103 (SQLSTATE 42000): ST_Geometry and its supertypes have no method ST_X of 0 arguments [ISO/IEC 9075-2:2023 §9.18 SR10b, §9.19 SR3] (at character 52)
  T
 ----------------------------------
  ST_Point
@@ -324,7 +324,7 @@ OK
 OK
 OK
 turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.SITES_CHECK1 of ANN.SITES is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
-turborel: SQLCODE -102 (SQLSTATE 2A000): CHECK ANN.NORTH: no function of the schema is of this name, and a call of a function registered is an [EXTENSION] taken while SQL.FUNCTION_CALLS is ON [ISO/IEC 9075-2:2023 §10.4] (at character 22)
+turborel: SQLCODE -102 (SQLSTATE 42000): CHECK ANN.NORTH: no function of the schema is of this name, and a call of a function registered is an [EXTENSION] taken while SQL.FUNCTION_CALLS is ON [ISO/IEC 9075-2:2023 §10.4] (at character 22)
 OK
 OK
 OK
@@ -1187,7 +1187,7 @@ OK
 ------------------------------------------------------------
  0165000000000000000000F03F0000000000000040
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the comparison compares values of ST_VECTOR, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.2.20, ST_ORDERINGEQUALS) [ISO/IEC 9075-2:2023 §9.14 SR3] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): the comparison compares values of ST_VECTOR, which has an ordering of EQUALS ONLY (ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §17.2.20, ST_ORDERINGEQUALS) [ISO/IEC 9075-2:2023 §9.14 SR3] (at character 7)
 ```
 
 The support routines of §18 work on arrays. ST_MAXDIMENSION,
@@ -1979,7 +1979,7 @@ OK
 | 22003 | -301 | A distance is greater than DOUBLE PRECISION holds |
 | 2202F | -301 | ST_VECTOROFFSETEXP is given more than three vectors |
 | 23000 | -201 | ST_DEFINESRS, ST_DROPSRS or ST_REGISTERGEOMETRYCOLUMN would break a constraint of the Spatial Information Schema's tables, or a column registered with a system would hold a value of another SRID |
-| 2A000 | -103 | A type's parameter is not one integer from 0 to 2147483647, a function's arguments are not of its types, a value of a supertype is assigned without TREAT, NEW names a type that holds no value of its own, geometry values are ordered, grouped or made distinct, a key names a geometry column, or a method is not of the value's declared type |
+| 42000 | -103 | A type's parameter is not one integer from 0 to 2147483647, a function's arguments are not of its types, a value of a supertype is assigned without TREAT, NEW names a type that holds no value of its own, geometry values are ordered, grouped or made distinct, a key names a geometry column, or a method is not of the value's declared type |
 | 2FF02 | -301 | A ring of ST_BDPOLYFROMTEXT's is not a closed simple ring, a measure is given a value of a type it does not measure, or a 3D routine's argument is out of its range: a TIN's maximum side length not above 0, a vertical triangle's slope, a measure range reversed, an interior shell outside the exterior one, a TIN table or column that does not exist, or a method given an argument it does not take |
 | 2FF03 | -301 | A TIN's maximum side length, an array of shells or one of its elements, an array ST_CHECKNULLS checks, or a mutator's argument is null |
 | 2FF04 | -301 | ST_RELATE's matrix is not nine of `T`, `F`, `0`, `1`, `2` and `*` |

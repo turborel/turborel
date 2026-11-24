@@ -85,9 +85,9 @@ body needs, as for CREATE FUNCTION and CREATE PROCEDURE.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The text is not a module definition: no routine, no semicolon after one, no END MODULE |
-| 2A000 | -103 | A rule above is broken, or a routine's body breaks a rule of CREATE FUNCTION or CREATE PROCEDURE |
-| 2A000 | -104 | Its user does not own the schema, or holds not a privilege a routine's body needs |
+| 42000 | -102 | The text is not a module definition: no routine, no semicolon after one, no END MODULE |
+| 42000 | -103 | A rule above is broken, or a routine's body breaks a rule of CREATE FUNCTION or CREATE PROCEDURE |
+| 42000 | -104 | Its user does not own the schema, or holds not a privilege a routine's body needs |
 | 0A000 | -900 | NAMES ARE names a character set other than SQL_TEXT |
 | 25000 | -917 | The transaction is READ ONLY |
 
@@ -127,7 +127,7 @@ OK
             1 |       12.00 |            2
             2 |       24.00 |            2
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): table MODULE.PLACED is not defined [X3.135-1986 §5.4 SR5] (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): table MODULE.PLACED is not defined [X3.135-1986 §5.4 SR5] (at character 15)
  ROUTINE_NAME                                                 | MODULE_NAME                                                  | SCHEMA_LEVEL_ROUTINE
 --------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
  PLACE                                                        | SHOP                                                         | NO

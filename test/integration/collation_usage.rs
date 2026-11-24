@@ -182,7 +182,7 @@ fn a_one_sided_revert_checks_the_key_again() {
 /// own view naming it stays.
 ///
 /// Regression test (R-TEST-7): the refusal of abandoning gave SQLSTATE
-/// 2A000, not 2B000 [ISO/IEC 9075-2:2023 §12.7 GR12q].
+/// 42000, not 2B000 [ISO/IEC 9075-2:2023 §12.7 GR12q].
 #[test]
 fn revoke_usage_abandons_what_names_the_collation_12_7() {
     let db = Database::new();

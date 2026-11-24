@@ -65,8 +65,8 @@ The owner of the type, who needs EXECUTE on the function.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken, or values of a type of no ordering are compared |
-| 2A000 | -104 | Its user does not own the type, or lacks EXECUTE on the function |
+| 42000 | -103 | A rule above is broken, or values of a type of no ordering are compared |
+| 42000 | -104 | Its user does not own the type, or lacks EXECUTE on the function |
 | 0A000 | -900 | A sort or grouping by a RELATIVE ordering |
 
 ## EXAMPLES
@@ -82,7 +82,7 @@ SELECT K FROM BOXES ORDER BY D;
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY compares values of ANN.DIMS, which has no ordering [ISO/IEC 9075-2:2023 §9.14 SR3]
+turborel: SQLCODE -103 (SQLSTATE 42000): ORDER BY compares values of ANN.DIMS, which has no ordering [ISO/IEC 9075-2:2023 §9.14 SR3]
 ```
 
 ```sql

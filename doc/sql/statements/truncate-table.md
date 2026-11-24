@@ -58,8 +58,8 @@ Ownership of the table's schema. DELETE on the table is not enough.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist, is a view, a declared local temporary table or a system-versioned table, or a foreign key references it; the start value of RESTART IDENTITY is beyond its generator's bounds |
-| 2A000 | -104 | Its user does not own the table's schema |
+| 42000 | -103 | The table does not exist, is a view, a declared local temporary table or a system-versioned table, or a foreign key references it; the start value of RESTART IDENTITY is beyond its generator's bounds |
+| 42000 | -104 | Its user does not own the table's schema |
 | 23000 | -201 | An assertion, or a CHECK with a subquery, that reads the table no longer holds |
 | 36002 | -501 | A cursor of the transaction reads the table |
 | TB911 | -911 | Another transaction holds the table, under LOCKS.WAIT OFF, or a wait for it would deadlock or passed LOCKS.TIMEOUT_MS; or the transaction began before a truncation of the table committed |
@@ -111,7 +111,7 @@ TRUNCATE TABLE ORDERS;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): foreign key ANN.ITEMS_FOREIGN1 of ANN.ITEMS references ANN.ORDERS, so its rows are not truncated [ISO/IEC 9075-2:2023 §14.10 SR4] (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): foreign key ANN.ITEMS_FOREIGN1 of ANN.ITEMS references ANN.ORDERS, so its rows are not truncated [ISO/IEC 9075-2:2023 §14.10 SR4] (at character 15)
 ```
 
 ## STANDARD

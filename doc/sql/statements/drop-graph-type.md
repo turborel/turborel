@@ -36,8 +36,8 @@ The graph type's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the graph type's schema |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the graph type's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -51,7 +51,7 @@ SELECT COUNT(*) FROM INFORMATION_SCHEMA.GQL_GRAPHS;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): graph ANN.NET is of graph type ANN.SOCIAL, so it is dropped only with CASCADE (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): graph ANN.NET is of graph type ANN.SOCIAL, so it is dropped only with CASCADE (at character 16)
 OK
 
 ----------------------

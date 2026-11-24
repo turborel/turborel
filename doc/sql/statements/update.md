@@ -114,8 +114,8 @@ privilege beyond UPDATE.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; a column set is not of it, or is set twice; a value is not assignable to its column, or contains a set function; a rule of FOR PORTION OF is broken (rule 8); WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
-| 2A000 | -104 | Its user lacks UPDATE on a column set, or SELECT on a table read |
+| 42000 | -103 | The table does not exist or is read-only; a column set is not of it, or is set twice; a value is not assignable to its column, or contains a set function; a rule of FOR PORTION OF is broken (rule 8); WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
+| 42000 | -104 | Its user lacks UPDATE on a column set, or SELECT on a table read |
 | 23000 | -201 | A row as changed breaks a constraint |
 | 44000 | -201 | A row changed through a view WITH CHECK OPTION is no longer a row of the view |
 | 22xxx | -301 | A data exception as a value is computed or assigned |
@@ -167,7 +167,7 @@ SELECT * FROM TICKETS ORDER BY TICKET;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): column TICKET is generated always, so it is set only to DEFAULT [ISO/IEC 9075-2:2023 §14.15 SR5] (at character 19)
+turborel: SQLCODE -103 (SQLSTATE 42000): column TICKET is generated always, so it is set only to DEFAULT [ISO/IEC 9075-2:2023 §14.15 SR5] (at character 19)
        TICKET | SEAT | ROW_NO
 --------------+------+--------
             1 | F01  | F
@@ -199,7 +199,7 @@ OK
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 2202E): element 8 of an array of maximum cardinality 7 is assigned [ISO/IEC 9075-2:2023 §15.5 GR3b i 4]
 turborel: SQLCODE -301 (SQLSTATE 2200E): an element of a null array is assigned [ISO/IEC 9075-2:2023 §15.5 GR3b i 1]
-turborel: SQLCODE -103 (SQLSTATE 2A000): column DAYS is set twice [X3.135-1986 §8.12 SR4] (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 42000): column DAYS is set twice [X3.135-1986 §8.12 SR4] (at character 35)
 ```
 
 Changes refused:
@@ -211,7 +211,7 @@ UPDATE PARTS SET QTY = SUM(QTY);
 
 ```
 turborel: SQLCODE -201 (SQLSTATE 23000): PRIMARY KEY ANN.PARTS_PRIMARY1 (ID) of ANN.PARTS would be violated: a row of these values is there [X3.135-1986 §6.4 GR2]
-turborel: SQLCODE -103 (SQLSTATE 2A000): a value of a SET clause contains no set function [X3.135-1986 §8.12 SR3] (at character 23)
+turborel: SQLCODE -103 (SQLSTATE 42000): a value of a SET clause contains no set function [X3.135-1986 §8.12 SR3] (at character 23)
 ```
 
 Of a table of prices through time, a week of January's price raised:

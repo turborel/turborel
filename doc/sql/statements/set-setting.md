@@ -50,7 +50,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | There is no such setting, or it is the database's alone |
+| 42000 | -103 | There is no such setting, or it is the database's alone |
 | 22000 | -301 | The value is not of the setting's kind or range |
 
 ## EXAMPLES
@@ -85,8 +85,8 @@ SET NO_SUCH = 1;
 
 ```
 turborel: SQLCODE -301 (SQLSTATE 22000): LOCKS.WAIT takes ONE OF ON, OFF, not 'SOMETIMES'
-turborel: SQLCODE -103 (SQLSTATE 2A000): MEMORY.BUDGET_BYTES is the database's, which a session does not set for itself
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no setting NO_SUCH
+turborel: SQLCODE -103 (SQLSTATE 42000): MEMORY.BUDGET_BYTES is the database's, which a session does not set for itself
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no setting NO_SUCH
 ```
 
 ## STANDARD

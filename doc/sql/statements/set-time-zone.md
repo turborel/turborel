@@ -42,7 +42,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The value is not an INTERVAL HOUR TO MINUTE |
+| 42000 | -103 | The value is not an INTERVAL HOUR TO MINUTE |
 | 22009 | -301 | The value is null, or not from -12:59 to +14:00 |
 
 ## EXAMPLES
@@ -88,7 +88,7 @@ SET TIME ZONE INTERVAL '2' HOUR;
 
 ```
 turborel: SQLCODE -301 (SQLSTATE 22009): INTERVAL '14:01' HOUR(2) TO MINUTE is no time zone displacement from -12:59 to +14:00 [ISO/IEC 9075-2:2023 §19.4 GR1b ii]
-turborel: SQLCODE -103 (SQLSTATE 2A000): SET TIME ZONE takes an INTERVAL HOUR TO MINUTE, not INTERVAL HOUR(2) [ISO/IEC 9075:1992 §16.5 SR1]
+turborel: SQLCODE -103 (SQLSTATE 42000): SET TIME ZONE takes an INTERVAL HOUR TO MINUTE, not INTERVAL HOUR(2) [ISO/IEC 9075:1992 §16.5 SR1]
 ```
 
 ## STANDARD

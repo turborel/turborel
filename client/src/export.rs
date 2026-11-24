@@ -1,193 +1,261 @@
-//! \[DESIGN\] Export (RULES.md D195): a query's rows streamed from the
-//! server and written as they come, a batch at a time, so memory holds a
-//! batch whatever the result's size. As CSV [RFC 4180]: a header of the
-//! columns' names, then a record for each row, a field quoted where it
-//! holds a comma, a quote, a line break or spaces at either end, a quote
-//! in it written twice; a null an empty field, an empty string `""`. Or
-//! as native rows: the protocol's own frames, a Description, then Rows,
-//! then a Complete, which `read_native` reads back, every value as it
-//! was, of whatever type.
+//! \[DESIGN\] Export (RULES.md D195, D975): a query's rows streamed from the
+//! server and written as they come, so memory holds a batch whatever the
+//! result's size, by a `Layout`: as delimited text (`Delimited`), CSV [RFC
+//! 4180] among it, or as native rows, the protocol's own frames, which
+//! `read_native` reads back, every value as it was, of whatever type.
+//!
+//! A large object comes whole if it is short (SERVER.LOB_INLINE_BYTES),
+//! else by its locator [ISO/IEC 9075-2:2023 §4.37.5]. Each one sent so is
+//! read as its row is written, a chunk at a time, and its value written,
+//! never its locator. So the rows of a query that may hold one come a
+//! batch at a time, through a cursor, the large objects of a batch read
+//! between its fetches, within the transaction they were sent in (`run`).
+//! A large object a column holds is written a chunk at a time, as it is
+//! read. One within a row, an array, a multiset or a structured value is
+//! read whole, as the text of the value it is part of needs it all.
 
-use std::io::{Read, Write};
+mod delimited;
+mod native;
+mod run;
+#[cfg(test)]
+mod tests;
+
+use std::io::{self, Read, Write};
+use std::sync::Arc;
 
 use turborel::storage::Row;
-use turborel::value::Value;
-use turborel_protocol::{Column, Completed, Failure, HEADER, MAX_BODY, Reply};
+use turborel::value::lob::{CHUNK_OCTETS, Lob, LobKind};
+use turborel::value::types::Structured;
+use turborel::value::{DataType, Value};
+use turborel_protocol::{Column, Failure};
 
-use crate::connection::{Connection, Result, Sink, Streamed, failed};
+pub use delimited::{Delimited, Quoting};
+pub use native::{Native, read_native};
 
-/// How an export writes rows.
+use crate::connection::{Connection, Result};
+
+/// How an export writes rows, as `Connection::export` takes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
-    /// CSV [RFC 4180], with a header of the columns' names.
+    /// CSV [RFC 4180], with a header of the columns' names
+    /// (`Delimited::csv`).
     Csv,
-    /// The protocol's frames: a Description, Rows, a Complete.
+    /// The protocol's frames: a Description, Rows, a Complete (`Native`).
     Native,
 }
 
-/// A query's rows, written to `out` as they come.
-struct Writer<'w> {
-    out: &'w mut dyn Write,
-    format: ExportFormat,
-    /// The first write that failed, which ends the export.
-    failed: Option<std::io::Error>,
+/// \[DESIGN\] RULES.md D975: what reads the large objects of an export's
+/// rows, as a `Layout` writes them.
+pub trait Lobs {
+    /// `lob`'s octets, a chunk at a time, each given to `each` in order. One
+    /// held whole is given at once, one sent by its locator a chunk a
+    /// request, its locator freed once it is read.
+    ///
+    /// # Errors
+    ///
+    /// A read that fails, which ends the export, or `each`'s.
+    fn chunks(&mut self, lob: &Lob, each: &mut dyn FnMut(&[u8]) -> io::Result<()>) -> io::Result<()>;
 }
 
-/// `field`, as CSV writes it: quoted where it must be.
-fn csv_field(field: &str) -> String {
-    let quoted = field.is_empty()
-        || field.contains([',', '"', '\n', '\r'])
-        || field.starts_with(char::is_whitespace)
-        || field.ends_with(char::is_whitespace);
-    if quoted { format!("\"{}\"", field.replace('"', "\"\"")) } else { field.to_owned() }
+/// \[DESIGN\] RULES.md D975: how an export writes a query's rows to its
+/// output. A program may write any format by one.
+pub trait Layout {
+    /// Writes what comes before the rows, given their columns.
+    ///
+    /// # Errors
+    ///
+    /// The write's.
+    fn columns(&mut self, out: &mut dyn Write, columns: &[Column]) -> io::Result<()>;
+
+    /// Writes a batch of rows, reading each large object sent by its
+    /// locator through `lobs`.
+    ///
+    /// # Errors
+    ///
+    /// The write's, or a read's.
+    fn rows(&mut self, out: &mut dyn Write, rows: &[Row], lobs: &mut dyn Lobs) -> io::Result<()>;
+
+    /// Writes what comes after the last row.
+    ///
+    /// # Errors
+    ///
+    /// The write's.
+    fn end(&mut self, out: &mut dyn Write) -> io::Result<()>;
 }
 
-/// `v` as a CSV field: a null empty and unquoted.
-fn csv_value(v: &Value) -> String {
+/// Whether `lob` was sent by its locator, its octets still the server's.
+pub(crate) fn located(lob: &Lob) -> bool {
+    lob.inline().is_none()
+}
+
+/// Whether `v` is or holds, however deep, a large object sent by its
+/// locator.
+pub fn holds_located(v: &Value) -> bool {
     match v {
-        Value::Null => String::new(),
-        Value::Char(s) => csv_field(s),
-        other @ (Value::Exact(_)
+        Value::Lob(l) => located(l),
+        Value::Array(items) | Value::Multiset(items) | Value::Row(items) => items.iter().any(holds_located),
+        Value::Structured(s) => s.attributes.iter().any(holds_located),
+        Value::Null
+        | Value::Char(_)
+        | Value::Exact(_)
         | Value::Approx(_)
         | Value::DecFloat(_)
         | Value::Binary(_)
-        | Value::Lob(_)
         | Value::Bool(_)
         | Value::Datetime(_)
         | Value::Interval(_)
-        | Value::Array(_)
-        | Value::Multiset(_)
-        | Value::Structured(_)
         | Value::Reference(_)
-        | Value::Row(_)
         | Value::Json(_)
-        | Value::Extension(_)
-        | Value::Xml(_)) => csv_field(&other.to_string()),
+        | Value::Xml(_)
+        | Value::Extension(_) => false,
     }
 }
 
-/// A CSV record of `fields`, ended by CR LF [RFC 4180 §2].
-fn csv_record(fields: impl Iterator<Item = String>) -> Vec<u8> {
-    let mut line = fields.collect::<Vec<_>>().join(",");
-    line.push_str("\r\n");
-    line.into_bytes()
+/// Whether a value of `t` may hold a large object: one of a large object
+/// type, or of a composite type of one. A client is not told a structured
+/// type's attributes, nor what an extension's value holds, so either may.
+pub(crate) fn may_hold_lob(t: &DataType) -> bool {
+    match t {
+        DataType::Lob { .. } | DataType::Structured(_) | DataType::Extension(_) => true,
+        DataType::Array(a) => may_hold_lob(&a.element),
+        DataType::Multiset(m) => may_hold_lob(&m.element),
+        DataType::Row(r) => r.fields.iter().any(|f| may_hold_lob(&f.data_type)),
+        DataType::Distinct(d) => may_hold_lob(&d.source),
+        DataType::Character { .. }
+        | DataType::Varying { .. }
+        | DataType::Exact { .. }
+        | DataType::Approximate { .. }
+        | DataType::DecFloat { .. }
+        | DataType::Binary { .. }
+        | DataType::VarBinary { .. }
+        | DataType::Boolean
+        | DataType::Date
+        | DataType::Time { .. }
+        | DataType::Timestamp { .. }
+        | DataType::Interval(_)
+        | DataType::Reference(_)
+        | DataType::Json
+        | DataType::Xml(_) => false,
+    }
 }
 
-impl Writer<'_> {
-    /// Writes `bytes`, unless a write failed before.
-    fn write(&mut self, bytes: &[u8]) {
-        if self.failed.is_none() {
-            self.failed = self.out.write_all(bytes).err();
+/// `v`, each large object in it sent by its locator, depth first, given to
+/// `each` for the value to stand in its place; `v` itself if it holds none.
+///
+/// # Errors
+///
+/// `each`'s.
+pub fn map_located(v: &Value, each: &mut dyn FnMut(&Lob) -> io::Result<Lob>) -> io::Result<Value> {
+    if !holds_located(v) {
+        return Ok(v.clone());
+    }
+    let mut all = |items: &[Value]| items.iter().map(|i| map_located(i, each)).collect::<io::Result<Vec<_>>>().map(Arc::<[Value]>::from);
+    Ok(match v {
+        Value::Lob(l) => Value::Lob(each(l)?),
+        Value::Array(items) => Value::Array(all(items)?),
+        Value::Multiset(items) => Value::Multiset(all(items)?),
+        Value::Row(items) => Value::Row(all(items)?),
+        Value::Structured(s) => Value::Structured(Arc::new(Structured::new(Arc::clone(&s.of), all(&s.attributes)?))),
+        Value::Null
+        | Value::Char(_)
+        | Value::Exact(_)
+        | Value::Approx(_)
+        | Value::DecFloat(_)
+        | Value::Binary(_)
+        | Value::Bool(_)
+        | Value::Datetime(_)
+        | Value::Interval(_)
+        | Value::Reference(_)
+        | Value::Json(_)
+        | Value::Xml(_)
+        | Value::Extension(_) => v.clone(),
+    })
+}
+
+/// The large object of `kind` whose octets are `bytes`, held whole.
+///
+/// # Errors
+///
+/// `InvalidData` if a character one's octets are not UTF-8.
+pub(crate) fn held(kind: LobKind, bytes: &[u8]) -> io::Result<Lob> {
+    match kind {
+        LobKind::Binary => Ok(Lob::of_octets(bytes)),
+        LobKind::Character => std::str::from_utf8(bytes).map(Lob::of_text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e)),
+    }
+}
+
+/// `v`, each large object in it sent by its locator read whole through
+/// `lobs`, as a value written as one text needs it.
+///
+/// # Errors
+///
+/// A read's.
+pub fn read_whole(v: &Value, lobs: &mut dyn Lobs) -> io::Result<Value> {
+    map_located(v, &mut |l| {
+        let mut bytes = Vec::with_capacity(usize::try_from(l.octets()).unwrap_or(0));
+        lobs.chunks(l, &mut |chunk| {
+            bytes.extend_from_slice(chunk);
+            Ok(())
+        })?;
+        held(l.kind(), &bytes)
+    })
+}
+
+/// The large objects of an export, read over its connection, the first
+/// read that failed kept as the export's failure.
+pub(crate) struct Reading<'c, S: Read + Write> {
+    pub(crate) connection: &'c mut Connection<S>,
+    pub(crate) failure: Option<Failure>,
+}
+
+impl<S: Read + Write> Reading<'_, S> {
+    /// `failure`, kept, as the I/O error that ends the layout's work.
+    fn failed(&mut self, failure: Failure) -> io::Error {
+        let e = io::Error::other(failure.to_string());
+        self.failure = Some(failure);
+        e
+    }
+}
+
+impl<S: Read + Write> Lobs for Reading<'_, S> {
+    fn chunks(&mut self, lob: &Lob, each: &mut dyn FnMut(&[u8]) -> io::Result<()>) -> io::Result<()> {
+        if let Some(bytes) = lob.inline() {
+            return each(bytes);
         }
-    }
-
-    /// Writes `reply` as a frame.
-    fn frame(&mut self, reply: &Reply) {
-        let mut bytes = Vec::new();
-        reply.encode(&mut bytes);
-        self.write(&bytes);
-    }
-}
-
-impl Sink for Writer<'_> {
-    fn columns(&mut self, columns: &[Column]) {
-        match self.format {
-            ExportFormat::Csv => {
-                let names = columns.iter().map(|c| csv_field(c.name.as_deref().unwrap_or_default()));
-                self.write(&csv_record(names));
+        let wanted = u64::try_from(CHUNK_OCTETS).unwrap_or(u64::MAX);
+        let mut at = 0_u64;
+        while at < lob.octets() {
+            let chunk = match self.connection.read_lob(lob, (at, wanted), false) {
+                Ok(chunk) => chunk,
+                Err(failure) => return Err(self.failed(failure)),
+            };
+            if chunk.is_empty() {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "the server sent less of a large object than its length"));
             }
-            ExportFormat::Native => self.frame(&Reply::Description(columns.to_vec())),
+            at = at.saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
+            each(&chunk)?;
         }
-    }
-
-    fn rows(&mut self, rows: &[Row]) {
-        match self.format {
-            ExportFormat::Csv => {
-                let bytes: Vec<u8> = rows.iter().flat_map(|row| csv_record(row.iter().map(csv_value))).collect();
-                self.write(&bytes);
-            }
-            ExportFormat::Native => self.frame(&Reply::Rows(rows.to_vec())),
+        // Read, its locator is of no more use. The server lets go of what it
+        // holds for it, so an export of many holds no more than a batch's.
+        match self.connection.free_lob(lob) {
+            Ok(_) => Ok(()),
+            Err(failure) => Err(self.failed(failure)),
         }
     }
 }
 
 impl<S: Read + Write> Connection<S> {
-    /// \[DESIGN\] RULES.md D195: runs the query `sql` and writes its rows to
-    /// `out` as `format` says, as they come: how many.
+    /// \[DESIGN\] RULES.md D195, D975: runs the query `sql` and writes its
+    /// rows to `out` as `format` says, as they come: how many. Its large
+    /// objects are written as their values.
     ///
     /// # Errors
     ///
-    /// The query's, as `query_into`'s; a statement that is no query; a
-    /// write to `out` that failed (SQLSTATE 08006 is not the connection's
-    /// then, but the export's, which ends).
+    /// As `export_with`'s.
     pub fn export(&mut self, sql: &str, out: &mut dyn Write, format: ExportFormat) -> Result<u64> {
-        let mut writer = Writer { out, format, failed: None };
-        let streamed = self.query_into(sql, &mut writer)?;
-        let Streamed::Rows(count) = streamed else { return Err(failed("[DESIGN] an export runs a query")) };
-        if format == ExportFormat::Native {
-            writer.frame(&Reply::Complete(Completed::of(0, "00000")));
+        match format {
+            ExportFormat::Csv => self.export_with(sql, out, &mut Delimited::csv()),
+            ExportFormat::Native => self.export_with(sql, out, &mut Native),
         }
-        let flushed = writer.failed.map_or_else(|| writer.out.flush(), Err);
-        flushed.map_err(|e| failed(&format!("[DESIGN] cannot write the export: {e}")))?;
-        Ok(count)
-    }
-}
-
-/// Reads native rows (`ExportFormat::Native`) from `input`: the columns,
-/// and the rows.
-///
-/// # Errors
-///
-/// SQLSTATE 08006 for input that is not native rows, or cut short.
-pub fn read_native(input: &mut impl Read) -> Result<(Vec<Column>, Vec<Row>)> {
-    let not_native = |why: &str| failed(&format!("[DESIGN] not native rows: {why}"));
-    let mut next = || -> Result<Reply> {
-        let mut head = [0_u8; HEADER];
-        input.read_exact(&mut head).map_err(|e| not_native(&e.to_string()))?;
-        let (kind, length) = turborel_protocol::header(head, MAX_BODY).map_err(|e| Failure::from(&e))?;
-        let mut body = vec![0; length];
-        input.read_exact(&mut body).map_err(|e| not_native(&e.to_string()))?;
-        Reply::decode(kind, &body).map_err(|e| Failure::from(&e))
-    };
-    let Reply::Description(columns) = next()? else { return Err(not_native("no Description first")) };
-    let mut rows = Vec::new();
-    loop {
-        match next()? {
-            Reply::Rows(batch) => rows.extend(batch),
-            Reply::Complete(_) => return Ok((columns, rows)),
-            Reply::Error(_)
-            | Reply::Lob(_)
-            | Reply::Challenge(_)
-            | Reply::Ready { .. }
-            | Reply::Prepared { .. }
-            | Reply::Description(_)
-            | Reply::Suspended
-            | Reply::Notice(_)
-            | Reply::Status { .. }
-            | Reply::Pong
-            | Reply::Debug(_)
-            | Reply::Event(_) => return Err(not_native("a frame other than Rows before the Complete")),
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies: [DESIGN] [RFC 4180 §2] RULES.md D195: a CSV field is
-    /// quoted where it holds a comma, a quote, a line break or spaces at
-    /// either end, its quotes doubled; an empty string quoted, a null
-    /// empty; each record ended by CR LF.
-    #[test]
-    fn csv_fields_are_quoted_where_they_must_be() {
-        assert_eq!(csv_field("plain"), "plain");
-        assert_eq!(csv_field("a,b"), "\"a,b\"");
-        assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
-        assert_eq!(csv_field(" pad"), "\" pad\"");
-        assert_eq!(csv_field("two\nlines"), "\"two\nlines\"");
-        assert_eq!(csv_value(&Value::Char(String::new().into())), "\"\"");
-        assert_eq!(csv_value(&Value::Null), "");
-        assert_eq!(csv_record(["1".to_owned(), String::new()].into_iter()), b"1,\r\n");
     }
 }

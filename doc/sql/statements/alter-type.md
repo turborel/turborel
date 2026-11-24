@@ -56,8 +56,8 @@ The owner of the type's schema.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The type does not exist, or a rule above is broken |
-| 2A000 | -104 | Its user does not own the type's schema |
+| 42000 | -103 | The type does not exist, or a rule above is broken |
+| 42000 | -104 | Its user does not own the type's schema |
 
 ## EXAMPLES
 
@@ -91,7 +91,7 @@ ALTER TYPE POINT DROP ATTRIBUTE Z RESTRICT;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): (RULES.md D81) column ANN.SHAPES.P is of a type of the family of ANN.POINT, whose stored values keep their attributes [ISO/IEC 9075-2:2023 §11.55 SR6] (at character 32)
+turborel: SQLCODE -103 (SQLSTATE 42000): (RULES.md D81) column ANN.SHAPES.P is of a type of the family of ANN.POINT, whose stored values keep their attributes [ISO/IEC 9075-2:2023 §11.55 SR6] (at character 32)
 ```
 
 ```sql

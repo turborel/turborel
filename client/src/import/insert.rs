@@ -11,10 +11,10 @@
 use std::fmt;
 use std::io::{Read, Write};
 
-use turborel::error::{Code, SqlError};
+use turborel::error::{Code, SqlError, SqlState};
 use turborel::lexer::{Tok, Token, delim, lex};
 use turborel::params::ParameterType;
-use turborel::value::{DataType, Value, assign};
+use turborel::value::{Binary, DataType, Value, assign};
 use turborel_protocol::Failure;
 
 use super::{Heading, Position, Record, Source};
@@ -187,16 +187,42 @@ fn column_name(heading: &Heading) -> String {
 /// string for a character string column assigned to it as INSERT assigns
 /// it [ISO/IEC 9075:1992 §13.8 GR4b iii, §9.2 GR3b, GR3e], so one too
 /// long is refused, where the CAST of a parameter's value would cut it,
-/// with a warning [§6.10 GR5c ii, GR6c ii; §17.9 GR5g]; any other value
-/// as it is, for the server to cast.
+/// with a warning [§6.10 GR5c ii, GR6c ii; §17.9 GR5g]; a character
+/// string for a binary string column, a binary large object's among them,
+/// read as its octets' hexits, as an export writes them (RULES.md D976);
+/// any other value as it is, for the server to cast.
 pub(super) fn assigned(values: &[Value], types: &[ParameterType]) -> Result<Vec<Value>, Failure> {
     let each = values.iter().zip(types).map(|(v, t)| {
         let to = t.clone().data_type();
-        let string = matches!(v, Value::Char(_)) && to.is_character();
-        if string { assign(v.clone(), &to, INSERT_ASSIGNS).map_err(|e| Failure::from(&e)) } else { Ok(v.clone()) }
+        let Value::Char(s) = v else { return Ok(v.clone()) };
+        if to.is_character() {
+            return assign(v.clone(), &to, INSERT_ASSIGNS).map_err(|e| Failure::from(&e));
+        }
+        if to.is_binary() {
+            return unhexed(s);
+        }
+        Ok(v.clone())
     });
     each.collect()
 }
+
+/// \[DESIGN\] RULES.md D976: the binary string whose octets `field`'s
+/// hexits write, two to each, of either case, as a `<binary string
+/// literal>` writes them [ISO/IEC 9075-2:2023 §5.3 SR4].
+///
+/// # Errors
+///
+/// SQLSTATE 22018 if `field` holds other than hexits, or an odd number.
+fn unhexed(field: &str) -> Result<Value, Failure> {
+    Binary::of_hex(field).map(Value::Binary).ok_or_else(|| {
+        let shown: String = field.chars().take(SHOWN_CHARS).collect();
+        let msg = format!("[DESIGN] {shown:?} is not a binary string's octets in hexits, two to each");
+        Failure::from(&SqlError::new(Code::Data, msg).with_state(SqlState::INVALID_CHARACTER_VALUE_FOR_CAST))
+    })
+}
+
+/// \[DESIGN\] The most characters of a field a failure shows.
+const SHOWN_CHARS: usize = 64;
 
 /// Whether `failure` is of a statement cancelled (RULES.md D44).
 pub(super) fn cancelled(failure: &Failure) -> bool {

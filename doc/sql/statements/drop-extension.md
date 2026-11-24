@@ -41,9 +41,9 @@ Only the database's owner, or any user of a database with none.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not of the form above |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -102 | The statement is not of the form above |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user is not the database's owner |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -57,7 +57,7 @@ DROP EXTENSION EXAMPLE;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.DOUBLED binds only with extension EXAMPLE, so it is dropped only with CASCADE (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.DOUBLED binds only with extension EXAMPLE, so it is dropped only with CASCADE (at character 15)
 ```
 
 With CASCADE, the view goes with it:

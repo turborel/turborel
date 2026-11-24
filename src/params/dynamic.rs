@@ -74,13 +74,12 @@ impl Dynamic {
 }
 
 /// [ISO/IEC 9075:1992 §17.6 GR4] A `?` where its context gives it no type
-/// (SQLSTATE 37000).
+/// (SQLSTATE 42000).
 fn untyped() -> SqlError {
     SqlError::new(
         Code::SyntaxRule,
         "[ISO/IEC 9075:1992 §17.6 GR4] a <dynamic parameter specification> here takes no type from where it stands",
     )
-    .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
 }
 
 /// [ISO/IEC 9075:1992 §17.9 GR5f, g] `value`, a dynamic parameter's, cast
@@ -236,7 +235,7 @@ impl Params {
     ///
     /// # Errors
     ///
-    /// SQLSTATE 37000 if its context gives it no type [§17.6 GR4], or there
+    /// SQLSTATE 42000 if its context gives it no type [§17.6 GR4], or there
     /// is no such parameter; CAST's [§17.9 GR5f].
     pub(crate) fn dynamic_value(&self, index: usize, taken: Option<ParameterType>) -> Result<(Value, DataType)> {
         if let Some(read) = self.noted() {

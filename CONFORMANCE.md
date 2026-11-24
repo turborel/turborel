@@ -636,6 +636,7 @@ in memory, in the log or on the wire. RULES.md D79 says how.
 | Regular expressions | §6.31 GR18, GR19, §6.33 GR4b, GR9b, §8.7 | LIKE_REGEX, OCCURRENCES_REGEX, POSITION_REGEX, SUBSTRING_REGEX and TRANSLATE_REGEX read a CLOB subject a chunk at a time, and SUBSTRING_REGEX and TRANSLATE_REGEX of one are CLOBs. A pattern, flag or replacement longer than a chunk is SQLCODE -900. |
 | LISTAGG | §10.9 SR11d, GR11g | Of CLOBs, CHARACTER VARYING of 32,767 characters (IA044), a longer value 22001 or left out under TRUNCATE. |
 | Locators | §4.37.5, §14.17, §14.18 | A session's four-octet integer (UV065) of a value sent to a client or made by one a piece at a time. Valid until its transaction ends, FREE LOCATOR ending it sooner and HOLD LOCATOR keeping it past a commit. A rollback ends every one. FREE and HOLD take dynamic parameters [SR1]. One not valid is 0F001. A character one a client makes is checked as UTF-8 as each Append comes, across Appends, else 22021 (RULES.md D392). |
+| Exported | §4.37.5, §5.3 SR4 | *(extension)* A client's export writes each large object as its value, read by its locator a chunk at a time, a CLOB's text, a BLOB's octets in hexits, which an import reads back (RULES.md D975, D976). |
 | Descriptor areas | §20.1 Table 30 | TYPE 30 of BINARY LARGE OBJECT, 40 of CHARACTER LARGE OBJECT, LENGTH its length and OCTET_LENGTH its length in octets. The locator types 31 and 41 are not used, as no host language is. |
 | Information Schema | 92 §21 | DATA_TYPE 'CHARACTER LARGE OBJECT' or 'BINARY LARGE OBJECT'. |
 | Stored | RULES.md D79 | In chunks of 256 KiB, logged and checkpointed by chunk, collected with the versions that name them; a distinct type's as its source's. One inside an array, a multiset, a row or a structured value is held whole in that value's row, at most a chunk, a longer one SQLCODE -900. The column store refuses a large object column, and one of a type holding a large object. |
@@ -2055,7 +2056,7 @@ has at most 1,048,576 members (IL051) and an array as many elements
 | SQL/JSON items | §4.48.3, §8.2 GR10 | The SQL/JSON null, a scalar that is a character string, a number, a truth value or a datetime, an array, or an object. Two are equivalent if their comparison keys are equal (RULES.md D89): scalars equal as SQL values, strings code point by code point, arrays element by element, objects by their members sorted by key and value. |
 | JSON text | §9.42 GR3a; RFC 8259 §2 to §7 | A string that is no JSON text is SQLSTATE 22032, and so is one whose string escapes a surrogate that is not of a pair. Members of one key are all kept (UA057), in the order written (US039); under WITH UNIQUE KEYS they are 22037. Arrays and objects nested more than 128 deep are SQLCODE -900. |
 | Numbers | §9.42 GR3a iii 3 A IV, §9.45 GR1a; §5.3 SR29 | A number without an exponent is exact, of its fraction's scale; one with an exponent is approximate. An exact one of more than 18 digits, or a fraction of more than 18, is exact still if its significant digits fit, leading zeros and a fraction's trailing zeros not being significant, else DECFLOAT of at most 34 significant digits. A number of more significant digits, or out of its kind's range, an approximate one too small to be other than zero among them, is 22003, IS JSON raising it too. |
-| Lexical elements | §9.45 SR1 to SR4, GR1; ECMAScript 5.1 §7 | Identifiers of Unicode 13.0's letters, with `\u` escapes; string literals in single or double quotation marks, with ECMAScript's escapes and line continuations; decimal numeric literals, and hex integer literals (T840), `0x` or `0X` and hexadecimal digits, each the exact number of its value, of more than 18 digits a DECFLOAT of at most 34. A literal past those limits is SQLCODE -900. The language is case-sensitive and reserves no word: `$.type` is a member, `$.type()` the method [NOTE 483]. A character that begins no token is SQLCODE -101. |
+| Lexical elements | §9.45 SR1 to SR4, GR1; ECMAScript 5.1 §7 | Identifiers of Unicode 13.0's letters, with `\u` escapes; string literals in single or double quotation marks, with ECMAScript's escapes and line continuations; decimal numeric literals, and hex integer literals (T840), `0x` or `0X` and hexadecimal digits, each the exact number of its value, of more than 18 digits a DECFLOAT of at most 34. A literal past those limits breaks a Syntax Rule as the `<signed numeric literal>` of its characters would [GR1a, §5.3 SR29, SR30], SQLCODE -103 (RULES.md D970). The language is case-sensitive and reserves no word: `$.type` is a member, `$.type()` the method [NOTE 483]. A character that begins no token is SQLCODE -101. |
 | Format | §9.46 F, SR3, SR5 to SR7, SR10 | A path begins with `strict` or `lax`. Text that does not conform is SQLCODE -102; `@` outside a predicate and `last` outside a subscript are -103. A like_regex pattern and its flags are read when the path is parsed, 2201S and 2201T. The precision and scale of decimal() and the precisions of time(), time_tz(), timestamp() and timestamp_tz() are unsigned integers, a precision of 0 or a scale above the precision -103 [§6.1 SR23, SR25], a precision above 18, or above 6 for a time or timestamp, -900. A `<JSON datetime template>` is read as the path is parsed [SR10]: one that is no datetime template, or is neither dated nor timed, or zoned and not timed, is SQLCODE -103, and one of FF7 to FF9 SQLCODE -900. A path nested more than 64 deep, or of more than 63 accessors or operators in a row, is SQLCODE -900. No analysis for certain exceptions is made (IA223) [SR9]. |
 | Modes | §9.46 GR7, GR8; §4.48.5 | Lax mode wraps and unwraps one level, and takes what it still cannot access for nothing. Strict mode raises each structural error. |
 | Member accessors | §9.46 GR11g ii 1, 2 | In strict mode an item that is no object with the member is 2203A, and for `.*` one that is no object 2203C. Members of one key raise no exception (IA071): `.key` takes the first (UA075), and `.*` gives the bound values of all (UA058) in the order written (US040). |
@@ -2080,9 +2081,9 @@ SAVEPOINT [§17.5], RELEASE SAVEPOINT [§17.6] and ROLLBACK TO SAVEPOINT
 |---|---|---|
 | SAVEPOINT | §17.5 GR1 to GR4, §4.41.2.4, IL208 | A savepoint of the name at the current level is destroyed, then one is established here. Past 1,024 in the transaction, 3B002, the statement failing alone. With no transaction active, it initiates one. |
 | RELEASE SAVEPOINT | §17.6 GR2, GR3 | The savepoint of the name at the current level and every one established after it at that level are destroyed, the changes kept. A name of none, with no transaction active too, is 3B001. |
-| ROLLBACK TO SAVEPOINT | §17.8 SR1, SR2, GR3a to GR3j, IA167, IA168, IA211 | AND CHAIN with it is a syntax error (2A000), AND NO CHAIN its default. A name of no savepoint of the current level is 3B001, as is one established before the most recent atomic execution context began. Every change to SQL-data since is undone, in tables, temporary tables, every index and large objects, through the same undo a failed statement uses, and every change of definitions staged since is cancelled. Later savepoints are destroyed, it stays. Locators given since are invalid, those before stay valid. Every open cursor is closed. The transaction goes on, holding every lock it took. |
+| ROLLBACK TO SAVEPOINT | §17.8 SR1, SR2, GR3a to GR3j, IA167, IA168, IA211 | AND CHAIN with it is a syntax error (42000), AND NO CHAIN its default. A name of no savepoint of the current level is 3B001, as is one established before the most recent atomic execution context began. Every change to SQL-data since is undone, in tables, temporary tables, every index and large objects, through the same undo a failed statement uses, and every change of definitions staged since is cancelled. Later savepoints are destroyed, it stays. Locators given since are invalid, those before stay valid. Every open cursor is closed. The transaction goes on, holding every lock it took. |
 | Savepoint levels | §4.43.2, §9.18 GR7, GR15, §11.60 SR9j to SR9l, GR3k, §15.21 GR6c, GR6j; ISO/IEC 9075-4:2006 draft §14.1 GR1, GR6 | A function, a procedure of NEW SAVEPOINT LEVEL, a triggered action and an ATOMIC compound statement each establish a level as they begin and destroy it with its savepoints as they end. A procedure of OLD SAVEPOINT LEVEL, written or implicit, runs at its caller's. A statement names only the savepoints of the current level. COMMIT and ROLLBACK destroy every savepoint [§17.7 GR7, §17.8 GR2c]. |
-| In routines and triggers | §9.18 GR8b iv 2, §15.21 GR6e iii, IA046; ISO/IEC 9075-4:2006 draft §14.13 SR9 | A routine's body may hold the savepoint statements, so 2F003 is never raised. A FOR holds no ROLLBACK TO SAVEPOINT (2A000). A trigger's action that is one is refused as the trigger is defined (2A000). One run while a triggered action executes, in a procedure it calls, raises 0W000, which fails the action with 09000. |
+| In routines and triggers | §9.18 GR8b iv 2, §15.21 GR6e iii, IA046; ISO/IEC 9075-4:2006 draft §14.13 SR9 | A routine's body may hold the savepoint statements, so 2F003 is never raised. A FOR holds no ROLLBACK TO SAVEPOINT (42000). A trigger's action that is one is refused as the trigger is defined (42000). One run while a triggered action executes, in a procedure it calls, raises 0W000, which fails the action with 09000. |
 | Atomic execution contexts | §4.41.5, §17.8 GR3c | A function, a triggered action and an ATOMIC compound statement are atomic execution contexts, a procedure's CALL is not. A savepoint statement of a program is not atomic itself, so ROLLBACK TO goes back past the start of the statement running. |
 | Recovery | §17.8 GR3d | Going back logs no record of its own. The changes since the savepoint are marked undone as a failed statement's are, so recovery and a standby replaying the log leave out the rows and the changes of definitions cancelled. |
 | ROUTINES | 11:2006 draft §5.49, §6.40 Description 21 | NEW_SAVEPOINT_LEVEL is YES of a function and of a procedure of NEW SAVEPOINT LEVEL, NO of another procedure. |
@@ -2100,7 +2101,7 @@ SAVEPOINT 57 and ROLLBACK WORK 62 [§23.1 Table 39].
 Feature T351 (Bracketed comments) is claimed [§5.2 SR11, SR12]. A
 `<bracketed comment>` is a separator, as a `<simple comment>` is, and
 one begun within it nests, so each needs its own `*/`. One not ended is
-SQLSTATE 2A000, SQLCODE -101. \[EXTENSION\] One that begins a statement
+SQLSTATE 42000, SQLCODE -101. \[EXTENSION\] One that begins a statement
 and whose contents begin with `+` holds hints, of which
 VECTOR_WAIT_FRESH is read (RULES.md D105).
 
@@ -2573,7 +2574,7 @@ when declared, with SQLCODE -103.
 | Type hierarchy | §4.2, Figure 1 | All 27 types are SQL type names, each with an optional SRID parameter. The four that hold no values of their own (ST_Geometry, ST_Curve, ST_Surface, ST_Solid) refuse NEW. |
 | Subtyping | 9075-2 §9.2 SR2, §6.17, §8.19 | A value can be assigned to a type above its own. Assigning it to a type below its own needs TREAT, which raises 0D000 at run time. IS OF and IS OF (ONLY) are supported. |
 | Casts | §4.2.1.5 Table 4 | CAST within the hierarchy, else 2FF08. The ST_ToXxx cast methods of §5.1.55, each also a function. |
-| Ordering | §5.1.65 | EQUALS ONLY BY RELATIVE with ST_OrderingEquals, the exact ST_Equals of x and y (RULES.md D126). Two empty values of one SRID are equal. PRIMARY KEY, UNIQUE and FOREIGN KEY of a geometry column are refused at declaration [9075-2 §11.7 SR1, §9.12 SR3], SQLSTATE 2A000. |
+| Ordering | §5.1.65 | EQUALS ONLY BY RELATIVE with ST_OrderingEquals, the exact ST_Equals of x and y (RULES.md D126). Two empty values of one SRID are equal. PRIMARY KEY, UNIQUE and FOREIGN KEY of a geometry column are refused at declaration [9075-2 §11.7 SR1, §9.12 SR3], SQLSTATE 42000. |
 | Methods | §4.2, 9075-2 §9.18 | A method table per type, with overriding. The collection types override ST_Geometries. `v.m()` binds by the declared type and runs by the most specific type. `(v AS T).m()` runs T's. |
 | SPECIFICTYPE | 9075-2 §6.15 | `v.SPECIFICTYPE` names the most specific type in INFORMATION_SCHEMA, the built-in types' schema. The function form SPECIFICTYPE(v) is not built. |
 | Collections | §10.1.3 to §10.1.5 | ST_NumGeometries, ST_GeometryN (01F01 out of range) and ST_Geometries, accessor and mutator. |
@@ -3778,7 +3779,7 @@ FETCH {APPROX | APPROXIMATE | EXACT} {FIRST | NEXT} n {ROW | ROWS} ONLY
 (RULES.md D94). APPROX takes WITH TARGET ACCURACY n (1 to 100, R9.4) or
 WITH TARGET ACCURACY PARAMETERS (EFSEARCH n, NEIGHBOR PARTITION PROBES
 n, SEARCH_LIST n, BEAM_WIDTH n). APPROX with WITH TIES or PERCENT is
-refused, SQLSTATE 2A000, SQLCODE -103, as is an accuracy without APPROX
+refused, SQLSTATE 42000, SQLCODE -103, as is an accuracy without APPROX
 (`parser/query/ordered/approx.rs`, `binder/limit.rs`). Hints follow the
 fetch clause, `HINT (VECTOR_INDEX(t i), NO_VECTOR_INDEX(t),
 VECTOR_PREFILTER, VECTOR_INFILTER, VECTOR_POSTFILTER, VECTOR_WAIT_FRESH)`.
@@ -3879,7 +3880,7 @@ out of scope. A clause not yet done has no row.
 | §1, §2, §20, §21 | Purpose, the vendors compared, the delivery plan and sources; no requirement of their own |
 | §3.1 R3.1 | `VECTOR` alone leaves dimensions, format and layout open, so a sparse value is taken too |
 | §3.1 R3.2, R3.3 | Yes; `float32` and `float16` in any case |
-| §3.1 R3.4 | Yes; a type out of bounds is 2A000, SQLCODE -103, a value 22003 |
+| §3.1 R3.4 | Yes; a type out of bounds is 42000, SQLCODE -103, a value 22003 |
 | §3.1 R3.5 to R3.8 | Yes; an index of an open column is -900, and so is a dense index of FLOAT64 (D95) |
 | §3.2, R3.9, R3.10 | Yes; NaN and infinities are 22003 |
 | §3.3 R3.11, R3.12 | Yes; each refused use is -103 (D93), a vector method's UNIQUE index -900 |
@@ -3949,12 +3950,12 @@ out of scope. A clause not yet done has no row.
 
 | Design code | SQLSTATE | SQLCODE |
 |---|---|---|
-| VEC-0001, VEC-0002 of a type, VEC-0009 | 2A000 | -103 |
+| VEC-0001, VEC-0002 of a type, VEC-0009 | 42000 | -103 |
 | VEC-0002 of a value, VEC-0006, VEC-0007, VEC-0012 | 22003 | -301 |
 | VEC-0003, VEC-0004, VEC-0008 and VEC-0013 of a call, VEC-0031 of a value | 22000 | -301 |
 | VEC-0005, VEC-0016 | 22018 | -301 |
 | VEC-0008 of an index, VEC-0010, VEC-0015, VEC-0020 of an index | 0A000 | -900 |
-| VEC-0013 of an index, VEC-0030, VEC-0031 of a model | 2A000 | -103 |
+| VEC-0013 of an index, VEC-0030, VEC-0031 of a model | 42000 | -103 |
 | VEC-0011 | TB918 | -918 |
 | VEC-0032 | The plug-in's own, under ON_ERROR | |
 
@@ -4952,8 +4953,9 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 
 | Condition | SQLSTATE |
 |---|---|
-| A Format, Syntax Rule or Access Rule error | Class 2A, statements being invoked directly [§20.1 GR5] |
-| The same while preparing | Class 37 [§17.6 GR4a] |
+| A Format, Syntax Rule or Access Rule error | 42000, of a statement invoked directly [ISO/IEC 9075-2:2023 §22.1 GR6a] and one prepared alike [§20.7 GR6c], SQL:2023's Table 39 [§24.1] having no class 2A or 37 (RULES.md D971) |
+| An exact numeric literal of more digits than 38, an approximate one beyond DOUBLE PRECISION's range | 42000, SQLCODE -103 [ISO/IEC 9075-2:2023 §5.3 SR29, SR30] (RULES.md D970) |
+| Text of such a number cast, or given as a parameter | 22003 [ISO/IEC 9075-2:2023 §6.13 GR8b ii, GR9b ii] |
 | This implementation's own conditions | Class TB, the subclass the SQLCODE's digits |
 | A server's conditions | Class 08, with 08004 for a connection refused and 08006 for one failed. 28000 for credentials refused. |
 | A commit whose commit record could not be synced | 08007, transaction resolution unknown [§4.29], in doubt until the database is opened again |
@@ -4979,7 +4981,7 @@ The SQLSTATE classes are §22.1, in `error/state.rs` and `db/completion.rs`.
 | Rule | Choice | Where |
 |---|---|---|
 | §17.6 GR5b-d, s, u CHARACTER VARYING of a dynamic parameter | Of the longest length, 32767, its value CAST to it [§17.9 GR5g] | `params/dynamic.rs` |
-| §17.6 GR5 a dynamic parameter as a CASE result, which GR5 gives no type | Refused, as one GR4 refuses (SQLSTATE 37000) | `binder/case.rs` |
+| §17.6 GR5 a dynamic parameter as a CASE result, which GR5 gives no type | Refused, as one GR4 refuses (SQLSTATE 42000) | `binder/case.rs` |
 | §17.6 GR10 a prepared statement in a later transaction | Valid. Its plan is kept between executions, and bound again against the definitions then whenever they changed (RULES.md D45). | `db/prepared.rs`, `db/prepared/plans.rs` |
 | §17.2 SR2, GR3 the `<occurrences>` of an SQL descriptor area allocated without WITH MAX, the greatest, and how many areas a session holds at once | 100; 1,000, with more or fewer than 1 raising 07009 [GR3]; 64, one more refused (SQLCODE -900) | `db/dynamic/areas.rs` |
 | §17.1 Table 18 the code of an implementation-defined data type | -1, of every plug-in's type (RULES.md D53). An item of it described keeps its type, which no other field gives. | `db/dynamic/descriptor.rs` |
@@ -5180,7 +5182,7 @@ SQLCODE -900 (RULES.md D18).
 |---|---|---|---|
 | BINARY and BINARY VARYING length | 32,767 octets | 2023 §6.1 SR4 requires only a length above 0. | `value.rs`, `parser/data_type.rs` |
 | CHARACTER length | 32,767 characters | 86 §5.5 SR2 requires only a length above 0. Values are stored padded to their length [86 §8.7 GR7b], so without a limit `CHAR(4000000000)` could allocate about 4 GB for each value. | `value.rs`, `parser/data_type.rs` |
-| Exact precision | 38 digits, for NUMERIC, DECIMAL, exact literals and every exact result; a column of more than 18 kept in 128 bits (RULES.md D695, D698) | 86 §5.5 SR6, SR7 and 86 §5.2 SR4 set no maximum; 2023 §6.1 SR27a leaves it implementation-defined (IL043). | `value.rs`, `parser/data_type.rs`, `parser/literal.rs`, `value/types/exact.rs` |
+| Exact precision | 38 digits, for NUMERIC, DECIMAL, exact literals and every exact result; a column of more than 18 kept in 128 bits (RULES.md D695, D698). A literal of more breaks 2023 §5.3 SR29, SQLSTATE 42000, and text of more cast to an exact type is 22003 (RULES.md D970) | 86 §5.5 SR6, SR7 and 86 §5.2 SR4 set no maximum; 2023 §6.1 SR27a leaves it implementation-defined (IL043). | `value.rs`, `parser/data_type.rs`, `parser/literal.rs`, `value/types/exact.rs` |
 | FLOAT precision | 53 binary digits, and approximate literals within the range of a double | 86 §5.5 SR10 allows more precision than asked for, but sets no maximum. | `parser/data_type.rs`, `parser/literal.rs` |
 | `<unsigned integer>` | 4,294,967,295 | 86 §5.2 sets no maximum. | `parser.rs` |
 | A sum of SUM or AVG on the way to its total | 128 bits, past some 10^20 exact values of 18 digits, two of 38, or 10^18 intervals of 9 digits of days; the total is judged against 38 digits | §6.5 GR2b iv judges only the total against the range of the result, so whether a sum raises does not depend on the order of its rows (RULES.md D15). Each sum before it is kept wider than the result, but not without bound. | `functions/sum.rs` |
@@ -5275,7 +5277,7 @@ Where the standards are unclear, turborel reads them as follows.
 | When a DEFAULT is evaluated [2023 §9.48 GR4c iii, GR5d] | The rules evaluate `CAST (VE AS DT)` only when the behavior is taken, and a call evaluates its arguments first. A DEFAULT that can raise an exception is bound as a CASE of which behavior the row takes, and one that draws NEXT VALUE FOR keeps every DEFAULT an argument, as §6.14 GR1a draws of each row and SR2 puts it in no CASE. "This `<cast specification>`", whose exception ON ERROR replaces, is the cast's own, so an exception VE raises before the cast is raised. |
 | Serialization's 22001 [2023 §9.43 GR2a iii] | GR2a ii lets a failed parse be the status ON ERROR handles, and GR2a iii says its exception "is raised". It is raised directly, so neither NULL nor EMPTY ARRAY ON ERROR replaces it. |
 | `%` of a number with a fraction [2023 §6.31 SR12, §9.46 GR11i] | MOD's operands are exact of scale 0 or DECFLOAT, a Syntax Rule the path can check only as it runs. It is checked then, data exception 22000. A whole exact number of nonzero scale, `4.0`, is taken. |
-| Numbers past 34 digits [2023 §9.42 GR3a iii 3 A IV, §5.3 SR29] | A number of which no number of the implementation is the value is out of range, 22003, never rounded. In a path literal it is SQLCODE -900, as other limits of the path's parse are. IS JSON raises it too, the text being of RFC 8259's grammar [§8.22 GR3a]. |
+| Numbers past 34 digits [2023 §9.42 GR3a iii 3 A IV, §5.3 SR29] | A number of which no number of the implementation is the value is out of range, 22003, never rounded. In a path literal it is SQLCODE -103, the literal breaking SR29 (RULES.md D970). IS JSON raises it too, the text being of RFC 8259's grammar [§8.22 GR3a]. |
 | The types of `number()`, `size()`, `string()` and `type()` in the simplified accessor [2023 §6.36 SR3a i 7, 8] | As printed `number()` and `size()` give CHARACTER VARYING and `string()` and `type()` BIGINT, which swaps `size()` and `string()` against §9.46 GR11g ii 6 C. `size()` is BIGINT, and `number()`, `string()` and `type()` CHARACTER VARYING(32767). |
 | PASSING variables of a NESTED path [2023 §7.11 SR1g v] | The rule names "the PASSING clause of the JSON table". The row pattern and every NESTED path may name its variables, and a column's own path, which has no PASSING clause [SR1e iii, SR1f vi], may not, SQLCODE -103. |
 | A JSON column of JSON_TABLE [2023 §7.11 SR1e ii] | A regular column is of no JSON type, so a column of the JSON type written without a formatted column's clause is formatted, and gives JSON_QUERY's value. |

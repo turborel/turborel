@@ -332,7 +332,7 @@ mod tests {
         assert_eq!((e.rule.as_deref(), e.msg.as_str()), (Some("X3.135-1986 §5.7 SR3b"), "column ID is ambiguous; qualify it"));
         assert_eq!(
             e.to_string(),
-            "SQLCODE -103 (SQLSTATE 2A000): column ID is ambiguous; qualify it [X3.135-1986 §5.7 SR3b] (at character 12)"
+            "SQLCODE -103 (SQLSTATE 42000): column ID is ambiguous; qualify it [X3.135-1986 §5.7 SR3b] (at character 12)"
         );
         let tagged = SqlError::new(Code::Api, "[EXTENSION] [ISO/IEC 9075:1992 §21.1] only SELECT is granted");
         assert_eq!((tagged.rule.as_deref(), tagged.msg.as_str()), (Some("ISO/IEC 9075:1992 §21.1"), "only SELECT is granted"));

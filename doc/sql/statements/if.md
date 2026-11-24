@@ -43,8 +43,8 @@ Those of its conditions and statements.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed, as a list of no statement |
-| 2A000 | -103 | It has a label |
+| 42000 | -102 | It is not well formed, as a list of no statement |
+| 42000 | -103 | It has a label |
 
 ## EXAMPLES
 
@@ -97,8 +97,8 @@ BEGIN L: IF 1 = 1 THEN INSERT INTO SIZES VALUES (0, 'x'); END IF; END;
 ```
 
 ```
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected an <SQL procedure statement>, found END (at character 20)
-turborel: SQLCODE -103 (SQLSTATE 2A000): this statement has no <beginning label> [ISO/IEC 9075-4:2006 draft §14.1] (at character 6)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected an <SQL procedure statement>, found END (at character 20)
+turborel: SQLCODE -103 (SQLSTATE 42000): this statement has no <beginning label> [ISO/IEC 9075-4:2006 draft §14.1] (at character 6)
 ```
 
 ## STANDARD

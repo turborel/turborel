@@ -40,9 +40,9 @@ The trigger's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | Anything is written after the name |
-| 2A000 | -103 | There is no such trigger |
-| 2A000 | -104 | Its user does not own the trigger's schema |
+| 42000 | -102 | Anything is written after the name |
+| 42000 | -103 | There is no such trigger |
+| 42000 | -104 | Its user does not own the trigger's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -62,9 +62,9 @@ DROP TABLE LOG RESTRICT;
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): the triggered action of trigger ANN.LOGGED references ANN.LOG, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.31 SR7g] (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): the triggered action of trigger ANN.LOGGED references ANN.LOG, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.31 SR7g] (at character 11)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no trigger ANN.LOGGED [ISO/IEC 9075-2:2023 §11.50 SR1] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no trigger ANN.LOGGED [ISO/IEC 9075-2:2023 §11.50 SR1] (at character 13)
 OK
 ```
 

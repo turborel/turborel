@@ -95,9 +95,9 @@ grantably (see [GRANT](grant.md)).
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not of the form above |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema |
+| 42000 | -102 | The statement is not of the form above |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -128,7 +128,7 @@ CREATE EMBEDDING MODEL SPARSE WITH (TYPE = 'HASH_SPARSE', LAYOUT = DENSE);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): VEC-0031 the model's vectors are VECTOR(1048576, FLOAT32, SPARSE), not of LAYOUT DENSE (at character 23)
+turborel: SQLCODE -103 (SQLSTATE 42000): VEC-0031 the model's vectors are VECTOR(1048576, FLOAT32, SPARSE), not of LAYOUT DENSE (at character 23)
 ```
 
 An external model needs the host's REMOTE plug-in, and the built-in
@@ -141,8 +141,8 @@ CREATE EMBEDDING MODEL LOADED FROM BLOB X'00FF' WITH (TYPE = 'HASH_DENSE');
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): VEC-0030 no model plug-in REMOTE is registered (at character 22)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the model plug-in HASH_DENSE reads no model's file, so takes no 2 octets FROM BLOB (at character 23)
+turborel: SQLCODE -103 (SQLSTATE 42000): VEC-0030 no model plug-in REMOTE is registered (at character 22)
+turborel: SQLCODE -103 (SQLSTATE 42000): the model plug-in HASH_DENSE reads no model's file, so takes no 2 octets FROM BLOB (at character 23)
 ```
 
 ## STANDARD

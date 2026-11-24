@@ -115,7 +115,7 @@ fn attributes_are_set_by_set_clauses_14_15() {
         ],
     );
     assert_eq!(query(&a, "SELECT K, P FROM T ORDER BY K"), ["1,A.PT(10, 10)", "2,A.PT(100, 4)", "3,NULL", "4,A.PT3(NULL, 7, 9)"]);
-    refused(&a, "UPDATE T SET P = NEW PT(), P.X = 1 WHERE K = 1", (Code::SyntaxRule, "2A000", "§8.12 SR4"));
+    refused(&a, "UPDATE T SET P = NEW PT(), P.X = 1 WHERE K = 1", (Code::SyntaxRule, "42000", "§8.12 SR4"));
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §6.22 to §6.24, §8.2 GR] A reference
@@ -204,7 +204,7 @@ fn references_are_treated_as_subtypes_6_17() {
     ok(&a, &["DELETE FROM PEOPLE WHERE NAME = 'CAT'"]);
     assert_eq!(treated("REF(PERSON)", 2), not_null.clone());
     assert_eq!(treated("REF(EMP)", 2), Err("0D000".to_owned()));
-    let syntax = |cited| (Code::SyntaxRule, "2A000", cited);
+    let syntax = |cited| (Code::SyntaxRule, "42000", cited);
     refused(&a, "SELECT TREAT(N AS REF(EMP)) FROM LOOSE", syntax("§6.17 SR1"));
     refused(&a, "SELECT TREAT(OWNER AS EMP) FROM LOOSE", syntax("§6.17 SR1"));
     refused(&a, "SELECT TREAT(CAST(OWNER AS REF(EMP)) AS REF(PERSON)) FROM LOOSE", syntax("§6.17 SR3"));
@@ -226,7 +226,7 @@ fn a_type_named_by_a_reference_type_is_dropped_11_59() {
             "CREATE FUNCTION F (R REF(PERSON)) RETURNS INTEGER CONTAINS SQL RETURN 1",
         ],
     );
-    let syntax = |cited| (Code::SyntaxRule, "2A000", cited);
+    let syntax = |cited| (Code::SyntaxRule, "42000", cited);
     refused(&a, "DROP TYPE PERSON RESTRICT", syntax("§11.59 SR4a"));
     ok(&a, &["ALTER TABLE PETS DROP COLUMN OWNER RESTRICT"]);
     refused(&a, "DROP TYPE PERSON RESTRICT", syntax("§11.59 SR4g"));

@@ -139,7 +139,7 @@ match conn.query("SELECT ID, NAME FROM STAFF WHERE ID < 3 ORDER BY ID")? {
     Outcome::Done(done) => { /* done.sqlcode, done.sqlstate */ }
 }
 match conn.query("SELECT * FROM NOPE") {
-    Err(f) => { /* f.sqlcode -103, f.sqlstate "2A000",
+    Err(f) => { /* f.sqlcode -103, f.sqlstate "42000",
                    f.message "table ANN.NOPE is not defined" */ }
     Ok(_) => {}
 }
@@ -242,7 +242,9 @@ conn.query("COMMIT")?;
 ```
 
 An import sends a field longer than 64 KiB for a CLOB or BLOB column
-by `create_lob`, so no message carries more.
+by `create_lob`, so no message carries more. A field for a BLOB, BINARY
+or VARBINARY column is read as its octets' hexits, as an export writes
+them ([Copying and exporting](#copying-and-exporting)).
 
 ## XML values
 
@@ -308,6 +310,11 @@ connection's session must have no transaction active. A row that
 fails ends the import with an `ImportError`: where its record began,
 why (`Cause::Input`, the source's, or `Cause::Sql`, a `Failure`), how
 many rows were committed and how many of the batch rolled back.
+
+A field for a binary string column, a BLOB's among them, is read as the
+octets its hexits write, two to each, of either case, so what an export
+wrote reads back. One that holds anything else, or an odd number of
+hexits, fails its row with SQLSTATE 22018 (SQLCODE -301).
 
 ```rust
 use std::fs::File;
@@ -451,7 +458,37 @@ let inserted = conn.copy_rows("STAFF", &["ID", "NAME"], rows)?;
 as CSV, a header of its columns' names then a record for each row
 (`ExportFormat::Csv`), or as the protocol's own frames
 (`ExportFormat::Native`), which `export::read_native` reads back with
-every value as it was.
+every value as it was. `export_with` writes them by any `export::Layout`,
+the program's own among them. `export::Delimited` writes CSV, or
+tab-separated text with `Delimited::text`, its header, delimiter, null
+text and line end as its fields say, and `export::Native` the frames.
+
+A large object is written as its value, never its locator. A CLOB or an
+NCLOB is written as its text. A BLOB, as every binary string, is written
+as its octets in hexits, two to each, upper case, as between the quotes
+of `X'...'`, which an import reads back into a binary string column. One
+the server sends by its locator, longer than 64 KiB, is read a chunk at
+a time as it is written, its locator freed once read, so no more than a
+chunk of it is held. In CSV it is quoted whatever it holds. In native
+rows its octets follow the Rows frame that holds it, in Lob frames of a
+chunk each. A large object within a row, an array or a structured value
+is read whole, as its value's text needs it all.
+
+The rows of a query whose columns may hold a large object come through a
+cursor, 256 at a time, its large objects read between the fetches, as
+the transaction they were sent in lasts. Under autocommit, a transaction
+the export began is committed at its end, or rolled back if it failed.
+A query whose columns hold none comes in one request, its rows written
+as they arrive.
+
+```rust
+use turborel_client::export::ExportFormat;
+
+let mut csv = Vec::new();
+let rows = conn.export("SELECT ID, PHOTO FROM BADGES ORDER BY ID", &mut csv, ExportFormat::Csv)?;
+// rows: 2
+// csv: ID,PHOTO\r\n1,CAFE\r\n2,\r\n
+```
 
 ## The SQL-agent
 

@@ -61,7 +61,7 @@ model of words makes are. BINARY is never sparse.
 A dimension count is from 1 to 65,535, of a sparse vector to
 2,147,483,647, and of BINARY from 8 to 65,528, a multiple of 8.
 A type out of these bounds, or of an unknown format, is refused with
-SQLSTATE 2A000 (SQLCODE -103). An element is never null, NaN or
+SQLSTATE 42000 (SQLCODE -103). An element is never null, NaN or
 infinite.
 
 VECTOR_DIMENSION_COUNT, VECTOR_DIMENSION_FORMAT, VECTOR_LAYOUT and
@@ -150,7 +150,7 @@ turborel: SQLCODE -301 (SQLSTATE 22003): 200 is not an INT8 element, an integer 
 ## No order and no equality
 
 Vectors have no order, and two vectors near each other are not equal
-in any useful sense. So a vector is refused, with SQLSTATE 2A000
+in any useful sense. So a vector is refused, with SQLSTATE 42000
 (SQLCODE -103), as an operand of a comparison, `=` and `<>` among
 them, of BETWEEN, IN, ORDER BY, GROUP BY, DISTINCT, UNION, INTERSECT
 and EXCEPT, MAX and MIN, and as a column of a PRIMARY KEY, UNIQUE or
@@ -164,7 +164,7 @@ SELECT ID FROM ITEMS WHERE VECTOR_EQUALS(EMBEDDING, '[1, 0, 0]');
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY orders, groups, compares or keys values of VECTOR(3), which have no order and no equality; VECTOR_EQUALS compares vectors
+turborel: SQLCODE -103 (SQLSTATE 42000): ORDER BY orders, groups, compares or keys values of VECTOR(3), which have no order and no equality; VECTOR_EQUALS compares vectors
            ID
 --------------
             1
@@ -259,7 +259,7 @@ number and a vector scales it, and `/` of a vector and a number divides
 each element. The result is FLOAT32 of INT8, FLOAT16 or BINARY operands,
 FLOAT64 if either is FLOAT64. They are VECTOR_ADD, VECTOR_SUBTRACT,
 VECTOR_MULTIPLY, VECTOR_SCALE and VECTOR_DIVIDE as functions. `/` of two
-vectors is refused with SQLSTATE 2A000 (SQLCODE -103), and division by
+vectors is refused with SQLSTATE 42000 (SQLCODE -103), and division by
 zero raises SQLSTATE 22012 (SQLCODE -301).
 
 ```sql
@@ -353,14 +353,14 @@ SELECT TABLE_NAME, COLUMN_NAME, VECTOR_DIMENSIONS, VECTOR_FORMAT, VECTOR_LAYOUT 
 
 | SQLSTATE | SQLCODE | Raised when |
 |---|---|---|
-| 2A000 | -103 | a VECTOR type out of its bounds; a vector ordered, compared or keyed; `/` of two vectors |
+| 42000 | -103 | a VECTOR type out of its bounds; a vector ordered, compared or keyed; `/` of two vectors |
 | 22000 | -301 | vectors of other dimension counts or formats; a vector of another dimension count than its type's; a metric of none of the vectors' formats, or of no name |
 | 22001 | -301 | FROM_VECTOR of a vector whose text is longer than a character string |
 | 22003 | -301 | an element out of its format's range |
 | 22012 | -301 | a vector divided by zero |
 | 22018 | -301 | text that is no vector |
 | 2202E | -301 | VECTOR_ELEMENT or VECTOR_SLICE outside the vector; VECTOR_TO_ARRAY of more elements than an array holds |
-| 2A000 | -104 | a distance function used by a user without EXECUTE on it |
+| 42000 | -104 | a distance function used by a user without EXECUTE on it |
 | TB910 | -910 | a registered metric that breaks its contract, as a negative distance of one declared NON_NEGATIVE |
 
 ## See also

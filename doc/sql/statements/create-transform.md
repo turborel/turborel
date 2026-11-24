@@ -52,8 +52,8 @@ The owner of the type, who needs EXECUTE on each function.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the type, or lacks EXECUTE on a function |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the type, or lacks EXECUTE on a function |
 
 ## EXAMPLES
 
@@ -82,7 +82,7 @@ CREATE TRANSFORM FOR TEMP HOST (FROM SQL WITH FUNCTION TEMP_OUT (TEMP));
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): type ANN.TEMP has a transform group HOST already [ISO/IEC 9075-2:2023 §11.67 SR2, SR4d] (at character 26)
+turborel: SQLCODE -103 (SQLSTATE 42000): type ANN.TEMP has a transform group HOST already [ISO/IEC 9075-2:2023 §11.67 SR2, SR4d] (at character 26)
 ```
 
 ## STANDARD
