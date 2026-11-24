@@ -3,11 +3,13 @@
 //! `Session::explain`; \[EXTENSION\] direct SQL by `EXPLAIN <cursor
 //! specification>`, whose rows are the lines of the same text. EXPLAIN
 //! ANALYZE runs the query and shows what each operator did
-//! (`explain/analyzed.rs`).
+//! (`explain/analyzed.rs`). EXPLAIN of a data change shows what it would
+//! do, running nothing (`explain/unrun.rs`).
 
 mod analyzed;
 mod changed;
 mod injected;
+mod unrun;
 
 use std::sync::Arc;
 
@@ -30,14 +32,18 @@ impl Session {
     /// that fired, the optimized plan, and the physical plan. Its parameters
     /// have the values in `params`, as at OPEN [X3.135-1986 §8.8 GR3a].
     /// Maintenance its planning noted due is asked for, as no transaction's
-    /// end asks for it here (RULES.md D473).
+    /// end asks for it here (RULES.md D473). \[EXTENSION\] Of a data change
+    /// statement, as a prepared statement's with the values of its `?`s,
+    /// what it would do, with nothing run (RULES.md D980).
     ///
     /// # Errors
     ///
-    /// Any error of parsing or binding the cursor specification.
+    /// Any error of parsing or binding the cursor specification, or the
+    /// data change statement.
     pub fn explain(&self, sql: &str, params: &Params) -> Result<String> {
         let call = self.enter()?;
-        let planned = self.planned(call.state(), sql, params);
+        let planned =
+            if analyzed::changes(sql)? { self.unrun_change(call.state(), sql, params) } else { self.planned(call.state(), sql, params) };
         self.db.maintain_if_due();
         planned
     }
@@ -82,14 +88,20 @@ impl Session {
     /// \[EXTENSION\] `EXPLAIN <cursor specification>`, `sql` the
     /// specification: a cursor of one column, PLAN, whose rows are the
     /// lines `explain` gives, in order. It opens a transaction, as a query
-    /// does, but reads no table.
+    /// does, but reads no table. So too `EXPLAIN <data change statement>`,
+    /// which locks and writes none either (RULES.md D982).
     ///
     /// # Errors
     ///
     /// As `explain`.
     pub(super) fn explain_rows(&self, sql: &str) -> Result<Cursor> {
+        let change = analyzed::changes(sql)?;
         self.open_with((commands::EXPLAIN, commands::UNRECOGNIZED), |call| {
-            let text = self.planned(call.state(), sql, &Params::new())?;
+            let text = if change {
+                self.unrun_change(call.state(), sql, &Params::new())?
+            } else {
+                self.planned(call.state(), sql, &Params::new())?
+            };
             self.unnamed(call, None, |st, _| plan_rows(st, &text))
         })
     }

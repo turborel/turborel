@@ -168,7 +168,9 @@ fn main() -> Result<(), turborel::error::SqlError> {
 
 `explain` gives the text of a query's plan that [EXPLAIN](../sql/statements/explain.md)
 shows as rows, without running it, its parameters of the values a
-`Params` gives. `physical_plan` gives the physical plan alone.
+`Params` gives. Of a data change, searched or positioned, it gives what
+the change would do, running nothing ([EXPLAIN of a data change](../sql/statements/explain.md#explain-of-a-data-change)).
+`physical_plan` gives the physical plan alone.
 `explain_analyze` runs the query and gives the text EXPLAIN ANALYZE
 shows, and `analyzed` gives each operator's line, estimate, rows, loops
 and time as an `Analyzed`. `with_cardinalities` gives the planner row

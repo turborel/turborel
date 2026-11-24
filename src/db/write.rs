@@ -374,7 +374,7 @@ impl Session {
 
     /// The plan of the rows of `query` inserted into `target`, its degree
     /// and its columns' types checked [X3.135-1986 §8.7 SR5, SR6].
-    fn insert_query(&self, st: &State, target: &Target, query: &QueryExpression, params: &Params) -> Result<LogicalPlan> {
+    pub(super) fn insert_query(&self, st: &State, target: &Target, query: &QueryExpression, params: &Params) -> Result<LogicalPlan> {
         let bound = self.bound_insert(st, target, query, params)?;
         if bound.columns.len() != target.object.len() {
             let (n, m) = (bound.columns.len(), target.object.len());
