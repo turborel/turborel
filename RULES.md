@@ -661,6 +661,7 @@ verification approach DO-178C expects (§8).
 | D1034 | A connection learns its own ID by a Debug request, so Ready keeps its first form |
 | D1035 | The client's debugger is methods of its connection, the events kept in it until read |
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
+| D1040 | An index join is read direct as nested point reads only by a unique index |
 
 ### The project
 
@@ -18105,6 +18106,24 @@ name is read as SQL reads an identifier, folded to upper case unless
 quoted. A breakpoint is shown by the specific name of the routine it
 is in, as the engine keeps it, so an overloaded name's breakpoints
 are told apart.
+
+### Defects a review of comments found
+
+#### D1040. An index join is read direct as nested point reads only by a unique index
+
+A direct read takes an inner index join whose probe fixes every column
+of an index (D932), and reads each left row's probe as a point read
+does. The read stops at the first row it finds with the key, as a
+unique key has one row at most. The join was taken of any index whose
+every column the probe fixed, and `Direct::of` never asked whether the
+index was unique. A kept query joining a range's rows with a table by
+an index that is not unique, on all its columns, gave each left row its
+key's first row alone. Of three rows a key, the executor gave twelve
+pairs of four left rows and the direct read four.
+
+The join is now taken only of an index that is unique
+(`join/indexed/direct.rs`). Any other is the executor's, whose probe
+gives every row of the key.
 
 ## 2. Project layout
 
