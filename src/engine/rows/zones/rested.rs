@@ -2,7 +2,6 @@
 //! every zone due, and after one over every zone, more due again.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 use super::summed::{REST, nanos};
 use super::tests::{TYPES, files, row, warmed};
@@ -28,14 +27,16 @@ fn table_of(zones: usize) -> (Arc<RowTable>, Vec<RowId>) {
 #[test]
 fn zones_rest_after_a_pass_over_every_zone_due() {
     let (table, ids) = table_of(MOST_SUMMED.checked_add(1).unwrap());
-    assert!(table.sum_zones(u64::MAX, false).unwrap());
-    assert!(table.zones.wanted(), "more zones due than one call sums up: no rest");
-    assert!(table.sum_zones(u64::MAX, false).unwrap());
-    assert!(!table.zones.due() && !table.zones.wanted(), "every zone looked at");
+    // The zones' own clock, not the wall's, so a slow sum up does not end
+    // the rest before it is looked at.
+    let (first, second) = (0_u64, nanos(REST));
+    assert!(table.sum_zones_at(u64::MAX, Some(first)).unwrap());
+    assert!(table.zones.wanted_at(first), "more zones due than one call sums up: no rest");
+    assert!(table.sum_zones_at(u64::MAX, Some(second)).unwrap());
+    assert!(!table.zones.due() && !table.zones.wanted_at(second), "every zone looked at");
     table.update(NO_TRANSACTION, ids[0], row(-1)).unwrap();
-    assert!(table.zones.due() && !table.zones.wanted(), "due, but resting");
-    table.zones.rest_until.store(0, Ordering::Release);
-    assert!(table.zones.wanted(), "the rest over");
+    assert!(table.zones.due() && !table.zones.wanted_at(second), "due, but resting");
+    assert!(table.zones.wanted_at(second.saturating_add(nanos(REST))), "the rest over");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, zone maps: zones writes make due again
