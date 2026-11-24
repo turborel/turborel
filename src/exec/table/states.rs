@@ -224,7 +224,7 @@ impl States {
     ///
     /// # Errors
     ///
-    /// SQLCODE -916 if an accumulator writes no state, as a grouping run in
+    /// SQLCODE -910 if an accumulator writes no state, as a grouping run in
     /// parallel has none such.
     pub(super) fn sent(self) -> Result<Sent> {
         match self {

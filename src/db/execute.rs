@@ -269,11 +269,6 @@ impl Session {
         self.db.noted(self.completed(&tx, settled(cx, stmt, ran)))
     }
 
-    /// [X3.135-1986 §8.4, §8.11] The positioned DELETE or UPDATE of
-    /// `table` giving `set`, bound as `kind`, run in `cx` by `run` through
-    /// the cursor its `<cursor name>` names: a dynamic cursor's, of a
-    /// statement prepared that names it [ISO/IEC 9075:1992 §17.6 GR2]; of
-    /// a prepared statement, bound as it keeps it (`keeping`, RULES.md D45).
     /// The positioned UPDATE or DELETE `stmt`, run as `positioned` runs it.
     fn positioned_statement(
         &self,
@@ -290,6 +285,11 @@ impl Session {
         Err(SqlError::new(Code::Api, "[DESIGN] a positioned statement is an UPDATE or a DELETE"))
     }
 
+    /// [X3.135-1986 §8.4, §8.11] The positioned DELETE or UPDATE of
+    /// `table` giving `set`, bound as `kind`, run in `cx` by `run` through
+    /// the cursor its `<cursor name>` names: a dynamic cursor's, of a
+    /// statement prepared that names it [ISO/IEC 9075:1992 §17.6 GR2]; of
+    /// a prepared statement, bound as it keeps it (`keeping`, RULES.md D45).
     fn positioned(
         &self,
         cx: StatementContext<'_>,

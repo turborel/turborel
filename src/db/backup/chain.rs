@@ -60,8 +60,7 @@ pub fn manifest_of(target: &Arc<dyn BackupTarget>, id: &str, reading: &Reading) 
 /// # Errors
 ///
 /// As `manifest_of`, for each; SQLCODE -916 (SQLSTATE TBB01) if a parent
-/// is missing, the chain is longer than `MAX_CHAIN`, or a file's chunks
-/// differ in number from its length's.
+/// is missing, or the chain is longer than `MAX_CHAIN`.
 pub fn chain_of(target: &Arc<dyn BackupTarget>, id: &str, reading: &Reading) -> Result<Vec<Manifest>> {
     let mut chain = vec![manifest_of(target, id, reading)?];
     while let Some(last) = chain.last().filter(|m| m.kind == BackupKind::Incremental) {

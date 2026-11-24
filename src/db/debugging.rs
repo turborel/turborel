@@ -3,9 +3,6 @@
 //! `DebugTarget`, sets and clears breakpoints in the routines and triggers
 //! it may debug, tells the target, paused, how to go on, and waits for
 //! what it hears of it.
-//!
-//! The plan this was built by is kept outside the repository, in
-//! turborel-work/rv-debugger-plan/PLAN.md.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

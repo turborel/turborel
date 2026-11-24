@@ -289,9 +289,15 @@ impl TcpTransport {
     /// is told.
     async fn accept_all(self: Arc<Self>, listener: TcpListener, db: Database, asker: JobAsker) {
         loop {
-            let Ok((stream, peer)) = listener.accept().await else {
-                tokio::time::sleep(self.retry).await;
-                continue;
+            let (stream, peer) = match listener.accept().await {
+                Ok(accepted) => accepted,
+                Err(e) => {
+                    // An accept a signal interrupts is asked again at once.
+                    if e.kind() != std::io::ErrorKind::Interrupted {
+                        tokio::time::sleep(self.retry).await;
+                    }
+                    continue;
+                }
             };
             let reading = Arc::clone(&self);
             let (telling, asker) = (db.clone(), asker.clone());

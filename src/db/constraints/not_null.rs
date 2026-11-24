@@ -11,7 +11,7 @@ impl Described<'_> {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if no name is free.
+    /// None in practice: one of the implementation's names is free.
     pub(in crate::db) fn not_null(&mut self, at: usize) -> Result<()> {
         self.attributes = ConstraintAttributes::default();
         self.add(None, "NOTNULL", ConstraintKind::NotNull(at))

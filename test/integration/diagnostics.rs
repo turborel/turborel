@@ -7,7 +7,7 @@ use turborel::error::Code;
 use turborel::index::BTreeMethod;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{Kept, Scramble, Scratch, arm, gated, locked, os};
+use crate::common::{Kept, RunLength, Scramble, Scratch, arm, gated, locked, os};
 
 /// Verifies: [DESIGN] RULES.md D40, `Diagnostics`: a database kept in a
 /// directory tells its sink it was created, of each checkpoint taken, of a
@@ -228,6 +228,30 @@ fn a_slow_statement_of_an_encrypted_database_is_told_without_its_text() {
     let told = slow(&kept);
     assert_eq!(told.len(), 1, "{told:?}");
     assert!(told[0].contains(r#"user: "X""#) && told[0].contains("statement: None"), "{told:?}");
+    holder.commit().unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D1043: a slow statement is told with its
+/// text while the spill areas pass through a compression alone, nothing
+/// of the database encrypted, and without it once they are encrypted.
+#[test]
+fn a_slow_statement_is_told_with_its_text_while_spills_are_only_compressed() {
+    let (db, holder) = locked();
+    db.register_encoding(Box::new(RunLength)).unwrap();
+    db.register_encoding(Box::new(Scramble)).unwrap();
+    let kept = Kept::default();
+    db.set_diagnostics(Box::new(kept.clone())).unwrap();
+    db.set_setting("DIAGNOSTICS.SLOW_STATEMENT_MS", &Value::Exact(Decimal::new(20, 0))).unwrap();
+    let waiter = db.session("X");
+    waiter.run("SET LOCKS.TIMEOUT_MS = 40").unwrap();
+    for (encodings, text) in [("test run-length", "INSERT INTO L VALUES (2)"), ("test scramble", "statement: None")] {
+        db.set_setting("SPILL.ENCODINGS", &Value::Char(encodings.into())).unwrap();
+        kept.taken();
+        assert!(waiter.run("INSERT INTO L VALUES (2)").is_err(), "waited, then refused");
+        let told = slow(&kept);
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert!(told[0].contains(r#"user: "X""#) && told[0].contains(text), "{encodings}: {told:?}");
+    }
     holder.commit().unwrap();
 }
 

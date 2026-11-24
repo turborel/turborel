@@ -134,7 +134,7 @@ pub(crate) fn assign_target(target: &Target, value: Value, frame: &mut Params) -
 ///
 /// # Errors
 ///
-/// SQLSTATE 2202H of a field of a null row [GR4a]; 2202D of an attribute
+/// SQLSTATE 2202A of a field of a null row [GR4a]; 2202D of an attribute
 /// of a null value, as its mutator raises [ISO/IEC 9075-2:2023 §9.18 GR4].
 fn with_field(held: Value, path: &[Modified], value: Value) -> Result<Value> {
     let Some((first, rest)) = path.split_first() else { return Ok(value) };

@@ -8,8 +8,9 @@
 //! The rows are those the filter keeps [X3.135-1986 §5.20 GR2b, §5.21
 //! GR2], or of a LEFT outer join [ISO/IEC 9075:1992 §7.5] those and each
 //! left row matching none with nulls, in the order of the left operand,
-//! each row's matches in the right's (`exec/join/range.rs`). The operand
-//! sorted, the right, is the one of fewer estimated rows, as a hash join's
+//! each row's matches in the right's, while the sorted rows fit the work
+//! area (`exec/join/range.rs`). The operand sorted, the right, is the one
+//! of fewer estimated rows, as a hash join's
 //! built side is (`physical/join.rs`); the join of the operands swapped is
 //! put back in order by a projection. Comparisons are judged once for each
 //! row of an operand and the rest of the condition only on the pairs the

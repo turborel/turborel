@@ -1,8 +1,8 @@
 //! \[EXTENSION\] CREATE INDEX, DROP INDEX and ALTER INDEX in SQL (RULES.md
 //! D34, D41): the statements of `Database::create_index`, `drop_index` and
 //! the index options. An index is built while transactions go on writing
-//! its table (`db/indexes.rs`), so these run outside a transaction, as
-//! PostgreSQL's CREATE INDEX CONCURRENTLY does, each made at once; and only
+//! its table (`db/indexes.rs`), so these run outside a transaction, each
+//! made at once; and only
 //! by the owner of the table's schema, as ALTER TABLE [ISO/IEC 9075:1992
 //! §11.10 AR1]. An index takes no UNIQUE: a UNIQUE constraint makes its own
 //! [X3.135-1986 §6.4].

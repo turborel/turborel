@@ -87,9 +87,10 @@ impl State {
         self.invokers_of(&lost)
     }
 
-    /// The columns DROP TYPE `qn` with CASCADE loses, or of each type of
-    /// a schema it drops, in the tables of a schema `within` takes: of a
-    /// type based on them, and generated columns that reference them.
+    /// The columns DROP TYPE with CASCADE loses of each of `types`, one
+    /// type or each type of a schema being dropped, in the tables of a
+    /// schema `within` takes: of a type based on them, and generated
+    /// columns that reference them.
     pub(in crate::db) fn columns_lost_with(&self, types: &[QualifiedName], within: &dyn Fn(&str) -> bool) -> Vec<Column> {
         let mut gone: Vec<QualifiedName> = Vec::new();
         for qn in types {

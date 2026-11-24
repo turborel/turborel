@@ -1,5 +1,5 @@
 //! \[DESIGN\] The database's logical clock (RULES.md D29): transaction ids,
-//! commit timestamps, the stable timestamp snapshots read at, and the
+//! commit timestamps, the durable timestamp snapshots read at, and the
 //! horizon, the oldest open snapshot. Every transaction uses it, so no
 //! global lock is taken on its way: transactions writing tables of their
 //! own would otherwise wait on that one lock.
@@ -9,8 +9,8 @@
 //!   and so on. A commit that ends marks its timestamp in a ring; the
 //!   *stable* timestamp, below which every commit has ended, is advanced
 //!   over the marked ones by whichever commit ends, by compare-and-swap. A
-//!   snapshot is one read of it. A commit waits only if the ring would
-//!   wrap onto one not ended, with `RING` commits under way.
+//!   commit waits only if the ring would wrap onto one not durable, with
+//!   `RING` commits under way.
 //! * **Durable** is the timestamp below which every commit has also been
 //!   made durable, its commit record synced or needing no sync, kept as
 //!   the stable timestamp is in a second ring (RULES.md D441). A snapshot

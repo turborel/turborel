@@ -69,7 +69,7 @@ pub fn based_on(t: &DataType, name: &QualifiedName) -> bool {
     match t {
         DataType::Distinct(d) => (d.schema == name.auth && d.name == name.ident) || based_on(&d.source, name),
         // [§4.2] It, or of a subtype of it; of its attributes and subtypes
-        // the catalog knows (`Catalog::type_based_on`). A reference type is
+        // the catalog knows (`types_based_on`). A reference type is
         // based on nothing, its referenced type usage-dependent on it.
         DataType::Structured(s) => s.precedence().any(|n| n.schema == name.auth && n.name == name.ident),
         DataType::Array(a) => based_on(&a.element, name),

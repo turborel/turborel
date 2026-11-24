@@ -55,8 +55,8 @@ pub enum Transfer {
 /// \[DESIGN\] (RULES.md D665) The phase over a chain.
 #[derive(Debug, Clone)]
 pub struct Phase {
-    /// The chain: inner hash joins, and filters and projections over
-    /// them, down to its leaves (`transfer/chain.rs`).
+    /// The chain: inner hash joins, LEFT outer joins, and filters and
+    /// projections over them, down to its leaves (`transfer/chain.rs`).
     pub input: Plan,
     /// The steps, in order: those from the leaves to the root, then back.
     pub steps: Vec<Step>,

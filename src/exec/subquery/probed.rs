@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use super::Runner;
-use super::planned::Planned;
+use super::planned::{KeptRun, Planned};
 use crate::logical::{Decorrelated, Subquery};
 use crate::physical::estimated_rows;
 
@@ -38,10 +38,7 @@ impl Runner {
     /// run past EXECUTOR.DECORRELATE_AFTER_RUNS that stayed probed made
     /// it again.
     pub(super) fn decorrelation_of(&self, subquery: &Subquery, at: u64) -> Option<Arc<Decorrelated>> {
-        let kept = match self.seen.borrow().get(&at).map(|seen| &seen.planned) {
-            Some(Planned::Kept(kept)) => Some(Arc::clone(kept)),
-            Some(Planned::Untried | Planned::Learning(..) | Planned::Varies) | None => None,
-        };
+        let kept = self.seen.borrow().get(&at).and_then(|seen| kept_of(&seen.planned));
         match kept {
             Some(kept) => kept.decorrelated(subquery),
             None => subquery.decorrelated().map(Arc::new),
@@ -53,11 +50,13 @@ impl Runner {
     /// probe of a whole unique key, and its probes, weighed as `PROBE_ROWS`
     /// rows each, come to fewer than the rows its build would hold.
     pub(super) fn probes_pay(&self, at: u64, runs: usize, how: &Decorrelated) -> bool {
-        let (probed, known) = match self.seen.borrow().get(&at) {
-            Some(seen) => (matches!(seen.planned, Planned::Kept(..)), seen.built_rows),
-            None => (false, None),
+        let (kept, known) = match self.seen.borrow().get(&at) {
+            Some(seen) => (kept_of(&seen.planned), seen.built_rows),
+            None => (None, None),
         };
-        if !probed {
+        // A plan learned over its runs is kept too, and may read many
+        // rows a run (RULES.md D1046).
+        if !kept.is_some_and(|kept| kept.probes(&self.db)) {
             return false;
         }
         let built = known.unwrap_or_else(|| estimated_rows(&self.db, &how.plan));
@@ -65,6 +64,14 @@ impl Runner {
             seen.built_rows = Some(built);
         }
         crate::storage::cost_of(runs) * PROBE_ROWS < built
+    }
+}
+
+/// The plan `planned` keeps, if it keeps one.
+fn kept_of(planned: &Planned) -> Option<Arc<KeptRun>> {
+    match planned {
+        Planned::Kept(kept) => Some(Arc::clone(kept)),
+        Planned::Untried | Planned::Learning(..) | Planned::Varies => None,
     }
 }
 

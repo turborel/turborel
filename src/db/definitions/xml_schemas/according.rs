@@ -12,7 +12,7 @@
 //!   namespace that the user may use, and of the schema location if one
 //!   is written, the one of the least name, schema then identifier,
 //!   which is repeatable as the rule asks [SR2b ii 1]. The permanently
-//!   registered ones come last, as turborel holds no components of them.
+//!   registered ones come last.
 //! - The registered XML Schema shall have the namespace the element clause
 //!   indicates, and the global element declaration it names [SR4b, SR4d
 //!   iii]: one that has not raises, as the type or clause is bound, the

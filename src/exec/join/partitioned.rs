@@ -111,7 +111,7 @@ impl Partitions {
         Ok(())
     }
 
-    /// Writes right row `row`, of key values `b`, to its partition.
+    /// Writes right row `row` to its partition.
     fn add_right(&mut self, row: &Row) -> Result<()> {
         let at = self.of_key(row, Operand::Right)?;
         let (run, bytes) = self.right.get_mut(at).ok_or_else(lost)?;

@@ -83,7 +83,7 @@ impl State {
     }
 
     /// [ISO/IEC 9075-2:2023 §11.60 SR10] The PTF part of the descriptor of
-    /// the function of PTF body `def`, of the public parameters `public`,
+    /// the function of PTF body `def`,
     /// its names without a schema in `schema`, of owner `owner`.
     ///
     /// # Errors

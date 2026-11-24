@@ -82,8 +82,8 @@ impl SemiJoin {
 /// it probes by and the rest of its condition.
 type IndexSemi = (Probing, f64, Vec<(usize, usize)>, Vec<Cond>);
 
-/// What a semi join is made of: whether an antijoin, its operands' plans,
-/// its condition over the pair's columns, and their degrees.
+/// What a semi join is made of: whether an antijoin, its condition over
+/// the pair's columns, and its operands' degrees.
 pub(super) struct Semi {
     pub(super) anti: bool,
     pub(super) cond: Cond,
@@ -124,7 +124,7 @@ impl PhysicalPlanner<'_> {
     /// The semi join, or of `anti` the antijoin, of `left` and `right` on
     /// `cond`, not of a chain the enumeration plans: by an index of the
     /// right's table if its probes cost less, else hashed, the left built
-    /// if it has fewer rows than the right and its order is not asked.
+    /// if it has fewer rows than the right.
     pub(super) fn semi_join(&self, (anti, cond): (bool, &Cond), (left, right): (&LogicalPlan, &LogicalPlan), want: &[SortKey]) -> Built {
         let width = left.width();
         let est = self.estimating(|e| e.semi_card((anti, cond), (left, right))).rows;

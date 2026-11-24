@@ -7,8 +7,9 @@
 //! Leis et al., "Morsel-Driven Parallelism" (2014), run a morsel's
 //! pipeline fragment whole on one thread. A pipeline whose every branch
 //! is a table's scan whose engine reads by batch, and whose every step is
-//! a filter or a projection the serial stream reads by batch, is read so;
-//! any other, as a hash join's probe, row by row (`parallel/pipeline.rs`).
+//! a filter, a projection or a hash join's probe the serial stream reads
+//! by batch, is read so; any other, as an index scan's, row by row
+//! (`parallel/pipeline.rs`).
 //! A morsel's batches give the rows, in the order, and raise the error,
 //! that its rows would.
 

@@ -10,7 +10,7 @@ use crate::physical::PhysicalPlanner;
 use crate::value::{ArithOp, DataType, Value};
 
 impl PhysicalPlanner<'_> {
-    /// The type of `plan`'s column `column`, if it is a table's column.
+    /// The type of `plan`'s column `column`, if known.
     pub(in crate::physical) fn column_type(&self, plan: &LogicalPlan, column: usize) -> Option<DataType> {
         match plan {
             LogicalPlan::Scan { table, .. } => self.db.catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone()),

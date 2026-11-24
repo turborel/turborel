@@ -8,7 +8,8 @@
 //! its local cursors the session's cursors, its diagnostics area the
 //! session's, and each statement that changes data is undone alone if it
 //! fails (`db/routines/program.rs`). The executor's runs a function a query
-//! evaluates, which reads SQL-data and changes none (`program/executor.rs`).
+//! evaluates, which reads SQL-data and changes none
+//! (`db/routines/program/executor.rs`).
 //!
 //! Each statement is run in its turn, and a condition it raises, an
 //! exception or a completion condition other than successful completion,

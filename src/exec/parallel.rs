@@ -21,7 +21,9 @@
 //! (RULES.md D29); each morsel looks at its cancellation (RULES.md D44);
 //! the first error in the order of the rows is the one raised, and none
 //! after it is read. A part holds no more than one work grant, split among
-//! its partitions (RULES.md D38, D298). One that would hold more gives way to
+//! its partitions (RULES.md D38, D298). A sort that would hold more spills
+//! its runs, and a window's or a set operation's partition its rows; a
+//! grouping or a join's built operand that would hold more gives way to
 //! the plan run alone, which spills, reading its rows again in the
 //! statement's snapshot, as does a part of a table its engine cannot
 //! split.

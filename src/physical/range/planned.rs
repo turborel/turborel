@@ -1,9 +1,9 @@
 //! \[DESIGN\] A filter over a product planned as a range join (RULES.md
 //! D580), and the plan node made of what the search answers: the operand
-//! of fewer estimated rows sorted, unless the left's order is the order
-//! asked for, if the range join is estimated cheaper than the nested loop,
-//! the hash join on the condition's equalities, and an index probed by its
-//! comparisons, whichever the condition allows (`physical/range/cost.rs`).
+//! of fewer estimated rows sorted, if the range join is estimated cheaper
+//! than the nested loop, the hash join on the condition's equalities, and
+//! an index probed by its comparisons, whichever the condition allows
+//! (`physical/range/cost.rs`).
 
 use super::{RangeJoin, Ranged, expanded_periods, range_cost, ranged};
 use std::fmt::Write;
@@ -79,7 +79,7 @@ impl PhysicalPlanner<'_> {
 
     /// The cheaper way round of a range join of `left` and `right` on
     /// `cond`, estimated to give `est` rows, if it may be one: not swapped,
-    /// if `kept`, the left's order being kept.
+    /// if `kept`, as the preserved operand of an outer join searches.
     pub(super) fn range_way(&self, cond: &Cond, (left, right): (&LogicalPlan, &LogicalPlan), (est, kept): (f64, bool)) -> Option<Way> {
         if !self.db.settings.is_on(RANGE_JOINS) || self.cond_raises(cond, (left, right)) {
             return None;

@@ -104,8 +104,8 @@ impl<'a> Framed<'a> {
         Ok(Framed { call, slot, way, last: None })
     }
 
-    /// Its value over `frame`, the frame of `current`, and whether it left
-    /// out a null: of the frame of the row before if alike.
+    /// Its value over `frame`, the frame of the current row, and whether it
+    /// left out a null: of the frame of the row before if alike.
     ///
     /// # Errors
     ///

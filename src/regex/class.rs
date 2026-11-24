@@ -132,7 +132,7 @@ impl CharSet {
 
 /// [XSD 1.1 Part 2 §G.4.2.5] The set of the multi-character escape `\`
 /// `letter`, but `\d`, `\D`, `\w` and `\W`, which a category gives
-/// (`Classes::multi`); none if it names none of the others.
+/// (`Parser::categorized`); none if it names none of the others.
 pub(super) fn fixed_escape(letter: char) -> Option<CharSet> {
     let name_start = || CharSet::of(NAME_START.to_vec());
     let name = || name_start().union(&CharSet::of(NAME_MORE.to_vec()));

@@ -12,9 +12,11 @@
 //!
 //! The statement is one an SQL routine body may contain: INSERT, a
 //! searched UPDATE or DELETE, MERGE, a `<select statement: single row>`,
-//! GET DIAGNOSTICS, CALL, a savepoint's statement [§9.18 GR8b iv 2], and
-//! in a function's body RETURN. A schema, connection, session or dynamic
-//! statement, COMMIT, ROLLBACK but to a savepoint, or one of a cursor, is
+//! GET DIAGNOSTICS, CALL, a savepoint's statement [§9.18 GR8b iv 2], an
+//! SQL control statement, SIGNAL or RESIGNAL, a statement of a PTF data
+//! area, and in a function's body RETURN. A schema, connection or session
+//! statement, a dynamic one but of a PTF data area, COMMIT, ROLLBACK but
+//! to a savepoint, or one of a cursor, is
 //! refused (IA078) [SR23f, SR23g], so SQLSTATE 2F003 is never raised
 //! [§9.18 GR8b iii to vi]. So too a body that possibly reads
 //! SQL-data of a routine of CONTAINS SQL (IA076), and one that possibly

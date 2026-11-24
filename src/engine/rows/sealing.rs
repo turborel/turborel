@@ -147,7 +147,7 @@ impl Sealing {
     ///
     /// # Errors
     ///
-    /// As `record`.
+    /// As `record_after`.
     pub(super) fn value(&self, id: RowId, value: &[u8], out: &mut Vec<u8>) -> Result<()> {
         self.pipeline()?.seal(id, value, out)
     }

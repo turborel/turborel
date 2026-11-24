@@ -19,7 +19,7 @@
 //! | `IndexMethod`       | btree, hash           | planner, UNIQUE \[EXTENSION\]      |
 //! | `AggregateFunction` | COUNT SUM AVG MAX MIN | set functions [X3.135-1986 §5.8] |
 //! | `ScalarFunction`    | SQL-92 string functions | standard syntax, \[EXTENSION\] call syntax |
-//! | `Rule`              | eleven rewrite rules  | optimizer                        |
+//! | `Rule`              | 24 rewrite rules      | optimizer                        |
 //! | `Diagnostics`       | none: events dropped  | the database's events (RULES.md D40) |
 //! | `Spill`             | `PagedSpill`          | operators past MEMORY.WORK_BYTES (RULES.md D38) |
 //! | `Credentials`       | none: no password kept | CREATE and ALTER USER (RULES.md D43) |

@@ -8,7 +8,8 @@
 //! (`dependents.rs`).
 //!
 //! Its statements are those a triggered action may run: INSERT, a
-//! searched UPDATE or DELETE, MERGE, a `<select statement: single row>`
+//! searched UPDATE or DELETE, MERGE, a `<select statement: single row>`,
+//! CALL, an SQL control statement, SIGNAL or RESIGNAL,
 //! and GET DIAGNOSTICS. A schema, transaction, connection, session or
 //! dynamic statement, a savepoint's, or one of a cursor, is refused as
 //! the trigger is defined (IA046); a savepoint's in a procedure it calls

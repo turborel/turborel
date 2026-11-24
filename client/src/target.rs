@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::connection::{Connection, Mechanism, Result, TlsChannel, failed, in_the_clear};
 #[cfg(unix)]
 use crate::timeouts::limit;
-use crate::timeouts::{Bound, Timeouts, io_failed};
+use crate::timeouts::{Bound, Timeouts, io_failed, uninterrupted};
 use crate::told::Offer;
 
 /// A stream that reads and writes, of any transport.
@@ -157,7 +157,8 @@ impl Target {
             }
             #[cfg(unix)]
             Target::Local(path) => {
-                let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| io_failed("connect", &e))?;
+                let made = uninterrupted(|| std::os::unix::net::UnixStream::connect(path));
+                let stream = made.map_err(|e| io_failed("connect", &e))?;
                 limit(&stream, within)?;
                 Ok((Box::new(stream), None))
             }
@@ -181,10 +182,10 @@ impl Target {
 ///
 /// A connection failure if it cannot be made, in time.
 fn connected(address: &SocketAddr, limit: Option<Duration>) -> Result<TcpStream> {
-    let stream = match limit {
+    let stream = uninterrupted(|| match limit {
         Some(limit) => TcpStream::connect_timeout(address, limit),
         None => TcpStream::connect(address),
-    }
+    })
     .map_err(|e| io_failed("connect", &e))?;
     stream
         .set_read_timeout(limit)

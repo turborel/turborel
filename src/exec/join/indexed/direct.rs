@@ -15,7 +15,8 @@
 //! is taken only of an inner join by the columns of its left operand,
 //! each of the type of the key column it is compared with, or a constant
 //! that column's type takes unchanged, so each value is one of its
-//! column's; any other join is the executor's.
+//! column's, and only of an index that is unique, as the read stops at a
+//! key's first row (D1040); any other join is the executor's.
 
 use std::sync::Arc;
 
@@ -109,7 +110,9 @@ impl Direct {
         let ix = st.catalog.index(index)?;
         let same =
             |(&key, &column): (&usize, &usize)| left.get(key).zip(types.get(column)).is_some_and(|(l, r)| l.placed_as_is(&r.data_type));
-        if keys.len() != ix.columns.len() || !keys.iter().zip(&ix.columns).all(same) {
+        // A key that is not unique may have many rows, and the read stops
+        // at a key's first (RULES.md D1040).
+        if !ix.unique || keys.len() != ix.columns.len() || !keys.iter().zip(&ix.columns).all(same) {
             return None;
         }
         if is_global_index(index) {

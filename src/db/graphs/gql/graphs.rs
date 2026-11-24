@@ -40,7 +40,7 @@ pub(crate) const SEQUENCE: &str = "SEQ";
 ///
 /// # Errors
 ///
-/// SQLCODE -102 if it defines none.
+/// SQLCODE -103 if it defines none; its parse's.
 pub(crate) fn graph_type_of(text: &str) -> Result<GraphTypeDefinition> {
     let SqlStatement::Schema { statement: SchemaStatement::GraphType(t), .. } = Parser::for_stored(text)?.sql_statement()? else {
         return Err(rule(format!("[DESIGN] {text} defines no graph type")));

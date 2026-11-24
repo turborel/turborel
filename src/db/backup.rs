@@ -71,7 +71,7 @@ pub(crate) struct Backups {
 
 /// \[EXTENSION\] The first position of the log a checkpoint keeps, as the
 /// archive needs (RULES.md D163): every position, until the archiver
-/// knows how far the archive goes; then the first not yet archived; or
+/// knows how far the archive goes; then the last archived; or
 /// none while archiving is off.
 #[derive(Debug)]
 pub(crate) struct Floor(AtomicU64);
@@ -98,7 +98,7 @@ impl Floor {
         let _ = self.0.compare_exchange(FREE, 0, Ordering::AcqRel, Ordering::Acquire);
     }
 
-    /// Holds back the records from `first` on, the first not archived.
+    /// Holds back the records from `first` on, the last archived.
     pub(crate) fn hold_from(&self, first: Lsn) {
         self.0.store(first.0, Ordering::Release);
     }

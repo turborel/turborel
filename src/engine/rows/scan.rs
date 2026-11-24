@@ -198,7 +198,8 @@ impl RowTable {
     }
 
     /// The rows `tx` sees, `columns` decoded, and only those `condition`
-    /// matches, if given, which is then what counts as read.
+    /// matches, if given, which is then what counts as read; of a table
+    /// that holds no group, every row of the zones it may match.
     pub(super) fn scan_rows(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>) -> Rows {
         let read = || Read::scan(condition.as_ref(), columns);
         let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {

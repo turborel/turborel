@@ -66,7 +66,8 @@ impl Invoked {
 
     /// Its result, of the values `arguments` of its arguments and its
     /// table arguments' rows `rows`, where `subqueries` runs a query's
-    /// subqueries, run in `db` for `tx`'s statement.
+    /// subqueries, run in the database and for the statement of the
+    /// transaction `run_in` gives.
     ///
     /// # Errors
     ///

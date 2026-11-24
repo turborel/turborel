@@ -330,7 +330,8 @@ impl Ordered {
         read.map(|()| has)
     }
 
-    /// How the next rows of sources `a` and `b` compare, in the order read.
+    /// How the next rows of sources `first` and `second` compare, in the
+    /// order read.
     fn row_cmp(&self, first: usize, second: usize) -> Ordering {
         let (Some(one), Some(other)) = (self.sources.get(first), self.sources.get(second)) else { return Ordering::Equal };
         let (Some(row), Some(other_row)) = (one.part.current(), other.part.current()) else { return Ordering::Equal };

@@ -222,8 +222,8 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         // A scan in an order too, merged by batch
         // (`TableStorage::scan_ordered_batches`).
         Plan::SeqScan { table, located, .. } => !located && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
-        // A whole sort's rows are held, so given by batch whatever its
-        // input's tables (RULES.md D380).
+        // A whole sort gives batches gathered of its input's, so it reads
+        // by batch where its input does (RULES.md D380).
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, most: None, .. } => reads(input, db, joined),
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }) && reads(input, db, joined),
         Plan::Counted(c) => reads(&c.input, db, joined),
@@ -543,8 +543,8 @@ pub(super) fn pick(batch: Batch, picks: &[usize]) -> Batch {
     Batch { columns, rows: batch.rows }
 }
 
-/// A scan's batches (`scanned`), its columns `deferred` leaves unread
-/// given late (RULES.md D361), told the bound of a sort above if it has
+/// A scan's batches (`TableStorage::scan_batches`), its columns `deferred`
+/// leaves unread given late (RULES.md D361), told the bound of a sort above if it has
 /// one (D379) and the ranges of the runtime filters it is told as
 /// conjuncts, then judged by each of those filters, no row of them
 /// filtered by the condition yet (RULES.md D369).

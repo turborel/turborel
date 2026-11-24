@@ -79,7 +79,7 @@ impl<'s> KeyCheck<'s> {
     ///
     /// # Errors
     ///
-    /// SQLCODE -916 if the table has no storage.
+    /// SQLCODE -910 if the table has no storage.
     pub(in crate::db) fn new(
         (st, txn): (&'s State, &'s Txn),
         desc: &'s TableDesc,
@@ -376,9 +376,6 @@ fn holds(newest: &Newest, has_key: &dyn Fn(&Row) -> Result<bool>) -> Result<bool
     has(&newest.row)
 }
 
-/// The message of a duplicate of `columns` of the table `desc`: its
-/// UNIQUE or PRIMARY KEY constraint `name`, as GET DIAGNOSTICS names it,
-/// and of one WITHOUT OVERLAPS, its period.
 /// \[DESIGN\] What a key another row holds says, as a structured failure's
 /// detail (RULES.md D186): its values as SQL writes them.
 fn held_by_another(key: &Key) -> String {
@@ -386,6 +383,9 @@ fn held_by_another(key: &Key) -> String {
     format!("the key ({}) is held by another row", values.join(", "))
 }
 
+/// The message of a duplicate of `columns` of the table `desc`: its
+/// UNIQUE or PRIMARY KEY constraint `name`, as GET DIAGNOSTICS names it,
+/// and of one WITHOUT OVERLAPS, its period.
 fn duplicated(desc: &TableDesc, name: &QualifiedName, columns: &[usize]) -> String {
     let names: Vec<&str> = columns.iter().filter_map(|&c| desc.columns.get(c)).map(|c| c.name.as_str()).collect();
     let constraint = desc.constraints.iter().find_map(|c| match &c.kind {

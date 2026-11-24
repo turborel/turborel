@@ -318,8 +318,6 @@ impl PhysicalPlanner<'_> {
         best
     }
 
-    /// The indexes of `table`, not partitioned, a probe may read: those
-    /// not being built.
     /// The storage of `table` and the indexes a probe of it may read: of a
     /// partitioned table, its partitions' and its global ones, unless each
     /// row found is followed by its id, as `located` says.
@@ -330,6 +328,8 @@ impl PhysicalPlanner<'_> {
         Some((Arc::clone(self.db.storage_of(table).ok()?), self.own_candidates(table)))
     }
 
+    /// The indexes of `table`, not partitioned, a probe may read: those
+    /// not being built.
     fn own_candidates(&self, table: &QualifiedName) -> Vec<Candidate> {
         let usable = self.db.catalog.indexes(table).into_iter().filter(|ix| !self.db.building.contains(&ix.name));
         usable

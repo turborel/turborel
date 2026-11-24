@@ -479,8 +479,11 @@ async fn listen(endpoint: Endpoint, services: Services, (connections, refusals):
                     }
                 }
                 Err(e) => {
-                    services.accept_failed(&e);
-                    tokio::time::sleep(ACCEPT_BACKOFF).await;
+                    // An accept a signal interrupts is no failure, and is asked again at once.
+                    if e.kind() != std::io::ErrorKind::Interrupted {
+                        services.accept_failed(&e);
+                        tokio::time::sleep(ACCEPT_BACKOFF).await;
+                    }
                 }
             },
         }

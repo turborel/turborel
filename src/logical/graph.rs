@@ -5,7 +5,7 @@
 //!
 //! Its conditions and columns are expressions over one row, its match
 //! row: each element variable's columns, its properties then the hidden
-//! columns of its identity (`VertexColumns`, `EdgeColumns`), then the
+//! columns of its identity (`VERTEX_COLUMNS`, `EDGE_COLUMNS`), then the
 //! values computed of a match (`GraphValue`), then its operands, what it
 //! reads of the rows before it and of enclosing queries, which the plan
 //! evaluates of each row of its input (`Unnest::collections`). So it is

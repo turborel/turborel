@@ -111,7 +111,7 @@ pub(super) fn params(values: &[Typed]) -> (Params, Vec<String>) {
 pub(super) type Written<'a> = (Vec<(String, Typed)>, Option<(&'a str, &'a str)>);
 
 /// Of an edge of `e` and its endpoints `ep` that joins the vertices
-/// `ends` identifies: its select list and its FROM and WHERE, the
+/// `src` and `dst` identify: its select list and its FROM and WHERE, the
 /// endpoint columns added to `names` and the identities to `values`.
 ///
 /// # Errors

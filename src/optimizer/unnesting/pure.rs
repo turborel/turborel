@@ -1,5 +1,5 @@
 //! \[DESIGN\] What unnesting asks of the plans and expressions it moves
-//! (RULES.md D317). Each must give the same rows every time it is
+//! (RULES.md D318). Each must give the same rows every time it is
 //! evaluated, so a domain of bindings made of one evaluation of the outer
 //! rows matches another. Unnesting also asks whether one can raise an
 //! error, so a part evaluated for bindings no row has is never one that

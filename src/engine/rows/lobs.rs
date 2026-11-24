@@ -180,8 +180,9 @@ impl LobSpace {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if there is none, as one freed by a transaction's
-    /// rollback has none, or its page is not its own.
+    /// SQLCODE -301, SQLSTATE 0F001, if there is none, as one freed by a
+    /// transaction's rollback has none; SQLCODE -916 if its page is not
+    /// its own.
     fn get(&self, id: u64) -> Result<Vec<u8>> {
         let Some(entry) = self.tree()?.get(&key(id))? else { return Err(gone(id)) };
         let page = <[u8; 8]>::try_from(entry.as_slice()).map(u64::from_le_bytes).map_err(|_| corrupt("a large object's entry"))?;

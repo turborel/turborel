@@ -107,7 +107,7 @@ impl Inner {
         Some(graph.node_bytes(level))
     }
 
-    /// Plans the insert of a node of `row`, `hash` and layer `level`
+    /// Plans the insert of a node of `vector` and layer `level`
     /// with no lock held, into `s.plan`: the epoch it read and the entry
     /// it searched from, or none if it must start again.
     fn planned(&self, vector: &[f32], level: u8, s: &mut Scratch) -> Result<Option<(u64, u32)>> {
