@@ -34,6 +34,7 @@ mod leaves;
 mod run;
 
 pub(crate) use conditions::{appropriate_among, completed, completion, item_text, raised, unhandled};
+pub(crate) use debug::{pause_most, transition_named};
 pub(crate) use framed::Framed;
 pub(crate) use leaves::{assign_target, rows};
 pub(crate) use run::{Ended, run_program};

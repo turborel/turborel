@@ -10,7 +10,7 @@ use super::super::{Mutation, Package};
 const PRIVILEGES: &str = "src/db/routines/privileges.rs";
 
 /// Mechanisms whose removal must fail the debugger's requirements.
-pub const DEBUGGER: [Mutation; 14] = [
+pub const DEBUGGER: [Mutation; 15] = [
     Mutation {
         name: "debugger-debug-held-by-all",
         package: Package::Core,
@@ -149,6 +149,16 @@ pub const DEBUGGER: [Mutation; 14] = [
         original: "self.places.push(at);",
         replacement: "self.places.push(at - at);",
         integration: &["debugger::a_breakpoint_pauses_and_shows_the_frame"],
+        unit: &[],
+    },
+    Mutation {
+        name: "debugger-plain-trigger-unpaused",
+        package: Package::Core,
+        breaks: "a statement of a plain triggered action never pauses",
+        file: "src/db/triggers/run.rs",
+        original: "let stepped = self.stop.debugged().on() && !matches!(stmt, SqlStatement::Control(_));",
+        replacement: "let stepped = self.stop.debugged().on() && false;",
+        integration: &["debugger::a_plain_triggered_actions_statements_pause"],
         unit: &[],
     },
 ];
