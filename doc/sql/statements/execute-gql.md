@@ -109,7 +109,7 @@ DELETE on the tables a procedure writes.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 42000 | -102 | The text is no GQL request |
-| 2A000 | -103 | A rule above is broken; the GRF codes are in [Appendix A](../../appendix/a-sqlstate.md) |
+| 42000 | -103 | A rule above is broken; the GRF codes are in [Appendix A](../../appendix/a-sqlstate.md) |
 | 42000 | -104 | Its user may not query the graph |
 | 23000 | -201 | A vertex with edges is deleted (GRF-0052), or a typed graph refuses a write (GRF-0053) |
 | 0A000 | -900 | GQL_TABLE's request writes, or is a session statement |

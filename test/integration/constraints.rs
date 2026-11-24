@@ -257,13 +257,13 @@ fn constraints_added_and_dropped_11_16_11_17() {
     assert_eq!(state(&s, "ALTER TABLE P ADD PRIMARY KEY (K)"), "23000", "a null K");
     s.run("UPDATE P SET K = 2 WHERE K IS NULL").unwrap();
     assert_eq!(state(&s, "ALTER TABLE P ADD CONSTRAINT P_KEY PRIMARY KEY (K)"), "00000");
-    assert_eq!(state(&s, "ALTER TABLE P ADD PRIMARY KEY (V)"), "2A000", "a second PRIMARY KEY");
+    assert_eq!(state(&s, "ALTER TABLE P ADD PRIMARY KEY (V)"), "42000", "a second PRIMARY KEY");
     assert_eq!(state(&s, "INSERT INTO P VALUES (2, 9)"), "23000", "enforced");
     assert_eq!(state(&s, "ALTER TABLE C ADD CONSTRAINT C_P FOREIGN KEY (K) REFERENCES P"), "00000");
     assert_eq!(state(&s, "INSERT INTO C VALUES (7)"), "23000", "enforced");
-    assert_eq!(state(&s, "ALTER TABLE P DROP CONSTRAINT NOPE CASCADE"), "2A000");
-    assert_eq!(state(&s, "ALTER TABLE P DROP CONSTRAINT P_KEY RESTRICT"), "2A000", "C_P depends on it");
-    assert_eq!(state(&s, "DROP TABLE P RESTRICT"), "2A000", "C references it");
+    assert_eq!(state(&s, "ALTER TABLE P DROP CONSTRAINT NOPE CASCADE"), "42000");
+    assert_eq!(state(&s, "ALTER TABLE P DROP CONSTRAINT P_KEY RESTRICT"), "42000", "C_P depends on it");
+    assert_eq!(state(&s, "DROP TABLE P RESTRICT"), "42000", "C references it");
     s.run("ALTER TABLE P DROP CONSTRAINT P_KEY CASCADE").unwrap();
     assert_eq!(state(&s, "INSERT INTO C VALUES (7)"), "00000", "C_P went with it");
     assert_eq!(state(&s, "INSERT INTO P VALUES (2, 9)"), "00000", "and the key");
@@ -317,8 +317,8 @@ fn columns_dropped_with_their_constraints_11_15() {
     s.run("ALTER TABLE P DROP COLUMN X RESTRICT").unwrap();
     assert_eq!(state(&s, "INSERT INTO C VALUES (3)"), "23000", "C references K, now first");
     assert_eq!(state(&s, "INSERT INTO P VALUES (2, 5, 5)"), "23000", "A < B");
-    assert_eq!(state(&s, "ALTER TABLE P DROP COLUMN A RESTRICT"), "2A000", "the CHECK and UNIQUE of A and B");
-    assert_eq!(state(&s, "ALTER TABLE P DROP COLUMN K RESTRICT"), "2A000", "C's key references it");
+    assert_eq!(state(&s, "ALTER TABLE P DROP COLUMN A RESTRICT"), "42000", "the CHECK and UNIQUE of A and B");
+    assert_eq!(state(&s, "ALTER TABLE P DROP COLUMN K RESTRICT"), "42000", "C's key references it");
     s.run("ALTER TABLE P DROP COLUMN A CASCADE").unwrap();
     assert_eq!(state(&s, "INSERT INTO P VALUES (2, 1)"), "00000", "neither left");
     s.run("ALTER TABLE P DROP COLUMN K CASCADE").unwrap();

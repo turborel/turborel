@@ -212,7 +212,7 @@ fn lrm_offset_routines_15_1() {
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §15.14, ISO/IEC
 /// 9075-2:2023 §9.2 SR2, §9.18 SR10b] a character string casts to the
 /// value of its text, a value to its own type, and the null value to any;
-/// a value of another type raises 2FF08; a call no routine takes 2A000.
+/// a value of another type raises 2FF08; a call no routine takes 42000.
 #[test]
 fn casts_to_linear_referencing_types() {
     let (_db, a) = session();
@@ -224,7 +224,7 @@ fn casts_to_linear_referencing_types() {
             (&format!("CAST({d} AS ST_DISTANCEEXP)"), "DISEXP MEASURE 3 metre"),
             ("CAST(ST_LRMEASURE(3) AS ST_DISTANCEEXP)", "ERR 2FF08"),
             ("CAST(NULL AS ST_LRM)", "NULL"),
-            ("ST_LRMID(ST_LRMEASURE(3))", "ERR 2A000"),
+            ("ST_LRMID(ST_LRMEASURE(3))", "ERR 42000"),
         ],
     );
 }

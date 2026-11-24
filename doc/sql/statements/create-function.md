@@ -207,9 +207,9 @@ table function holds EXECUTE on each of its components.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist |
-| 2A000 | -102 | The definition is not well formed |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or the owner lacks a privilege the body needs |
+| 42000 | -102 | The definition is not well formed |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema, or the owner lacks a privilege the body needs |
 | 0A000 | -900 | A feature not supported is used |
 | 25000 | -917 | The transaction is READ ONLY |
 
@@ -333,7 +333,7 @@ OK
             1 |      9.50
             2 |     20.00
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): function ANN.LOGGED possibly modifies SQL-data, so it is not invoked here [ISO/IEC 9075-2:2023 §7.17 SR25, §11.49 SR11] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): function ANN.LOGGED possibly modifies SQL-data, so it is not invoked here [ISO/IEC 9075-2:2023 §7.17 SR25, §11.49 SR11] (at character 7)
 ```
 
 Rules refused, and an invocation that fails:
@@ -347,8 +347,8 @@ SELECT TINY(100000) FROM (VALUES (0)) AS ONE (X);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the body of ANN.PEEK possibly reads SQL-data, and it is CONTAINS SQL (IA076) [ISO/IEC 9075-2:2023 §11.60 SR23d]
-turborel: SQLCODE -103 (SQLSTATE 2A000): function ANN.TAXED (INTEGER) is not told apart from function ANN.TAXED_1 (DECIMAL(7,2)), as an invocation of arguments of its types would invoke either [ISO/IEC 9075-2:2023 §11.60 SR20b] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): the body of ANN.PEEK possibly reads SQL-data, and it is CONTAINS SQL (IA076) [ISO/IEC 9075-2:2023 §11.60 SR23d]
+turborel: SQLCODE -103 (SQLSTATE 42000): function ANN.TAXED (INTEGER) is not told apart from function ANN.TAXED_1 (DECIMAL(7,2)), as an invocation of arguments of its types would invoke either [ISO/IEC 9075-2:2023 §11.60 SR20b] (at character 16)
 OK
 turborel: SQLCODE -301 (SQLSTATE 22003): 100000 does not fit SMALLINT without losing leading digits [ISO/IEC 9075-2:2023 §9.18 GR4a ii; ISO/IEC 9075:1992 §9.2 GR3k]
 ```
@@ -398,10 +398,10 @@ OK
            20 |            1 |           10
            40 |            2 |           20
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a polymorphic table function of no <table function column list> nor ONLY PASS THROUGH has a PTF describe component procedure [ISO/IEC 9075-2:2023 §11.60 SR10m]
-turborel: SQLCODE -103 (SQLSTATE 2A000): the parameters of PTF fulfill component procedure ANN.TWICE_F do not conform to (IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), INOUT CHARACTER(5)) [ISO/IEC 9075-2:2023 §11.60 SR10h]
-turborel: SQLCODE -103 (SQLSTATE 2A000): a <PTF derived table> has a correlation name [ISO/IEC 9075-2:2023 §7.6 SR7d ii] (at character 21)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a table argument of a parameter of row semantics has no PARTITION BY [ISO/IEC 9075-2:2023 §9.18 SR12b iii 1] (at character 28)
+turborel: SQLCODE -103 (SQLSTATE 42000): a polymorphic table function of no <table function column list> nor ONLY PASS THROUGH has a PTF describe component procedure [ISO/IEC 9075-2:2023 §11.60 SR10m]
+turborel: SQLCODE -103 (SQLSTATE 42000): the parameters of PTF fulfill component procedure ANN.TWICE_F do not conform to (IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), IN CHARACTER VARYING(128), INOUT CHARACTER(5)) [ISO/IEC 9075-2:2023 §11.60 SR10h]
+turborel: SQLCODE -103 (SQLSTATE 42000): a <PTF derived table> has a correlation name [ISO/IEC 9075-2:2023 §7.6 SR7d ii] (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): a table argument of a parameter of row semantics has no PARTITION BY [ISO/IEC 9075-2:2023 §9.18 SR12b iii 1] (at character 28)
 ```
 
 ## STANDARD

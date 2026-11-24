@@ -57,9 +57,9 @@ The schema of each table indexed is its user's.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -102 | Neither VERTEX nor EDGE comes before TABLE |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own a table's schema |
+| 42000 | -102 | Neither VERTEX nor EDGE comes before TABLE |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own a table's schema |
 | 0A000 | -900 | A key column of a table indexed may be null |
 
 ## EXAMPLES

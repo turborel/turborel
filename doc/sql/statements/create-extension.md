@@ -63,9 +63,9 @@ user may call its objects.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not of the form above |
-| 2A000 | -103 | Rule 1 is broken |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -102 | The statement is not of the form above |
+| 42000 | -103 | Rule 1 is broken |
+| 42000 | -104 | Its user is not the database's owner |
 | 38T05 | -301 | The directory is under none of PLUGINS.DIRECTORIES, or no cryptography is given to check a package |
 | 38T06 | -301 | The manifest breaks a rule of format 1 |
 | 38T07 | -301 | A package's files are not those its digests name |
@@ -103,7 +103,7 @@ CREATE EXTENSION EXAMPLE;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is an extension EXAMPLE already (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is an extension EXAMPLE already (at character 17)
 ```
 
 ## STANDARD

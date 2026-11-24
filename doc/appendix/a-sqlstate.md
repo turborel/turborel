@@ -4,7 +4,7 @@
 
 Every statement completes with an SQLSTATE, five characters, and an
 SQLCODE, a number. The client shows both of an error or a warning:
-`turborel: SQLCODE -103 (SQLSTATE 2A000): ...`. In a program,
+`turborel: SQLCODE -103 (SQLSTATE 42000): ...`. In a program,
 [GET DIAGNOSTICS](../sql/statements/get-diagnostics.md) reads them.
 
 ## SQLSTATE values
@@ -67,7 +67,7 @@ its own; class TB is turborel's own.
 | 22000 | Data exception: a path's `%` of an approximate number or one with a fraction; vectors of other dimension counts or formats |
 | 22001 | String data, right truncation: a string too long for its type, JSON_QUERY's JSON text longer than its returned type whatever ON ERROR says among them; FROM_VECTOR of a vector whose text is longer than a character string |
 | 22002 | Null value, no indicator parameter |
-| 22003 | Numeric value out of range, a number of JSON text of more than 34 significant digits among them, wherever JSON text is read, IS JSON too; a vector element out of its format's range, NaN or infinite, or a vector distance that overflows |
+| 22003 | Numeric value out of range: a value that does not fit its type, given as a parameter, cast from text, as the text of more digits than the maximum precision, or computed; a number of JSON text of more than 34 significant digits among them, wherever JSON text is read, IS JSON too; a vector element out of its format's range, NaN or infinite, or a vector distance that overflows |
 | 22004 | Null value not allowed: a null name of a member of JSON_OBJECT or JSON_OBJECTAGG |
 | 22005 | Error in assignment |
 | 22007 | Invalid datetime format |
@@ -151,7 +151,6 @@ its own; class TB is turborel's own.
 | 27000 | Triggered data change violation: a row changed twice by referential actions |
 | 27001 | Triggered data change violation: modify table modified by data change delta table, a referential action's change of the subject table of a FINAL TABLE |
 | 28000 | Invalid authorization specification |
-| 2A000 | Syntax error or access rule violation in a direct SQL statement |
 | 2B000 | Dependent privilege descriptors still exist |
 | 2E000 | Invalid connection name |
 | 2F002 | SQL routine exception: modifying SQL-data not permitted, of a plug-in's procedure that does not say MODIFIES SQL DATA |
@@ -203,7 +202,6 @@ its own; class TB is turborel's own.
 | 34000 | Invalid cursor name: of a cursor allocated, or a positioned statement prepared |
 | 35000 | Invalid condition number |
 | 36002 | Cursor sensitivity exception: request failed, of TRUNCATE TABLE while a cursor of the transaction reads the table |
-| 37000 | Syntax error or access rule violation in a dynamic SQL statement |
 | 38000 | External routine exception: a plug-in's error of a class a routine may not raise |
 | 38T01 | External routine exception: a plug-in's process ended, crashed or closed a pipe; the next call starts another |
 | 38T02 | External routine exception: a plug-in's call ran past PLUGINS.CALL_TIMEOUT_MS, or a starting plug-in gave no WELCOME in time, its process stopped |
@@ -225,6 +223,7 @@ its own; class TB is turborel's own.
 | 40000 | Transaction rollback |
 | 40001 | Transaction rollback: serialization failure |
 | 40002 | Transaction rollback: integrity constraint violation, at commit |
+| 42000 | Syntax error or access rule violation: a statement breaks a rule of its form, its names, its types or its privileges, run directly or prepared alike; an exact numeric literal of more digits than the maximum precision, 38, or an approximate one beyond the range of DOUBLE PRECISION |
 | 44000 | With check option violation |
 | 54061 | Program limit exceeded: a GRAPH_TABLE's search passed MAX_PATH_LENGTH, MAX_PATHS_PER_PARTITION or MAX_SEARCH_STATES (GRF-0061) |
 | TB910 | The Rust API was misused, or a defect, or a registered vector distance function that breaks its contract |
@@ -239,9 +238,10 @@ its own; class TB is turborel's own.
 | TBB02 | A restore's recovery target is not among the records the backup and the archive hold *(extension)* |
 | TBR01 | A session's REPLICATION.READ_AFTER names a log position the database did not apply within STATEMENT.TIMEOUT_MS *(extension)* |
 
-Statements are run directly, so an error of the rules of a statement's
-form, its names or its privileges is class 2A; while preparing one, class
-37.
+An error of the rules of a statement's form, its names or its privileges
+is class 42, whether the statement is run directly or prepared, by
+PREPARE, EXECUTE IMMEDIATE or a client [ISO/IEC 9075-2:2023 §20.7 GR6c,
+§22.1 GR6a]. The SQLCODE tells which rule: -101, -102, -103 or -104.
 
 ## SQLCODE values
 
@@ -273,13 +273,14 @@ negative of an exception:
 | -921 | A dynamic SQL error |
 | -922 | A commit in doubt: whether it committed is known once the database is opened again |
 
-The standard: ISO/IEC 9075:1992 §22.1, Table 23; X3.135-1986 §7.3, of
-SQLCODE.
+The standard: ISO/IEC 9075-2:2023 §24.1, Table 39, which has one class,
+42, of syntax error or access rule violation; ISO/IEC 9075:1992 §22.1,
+Table 23, of the other classes; X3.135-1986 §7.3, of SQLCODE.
 
 ## Property graph conditions
 
 A statement of property graphs that breaks one of their rules fails
-with SQLCODE -103, SQLSTATE 2A000, as any statement whose Syntax Rule is
+with SQLCODE -103, SQLSTATE 42000, as any statement whose Syntax Rule is
 broken. Its message names the condition by a code of its own, as in
 `[EXTENSION] GRF-0003 ...`, after the property graph implementation
 standard's §22.

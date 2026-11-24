@@ -29,9 +29,9 @@ VALUES 1 @;
 ```
 
 ```
-turborel: SQLCODE -101 (SQLSTATE 2A000): "VALUES" must be followed by a <delimiter token> or a <separator>, not '\t' [X3.135-1986 §5.3 SR2] (at character 6)
-turborel: SQLCODE -101 (SQLSTATE 2A000): "1" must be followed by a <delimiter token> or a <separator>, not 'a' [X3.135-1986 §5.3 SR2] (at character 8)
-turborel: SQLCODE -101 (SQLSTATE 2A000): character '@' cannot start a <token> [X3.135-1986 §5.3 F] (at character 9)
+turborel: SQLCODE -101 (SQLSTATE 42000): "VALUES" must be followed by a <delimiter token> or a <separator>, not '\t' [X3.135-1986 §5.3 SR2] (at character 6)
+turborel: SQLCODE -101 (SQLSTATE 42000): "1" must be followed by a <delimiter token> or a <separator>, not 'a' [X3.135-1986 §5.3 SR2] (at character 8)
+turborel: SQLCODE -101 (SQLSTATE 42000): character '@' cannot start a <token> [X3.135-1986 §5.3 F] (at character 9)
 ```
 
 The operators and delimiters are `( ) , . ; ' " + - * / = < > <= >= <>
@@ -67,7 +67,7 @@ OK
  ABC
  Mixed Case
 (2 rows)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected an <identifier>, found VALUE (at character 13)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected an <identifier>, found VALUE (at character 13)
 ```
 
 A name of an object in a schema may be qualified by the schema's,
@@ -98,17 +98,25 @@ over, and may be written in parts as a character string may. The
 letters X, N and E may be written in either case. SQL-92's bit string
 literal, `B'1010'`, is gone, as SQL:2023 has none.
 
-An exact number holds at most 38 digits; an approximate number is
-within the range of DOUBLE PRECISION. A datetime literal is a valid
-date or time:
+An exact number holds at most 38 digits, and an approximate number is
+within the range of DOUBLE PRECISION. A literal of more digits, or
+beyond that range, is one no type holds, so it breaks a Syntax Rule
+(SQLSTATE 42000, SQLCODE -103), as written in a statement run or one
+prepared [ISO/IEC 9075-2:2023 §5.3 SR29, SR30]. One too near zero for
+DOUBLE PRECISION is zero. Text of such a number cast, or given as a
+parameter, is a value, so it is out of range of an exact type (SQLSTATE
+22003), and cast to DOUBLE PRECISION is the number, if within its range. A
+datetime literal is a valid date or time:
 
 ```sql
 VALUES ('ab'
   'cd', 'it''s', '', N'n', X'1F', x'0a 0b'
   'FF', 1.5E3, .5, 5.);
 VALUES 'ab' 'cd';
-VALUES 123456789012345678901;
+VALUES 99999999999999999999999999999999999999;
+VALUES 999999999999999999999999999999999999999;
 VALUES 1E400;
+VALUES CAST('999999999999999999999999999999999999999' AS DECIMAL(38));
 VALUES TIME '25:00:00';
 ```
 
@@ -117,10 +125,15 @@ VALUES TIME '25:00:00';
 ------+------+--+---+----+--------+--------------------------+-----+-----
  abcd | it's |  | n | 1F | 0A0BFF |                    1.5E3 | 0.5 |   5
 (1 row)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected end of statement, found 'cd' (at character 12)
-turborel: SQLCODE -900 (SQLSTATE 0A000): <exact numeric literal> 123456789012345678901 has 21 digits; this implementation's maximum exact precision is 18 [X3.135-1986 §5.2 SR4] (at character 7)
-turborel: SQLCODE -900 (SQLSTATE 0A000): 1E400 is outside the range of this implementation's approximate numbers [X3.135-1986 §5.2 SR5] (at character 7)
-turborel: SQLCODE -103 (SQLSTATE 2A000): TIME '25:00:00' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43] (at character 7)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected end of statement, found 'cd' (at character 12)
+
+------------------------------------------
+   99999999999999999999999999999999999999
+(1 row)
+turborel: SQLCODE -103 (SQLSTATE 42000): no exact type holds 999999999999999999999999999999999999999, of 39 digits; the maximum precision is 38 [ISO/IEC 9075-2:2023 §5.3 SR29] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): 1E400 is outside the range of this implementation's approximate numbers [ISO/IEC 9075-2:2023 §5.3 SR30] (at character 7)
+turborel: SQLCODE -301 (SQLSTATE 22003): 1E39 does not fit NUMERIC(38,0) [ISO/IEC 9075:1992 §6.10 GR3a ii]
+turborel: SQLCODE -103 (SQLSTATE 42000): TIME '25:00:00' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43] (at character 7)
 ```
 
 The parts of `'ab' 'cd'` on one line are two strings, not one.
@@ -142,7 +155,7 @@ VALUES 1__000;
 -----------+-----------+--------------------------+--------------
    1000000 |  3.141592 |            6.02214076E23 |         1000
 (1 row)
-turborel: SQLCODE -101 (SQLSTATE 2A000): "1" must be followed by a <delimiter token> or a <separator>, not '_' [X3.135-1986 §5.3 SR2] (at character 8)
+turborel: SQLCODE -101 (SQLSTATE 42000): "1" must be followed by a <delimiter token> or a <separator>, not '_' [X3.135-1986 §5.3 SR2] (at character 8)
 ```
 
 ## Comments
@@ -160,7 +173,7 @@ ends one that the end of its input cuts short.
 A bracketed comment, of SQL:2023's Feature T351, begins with `/*` and
 ends with `*/`, across lines if need be. One begun within it is nested
 and ends first, so a comment may hold one. A statement whose comment is
-not ended is refused (SQLSTATE 2A000, SQLCODE -101):
+not ended is refused (SQLSTATE 42000, SQLCODE -101):
 
 ```sql
 VALUES (1 /* one /* nested */ still the comment */ + 2);

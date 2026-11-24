@@ -93,8 +93,8 @@ are everyone's. COLLATE needs USAGE, which GRANT gives.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | One of its name exists, or no collation of the name it comes from |
-| 2A000 | -104 | Its user does not own the schema, or lacks USAGE |
+| 42000 | -103 | One of its name exists, or no collation of the name it comes from |
+| 42000 | -104 | Its user does not own the schema, or lacks USAGE |
 | 0A000 | -900 | It is for another character set, or comes from SQL-92's EXTERNAL, DESC, DEFAULT or TRANSLATION |
 
 ## EXAMPLES
@@ -134,8 +134,8 @@ OK
 ----------------------
                     1
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): collation ANN.WITH_PAD exists [ISO/IEC 9075-2:2023 §11.43 SR3] (at character 17)
-turborel: SQLCODE -103 (SQLSTATE 2A000): no collation INFORMATION_SCHEMA.NOPE [ISO/IEC 9075-2:2023 §10.7 SR1] (at character 41)
+turborel: SQLCODE -103 (SQLSTATE 42000): collation ANN.WITH_PAD exists [ISO/IEC 9075-2:2023 §11.43 SR3] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 42000): no collation INFORMATION_SCHEMA.NOPE [ISO/IEC 9075-2:2023 §10.7 SR1] (at character 41)
 ```
 
 ## STANDARD

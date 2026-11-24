@@ -103,7 +103,8 @@ fn nines(n: u32) -> String {
 /// Verifies: [ISO/IEC 9075-2:2023 §6.30 SR1c, GR5, §5.3 SR28] RULES.md
 /// D695, D697: sums, differences, products and quotients are exact to 38
 /// digits, and a literal holds 38; a result of 39 is SQLSTATE 22003
-/// (SQLCODE -301), and a literal of 39 is SQLCODE -900.
+/// (SQLCODE -301), and a literal of 39 breaks a Syntax Rule, SQLCODE
+/// -103 [§5.3 SR29] (RULES.md D970).
 #[test]
 fn arithmetic_is_exact_to_38_digits_6_30() {
     let db = Database::new();
@@ -123,7 +124,7 @@ fn arithmetic_is_exact_to_38_digits_6_30() {
     assert_eq!(refused(&a, &format!("SELECT {most} + 1 FROM ONE")), (-301, "22003".to_owned(), Some("X3.135-1986 §5.9 GR6".to_owned())));
     assert_eq!(refused(&a, "SELECT 10000000000000000000 * 10000000000000000000 FROM ONE").0, -301, "39 digits");
     assert_eq!(refused(&a, "SELECT 10 / 0.0000000000000000000000000000000000001 FROM ONE").0, -301, "a quotient of 39");
-    assert_eq!(exec(&a, &format!("SELECT {} FROM ONE", nines(MAX_EXACT_PRECISION + 1))).err(), Some(Code::Unsupported));
+    assert_eq!(exec(&a, &format!("SELECT {} FROM ONE", nines(MAX_EXACT_PRECISION + 1))).err(), Some(Code::SyntaxRule));
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §6.30 SR1c iv, §10.9 SR7g ii] RULES.md

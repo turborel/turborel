@@ -146,6 +146,6 @@ fn parameters_and_set_descriptor_have_no_key_20_10() {
     assert_eq!(p.value("N").to_string(), "0");
     run(&s, "GET DESCRIPTOR 'D' VALUE 1 N = KEY_MEMBER", &mut p).unwrap();
     assert_eq!(p.value("N").to_string(), "0");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'D' KEY_TYPE = 1", &mut p), Err("2A000".to_owned()), "§20.5 SR2");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'D' VALUE 1 KEY_MEMBER = 1", &mut p), Err("2A000".to_owned()), "§20.5 SR3a");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'D' KEY_TYPE = 1", &mut p), Err("42000".to_owned()), "§20.5 SR2");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'D' VALUE 1 KEY_MEMBER = 1", &mut p), Err("42000".to_owned()), "§20.5 SR3a");
 }

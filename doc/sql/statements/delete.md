@@ -80,8 +80,8 @@ DELETE on the table. SELECT on each other table a subquery reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery; a rule of FOR PORTION OF is broken (rule 5); WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
-| 2A000 | -104 | Its user lacks DELETE on the table, or SELECT on a table read |
+| 42000 | -103 | The table does not exist or is read-only; the search condition has a set function outside a subquery; a rule of FOR PORTION OF is broken (rule 5); WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
+| 42000 | -104 | Its user lacks DELETE on the table, or SELECT on a table read |
 | 23000 | -201 | A row deleted is referenced by a foreign key whose action refuses it, or a referential action breaks a constraint |
 | 2201H | -301 | A row of a system-time period begins after the transaction timestamp: another transaction changed it later |
 | TB911 | -911 | A row was written by another transaction, not committed under LOCKS.WAIT OFF, or committed after this one's snapshot at REPEATABLE READ or SERIALIZABLE; or a wait for it would deadlock or passed LOCKS.TIMEOUT_MS: the statement is undone, and may be run again |
@@ -115,7 +115,7 @@ DELETE FROM PARTS WHERE SUM(QTY) > 0;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): a set function needs an argument source (a <table expression>), which this <search condition> does not have [X3.135-1986 §5.8 SR1] (at character 24)
+turborel: SQLCODE -103 (SQLSTATE 42000): a set function needs an argument source (a <table expression>), which this <search condition> does not have [X3.135-1986 §5.8 SR1] (at character 24)
 ```
 
 Of a table of prices through time, a week of January deleted:

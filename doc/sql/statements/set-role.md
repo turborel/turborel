@@ -59,7 +59,7 @@ None, beyond rule 4.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25001 | -917 | A transaction is active |
-| 2A000 | -103 | The value is not a character string |
+| 42000 | -103 | The value is not a character string |
 | 0P000 | -104 | The session has no current user; or the value names no role granted to its user or to PUBLIC |
 
 ## EXAMPLES
@@ -79,7 +79,7 @@ SET ROLE NONE;
 ```
 
 ```
-turborel: SQLCODE -104 (SQLSTATE 2A000): BOB has no SELECT privilege on ANN.STAFF [X3.135-1986 §5.25 SR1; X3.135-1986 §6.6 SR3] (at character 17)
+turborel: SQLCODE -104 (SQLSTATE 42000): BOB has no SELECT privilege on ANN.STAFF [X3.135-1986 §5.25 SR1; X3.135-1986 §6.6 SR3] (at character 17)
 OK
 OK
  NAME

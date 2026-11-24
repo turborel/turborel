@@ -42,9 +42,9 @@ fn variables_and_conditionals_steer_a_script() {
     let ran = script(&server, &["-v", "table=T", "-q"], text);
     assert_eq!(
         ran.out,
-        "            K\n--------------\n            2\n(1 row)\nnested\ntrue 2A000\n            K | S\n--------------+-------\n            1 | a\n            2 | b\n(2 rows)\nfalse 2\n"
+        "            K\n--------------\n            2\n(1 row)\nnested\ntrue 42000\n            K | S\n--------------+-------\n            1 | a\n            2 | b\n(2 rows)\nfalse 2\n"
     );
-    assert!(ran.err.contains("SQLSTATE 2A000"), "{}", ran.err);
+    assert!(ran.err.contains("SQLSTATE 42000"), "{}", ran.err);
     assert_eq!(ran.outcome, Outcome::Failed);
 }
 
@@ -172,7 +172,7 @@ fn results_become_variables_and_statements() {
 /// Verifies: [DESIGN] RULES.md D396: `\gdesc` describes the statement
 /// begun without running it, each column's name and declared type, the
 /// client asking for declared types; a statement that cannot be prepared
-/// is told as a failure.
+/// is told as a failure, of the SQLSTATE it has run, 42000 (D971).
 #[test]
 fn gdesc_shows_declared_types_without_running() {
     let (_db, server) = served();
@@ -181,7 +181,9 @@ fn gdesc_shows_declared_types_without_running() {
     let rows = script(&server, &["-q", "-t", "-A"], "SELECT COUNT(*) FROM T;\n");
     assert_eq!(rows.out, "2\n", "nothing ran");
     let wrong = script(&server, &[], "SELECT NOTHING FROM T \\gdesc\n");
-    assert!(wrong.err.contains("SQLSTATE 37000"), "{}", wrong.err);
+    assert!(wrong.err.contains("SQLCODE -103 (SQLSTATE 42000)"), "{}", wrong.err);
+    let run = script(&server, &[], "SELECT NOTHING FROM T;\n");
+    assert!(run.err.contains("SQLCODE -103 (SQLSTATE 42000)"), "run as prepared (D971): {}", run.err);
 }
 
 /// Verifies: [DESIGN] RULES.md D219: SAFE_UPDATES refuses an UPDATE

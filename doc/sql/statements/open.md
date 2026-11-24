@@ -61,8 +61,8 @@ SELECT on the tables the query reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | No cursor of the name is declared, or a rule of its specification is broken |
-| 2A000 | -104 | A privilege the query needs is not held |
+| 42000 | -103 | No cursor of the name is declared, or a rule of its specification is broken |
+| 42000 | -104 | A privilege the query needs is not held |
 | 24000 | -501 | The cursor is open |
 | 26000 | -921 | A dynamic cursor's statement is not prepared (rule 3) |
 | 34000 | -921 | No cursor of the extended name is allocated |
@@ -77,7 +77,7 @@ BY ID`:
 ```
 OPEN C          Success
 OPEN C          -501 (24000): cursor C is already open [X3.135-1986 §8.8 GR1]
-OPEN NOPE       -103 (2A000): no cursor NOPE is declared [X3.135-1986 §8.8 SR1]
+OPEN NOPE       -103 (42000): no cursor NOPE is declared [X3.135-1986 §8.8 SR1]
 ```
 
 Of the dynamic cursor D of [DECLARE CURSOR](declare-cursor.md):

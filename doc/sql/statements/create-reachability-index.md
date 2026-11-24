@@ -59,9 +59,9 @@ The table's schema is its user's.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -102 | EDGE TABLE does not follow the graph's name |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the table's schema |
+| 42000 | -102 | EDGE TABLE does not follow the graph's name |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the table's schema |
 | 0A000 | -900 | The ends' columns differ in number or type, or have a collation |
 
 ## EXAMPLES

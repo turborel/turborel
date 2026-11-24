@@ -162,7 +162,7 @@ OK
  <?xml version="1.0" encoding="UTF-8"?><order no="17"><item>tea</item><item>cups</item></order>
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 2200L): the value of XML(DOCUMENT(ANY)) is not an XML document [ISO/IEC 9075:1992 §13.8 GR4b iii; ISO/IEC 9075-14:2006 draft §10.2 GR1a]
-turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY orders values of XML(DOCUMENT(ANY)), and XML values are not comparable [ISO/IEC 9075-14:2006 draft §10.11 SR1]
+turborel: SQLCODE -103 (SQLSTATE 42000): ORDER BY orders values of XML(DOCUMENT(ANY)), and XML values are not comparable [ISO/IEC 9075-14:2006 draft §10.11 SR1]
 ```
 
 ## CAST
@@ -197,7 +197,7 @@ OK
  <order no="17"><item>tea</item><item>cups</item></order>
  <a/>
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): CAST of XML(DOCUMENT(ANY)) to CHARACTER VARYING(80) is not valid [ISO/IEC 9075-14:2006 draft §6.5 SR3] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): CAST of XML(DOCUMENT(ANY)) to CHARACTER VARYING(80) is not valid [ISO/IEC 9075-14:2006 draft §6.5 SR3] (at character 7)
 ```
 
 ## XMLCAST
@@ -475,7 +475,7 @@ SELECT XMLELEMENT(NAME "r", ROW(ID, NAME)) FROM STAFF;
 --------------------------------------------------------------
  <names><element>Ann</element></names><rows><element><id>1</id><full_x0020_name>Ann</full_x0020_name></element></rows>
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a value of ROW(F1 INTEGER, F2 CHARACTER VARYING(20)) is not mapped to XML here [ISO/IEC 9075-14:2006 draft §6.14 SR7] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): a value of ROW(F1 INTEGER, F2 CHARACTER VARYING(20)) is not mapped to XML here [ISO/IEC 9075-14:2006 draft §6.14 SR7] (at character 7)
 ```
 
 ## XMLAGG
@@ -543,7 +543,7 @@ OK
  <cover/>
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 2200L): the value of XML(DOCUMENT(ANY)) is not an XML document [ISO/IEC 9075-14:2006 draft §6.5 GR1a]
-turborel: SQLCODE -103 (SQLSTATE 2A000): the comparison compares values of XML(CONTENT(ANY)) ARRAY[10], and XML values are not comparable [ISO/IEC 9075-14:2006 draft §10.8 SR1] (at character 27)
+turborel: SQLCODE -103 (SQLSTATE 42000): the comparison compares values of XML(CONTENT(ANY)) ARRAY[10], and XML values are not comparable [ISO/IEC 9075-14:2006 draft §10.8 SR1] (at character 27)
 ```
 
 ## Querying XML
@@ -971,7 +971,7 @@ OK
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): index ORDER_IDS of method xml_property keys one column, of an XML type (RULES.md D106)
+turborel: SQLCODE -103 (SQLSTATE 42000): index ORDER_IDS of method xml_property keys one column, of an XML type (RULES.md D106)
 OK
  INDEX_NAME                                                   | METHOD_NAME                                                  | COLUMN_NAMES
 --------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
@@ -1233,7 +1233,7 @@ OK
 --------------+----------+------------------------------------------
             1 | 0FB7     | <img>D7c=</img>
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the options declare namespaces once and a binary encoding once [ISO/IEC 9075-14:2006 draft §11.3 SR1] (at character 23)
+turborel: SQLCODE -103 (SQLSTATE 42000): the options declare namespaces once and a binary encoding once [ISO/IEC 9075-14:2006 draft §11.3 SR1] (at character 23)
 ```
 
 ## Mapping names
@@ -1395,7 +1395,7 @@ OK
 --------------------------------------------------------------
  <xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"><xs:simpleType name="CHAR_4"><xs:restriction base="xs:string"><xs:length value="4"/></xs:restriction></xs:simpleType><xs:simpleType name="NUMERIC_6_2"><xs:restriction base="xs:decimal"><xs:totalDigits value="6"/><xs:fractionDigits value="2"/></xs:restriction></xs:simpleType><xs:complexType name="RowType.TURBOREL.SHOP.ITEMS"><xs:sequence><xs:element name="SKU" type="CHAR_4"/><xs:element name="PRICE" type="NUMERIC_6_2" minOccurs="0"/></xs:sequence></xs:complexType><xs:complexType name="TableType.TURBOREL.SHOP.ITEMS"><xs:sequence><xs:element name="row" type="RowType.TURBOREL.SHOP.ITEMS" minOccurs="0" maxOccurs="unbounded"/></xs:sequence></xs:complexType><xs:complexType name="SchemaType.TURBOREL.SHOP"><xs:all><xs:element name="ITEMS" type="TableType.TURBOREL.SHOP.ITEMS"/></xs:all></xs:complexType><xs:element name="SHOP" type="SchemaType.TURBOREL.SHOP"/></xs:schema>
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOWHERE is not defined [X3.135-1986 §5.4 SR5] (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.NOWHERE is not defined [X3.135-1986 §5.4 SR5] (at character 21)
 ```
 
 ## Registered XML Schemas
@@ -1420,7 +1420,7 @@ DROP XML SCHEMA NOTES RESTRICT;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): registered XML Schema ANN.PAGES depends on registered XML Schema ANN.NOTES, so it is dropped only with CASCADE (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): registered XML Schema ANN.PAGES depends on registered XML Schema ANN.NOTES, so it is dropped only with CASCADE (at character 16)
 ```
 
 Every user may use the XML Schemas registered always. The owner of a
@@ -1557,13 +1557,13 @@ OK
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): cannot assign a XML(DOCUMENT(UNTYPED)) value to column BOOK (XML(DOCUMENT(XMLSCHEMA ID ANN.BOOKS NAMESPACE 'urn:books' ELEMENT "book"))) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075-14:2006 draft §10.2 SR1b] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 42000): cannot assign a XML(DOCUMENT(UNTYPED)) value to column BOOK (XML(DOCUMENT(XMLSCHEMA ID ANN.BOOKS NAMESPACE 'urn:books' ELEMENT "book"))) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075-14:2006 draft §10.2 SR1b] (at character 29)
            ID | TYPED |          MORE
 --------------+-------+---------------
             1 | TRUE  |           413
             2 | TRUE  |           475
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.SHELF is of an XML type of registered XML Schema ANN.BOOKS, so it is not dropped, even with CASCADE (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.SHELF is of an XML type of registered XML Schema ANN.BOOKS, so it is not dropped, even with CASCADE (at character 16)
 ```
 
 ## XMLVALIDATE

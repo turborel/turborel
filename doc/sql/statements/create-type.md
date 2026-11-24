@@ -138,8 +138,8 @@ function, or a CAST to or from the type, needs EXECUTE on the function.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist |
-| 2A000 | -103 | A rule above is broken, or a value of the type meets an operator or a type it is not taken by |
-| 2A000 | -104 | Its user does not own the schema, or lacks USAGE on the type or EXECUTE on a function |
+| 42000 | -103 | A rule above is broken, or a value of the type meets an operator or a type it is not taken by |
+| 42000 | -104 | Its user does not own the schema, or lacks USAGE on the type or EXECUTE on a function |
 | 0A000 | -900 | A method specification says SELF AS LOCATOR |
 
 ## EXAMPLES
@@ -173,7 +173,7 @@ OK
            500
            800
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.MONEY and NUMERIC(2,0) are not comparable [ISO/IEC 9075:1992 §8.2 SR1, SR3] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.MONEY and NUMERIC(2,0) are not comparable [ISO/IEC 9075:1992 §8.2 SR1, SR3] (at character 29)
 ```
 
 ```sql
@@ -181,7 +181,7 @@ SELECT ID FROM PARCELS WHERE PRICE = MASS;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.MONEY and ANN.GRAMS are not comparable [ISO/IEC 9075:1992 §8.2 SR1, SR3] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.MONEY and ANN.GRAMS are not comparable [ISO/IEC 9075:1992 §8.2 SR1, SR3] (at character 29)
 ```
 
 ```sql
@@ -189,7 +189,7 @@ CREATE TYPE BAD AS MONEY;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): a distinct type's representation is a <predefined type> or a <collection type>, not MONEY [ISO/IEC 9075-2:2023 §11.51 SR5a] (at character 19)
+turborel: SQLCODE -103 (SQLSTATE 42000): a distinct type's representation is a <predefined type> or a <collection type>, not MONEY [ISO/IEC 9075-2:2023 §11.51 SR5a] (at character 19)
 ```
 
 A structured type and a subtype of it, and a value of each:

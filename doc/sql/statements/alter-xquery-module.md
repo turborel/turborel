@@ -64,8 +64,8 @@ is found if that owner owns its schema too, or holds USAGE on it.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | There is none of its name, its target namespace is the empty string, or something depending on it would no longer analyse or bind |
-| 2A000 | -104 | Its user does not own its schema |
+| 42000 | -103 | There is none of its name, its target namespace is the empty string, or something depending on it would no longer analyse or bind |
+| 42000 | -104 | Its user does not own its schema |
 | 10000 | -301 | The text is no library module, raises a static error of XQuery, or closes a cycle of modules of more than one namespace (`err:XQST0073`) |
 | 0A000 | -900 | Its modules import modules more deeply than turborel allows |
 
@@ -92,8 +92,8 @@ OK
 ------------
  true
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): registered XQuery module ANN.ODD would no longer analyse or bind with registered XQuery module ANN.EVEN altered: XQuery error err:XPST0017: no function {urn:m}even of 1 arguments is in the static context [XQuery §3.1.5] (at character 20)
-turborel: SQLCODE -103 (SQLSTATE 2A000): registered XQuery module ANN.ODD depends on registered XQuery module ANN.EVEN, so it is dropped only with CASCADE (at character 19)
+turborel: SQLCODE -103 (SQLSTATE 42000): registered XQuery module ANN.ODD would no longer analyse or bind with registered XQuery module ANN.EVEN altered: XQuery error err:XPST0017: no function {urn:m}even of 1 arguments is in the static context [XQuery §3.1.5] (at character 20)
+turborel: SQLCODE -103 (SQLSTATE 42000): registered XQuery module ANN.ODD depends on registered XQuery module ANN.EVEN, so it is dropped only with CASCADE (at character 19)
 ```
 
 ODD imported EVEN as it was registered, and EVEN, altered, imports ODD,

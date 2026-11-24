@@ -74,8 +74,8 @@ owner holds and GRANT gives.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken, or NEXT VALUE FOR is where it may not be |
-| 2A000 | -104 | Its user does not own the schema, or NEXT VALUE FOR lacks USAGE |
+| 42000 | -103 | A rule above is broken, or NEXT VALUE FOR is where it may not be |
+| 42000 | -104 | Its user does not own the schema, or NEXT VALUE FOR lacks USAGE |
 | 2200H | -301 | NEXT VALUE FOR of a generator of NO CYCLE that has given its last value |
 
 ## EXAMPLES
@@ -106,8 +106,8 @@ OK
        1 |       1
        2 |       2
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): NEXT VALUE FOR is only directly in the select list of the whole query of a cursor, a SELECT INTO or an INSERT, not grouped nor DISTINCT, in an INSERT's VALUES or in an UPDATE's SET, and not in a CASE, a search condition, ORDER BY or a set function [ISO/IEC 9075-2:2023 §6.14 SR1, SR2] (at character 33)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the increment of a sequence generator is not 0 [ISO/IEC 9075-2:2023 §9.36 SR5, §9.37 SR5] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 42000): NEXT VALUE FOR is only directly in the select list of the whole query of a cursor, a SELECT INTO or an INSERT, not grouped nor DISTINCT, in an INSERT's VALUES or in an UPDATE's SET, and not in a CASE, a search condition, ORDER BY or a set function [ISO/IEC 9075-2:2023 §6.14 SR1, SR2] (at character 33)
+turborel: SQLCODE -103 (SQLSTATE 42000): the increment of a sequence generator is not 0 [ISO/IEC 9075-2:2023 §9.36 SR5, §9.37 SR5] (at character 17)
 ```
 
 ## STANDARD

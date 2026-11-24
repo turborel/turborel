@@ -55,8 +55,8 @@ Its schema's owner.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the registered XML Schema's schema |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the registered XML Schema's schema |
 
 ## EXAMPLES
 
@@ -74,10 +74,10 @@ DROP XML SCHEMA INFORMATION_SCHEMA.XS CASCADE;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): registered XML Schema ANN.PRICES depends on registered XML Schema ANN.BASE, so it is dropped only with CASCADE (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): registered XML Schema ANN.PRICES depends on registered XML Schema ANN.BASE, so it is dropped only with CASCADE (at character 16)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no registered XML Schema ANN.PRICES (at character 16)
-turborel: SQLCODE -103 (SQLSTATE 2A000): INFORMATION_SCHEMA.XS is permanently registered: it is never dropped [ISO/IEC 9075-14:2006 draft §4.2.6] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no registered XML Schema ANN.PRICES (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): INFORMATION_SCHEMA.XS is permanently registered: it is never dropped [ISO/IEC 9075-14:2006 draft §4.2.6] (at character 16)
 ```
 
 PRICES went with BASE, as it imports it.

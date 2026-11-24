@@ -98,7 +98,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A mode is written more than once, READ WRITE is written with READ UNCOMMITTED, or the `<number of conditions>` is not an exact number of scale 0 |
+| 42000 | -103 | A mode is written more than once, READ WRITE is written with READ UNCOMMITTED, or the `<number of conditions>` is not an exact number of scale 0 |
 | 35000 | -301 | The `<number of conditions>` is less than 1 |
 | 25000 | -917 | A transaction is active |
 

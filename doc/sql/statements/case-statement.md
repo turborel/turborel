@@ -71,8 +71,8 @@ Those of its operands, conditions and statements.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed, as a CASE ended by END IF |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | It is not well formed, as a CASE ended by END IF |
+| 42000 | -103 | A rule above is broken |
 | 20000 | -301 | No WHEN holds and there is no ELSE |
 
 ## EXAMPLES
@@ -159,7 +159,7 @@ END;
 
 ```
 turborel: SQLCODE -301 (SQLSTATE 20000): no WHEN of the CASE statement is true, and it has no ELSE [ISO/IEC 9075-4:2006 draft §14.6 GR1b, GR2b] (at character 39)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected CASE, found IF (at character 73)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected CASE, found IF (at character 73)
 ```
 
 ## STANDARD

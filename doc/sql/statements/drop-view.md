@@ -42,9 +42,9 @@ The view's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | No `<drop behavior>` is written |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the view's schema |
+| 42000 | -102 | No `<drop behavior>` is written |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the view's schema |
 | 24000 | -501 | A cursor of the transaction reads the view |
 | 25000 | -917 | The transaction is READ ONLY |
 
@@ -62,10 +62,10 @@ DROP VIEW EMP CASCADE;
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.ENG is read by view ANN.ENG2, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.20 SR3] (at character 10)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.ENG is read by view ANN.ENG2, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.20 SR3] (at character 10)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.ENG2 is not defined [X3.135-1986 §5.4 SR5] (at character 14)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.EMP is a base table, not a view [ISO/IEC 9075:1992 §11.20 SR2] (at character 10)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.ENG2 is not defined [X3.135-1986 §5.4 SR5] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.EMP is a base table, not a view [ISO/IEC 9075:1992 §11.20 SR2] (at character 10)
 ```
 
 ## STANDARD

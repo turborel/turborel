@@ -375,7 +375,7 @@ pub const JSON: [Mutation; 37] = [
     Mutation {
         name: "json-objectagg-name-untyped",
         package: Package::Core,
-        breaks: "a `?` as JSON_OBJECTAGG's name takes no type and is refused 37000",
+        breaks: "a `?` as JSON_OBJECTAGG's name takes no type and is refused 42000",
         file: "src/functions/json/aggregate.rs",
         original: "(position == 0 || self.format.is_some()).then_some(ParameterType::Varying)",
         replacement: "self.format.is_some().then_some(ParameterType::Varying)",

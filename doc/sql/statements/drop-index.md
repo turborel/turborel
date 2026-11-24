@@ -34,8 +34,8 @@ The schema of the index's table is its user's.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema of the index's table |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema of the index's table |
 
 ## EXAMPLES
 
@@ -49,8 +49,8 @@ DROP INDEX "ANN.STAFF.UNIQUE1";
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no index NOPE (at character 11)
-turborel: SQLCODE -103 (SQLSTATE 2A000): index ANN.STAFF.UNIQUE1 is a UNIQUE constraint's: drop the constraint (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no index NOPE (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): index ANN.STAFF.UNIQUE1 is a UNIQUE constraint's: drop the constraint (at character 11)
 ```
 
 ## STANDARD

@@ -261,7 +261,7 @@ OK
 ------------
  ADA
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY orders values of CHARACTER LARGE OBJECT(16777216), and large objects are compared for equality alone [ISO/IEC 9075-2:2023 §9.14 SR3]
+turborel: SQLCODE -103 (SQLSTATE 42000): ORDER BY orders values of CHARACTER LARGE OBJECT(16777216), and large objects are compared for equality alone [ISO/IEC 9075-2:2023 §9.14 SR3]
 ```
 
 A value stored in a site shorter than it is refused (SQLSTATE 22001),
@@ -325,7 +325,7 @@ OK
  TRUE
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22018): 'yes' is not a <boolean literal> [ISO/IEC 9075-2:2023 §6.13 GR21a ii]
-turborel: SQLCODE -103 (SQLSTATE 2A000): a <boolean predicand> is of type BOOLEAN (found INTEGER) [ISO/IEC 9075-2:2023 §6.46 SR3] (at character 26)
+turborel: SQLCODE -103 (SQLSTATE 42000): a <boolean predicand> is of type BOOLEAN (found INTEGER) [ISO/IEC 9075-2:2023 §6.46 SR3] (at character 26)
 ```
 
 The warning is SQLSTATE 01003, a null left out of a set function.
@@ -481,7 +481,7 @@ OK
 ----------------------------------+----------------------------
  2026-10-28 13:45:30.000000+02:00 | 2026-10-28 19:15:30.123456
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): DATE '2026-02-30' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43] (at character 27)
+turborel: SQLCODE -103 (SQLSTATE 42000): DATE '2026-02-30' is no valid <datetime literal> [ISO/IEC 9075:1992 §5.3 SR21, SR22; ISO/IEC 9075-2:2023 §5.3 SR43] (at character 27)
 ```
 
 TIME(2) kept two of the three fraction digits written, the third
@@ -520,7 +520,7 @@ VALUES INTERVAL '1' YEAR + INTERVAL '1' DAY;
   27 12
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22008): DATE '2026-01-31' + INTERVAL '1' MONTH(2) is no valid datetime [ISO/IEC 9075:1992 §6.14 GR3c]
-turborel: SQLCODE -103 (SQLSTATE 2A000): INTERVAL YEAR(2) + INTERVAL DAY(2) is no datetime or interval arithmetic [ISO/IEC 9075:1992 §6.14, §6.15] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): INTERVAL YEAR(2) + INTERVAL DAY(2) is no datetime or interval arithmetic [ISO/IEC 9075:1992 §6.14, §6.15] (at character 7)
 ```
 
 A month added keeps the day, so January 31 plus a month would be
@@ -583,7 +583,7 @@ OK
 --------------
             1
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY orders values of CHARACTER VARYING(10) MULTISET, and multisets are compared for equality alone [ISO/IEC 9075-2:2023 §9.14 SR3]
+turborel: SQLCODE -103 (SQLSTATE 42000): ORDER BY orders values of CHARACTER VARYING(10) MULTISET, and multisets are compared for equality alone [ISO/IEC 9075-2:2023 §9.14 SR3]
 ```
 
 The literals `'red'` and `'blue'` are brought together as CHARACTER(4),
@@ -658,7 +658,7 @@ one. `REF(t) SCOPE tab` names the table it refers into. `r -> a` reads
 the attribute `a` of the row `r` identifies, `r -> m()` invokes a
 method of it, and `DEREF(r)` gives the row as a value of `t`, each a
 null value if no row is identified. A reference without a scope is not
-dereferenced (SQLSTATE 2A000). References compare for equality alone,
+dereferenced (SQLSTATE 42000). References compare for equality alone,
 and may be elements of arrays and multisets.
 
 ## XML
@@ -829,7 +829,7 @@ VALUES CAST(1 AS BINARY(8));
 (1 row)
 turborel: SQLCODE -301 (SQLSTATE 22018): 'x' is not a <signed numeric literal> [ISO/IEC 9075:1992 §6.10 GR3b i, GR4b i]
 turborel: SQLCODE -301 (SQLSTATE 22001): '12345' is longer than CHARACTER(3) [ISO/IEC 9075:1992 §6.10 GR5a iv]
-turborel: SQLCODE -103 (SQLSTATE 2A000): CAST of NUMERIC(1,0) to BINARY(8) is not valid [ISO/IEC 9075-2:2023 §6.13 SR7] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): CAST of NUMERIC(1,0) to BINARY(8) is not valid [ISO/IEC 9075-2:2023 §6.13 SR7] (at character 7)
 ```
 
 A string CAST to a shorter character type is cut to its length, the

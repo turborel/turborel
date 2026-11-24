@@ -139,7 +139,7 @@ match conn.query("SELECT ID, NAME FROM STAFF WHERE ID < 3 ORDER BY ID")? {
     Outcome::Done(done) => { /* done.sqlcode, done.sqlstate */ }
 }
 match conn.query("SELECT * FROM NOPE") {
-    Err(f) => { /* f.sqlcode -103, f.sqlstate "2A000",
+    Err(f) => { /* f.sqlcode -103, f.sqlstate "42000",
                    f.message "table ANN.NOPE is not defined" */ }
     Ok(_) => {}
 }

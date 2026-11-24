@@ -331,7 +331,7 @@ $ turborel -U ann -f check.sql
 ----------------------
                     3
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): no table in the FROM clause has a column NOPE [X3.135-1986 §5.7 SR3b] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): no table in the FROM clause has a column NOPE [X3.135-1986 §5.7 SR3b] (at character 7)
 ```
 
 `-1`, `--single-transaction`, runs every statement in one transaction.

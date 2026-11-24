@@ -109,7 +109,7 @@ fn registered_modules_are_imported_4_11() {
 fn registration_is_refused_4_2() {
     let db = database();
     let a = db.session("A");
-    assert_eq!(refused(&a, &create("NOTES_LIB", NOTES)), (-103, "2A000".to_owned()));
+    assert_eq!(refused(&a, &create("NOTES_LIB", NOTES)), (-103, "42000".to_owned()));
     assert_eq!(refused(&a, &create("NOWHERE.M", NOTES)).1, "3F000");
     assert_eq!(refused(&a, &create("B.M", NOTES)).0, -104);
     assert_eq!(refused(&a, &create("EMPTY", "module namespace e = \"\";")).0, -103);

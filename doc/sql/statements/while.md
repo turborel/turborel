@@ -51,8 +51,8 @@ Those of its condition and statements.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | It is not well formed |
+| 42000 | -103 | A rule above is broken |
 | TB920 | -920 | It is cancelled |
 
 ## EXAMPLES
@@ -113,7 +113,7 @@ OK
             2
             3
 (3 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the <ending label> W2 is not W1 [ISO/IEC 9075-4:2006 draft §14.1 SR3] (at character 65)
+turborel: SQLCODE -103 (SQLSTATE 42000): the <ending label> W2 is not W1 [ISO/IEC 9075-4:2006 draft §14.1 SR3] (at character 65)
 ```
 
 ## STANDARD

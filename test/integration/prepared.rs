@@ -196,7 +196,7 @@ fn prepared_writes_take_their_columns_types() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR4]: a `?` where nothing
 /// gives it a type is refused as the statement is prepared (SQLSTATE
-/// 37000): in a select list [b], as both operands of one operator [c], with
+/// 42000): in a select list [b], as both operands of one operator [c], with
 /// a sign [d], as a set function's argument [e], in IS NULL [f], as
 /// COALESCE's first operand or the first WHEN operand [h], on both sides
 /// of a comparison or BETWEEN [i], as a table value constructor's value in
@@ -230,7 +230,7 @@ fn a_parameter_with_no_type_is_refused() {
     ];
     for sql in refused {
         let e = s.prepare(sql).unwrap_err();
-        assert_eq!((e.code, e.sqlstate().as_str()), (Code::SyntaxRule, "37000"), "{sql}: {e}");
+        assert_eq!((e.code, e.sqlstate().as_str()), (Code::SyntaxRule, "42000"), "{sql}: {e}");
     }
     // [GR5b] BIT_LENGTH's `?` is CHARACTER VARYING; beside a binary
     // string, a `?` of || is BINARY VARYING of the longest length.
@@ -243,7 +243,7 @@ fn a_parameter_with_no_type_is_refused() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.2 SR2, §17.6 GR4a, §17.9
 /// GR5a, f, §17.10 GR2, §17.13 GR2]: a `?` outside a prepared statement is
 /// refused (SQLCODE -103); OPEN, FETCH and CLOSE are not preparable
-/// (37000); values not one for each parameter (07001), a query
+/// (42000); values not one for each parameter (07001), a query
 /// executed (07003) and another statement opened as a cursor (07005) are
 /// dynamic SQL errors (SQLCODE -921); a value CAST cannot make of the type,
 /// CAST's error.
@@ -253,7 +253,7 @@ fn prepared_statements_are_refused_saying_why() {
     assert_eq!(s.run("DELETE FROM T WHERE K = ?").err().map(|e| e.code), Some(Code::SyntaxRule));
     assert_eq!(s.open_cursor("SELECT K FROM T WHERE K = ?").err().map(|e| e.code), Some(Code::SyntaxRule));
     for sql in ["OPEN C", "FETCH C INTO P", "CLOSE C"] {
-        assert_eq!(s.prepare(sql).err().map(|e| e.sqlstate().to_string()).as_deref(), Some("37000"), "{sql}");
+        assert_eq!(s.prepare(sql).err().map(|e| e.sqlstate().to_string()).as_deref(), Some("42000"), "{sql}");
     }
     let q = s.prepare("SELECT K FROM T WHERE K = ?").unwrap();
     let w = s.prepare("DELETE FROM T WHERE K = ?").unwrap();

@@ -38,7 +38,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 37000 | -103 | A locator reference is not a dynamic parameter, as PREPARE finds (rule 1) |
+| 42000 | -103 | A locator reference is not a dynamic parameter, as PREPARE finds (rule 1) |
 | 0F001 | -301 | A locator is not valid: freed, of a transaction that ended, or never given (rule 2) |
 
 ## EXAMPLES

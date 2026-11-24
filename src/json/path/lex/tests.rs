@@ -176,7 +176,7 @@ fn a_decimal_literal_without_an_exponent_is_exact() {
 /// §7.8.3] a DecimalLiteral with an ExponentPart is the approximate number
 /// of its characters, the exponent signed or not, E of either case, the
 /// forms `.5e1` and `5.e1` too; one past an approximate number's range is
-/// SQLCODE -900. MC/DC of `'e' | 'E'`: each is an exponent, and neither
+/// SQLCODE -103 [§5.3 SR30] (RULES.md D970). MC/DC of `'e' | 'E'`: each is an exponent, and neither
 /// (`a_decimal_literal_without_an_exponent_is_exact`) none.
 #[test]
 fn a_decimal_literal_with_an_exponent_is_approximate() {
@@ -186,7 +186,7 @@ fn a_decimal_literal_with_an_exponent_is_approximate() {
     assert_eq!(bits(".5e1"), 5.0_f64.to_bits());
     assert_eq!(bits("5.e-1"), 0.5_f64.to_bits());
     assert_eq!(bits("0e0"), 0.0_f64.to_bits());
-    assert_eq!(refused("1E400").sqlcode(), -900_i32);
+    assert_eq!(refused("1E400").sqlcode(), -103_i32);
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.45 SR2; ECMAScript 5.1 §7.8.3] what is no numeric
@@ -211,7 +211,7 @@ fn what_is_no_numeric_literal() {
 /// GR1a] [ECMAScript 5.1 §7.8.3] Feature T840: a HexIntegerLiteral, `0x`
 /// or `0X` (MC/DC of `'x' | 'X'`: each) and hexadecimal digits of either case, is the exact number of
 /// its MV, of scale 0; of more than 18 decimal digits a DECFLOAT of at most
-/// 34 significant digits, held exactly; past that, SQLCODE -900. It is no `<unsigned integer>`.
+/// 34 significant digits, held exactly; past that, SQLCODE -103 [§5.3 SR29]. It is no `<unsigned integer>`.
 #[test]
 fn hex_integer_literals_are_exact_numbers() {
     assert_eq!(exact_of("0x1F"), (31_i128, 0_u32));
@@ -223,10 +223,10 @@ fn hex_integer_literals_are_exact_numbers() {
     let expected = DecFloat::of_digits(false, "5192296858534827628530496329220095", 0, MAX_DECFLOAT_PRECISION).unwrap();
     assert_eq!(big.to_string(), expected.to_string());
     // Regression: of 39 significant digits it was rounded to 34 before the fix.
-    assert_eq!(refused("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").sqlcode(), -900_i32);
+    assert_eq!(refused("0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF").sqlcode(), -103_i32);
     let huge = format!("0x{}", "F".repeat(6000));
-    assert_eq!(refused(&huge).sqlcode(), -900_i32);
-    assert_eq!(refused(&format!("0x1{}", "0".repeat(5200))).sqlcode(), -900_i32);
+    assert_eq!(refused(&huge).sqlcode(), -103_i32);
+    assert_eq!(refused(&format!("0x1{}", "0".repeat(5200))).sqlcode(), -103_i32);
     assert_eq!(tokens("0x1F+0x2 0x3)"), ["num", "Plus", "num", "num", "RightParen"]);
     let numerals: Vec<Numeral> = lex("0x5 5 5. 5.0 5e0 .5")
         .unwrap()
@@ -303,7 +303,7 @@ fn tokens_and_refusals_know_their_place() {
     let error = refused("lax $ = 1");
     assert_eq!(error.rule.as_deref(), Some("ISO/IEC 9075-2:2023 §9.45 SR2"));
     assert!(error.msg.contains("(at character 7)"), "{}", error.msg);
-    assert_eq!(error.sqlstate().as_str(), "2A000");
+    assert_eq!(error.sqlstate().as_str(), "42000");
     let open = refused("$ ? ('abc");
     assert!(open.msg.contains("(at character 6)"), "{}", open.msg);
 }

@@ -63,8 +63,8 @@ Those of the item values.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed, as an item value that is no simple value |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | It is not well formed, as an item value that is no simple value |
+| 42000 | -103 | A rule above is broken |
 | *the value* | -401 | Not handled, the exception SIGNAL raises |
 | 45000 | -401 | Not handled, a condition declared with no SQLSTATE value |
 | *01xxx* | 0 | Not an error. An unhandled warning, after which the statement goes on |
@@ -134,11 +134,11 @@ SIGNAL SQLSTATE '75001' SET MESSAGE_TEXT = 5;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): '00000' is no SQLSTATE value: five digits or upper case letters, not of the class 00 of successful completion [ISO/IEC 9075-4:2006 draft §8.2 SR4, SR5] (at character 16)
-turborel: SQLCODE -103 (SQLSTATE 2A000): '7500' is no SQLSTATE value: five digits or upper case letters, not of the class 00 of successful completion [ISO/IEC 9075-4:2006 draft §8.2 SR4, SR5] (at character 16)
-turborel: SQLCODE -103 (SQLSTATE 2A000): no compound statement this is in declares the condition OVERDRAWN [ISO/IEC 9075-4:2006 draft §17.2 SR1a ii] (at character 7)
-turborel: SQLCODE -103 (SQLSTATE 2A000): MESSAGE_TEXT is set twice [ISO/IEC 9075-4:2006 draft §17.2 SR2] (at character 48)
-turborel: SQLCODE -103 (SQLSTATE 2A000): MESSAGE_TEXT is set to a value of NUMERIC(1,0): it takes a character string [ISO/IEC 9075-4:2006 draft §17.2 SR3] (at character 0)
+turborel: SQLCODE -103 (SQLSTATE 42000): '00000' is no SQLSTATE value: five digits or upper case letters, not of the class 00 of successful completion [ISO/IEC 9075-4:2006 draft §8.2 SR4, SR5] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): '7500' is no SQLSTATE value: five digits or upper case letters, not of the class 00 of successful completion [ISO/IEC 9075-4:2006 draft §8.2 SR4, SR5] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): no compound statement this is in declares the condition OVERDRAWN [ISO/IEC 9075-4:2006 draft §17.2 SR1a ii] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): MESSAGE_TEXT is set twice [ISO/IEC 9075-4:2006 draft §17.2 SR2] (at character 48)
+turborel: SQLCODE -103 (SQLSTATE 42000): MESSAGE_TEXT is set to a value of NUMERIC(1,0): it takes a character string [ISO/IEC 9075-4:2006 draft §17.2 SR3] (at character 0)
 ```
 
 ## STANDARD

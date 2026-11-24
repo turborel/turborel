@@ -43,7 +43,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | No cursor of the name is declared |
+| 42000 | -103 | No cursor of the name is declared |
 | 24000 | -501 | The cursor is not open |
 | 34000 | -921 | No cursor of the extended name is allocated |
 
