@@ -28,6 +28,7 @@ mod decode;
 mod dirty_frames;
 mod distinct_aggregates;
 mod expr;
+mod exports;
 mod fetch_path;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
 mod alloc;
@@ -273,15 +274,16 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
 }
 
-/// The transport's, connections' homes', parallel queries', the client's
+/// An export's large objects', the transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures' and rows in demand's last, as `last`
 /// holds no more.
-fn closing() -> [&'static [Mutation]; 21] {
+fn closing() -> [&'static [Mutation]; 22] {
     [
+        &exports::EXPORTS,
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
         &parallel::PARALLEL,

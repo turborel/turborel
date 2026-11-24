@@ -1,26 +1,29 @@
-//! \[DESIGN\] `\export` (RULES.md D216) writes a table's or a query's
+//! \[DESIGN\] `\export` (RULES.md D216, D975) writes a table's or a query's
 //! rows, streamed from the server as they come, to a file as CSV (RFC
 //! 4180) or as tab-separated text, so `\import` and `--import` read them
 //! back as they were. In CSV a null is written as the null text, unquoted,
 //! and a value that would read back as a null, the empty string among
 //! them, is quoted; in text a value cannot hold a tab or a line break.
+//! `native` writes the protocol's own frames instead, every value with
+//! its type, as `turborel_client::export::read_native` reads them back.
 //!
-//! The rows come by a query (`Statements::query_into`), the protocol's
-//! export of a query's rows as they come. `native` writes them as the
-//! protocol's own frames instead (`Statements::export_native`), every
-//! value with its type, as `turborel_client::export::read_native` reads
-//! them back.
+//! The client library writes them (`Statements::export`), by its layouts
+//! (`turborel_client::export`): a large object is written as its value, a
+//! character one as its text and a binary one, as every binary string, in
+//! hexits, which `\import` reads back, read a chunk at a time as it is
+//! written.
 
 use std::fs::File;
-use std::io::{self, BufWriter, Write};
+use std::io::BufWriter;
 use std::path::PathBuf;
 
-use turborel::storage::Row;
-use turborel::value::Value;
-use turborel_client::Column;
-use turborel_client::connection::{Sink, Streamed};
+use turborel_client::export::{Delimited, Layout, Native, Quoting};
 
 use crate::run::Statements;
+
+/// What ends a line of the file, CSV's among them, as the other files the
+/// command-line client writes end theirs.
+const LF: &str = "\n";
 
 /// How a file is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,64 +97,10 @@ impl Export {
         Ok(how)
     }
 
-    /// `value` as a field of the file.
-    fn field(&self, value: &Value) -> Result<String, String> {
-        if matches!(value, Value::Null) {
-            return Ok(self.null.clone());
-        }
-        let text = value.to_string();
-        match self.form {
-            Form::Csv => {
-                let quote = text.is_empty() || text == self.null || text.contains([self.delimiter, '"', '\r', '\n']);
-                Ok(if quote { format!("\"{}\"", text.replace('"', "\"\"")) } else { text })
-            }
-            Form::Text => {
-                if text.contains([self.delimiter, '\r', '\n']) || text == self.null {
-                    return Err(format!(
-                        "{text:?} holds the delimiter or a line break, or is the null text: text cannot hold it; export as csv"
-                    ));
-                }
-                Ok(text)
-            }
-            // Native rows are written as frames, never as fields.
-            Form::Native => Ok(text),
-        }
-    }
-}
-
-/// What writes the rows to the file as they come.
-struct Writer<'e> {
-    how: &'e Export,
-    out: BufWriter<File>,
-    /// The first failure. Nothing more is written after it.
-    failed: Option<String>,
-}
-
-impl Writer<'_> {
-    /// Writes the line of `fields`, unless writing failed.
-    fn line(&mut self, fields: Result<Vec<String>, String>) {
-        if self.failed.is_some() {
-            return;
-        }
-        let delimiter = self.how.delimiter.to_string();
-        let written = fields.and_then(|f| writeln!(self.out, "{}", f.join(&delimiter)).map_err(|e| e.to_string()));
-        self.failed = written.err();
-    }
-}
-
-impl Sink for Writer<'_> {
-    fn columns(&mut self, columns: &[Column]) {
-        if self.how.header {
-            let names = columns.iter().map(|c| self.how.field(&Value::Char(c.name.clone().unwrap_or_default().into()))).collect();
-            self.line(names);
-        }
-    }
-
-    fn rows(&mut self, rows: &[Row]) {
-        for row in rows {
-            let fields = row.iter().map(|v| self.how.field(v)).collect();
-            self.line(fields);
-        }
+    /// The layout its delimited forms are written by.
+    fn delimited(&self) -> Delimited {
+        let quoting = if self.form == Form::Text { Quoting::Refused } else { Quoting::Quoted };
+        Delimited { quoting, header: self.header, delimiter: self.delimiter, null: self.null.clone(), line_end: LF.to_owned() }
     }
 }
 
@@ -159,23 +108,13 @@ impl Sink for Writer<'_> {
 ///
 /// # Errors
 ///
-/// The query fails, gives no rows, or the file cannot be written.
+/// The query fails, is no query, or the file cannot be written.
 pub fn export<S: Statements + ?Sized>(connection: &mut S, how: &Export) -> Result<u64, String> {
     let file = File::create(&how.file).map_err(|e| format!("cannot write {}: {e}", how.file.display()))?;
-    if how.form == Form::Native {
-        let mut out = BufWriter::new(file);
-        return connection.export_native(&how.query, &mut out).map_err(|f| f.to_string());
-    }
-    let mut writer = Writer { how, out: BufWriter::new(file), failed: None };
-    let streamed = connection.query_into(&how.query, &mut writer).map_err(|f| f.to_string())?;
-    if let Some(e) = writer.failed {
-        return Err(e);
-    }
-    writer.out.flush().map_err(|e: io::Error| e.to_string())?;
-    match streamed {
-        Streamed::Rows(count) => Ok(count),
-        Streamed::Done(_) => Err("the statement gave no rows".to_owned()),
-    }
+    let mut out = BufWriter::new(file);
+    let (mut native, mut delimited) = (Native, how.delimited());
+    let layout: &mut dyn Layout = if how.form == Form::Native { &mut native } else { &mut delimited };
+    connection.export(&how.query, &mut out, layout).map_err(|f| f.to_string())
 }
 
 #[cfg(test)]
@@ -202,24 +141,28 @@ mod tests {
         assert!(Export::parse(&args("T f delimiter ab")).is_err());
     }
 
-    /// Verifies: [DESIGN] RULES.md D216; [RFC 4180 §2] a CSV field is
-    /// quoted if it holds the delimiter, a quote or a line break, is empty
-    /// or is the null text, so it reads back as written; a null is the
-    /// null text unquoted; text refuses a value it cannot hold.
+    /// Verifies: [DESIGN] RULES.md D216, D975; [RFC 4180 §2] a CSV field
+    /// is quoted if it holds the delimiter, a quote or a line break, is
+    /// empty or is the null text, so it reads back as written; text refuses
+    /// a value it cannot hold; each line ends with LF.
     #[test]
     fn fields_read_back_as_written() {
+        let field = |how: &Export, v: &str| {
+            let mut buf = Vec::new();
+            how.delimited().text_field(&mut buf, v).map(|()| String::from_utf8(buf).unwrap())
+        };
         let csv = Export::parse(&args("T f")).unwrap();
-        let field = |how: &Export, v: &str| how.field(&Value::Char(v.into()));
-        assert_eq!(csv.field(&Value::Null).unwrap(), "");
         assert_eq!(field(&csv, "").unwrap(), "\"\"");
         assert_eq!(field(&csv, "a,\"b\"").unwrap(), "\"a,\"\"b\"\"\"");
         assert_eq!(field(&csv, "plain").unwrap(), "plain");
+        assert_eq!(csv.delimited().line_end, "\n");
         let dashed = Export::parse(&args("T f null -")).unwrap();
         assert_eq!(field(&dashed, "").unwrap(), "\"\"", "the empty string is quoted, whatever the null text");
+        assert_eq!(field(&dashed, "-").unwrap(), "\"-\"", "as is the null text");
         let text = Export::parse(&args("T f text null N")).unwrap();
         assert_eq!(field(&text, "a b").unwrap(), "a b");
         assert!(field(&text, "a\tb").is_err());
         assert!(field(&text, "N").is_err());
-        assert_eq!(text.field(&Value::Null).unwrap(), "N");
+        assert_eq!(text.delimited().null, "N");
     }
 }
