@@ -83,7 +83,8 @@ pub fn datetimes_at<S: Seal>(
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
 /// `positions` of `group`, in increasing order, as integers, as `ints`
 /// gives those of a run: each chunk's span from the first position asked
-/// of it to the last decoded at once, and those asked taken of it.
+/// of it to the last decoded at once, and those asked taken of it, if they
+/// are dense in it, else each read alone (`words_of`).
 ///
 /// # Errors
 ///
