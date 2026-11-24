@@ -27,7 +27,8 @@
 //!   statements run since it was opened (`STATEMENT_STATISTICS`, D521,
 //!   `system/statements.rs`), and what its tables hold and take and how
 //!   its indexes are used (`TABLE_STATISTICS`, `INDEX_STATISTICS`, D522,
-//!   `system/sizes.rs`).
+//!   `system/sizes.rs`), and what the planner's statistics hold of each
+//!   column (`COLUMN_STATISTICS`, D990, `system/column_stats.rs`).
 //!
 //! A system table is an extension point (`SystemTable`): a plug-in may add
 //! one (`Database::register_system_table`), an engine's statistics, say.
@@ -39,6 +40,7 @@
 //! binding it.
 
 mod backups;
+mod column_stats;
 mod definition;
 mod embedding;
 mod extensions;
@@ -219,6 +221,7 @@ pub(crate) fn builtin() -> SystemTables {
     tables.extend(extensions::tables());
     tables.extend(vectors::tables());
     tables.extend(sizes::tables());
+    tables.extend(column_stats::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
 }
 

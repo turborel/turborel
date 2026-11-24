@@ -231,11 +231,13 @@ pub(crate) struct TableLock {
     /// the set under its lock, so an end that would leave it so changes
     /// nothing shared (RULES.md D795).
     noted: AtomicBool,
-    /// When a transaction that wrote it last committed, and when its
-    /// engine's maintenance last did some work, as a timestamp's instant;
-    /// 0 for never (TABLE_STATISTICS, RULES.md D522).
+    /// When a transaction that wrote it last committed, when its engine's
+    /// maintenance last did some work, and when its statistics were last
+    /// gathered, as a timestamp's instant; 0 for never (TABLE_STATISTICS,
+    /// RULES.md D522; COLUMN_STATISTICS, D991).
     changed: AtomicI64,
     compacted: AtomicI64,
+    gathered: AtomicI64,
     /// The increments reserved on its rows (RULES.md D452).
     pub(crate) escrow: Arc<super::escrow::Escrow>,
 }
@@ -288,6 +290,15 @@ impl TableLock {
     pub(crate) fn stamps(&self) -> (Option<i64>, Option<i64>) {
         let at = |a: &AtomicI64| Some(a.load(Ordering::Relaxed)).filter(|&t| t != 0);
         (at(&self.changed), at(&self.compacted))
+    }
+
+    /// Records that its statistics were gathered at `at`, and when they
+    /// last were, if ever (RULES.md D991).
+    pub(crate) fn gathered(&self, at: Option<i64>) -> Option<i64> {
+        if let Some(at) = at {
+            self.gathered.store(at, Ordering::Relaxed);
+        }
+        Some(self.gathered.load(Ordering::Relaxed)).filter(|&t| t != 0)
     }
 
     /// Marks the table repaired (`Database::repair_table`).

@@ -93,6 +93,8 @@ pub(super) struct Gathered {
     changes: AtomicU64,
     /// The rows the last pass found.
     rows: AtomicU64,
+    /// The passes that gathered them (RULES.md D991).
+    passes: AtomicU64,
     /// Set while a thread gathers them.
     gathering: AtomicBool,
     /// Set for a table opened: due when first asked for.
@@ -118,6 +120,7 @@ impl Gathered {
             stats: RwLock::default(),
             changes: AtomicU64::default(),
             rows: AtomicU64::default(),
+            passes: AtomicU64::default(),
             gathering: AtomicBool::default(),
             when_asked: AtomicBool::default(),
             asked: AtomicBool::default(),
@@ -193,6 +196,11 @@ impl Gathered {
             self.asked.store(true, Ordering::Release);
         }
         stats
+    }
+
+    /// The passes that gathered them.
+    pub(super) fn passes(&self) -> u64 {
+        self.passes.load(Ordering::Acquire)
     }
 
     /// The statistics of the last pass, if there was one.
@@ -283,6 +291,7 @@ impl RowTable {
         self.gathered.changes.fetch_sub(before, Ordering::Relaxed);
         self.gathered.asked.store(false, Ordering::Release);
         self.gathered.spaced_after(begun.elapsed());
+        self.gathered.passes.fetch_add(1, Ordering::Release);
         Ok(stats)
     }
 

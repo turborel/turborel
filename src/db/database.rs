@@ -570,8 +570,13 @@ impl Database {
     /// SQLCODE -910 if `table` is not "AUTH.TABLE" or has no storage; the
     /// engine's errors, the statistics then left as they were.
     pub fn analyze(&self, table: &str) -> Result<()> {
-        let name = qualified_name(table)?;
-        self.snapshot()?.storage_of(&name)?.analyze()
+        let (name, state) = (qualified_name(table)?, self.snapshot()?);
+        let storage = state.storage_of(&name)?;
+        let passes = storage.statistics_passes();
+        storage.analyze()?;
+        // When they were gathered (RULES.md D991).
+        state.lock_of(&name)?.gathered((storage.statistics_passes() != passes).then(|| state.clock.now()));
+        Ok(())
     }
 
     /// Start a session whose authorization identifier plays the role of the

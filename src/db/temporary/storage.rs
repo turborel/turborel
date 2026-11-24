@@ -312,6 +312,9 @@ impl TableStorage for Rows_ {
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         self.made().and_then(|rows| rows.statistics())
     }
+    fn statistics_passes(&self) -> u64 {
+        self.made().map_or(0, |rows| rows.statistics_passes())
+    }
     fn analyze(&self) -> Result<()> {
         self.made().map_or(Ok(()), |rows| rows.analyze())
     }

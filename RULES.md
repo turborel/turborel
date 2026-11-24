@@ -635,6 +635,9 @@ verification approach DO-178C expects (§8).
 | D982 | EXPLAIN of a data change reads, locks and writes nothing, so no trigger fires |
 | D983 | EXPLAIN of a data change names the indexes it maintains, the actions that cascade and the triggers that fire |
 | D984 | EXPLAIN of a data change says whether a point path runs it when prepared or in a procedure |
+| D990 | COLUMN_STATISTICS shows what the planner's statistics hold of each column, its values as text, to those holding a privilege on the column |
+| D991 | A table's lock stamps when its statistics were last gathered, as a pass the engine counts is seen |
+| D992 | INDEX_STATISTICS shows the distinct keys an index counts, as the planner reads them |
 | D1000 | DEBUG is a routine's privilege of its own, granted and revoked as EXECUTE is |
 | D1001 | The owner of a routine holds DEBUG on it by owning it, as the owner of a domain holds USAGE |
 | D1002 | ALL PRIVILEGES on a routine stays EXECUTE alone |
@@ -17747,6 +17750,68 @@ compiled program's own, from the statement's shape and its table
 says so (D419). None of these is `none`. A statement run directly
 plans its rows each time, so the line tells what its prepared or
 procedure's form gains.
+
+### Statistics views
+
+#### D990. COLUMN_STATISTICS shows what the planner's statistics hold of each column, its values as text, to those holding a privilege on the column
+
+The standard has no view of the statistics a planner keeps, and it lets an
+implementation add objects to INFORMATION_SCHEMA [ISO/IEC 9075:1992 §21.1].
+A tool tuning queries needs them, so INFORMATION_SCHEMA.COLUMN_STATISTICS
+has a row of each column of each base table (`system/column_stats.rs`).
+The row shows the rows the last pass found and when it was made (D991),
+the share NULL, the distinct values, the average width of a row read for
+the column, the least and greatest values, the most common values with
+the share of the rows each holds, and the histogram's bounds. Each figure
+is read through `State::statistics`, so it is what the planner reads. The
+distinct values of a column an index keys alone are the index's count
+(D383), and the width is what the engine answers for the column, of a row
+store the whole row's. A table's engine knowing none shows NULL in each.
+No correlation of a column with its rows' order is kept, so none is shown.
+
+A view's column has one declared type in every row, and a table's columns
+have many. So a value is shown as a character string, its text as the
+client shows it, from which a CAST to the column's own type reads it back
+[ISO/IEC 9075-2:2023 §6.13]. Its `<literal>` was tried first, but an
+array of literals quotes each string twice over, which no reader wants.
+The most common values and the bounds are arrays of these texts, and the
+shares an array of DECIMAL(18, 4). A text is cut at 4,096 characters, as
+a statement's text in STATEMENT_STATISTICS is.
+
+Reading the view reads the statistics as a plan does. Ones not gathered
+become due, and the database's maintenance gathers them, so a tool that
+opens the view sees them soon after (D473).
+
+The owner and a user granted MONITOR (D520) see every column, as in
+TABLE_STATISTICS (D522). Any other user sees the columns on which it
+holds a column privilege, SELECT, INSERT, UPDATE or REFERENCES [ISO/IEC
+9075-2:2023 §4.42.2], SELECT on the table counting for each column. That
+is how COLUMNS shows the columns accessible to a user [ISO/IEC 9075:1992
+§21.2.9]. DELETE alone is on no column and shows none. A table none of
+whose columns is shown is not asked for its statistics.
+
+#### D991. A table's lock stamps when its statistics were last gathered, as a pass the engine counts is seen
+
+An engine has no clock of the database's, so it cannot stamp its own
+passes with the instant CURRENT_TIMESTAMP would read. It counts them
+instead (`TableStorage::statistics_passes`, none by default). The row
+store adds one as each pass stores its statistics. The database reads the
+count before and after it has the engine gather, by ANALYZE
+(`Database::analyze`) or by its maintenance, and stores its clock's
+instant in the table's lock if the count moved. The stamp sits beside
+the commit and compaction stamps of D522, which every snapshot shares.
+TRUNCATE TABLE gives a table a new storage and a new lock, so its
+statistics and their stamp both begin again from none.
+
+#### D992. INDEX_STATISTICS shows the distinct keys an index counts, as the planner reads them
+
+The planner estimates an equality on all of an index's columns by the
+distinct keys the index counts (D35, D383). INDEX_STATISTICS shows them
+in DISTINCT_KEYS, through `State::distinct_keys`, rounded to a whole
+number, NULL while the index has not counted them. Asking makes a count
+due as a plan's asking does.
+
+### The routine debugger
 
 #### D1000. DEBUG is a routine's privilege of its own, granted and revoked as EXECUTE is
 

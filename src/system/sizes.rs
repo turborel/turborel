@@ -12,7 +12,9 @@
 //! INDEX_STATISTICS has a row for each index: its method, the searches
 //! made of it and the entries they gave (`index/uses.rs`) since the
 //! database was opened or the index made, and what its method knows of
-//! its entries, height and bytes (`Index::sizes`).
+//! its entries, height and bytes (`Index::sizes`), and the distinct keys
+//! it counts, as the planner reads them (`State::distinct_keys`, RULES.md
+//! D992).
 //!
 //! The database's owner, and a user granted the role MONITOR the owner
 //! created (`Seen::may_monitor`, RULES.md D520), see every table's and
@@ -22,6 +24,7 @@
 
 use std::sync::Arc;
 
+use super::column_stats::whole;
 use super::statements::{count, counted, time, time_column};
 use super::{Seen, SystemTable, catalog_name, identifier, text, text_column, yes};
 use crate::catalog::{ColumnDesc, IndexDesc, QualifiedName, TableDesc, Who, applicable};
@@ -132,7 +135,8 @@ impl SystemTable for IndexStatistics {
         let mut columns = table_columns();
         columns.extend([identifier("INDEX_NAME", true), identifier("METHOD_NAME", true)]);
         columns.extend(["SEARCHES", "ENTRIES_READ"].into_iter().map(counted));
-        columns.extend(["ENTRY_COUNT", "HEIGHT", "BYTES"].into_iter().map(|n| ColumnDesc { not_null: false, ..counted(n) }));
+        let known = ["ENTRY_COUNT", "HEIGHT", "BYTES", "DISTINCT_KEYS"];
+        columns.extend(known.into_iter().map(|n| ColumnDesc { not_null: false, ..counted(n) }));
         columns
     }
 
@@ -145,10 +149,12 @@ impl SystemTable for IndexStatistics {
             of.sort_by(|a, b| a.name.cmp(&b.name));
             for ix in of {
                 let (searches, entries) = seen.state.uses_of(&ix.name).map_or((0, 0), |uses| uses.totals());
-                let sizes = seen.state.index_of(&ix.name).map(|index| index.sizes()).unwrap_or_default();
+                let index = seen.state.index_of(&ix.name).ok();
+                let sizes = index.map(|index| index.sizes()).unwrap_or_default();
+                let keys = whole(index.and_then(|index| seen.state.distinct_keys(&t.name, &**index)));
                 let mut row = named(seen, &t.name);
                 row.extend([text(&ix.name), text(&ix.method), count(searches), count(entries)]);
-                row.extend([maybe(sizes.entries), maybe(sizes.height), maybe(sizes.bytes)]);
+                row.extend([maybe(sizes.entries), maybe(sizes.height), maybe(sizes.bytes), keys]);
                 rows.push(row);
             }
         }

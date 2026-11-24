@@ -37,6 +37,7 @@ mod collation_derivation;
 mod collation_usage;
 mod collations;
 mod collection;
+mod column_statistics;
 mod commit_restore;
 mod commit_visibility;
 mod common;

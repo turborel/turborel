@@ -4293,7 +4293,8 @@ PARTITIONS and PARTITION_INDEXES are extensions
 |---|---|
 | CONNECTIONS, SERVER, REPLICAS | A server's connections, each with the statement it runs, its transaction's start and what it waits on (RULES.md D520), its counts with the database's transactions committed and rolled back (RULES.md D334), and its replicas |
 | STATEMENT_STATISTICS | The statements run since the database opened, by normalized text and user, with their calls, times, rows, rows read and bytes spilled (RULES.md D521) |
-| TABLE_STATISTICS, INDEX_STATISTICS | Each table's rows, bytes, last change and last compaction, and each index's searches, entries read and size as its method knows it (RULES.md D522) |
+| TABLE_STATISTICS, INDEX_STATISTICS | Each table's rows, bytes, last change and last compaction, and each index's searches, entries read, size as its method knows it and distinct keys it counts (RULES.md D522, D992) |
+| COLUMN_STATISTICS | What the planner's statistics hold of each column: the rows of the last pass and when it was made, the share NULL, distinct values, width, least and greatest values, most common values and their shares, and histogram bounds, each value as text, to those holding a privilege on the column (RULES.md D990, D991) |
 | FILES, FILE_FORMATS | A database's files and their formats |
 | JOBS | Its background jobs |
 | MEMORY_RESERVATIONS | What holds its memory |

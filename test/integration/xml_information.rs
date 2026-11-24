@@ -130,7 +130,7 @@ fn columns_and_domains_20_4() {
 fn element_types_and_fields_20_6() {
     let db = described();
     let a = db.session("A");
-    let elements = format!("SELECT OBJECT_NAME, DATA_TYPE, {XML_COLUMNS} FROM INFORMATION_SCHEMA.ELEMENT_TYPES");
+    let elements = format!("SELECT OBJECT_NAME, DATA_TYPE, {XML_COLUMNS} FROM INFORMATION_SCHEMA.ELEMENT_TYPES WHERE OBJECT_SCHEMA = 'A'");
     assert_eq!(query(&a, &elements), ["U,XML,DOCUMENT,UNTYPED,NULL,NULL,NULL,NULL,NULL"]);
     let fields = format!("SELECT FIELD_NAME, DATA_TYPE, {XML_COLUMNS} FROM INFORMATION_SCHEMA.FIELDS");
     assert_eq!(sorted(&a, &fields), ["F,XML,CONTENT,UNTYPED,NULL,NULL,NULL,NULL,NULL", "N,INTEGER,NULL,NULL,NULL,NULL,NULL,NULL,NULL"]);

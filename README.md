@@ -86,6 +86,8 @@ behind it, and each can be replaced or added to.
   queries of a hundred tables, on statistics of most common values, a
   sample of rows for correlated conditions and indexes' joint key counts,
   joins estimated by keys and bounded, index joins chosen robustly.
+- [Column statistics](doc/sql/07-information-schema.md#column-statistics)
+  in a view: what the planner holds of each column, and each index's keys.
 - [Range joins](doc/sql/06-queries.md#how-joins-are-planned-extension) of
   bands and overlapping periods, one table sorted and searched by the other.
 - [Predicate transfer](doc/sql/06-queries.md#how-joins-are-planned-extension)

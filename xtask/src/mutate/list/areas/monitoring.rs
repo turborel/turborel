@@ -3,13 +3,16 @@
 //! wait, the role MONITOR's creator, a literal's placeholder, the tally
 //! that gives way, the rows a scan read, an index's searches and probes,
 //! the counts a dropped index leaves, a table's commit and compaction
-//! stamps, who sees which table, and the user a session's tallies keep.
+//! stamps, who sees which table, and the user a session's tallies keep;
+//! and of the planner's statistics of columns and indexes (D990, D991,
+//! D992): who sees which column, a value's text, the stamp of a pass
+//! and the pass counted, and an index's distinct keys.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the sessions' and statements' views whose removal must
 /// fail their tests.
-pub const MONITORING: [Mutation; 12] = [
+pub const MONITORING: [Mutation; 18] = [
     Mutation {
         name: "monitoring-wait-not-shown",
         package: Package::Server,
@@ -128,6 +131,66 @@ pub const MONITORING: [Mutation; 12] = [
         original: "        if self.0.load(Ordering::Relaxed) != hash {",
         replacement: "        if self.0.load(Ordering::Relaxed) == 0 {",
         integration: &["statement_statistics::a_session_tallies_each_user_it_runs_as"],
+        unit: &[],
+    },
+    Mutation {
+        name: "colstats-columns-by-table",
+        package: Package::Core,
+        breaks: "a privilege on a table, DELETE among them, shows every column's statistics, not those of the columns it is on",
+        file: "src/system/column_stats.rs",
+        original: "    held.select || held.insert.contains(&column) || held.update.contains(&column) || held.references.contains(&column)\n",
+        replacement: "    !held.is_empty()\n",
+        integration: &["column_statistics::a_user_sees_the_columns_it_holds_a_privilege_on"],
+        unit: &[],
+    },
+    Mutation {
+        name: "colstats-value-not-literal",
+        package: Package::Core,
+        breaks: "a value is shown as its literal, not its text, so a string is quoted and a date keeps its key word",
+        file: "src/system/column_stats.rs",
+        original: "    cut(&value.to_string())\n",
+        replacement: "    cut(&value.to_literal())\n",
+        integration: &["column_statistics::each_columns_statistics_are_shown_after_analyze"],
+        unit: &[],
+    },
+    Mutation {
+        name: "colstats-analyze-unstamped",
+        package: Package::Core,
+        breaks: "ANALYZE does not stamp when it gathered, so GATHERED stays null",
+        file: "src/db/database.rs",
+        original: "        state.lock_of(&name)?.gathered((storage.statistics_passes() != passes).then(|| state.clock.now()));\n",
+        replacement: "",
+        integration: &["column_statistics::each_columns_statistics_are_shown_after_analyze"],
+        unit: &[],
+    },
+    Mutation {
+        name: "colstats-job-unstamped",
+        package: Package::Core,
+        breaks: "the statistics job does not stamp when it gathered, so GATHERED stays null",
+        file: "src/db/maintenance.rs",
+        original: "        lock.gathered((storage.statistics_passes() != passes).then(|| self.clock.now()));\n",
+        replacement: "",
+        integration: &["column_statistics::statistics_gathered_by_the_job_are_stamped_when"],
+        unit: &[],
+    },
+    Mutation {
+        name: "colstats-pass-uncounted",
+        package: Package::Core,
+        breaks: "the row store counts no pass, so no gathering is ever stamped",
+        file: "src/engine/rows/stats.rs",
+        original: "        self.gathered.passes.fetch_add(1, Ordering::Release);\n",
+        replacement: "",
+        integration: &["column_statistics::each_columns_statistics_are_shown_after_analyze"],
+        unit: &[],
+    },
+    Mutation {
+        name: "colstats-index-keys-unshown",
+        package: Package::Core,
+        breaks: "INDEX_STATISTICS shows no distinct keys of an index that counts them",
+        file: "src/system/sizes.rs",
+        original: "let keys = whole(index.and_then(|index| seen.state.distinct_keys(&t.name, &**index)));",
+        replacement: "let keys = whole(None);",
+        integration: &["column_statistics::an_indexs_distinct_keys_are_shown"],
         unit: &[],
     },
 ];
