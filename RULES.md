@@ -629,6 +629,7 @@ verification approach DO-178C expects (§8).
 | D976 | An import reads a binary string column's field as its octets' hexits, as an export writes them |
 | D977 | Each `?` of a prepared CALL is described with its parameter's mode and ordinal position and the procedure's specific name |
 | D978 | With `parameter-modes`, a Prepared of a CALL carries its procedure and each `?` with its parameter's mode, tag 20 |
+| D979 | A procedure's IN and INOUT parameters take their defaults by DEFAULT, by an argument left out, or by a name not named |
 
 ### The project
 
@@ -17593,9 +17594,8 @@ written in Rust, which has no specific name. DESCRIBE INPUT and
 DESCRIBE OUTPUT set PARAMETER_MODE to Table 33's code, 1 IN, 2 INOUT
 and 4 OUT, PARAMETER_ORDINAL_POSITION, and the three
 PARAMETER_SPECIFIC items, of each top-level item of a CALL, and SET
-DESCRIPTOR sets none of them [§20.5 SR3a]. No parameter has a default
-(Features T522, T523), so DEFAULT as an argument stays refused, SQLCODE
--900, and a CALL of fewer arguments than parameters finds no procedure.
+DESCRIPTOR sets none of them [§20.5 SR3a]. A parameter left to its
+default value holds no `?` (D979).
 
 #### D978. With `parameter-modes`, a Prepared of a CALL carries its procedure and each `?` with its parameter's mode, tag 20
 
@@ -17612,6 +17612,33 @@ it reads what it always read, and the protocol's version stays 1. The
 OUT and INOUT values still come back as the one row of the statement's
 columns, which `Statement::parameters` now matches by mode. The
 client's `parameters` gives the modes told, else the inputs, each IN.
+
+#### D979. A procedure's IN and INOUT parameters take their defaults by DEFAULT, by an argument left out, or by a name not named
+
+A `<parameter default>` of a procedure's IN or INOUT parameter (Features
+T522 and T523) is read, a value expression or NULL, with no host or
+dynamic parameter [ISO/IEC 9075-2:2023 §11.60 SR19], and an OUT
+parameter's is refused [SR16e ii]. The routine descriptor keeps its
+text as written [GR3c vi], logged and checkpointed with the rest, and
+PARAMETERS shows it as PARAMETER_DEFAULT, a last column, as the 2006
+draft's view has none. It is bound as the body is, under the owner of
+the procedure's schema, in a scope of the routine's path and horizon
+and of no parameter, its type one the parameter's takes by store
+assignment [SR16e i]. The tables, columns and routines it names join
+the body's, after the body's SQL-data access is checked, so a drop of
+one is refused without CASCADE [§11.23 SR7d, §11.31 SR7f, §11.62 SR4c
+ii]. A CALL's candidates are the procedures of the name with at least
+as many parameters as arguments, each parameter past those written, or
+named by none, of a default [§9.18 SR9b, SR9d], and of those of the
+schema first in the path the one of fewest parameters is invoked
+[SR9e to SR9g]. Such a parameter, and one given DEFAULT, takes its
+default, bound again from the kept text as at definition and evaluated
+in the row of the CALL's arguments, so the compiled and the direct
+paths take it as any argument; with no default it is null [GR3b ii]. An
+INOUT parameter given DEFAULT has no target, so its value out goes
+nowhere [SR9h iii 2]. NULL of an IN parameter is the null value, as it
+is of a procedure written in Rust, whose parameters have no default. A
+function's default stays refused, SQLCODE -900 (T525).
 
 ## 2. Project layout
 

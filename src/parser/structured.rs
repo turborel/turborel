@@ -300,7 +300,7 @@ impl Parser {
         if self.is_word(RESULT) {
             return Err(broken(defined.of(("§11.51 SR9b ix 2", "§11.56 SR12b")), self.here(), "a parameter of a method is not RESULT"));
         }
-        Ok(ParameterDeclaration { mode: None, name, data_type: ParameterType::Data(data_type), at })
+        Ok(ParameterDeclaration { mode: None, name, data_type: ParameterType::Data(data_type), default: None, at })
     }
 
     /// [ISO/IEC 9075-2:2023 §11.51] `<method characteristics>`, in any

@@ -1,13 +1,14 @@
 //! [ISO/IEC 9075-2:2023 §16.1, §9.18, §10.4] CALL of an SQL-invoked
 //! procedure (Feature T321).
 //!
-//! The subject routine is the procedure of the name with as many
-//! parameters as there are arguments, on which the current authorization
-//! identifier holds EXECUTE [§9.18 SR6, SR9]. Each argument is as its
-//! parameter's mode allows [SR9h iii, iv]: a value expression of an input
-//! parameter; a target specification of an output one, or of one both.
-//! NULL or DEFAULT of an input parameter, and DEFAULT of one both, are of
-//! Features T522 and T523, not supported [§10.4 CR6, CR7]. A target is a
+//! The subject routine is the procedure of the name that takes the
+//! arguments, the one of fewest parameters, on which the current
+//! authorization identifier holds EXECUTE [§9.18 SR6, SR9]. Each argument
+//! is as its parameter's mode allows [SR9h iii, iv]: a value expression,
+//! NULL or DEFAULT of an input parameter; a target specification of an
+//! output one; a target specification or DEFAULT of one both. A parameter
+//! past the arguments written, or named by none, takes DEFAULT, its
+//! default value (`defaults.rs`) (Features T522 and T523). A target is a
 //! host parameter, an SQL parameter of the procedure whose body the CALL
 //! is, or a column of a BEFORE trigger's new transition variable [§6.4];
 //! or, of a prepared CALL, a `?`, an output dynamic parameter, or one
@@ -32,10 +33,11 @@ use super::program::{Hosted, hosted_rows};
 use crate::ast::{
     CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
 };
-use crate::binder::named::{all_or_none, arranged};
-use crate::binder::{Context, OutColumn, bind_argument, qualify, resolve_procedure};
+use super::defaults::default_input;
+use crate::binder::named::{all_or_none, placed};
+use crate::binder::{Context, OutColumn, bind_argument, qualify, resolve_procedure, takes};
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of, routine_path};
-use crate::error::{At, Code, Result, SqlError, Subject};
+use crate::error::{At, Result, Subject};
 use crate::exec::execute;
 use crate::logical::{Expr, LogicalPlan, filled};
 use crate::params::{ParameterType, Params, RoutineScope, conformed};
@@ -244,17 +246,6 @@ fn no_target<T>(desc: &SqlRoutineDesc, (k, both): (usize, bool), a: &SqlArgument
     }
 }
 
-/// [ISO/IEC 9075-2:2023 §10.4 CR6, CR7] A `<contextually typed value
-/// specification>` of an input parameter, or DEFAULT of one both input
-/// and output: the null value, as no parameter has a default [§9.18
-/// GR3b ii 1], but of Feature `feature`, not supported.
-pub(super) fn defaulted<T>(feature: &str, rule_of: u8, at: usize) -> Result<T> {
-    let msg = format!(
-        "[ISO/IEC 9075-2:2023 §10.4 CR{rule_of}] NULL or DEFAULT as an argument of an input parameter of CALL is of Feature {feature}, not supported"
-    );
-    Err(SqlError::new(Code::Unsupported, msg)).or_at(at)
-}
-
 /// [ISO/IEC 9075-2:2023 §9.18 SR9h iv, v, §9.2 SR2] The value expression
 /// `v` of the input parameter `p`, bound in `cx`: its type one the
 /// parameter's may take by store assignment, a `?` of the parameter's.
@@ -279,21 +270,20 @@ impl State {
     /// EXECUTE on it; an argument's, bound.
     pub(crate) fn bind_call(cx: Context<'_>, call: &CallStatement) -> Result<BoundCall> {
         all_or_none(&call.names)?;
-        let desc = resolve_procedure(cx, &call.name, call.arguments.len())?;
-        let parameters: Vec<&str> = desc.parameters.iter().map(|p| p.name.as_str()).collect();
-        let written: Vec<usize> = (0..call.arguments.len()).collect();
-        let Some(arguments) = arranged(&parameters, &written, &call.names) else {
-            return Err(rule(format!(
-                "[ISO/IEC 9075-2:2023 §9.18 SR5d] the arguments of the CALL do not name each parameter of procedure {}",
-                desc.name
-            )));
-        };
+        let desc = resolve_procedure(cx, &call.name, &call.names)?;
+        let shape: Vec<(&str, bool)> = desc.parameters.iter().map(|p| (p.name.as_str(), p.default.is_some())).collect();
+        let places = placed(&shape, &call.names).unwrap_or_default();
         let mut outputs = Outputs::default();
         let (mut inputs, mut questions) = (Vec::new(), Vec::new());
-        for (k, (p, j)) in desc.parameters.iter().zip(arguments).enumerate() {
-            let Some(a) = call.arguments.get(*j) else { continue };
+        for (k, (p, place)) in desc.parameters.iter().zip(places).enumerate() {
+            // [§9.18 SR9h i 1 B, 2 B] DEFAULT, of a parameter of no argument.
+            let Some(j) = place else {
+                inputs.push(default_input(cx, &desc, p)?);
+                continue;
+            };
+            let Some(a) = call.arguments.get(j) else { continue };
             inputs.push(argument(cx, (&desc, k, p), a, &mut outputs)?);
-            questions.extend(call.dynamic.get(*j).into_iter().flatten().map(|number| (*number, k)));
+            questions.extend(call.dynamic.get(j).into_iter().flatten().map(|number| (*number, k)));
         }
         let Outputs { targets, dynamic } = outputs;
         let columns: Vec<OutColumn> = targets.iter().filter_map(|(k, _)| desc.parameters.get(*k)).map(out_column).collect();
@@ -308,11 +298,11 @@ impl State {
     }
 
     /// Whether `call`, its names in schema `schema`, invokes a procedure
-    /// that possibly modifies SQL-data: the one of the name of as many
-    /// parameters as it has arguments [§9.18 SR9, §11.60 SR20a].
+    /// that possibly modifies SQL-data: one of the name that takes its
+    /// arguments [§9.18 SR9b, SR9d].
     pub(in crate::db) fn call_modifies(&self, call: &CallStatement, schema: &str) -> bool {
         let name = qualify(&call.name, schema);
-        let invoked = |r: &&SqlRoutineDesc| r.kind == RoutineKind::Procedure && r.parameters.len() == call.arguments.len();
+        let invoked = |r: &&SqlRoutineDesc| r.kind == RoutineKind::Procedure && takes(r, &call.names);
         // One written in Rust possibly modifies SQL-data.
         Session::rust_procedure(self, call).is_some()
             || self.catalog.routines_named(&name).into_iter().filter(invoked).any(|r| r.access == DataAccess::Modifies)
@@ -335,8 +325,10 @@ fn argument(
     };
     match (p.mode, given, target) {
         (ParameterMode::In, SqlArgument::Value(v), _) => input(cx, p, v),
-        (ParameterMode::In, SqlArgument::Default(at) | SqlArgument::Null(at), _) => defaulted("T522", 6, *at),
-        (ParameterMode::InOut, SqlArgument::Default(at), _) => defaulted("T523", 7, *at),
+        // [§9.18 GR3b ii] Its default value, its value out assigned to no
+        // target [SR9h iii 2].
+        (ParameterMode::In | ParameterMode::InOut, SqlArgument::Default(_), _) => default_input(cx, desc, p),
+        (ParameterMode::In, SqlArgument::Null(_), _) => Ok(Expr::Const(Value::Null)),
         (ParameterMode::Out, _, Some(to)) => {
             outputs.push(cx, (k, p), to)?;
             Ok(Expr::Const(Value::Null))

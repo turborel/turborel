@@ -269,6 +269,7 @@ mod order_by;
 mod ordered_joins;
 mod pages;
 mod parallel;
+mod parameter_defaults;
 mod partial_groups;
 mod partition_deltas;
 mod partitioned_joins;

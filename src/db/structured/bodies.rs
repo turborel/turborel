@@ -234,7 +234,7 @@ fn augmented(subject: &DataType, spec: &MethodSpecDesc) -> Vec<SqlParameter> {
     if spec.kind == MethodKind::Static {
         return own.collect();
     }
-    let subject = SqlParameter { name: SELF_NAME.to_owned(), data_type: subject.clone(), mode: ParameterMode::In, generic: None };
+    let subject = SqlParameter { name: SELF_NAME.to_owned(), data_type: subject.clone(), mode: ParameterMode::In, generic: None, default: None };
     std::iter::once(subject).chain(own).collect()
 }
 

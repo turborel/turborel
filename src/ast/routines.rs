@@ -95,6 +95,7 @@ impl ParameterMode {
 
 /// [ISO/IEC 9075-2:2023 §11.60] `<SQL parameter declaration>` ::=
 /// \[`<parameter mode>`\] `<SQL parameter name>` `<parameter type>`
+/// \[DEFAULT `<parameter default>`\]
 #[derive(Debug, Clone)]
 pub struct ParameterDeclaration {
     /// The `<parameter mode>`, if written.
@@ -104,8 +105,22 @@ pub struct ParameterDeclaration {
     pub name: String,
     /// The `<parameter type>`.
     pub data_type: ParameterType,
+    /// Its `<parameter default>`, if a procedure's parameter has one
+    /// (Features T522 and T523).
+    pub default: Option<ParameterDefault>,
     /// Where it is written.
     pub at: usize,
+}
+
+/// [ISO/IEC 9075-2:2023 §11.60] A `<parameter default>` of a procedure's
+/// parameter: a `<value expression>`, or NULL, a `<contextually typed
+/// value specification>`.
+#[derive(Debug, Clone)]
+pub struct ParameterDefault {
+    /// The value, a `SqlArgument::Value` or `SqlArgument::Null`.
+    pub value: SqlArgument,
+    /// Its text as written, which the routine descriptor keeps [GR3c vi].
+    pub text: String,
 }
 
 /// [ISO/IEC 9075-2:2023 §11.60] `<SQL-data access indication>`, of which

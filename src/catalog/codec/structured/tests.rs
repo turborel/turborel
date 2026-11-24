@@ -39,7 +39,7 @@ fn method_spec(kind: MethodKind, access: DataAccess, overrides: bool) -> MethodS
         specific: name("M_1"),
         kind,
         overrides: overrides.then(|| name("M_0")),
-        parameters: vec![SqlParameter { name: "N".into(), data_type: numeric(), mode: ParameterMode::In, generic: None }],
+        parameters: vec![SqlParameter { name: "N".into(), data_type: numeric(), mode: ParameterMode::In, generic: None, default: None }],
         returns: numeric(),
         self_as_result: overrides,
         deterministic: !overrides,

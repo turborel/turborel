@@ -298,7 +298,7 @@ pub(super) fn instant(r: &mut Reader<'_>) -> Result<Now> {
     Ok(Now { utc, zone })
 }
 
-/// An SQL parameter: its name, declared type and mode.
+/// An SQL parameter: its name, declared type, mode, kind and default.
 pub(super) fn put_parameter(out: &mut Vec<u8>, p: &SqlParameter) {
     out.put_str(&p.name);
     put_type(out, &p.data_type);
@@ -320,6 +320,7 @@ pub(super) fn put_parameter(out: &mut Vec<u8>, p: &SqlParameter) {
             });
         }
     }
+    super::triggers::put_optional(out, p.default.as_deref());
 }
 
 /// The SQL parameter `put_parameter` wrote.
@@ -346,7 +347,8 @@ pub(super) fn parameter(r: &mut Reader<'_>) -> Result<SqlParameter> {
         }
         _ => return Err(r.corrupt("not what a parameter is")),
     };
-    Ok(SqlParameter { name, data_type, mode, generic })
+    let default = super::triggers::optional(r)?;
+    Ok(SqlParameter { name, data_type, mode, generic, default })
 }
 
 /// A schema's name of a module's path.

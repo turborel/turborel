@@ -9,6 +9,7 @@ mod builtin;
 pub(super) use builtin::rust_arguments;
 pub(super) use call::{BoundCall, out_column};
 mod call;
+mod defaults;
 mod define;
 mod dependents;
 mod direct;

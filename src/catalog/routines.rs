@@ -31,7 +31,7 @@ impl Stamps {
 }
 
 /// [ISO/IEC 9075-2:2023 §4.35.5] An SQL parameter of a routine: its name,
-/// its declared type, its ordinal position and its mode.
+/// its declared type, its ordinal position, its mode and its default.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SqlParameter {
     /// Its `<SQL parameter name>` \[GR3j iii\].
@@ -46,6 +46,9 @@ pub struct SqlParameter {
     /// then that of the name of its table or descriptor in the function's
     /// component procedures, VARCHAR(128) [§9.26] (IL058).
     pub generic: Option<GenericParameter>,
+    /// The text of its `<parameter default>`, if it has a default value, as
+    /// a procedure's parameter may (Features T522 and T523) \[GR3c vi\].
+    pub default: Option<String>,
 }
 
 /// [ISO/IEC 9075-2:2023 §9.26 SR2a vi] (IL058) The maximum length of a

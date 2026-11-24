@@ -28,7 +28,9 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use super::super::{State, rule, triggers::named};
+use super::super::triggers::{named, named_by_values};
+use super::super::{State, rule};
+use super::defaults;
 use crate::ast::{RoutineDefinition, SqlStatement};
 use crate::binder::{
     Context, Counting, DrawnFrom, Invoked, Uses, bind_function_body, definition_of, grantably_held, once_each, sql_statement,
@@ -215,10 +217,12 @@ impl State {
         } else {
             self.bind_triggered(cx, stmt, (&owner, &params))?;
         }
-        let reads = named(std::slice::from_ref(stmt), None, (&desc.schema, &TransitionNames::default()));
+        let defaulted = Invoked::default();
+        self.bind_defaults(Context { invoked: Some(&defaulted), ..cx }, desc, definition)?;
+        let mut reads = named(std::slice::from_ref(stmt), None, (&desc.schema, &TransitionNames::default()));
         let indicates = invoked.take_indicated();
         let typed = invoked.take_typed();
-        let invocations = invoked.into_inner();
+        let mut invocations = invoked.into_inner();
         for r in invocations.iter().filter_map(|s| self.catalog.routine(s)) {
             access = if rank(r.access) > rank(access) { r.access } else { access };
         }
@@ -226,6 +230,18 @@ impl State {
             access = DataAccess::Reads;
         }
         within(desc, access)?;
+        // [§11.60 SR16e] What the parameter defaults name and invoke, which
+        // a CALL evaluates, not the body: no part of its access.
+        for t in named_by_values(defaults::default_values(definition), &desc.schema) {
+            if !reads.contains(&t) {
+                reads.push(t);
+            }
+        }
+        for s in defaulted.into_inner() {
+            if !invocations.contains(&s) {
+                invocations.push(s);
+            }
+        }
         let grantable = self.execute_grantable((&owner, desc.module_name()), &reads, &invocations);
         let mut sequences = drawn.into_inner();
         sequences.sort();
