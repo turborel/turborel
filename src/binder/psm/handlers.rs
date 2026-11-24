@@ -32,6 +32,7 @@ impl ProgramBinder<'_> {
                     "[ISO/IEC 9075-4:2006 draft §14.2 SR3] SQLEXCEPTION, SQLWARNING or NOT FOUND is the one condition value of its handler";
                 return Err(rule(msg).or_at(d.at));
             }
+            self.places.push(d.action_at);
             let action = self.statement(&d.action)?;
             handlers.push(Handler { kind: d.kind, conditions, action });
         }

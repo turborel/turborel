@@ -162,7 +162,8 @@ impl Session {
         let frame = || {
             let scope = params.routine_scope().map_or_else(|| RoutineScope::unnamed(WHOLE.clone()), RoutineScope::clone);
             let (base, transitions) = (params.dynamic_values().len(), params.transitions_shared());
-            Frame { base, scope: Arc::new(scope), transitions, returns: None, inline: false }
+            let origin = routine.map(|r| r.origin.clone()).or_else(|| transitions.as_ref().and_then(|_| self.trigger_executing()));
+            Frame { base, scope: Arc::new(scope), transitions, returns: None, inline: false, origin }
         };
         let Some(routine) = routine else { return Ok(KeptProgram::of(self.bound(cx.st, params, |b| bind_program(b, stmt, frame()))?)) };
         routine.program((cx.st, self), || {

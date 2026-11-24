@@ -28,6 +28,7 @@
 
 mod called;
 mod conditions;
+mod debug;
 mod framed;
 mod leaves;
 mod run;
@@ -160,4 +161,17 @@ pub(crate) trait Host {
 
     /// [ISO/IEC 9075-2:2023 §23.2] The diagnostics area stack popped.
     fn pop_area(&mut self);
+
+    /// \[EXTENSION\] The link of the debugger attached to the session the
+    /// program runs in, and the state it runs in, if one is (RULES.md
+    /// D1005). Default: a host of no session has none.
+    fn debugged(&self) -> Option<(std::sync::Arc<crate::debugger::Link>, std::sync::Arc<crate::db::State>)> {
+        None
+    }
+
+    /// \[EXTENSION\] Whether the local cursor `key` is open, as a debugger
+    /// shows it. Default: not.
+    fn cursor_open(&self, _key: &str) -> bool {
+        false
+    }
 }

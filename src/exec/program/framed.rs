@@ -49,6 +49,10 @@ impl Subqueries for Framed<'_> {
         self.inner.interrupted()
     }
 
+    fn debugged(&self) -> Option<Arc<crate::debugger::Link>> {
+        self.inner.debugged()
+    }
+
     fn state(&self) -> Option<&Arc<State>> {
         self.inner.state()
     }

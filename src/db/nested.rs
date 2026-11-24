@@ -26,6 +26,7 @@ use super::collations::Collating;
 use super::savepoints::{Held, Level, Levels};
 use super::{Session, area};
 use crate::catalog::QualifiedName;
+use crate::debugger::{Kind, Origin};
 use crate::error::{Code, Result, SqlError};
 
 /// \[DESIGN\] How deep triggered actions and SQL-invoked procedures nest,
@@ -89,6 +90,14 @@ impl Drop for Pushed<'_> {
 }
 
 impl Session {
+    /// \[DESIGN\] The trigger whose triggered action the session executes
+    /// now, as a debugger names it: the context pushed last, of a program
+    /// bound over transition variables (RULES.md D1004).
+    pub(in crate::db) fn trigger_executing(&self) -> Option<Origin> {
+        let name = self.nesting.executing.borrow().last().cloned()?;
+        Some(Origin { kind: Kind::Trigger, shown: name.clone(), name })
+    }
+
     /// Pushes the context of the trigger or procedure `name`, of the
     /// authorization identifier `owner` and the default schema `schema`,
     /// on the session, as the module says, a new savepoint level of

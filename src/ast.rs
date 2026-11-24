@@ -136,7 +136,7 @@ pub use privileges::{Action, PrivilegeDefinition, PrivilegeObject, RevokeStateme
 pub use psm::{
     Assignment, AssignmentSource, AssignmentTarget, CaseStatement, CaseWhen, CompoundStatement, ConditionDeclaration, ConditionValue,
     ControlStatement, ForStatement, HandlerDeclaration, HandlerType, IfStatement, Iterated, Iteration, Label, LocalCursor,
-    LocalDeclaration, SignalStatement, SignalValue, VariableDeclaration,
+    LocalDeclaration, SignalStatement, SignalValue, StatementList, VariableDeclaration,
 };
 pub use ptf::{
     DescriptorColumn, GenericTable, ParameterType, PrivateParameter, PtfArgument, PtfDefinition, PtfInvocation, PtfTable, RoutineBody,

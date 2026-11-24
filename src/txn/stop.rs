@@ -21,11 +21,13 @@
 //! It holds the warnings the session's statements raise as they evaluate
 //! expressions, too (`error::Warnings`): what a statement reaches through
 //! its transaction, as it reaches the flag, wherever its rows are pulled;
-//! and what a server takes of them for its client (`stop/served.rs`); and
-//! the plan of a data change EXPLAIN ANALYZE runs (`stop/changed.rs`).
+//! and what a server takes of them for its client (`stop/served.rs`); the
+//! plan of a data change EXPLAIN ANALYZE runs (`stop/changed.rs`); and the
+//! debugger attached to the session (`stop/debugged.rs`).
 
 mod activity;
 mod changed;
+mod debugged;
 mod served;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -40,6 +42,7 @@ use crate::sync::{Alone, lock_builtin};
 
 pub use activity::{Activity, Now, Tallied, Tallies, Tally, Waiting};
 pub(crate) use changed::Changed;
+pub(crate) use debugged::Debugged;
 pub use served::{MAX_NOTES, Served};
 
 /// The flag a session's statements look at.
@@ -80,6 +83,9 @@ pub struct Stop {
     changed: Changed,
     /// What the session does now, and what its statements did.
     activity: Activity,
+    /// \[EXTENSION\] The debugger attached to the session, if one is
+    /// (RULES.md D1005).
+    debugged: Debugged,
 }
 
 /// \[DESIGN\] Looks at a `Stop` as rows are read between two readings of
@@ -105,6 +111,7 @@ impl Default for Stop {
             owed: Mutex::default(),
             changed: Changed::default(),
             activity: Activity::default(),
+            debugged: Debugged::default(),
         }
     }
 }
@@ -120,6 +127,12 @@ fn expired(timeout: u64) -> SqlError {
 }
 
 impl Stop {
+    /// \[EXTENSION\] The debugger attached to its session, if one is
+    /// (RULES.md D1005).
+    pub(crate) fn debugged(&self) -> &Debugged {
+        &self.debugged
+    }
+
     /// Opens a window; closed when the window returned is dropped.
     pub(crate) fn window(&self) -> Window<'_> {
         if self.open.fetch_add(1, Ordering::SeqCst) == 0 {

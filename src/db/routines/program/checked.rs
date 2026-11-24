@@ -17,7 +17,14 @@ use crate::value::{DataType, Value};
 /// function, its result type `returns`.
 fn frame_of(params: &Params, returns: Option<DataType>) -> Frame {
     let scope = params.routine_scope().map_or_else(|| RoutineScope::unnamed(WHOLE.clone()), RoutineScope::clone);
-    Frame { base: params.dynamic_values().len(), scope: Arc::new(scope), transitions: params.transitions_shared(), returns, inline: false }
+    Frame {
+        base: params.dynamic_values().len(),
+        scope: Arc::new(scope),
+        transitions: params.transitions_shared(),
+        returns,
+        inline: false,
+        origin: None,
+    }
 }
 
 impl State {

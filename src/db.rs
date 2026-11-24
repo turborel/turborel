@@ -75,6 +75,7 @@ mod contents;
 mod cursor;
 mod database;
 mod ddl;
+mod debugging;
 mod declared;
 mod defaults;
 mod deferral;
@@ -155,6 +156,7 @@ pub(crate) mod write;
 use assignment::{candidate, check_option, set_columns};
 pub use catalog_file::{COMPACT_AFTER, CatalogFiles};
 use compiled::{plan, plan_heard, plan_slotted, plan_written, plan_written_slotted};
+pub use debugging::{DebugTarget, Debugger};
 pub use lobs::LOB_READ_OCTETS;
 pub use prepared::Prepared;
 pub use rekey::FormatsBehind;
@@ -548,6 +550,8 @@ impl Session {
 /// ROLLBACK is performed; which one is implementor-defined (`SessionEnd`).
 impl Drop for Session {
     fn drop(&mut self) {
+        // [EXTENSION] Its debugger, if one is attached, told it ended (RULES.md D1010).
+        self.stop.debugged().end();
         // A session dropped by a plug-in while a call on it runs cannot end its transaction here.
         let Ok(call) = self.enter() else { return };
         let st = call.state();

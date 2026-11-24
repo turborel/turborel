@@ -44,8 +44,7 @@ impl State {
             );
             return Err(rule(msg).or_at(m.at));
         }
-        let parameters = augmented(&subject, &spec);
-        let name = QualifiedName { auth: udt.auth.clone(), ident: spec.name.clone() };
+        let (parameters, name) = (augmented(&subject, &spec), QualifiedName { auth: udt.auth.clone(), ident: spec.name.clone() });
         if spec.kind == MethodKind::Instance
             && let Some(other) = alike(self, &name, &parameters.iter().map(|p| p.data_type.clone()).collect::<Vec<_>>())
         {

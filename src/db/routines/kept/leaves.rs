@@ -253,6 +253,10 @@ impl Subqueries for KeptRuns<'_> {
         self.runner.interrupted()
     }
 
+    fn debugged(&self) -> Option<Arc<crate::debugger::Link>> {
+        self.runner.debugged()
+    }
+
     fn state(&self) -> Option<&Arc<State>> {
         self.runner.state()
     }

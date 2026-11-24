@@ -58,6 +58,10 @@ impl Subqueries for Quiet<'_> {
         self.statement.interrupted()
     }
 
+    fn debugged(&self) -> Option<Arc<crate::debugger::Link>> {
+        self.statement.debugged()
+    }
+
     fn state(&self) -> Option<&Arc<State>> {
         self.statement.state()
     }

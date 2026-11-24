@@ -22,7 +22,7 @@ mod signal;
 
 use super::Parser;
 use super::routines::{RoutineScope, cursor_refused};
-use crate::ast::{ParameterSpecification, RoutineKind, SqlStatement, TargetKind};
+use crate::ast::{ParameterSpecification, RoutineKind, SqlStatement, StatementList, TargetKind};
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
 
@@ -294,8 +294,9 @@ impl Parser {
     }
 
     /// `<SQL statement list>` ::= {`<SQL procedure statement>`
-    /// `<semicolon>`}..., ended by one of the words `ends`.
-    fn statement_list(&mut self, ends: &[&str]) -> Result<Vec<SqlStatement>> {
+    /// `<semicolon>`}..., ended by one of the words `ends`: each statement
+    /// with where it begins (RULES.md D1003).
+    fn statement_list(&mut self, ends: &[&str]) -> Result<StatementList> {
         let mut list = Vec::new();
         loop {
             // END ends no statement of the list here: an empty list, or one
@@ -304,10 +305,11 @@ impl Parser {
                 let wanted = if list.is_empty() { "an <SQL procedure statement>".to_owned() } else { ends.join(" or ") };
                 return Err(self.syntax(format!("expected {wanted}")));
             }
-            list.push(self.body_statement()?);
+            let at = self.here();
+            list.push((at, self.body_statement()?));
             self.expect_delim(delim::SEMICOLON)?;
             if ends.iter().any(|w| self.is_kw(w) || self.is_word(w)) {
-                return Ok(list);
+                return Ok(StatementList::of(list));
             }
         }
     }

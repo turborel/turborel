@@ -228,6 +228,12 @@ pub trait Subqueries {
         Ok(())
     }
 
+    /// \[EXTENSION\] The link of the debugger attached to the session the
+    /// statement runs in, if one is (RULES.md D1005): by default none.
+    fn debugged(&self) -> Option<Arc<crate::debugger::Link>> {
+        None
+    }
+
     /// The database the statement runs in, if one does: what GET
     /// DIAGNOSTICS in a function's body reads the names a condition gives
     /// of.
@@ -532,6 +538,10 @@ impl Subqueries for Runner {
 
     fn interrupted(&self) -> Result<()> {
         self.stop.get_or_init(|| self.db.tx.stop_of(self.tx)).as_deref().map_or(Ok(()), Stop::check)
+    }
+
+    fn debugged(&self) -> Option<Arc<crate::debugger::Link>> {
+        self.stop.get_or_init(|| self.db.tx.stop_of(self.tx)).as_deref().and_then(|s| s.debugged().link())
     }
 
     fn state(&self) -> Option<&Arc<State>> {

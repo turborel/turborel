@@ -35,6 +35,7 @@ pub mod bytes;
 pub mod catalog;
 pub mod clock;
 pub mod db;
+pub mod debugger;
 pub mod diagnostics;
 pub mod disk;
 pub mod engine;

@@ -111,6 +111,7 @@ mod datetimes;
 mod ddl;
 mod dead_entries;
 mod debug_privileges;
+mod debugger;
 mod decfloat;
 mod decoded;
 mod decorrelation;

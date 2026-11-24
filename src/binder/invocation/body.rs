@@ -34,6 +34,7 @@ use crate::ast::{
 use crate::catalog::{
     ColumnDesc, DataAccess, Principal, QualifiedName, SqlRoutineDesc, TableDesc, Who, module_schema, owner_of, routine_path,
 };
+use crate::debugger::{Kind, Origin};
 use crate::error::{Code, Result, SqlError};
 use crate::logical::{LogicalPlan, Program, Subquery};
 use crate::params::{Params, RoutineScope};
@@ -207,7 +208,9 @@ pub(crate) fn bind_procedure_program(cx: Context<'_>, desc: &SqlRoutineDesc) -> 
 /// statement, is bound over: its parameters, its CALLs bound with it.
 fn inline_frame(desc: &SqlRoutineDesc, path: Vec<String>) -> Frame {
     let scope = RoutineScope::of(desc, path);
-    Frame { base: desc.parameters.len(), scope: Arc::new(scope), transitions: None, returns: desc.returns.clone(), inline: true }
+    let kind = if desc.function() { Kind::Function } else { Kind::Procedure };
+    let origin = Some(Origin { kind, name: desc.specific.clone(), shown: desc.name.clone() });
+    Frame { base: desc.parameters.len(), scope: Arc::new(scope), transitions: None, returns: desc.returns.clone(), inline: true, origin }
 }
 
 /// `f` of the context the body of `desc` is bound in, within the bodies of

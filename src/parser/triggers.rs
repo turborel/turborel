@@ -452,7 +452,7 @@ impl Parser {
         let declares = c.options.is_some() || !c.declarations.is_empty();
         let plain = c.label.is_none() && !declares && c.cursors.is_empty() && c.handlers.is_empty();
         if plain && !c.statements.is_empty() {
-            return Ok(c.statements);
+            return Ok(c.statements.into_statements());
         }
         Ok(vec![SqlStatement::Control(Box::new(crate::ast::ControlStatement::Compound(c)))])
     }

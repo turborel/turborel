@@ -625,6 +625,17 @@ verification approach DO-178C expects (§8).
 | D1000 | DEBUG is a routine's privilege of its own, granted and revoked as EXECUTE is |
 | D1001 | The owner of a routine holds DEBUG on it by owning it, as the owner of a domain holds USAGE |
 | D1002 | ALL PRIVILEGES on a routine stays EXECUTE alone |
+| D1003 | A program notes where each of its statements begins, in the order its steps are walked |
+| D1004 | A program knows the routine or trigger it is the body of |
+| D1005 | A debugger's link hangs on its target's Stop, looked at by one flag |
+| D1006 | A debugged session runs its procedures interpreted |
+| D1007 | Breakpoints are by line of a routine's text; steps by the depth of the frame |
+| D1008 | A debugger sees into, and pauses in, only what its user may debug |
+| D1009 | A breakpoint's condition is evaluated by the debugger's session over the paused frame's values |
+| D1010 | Detaching, dropping the debugger and the target's end let the target go on; a cancel ends the pause |
+| D1011 | A pause ends by itself after DEBUGGER.PAUSE_TIMEOUT_MS, a database setting |
+| D1012 | The stack is one thread's: a function run on another thread is not debugged |
+| D1013 | A debugger's request its target's state refuses fails with SQLSTATE TBD01 |
 
 ### The project
 
@@ -17468,6 +17479,116 @@ and revoke what the standard does not define, and ROUTINE_PRIVILEGES
 would show rows a database of the standard's privileges never had. So
 ALL PRIVILEGES on a routine grants and revokes EXECUTE, and DEBUG is
 granted and revoked only by name.
+
+#### D1003. A program notes where each of its statements begins, in the order its steps are walked
+
+A debugger names a place by a character of the routine's text, as an
+error does (`SqlError::at`). The parser keeps, beside each statement of
+an `<SQL statement list>` and each handler's action, where it begins
+(`ast::StatementList`), and the binder pushes each place as it binds the
+statement, in the very order `Step::steps` walks a program's steps, the
+body first (`Program::places`). A frame pushed while a debugger is
+attached walks the steps once and gives each step's address its place,
+as a program kept finds its statements' plans by address. No program
+with no debugger attached reads the list, and binding pays a push per
+statement.
+
+#### D1004. A program knows the routine or trigger it is the body of
+
+A frame shows what routine it runs, and a breakpoint names one, so a
+program carries its origin (`debugger::Origin`): of a procedure, from
+the routine kept (`KeptRoutine::origin`); of a function or a procedure a
+function invokes, from its descriptor as its body is bound inline; of a
+triggered action, the trigger the session pushed last. A control
+statement run directly has none, and no debugger sees into it.
+
+#### D1005. A debugger's link hangs on its target's Stop, looked at by one flag
+
+A `Session` is of one thread; another may hold only its `Stop`, as a
+server does to cancel its statements. So a debugger and its target share
+a link (`debugger::Link`) hung on the target's Stop (`stop/debugged.rs`):
+an atomic flag, and behind a lock the link itself. Each statement a
+program runs looks at the flag first (`Run::debugged`): with none
+attached that is one relaxed load and one branch, and nothing else is
+made. Attached, the run pushes a frame on the link's stack as its first
+statement is looked at, and pops it as it ends.
+
+#### D1006. A debugged session runs its procedures interpreted
+
+Compiled procedures (D841) and the straight CALL of a prepared one run
+their bodies with no step to pause at. A session with a debugger
+attached runs them interpreted: `compiled_procedures` and `call_direct`
+each look at the same flag first, and the interpreted path gives the
+same results (D841), so only the time differs. Detached, the next call
+runs compiled again.
+
+#### D1007. Breakpoints are by line of a routine's text; steps by the depth of the frame
+
+A debugger sets a breakpoint where a user reads one, a line of the
+routine's text as its definition holds it; the line is kept as the span
+of characters it holds, and a statement that begins in it pauses there.
+A compound statement does not, as its first statement does. A step is
+kept as the depth it pauses at: into, at the next statement of any
+frame; over, of a frame no deeper; out, of a frame shallower; continue,
+at a breakpoint. The interrupt asks for a pause at the next statement,
+as into does.
+
+#### D1008. A debugger sees into, and pauses in, only what its user may debug
+
+DEBUG shows the values of a routine's variables, which its owner may
+not want shown (D1000). The debugger runs as the user its session was
+when it attached; of a routine its frames are seen into only if that
+user holds DEBUG on it, owner included (D1001); of a trigger only if it
+owns the trigger's schema, as no privilege is granted on a trigger. A
+frame not seen into shows its name alone and never pauses, and a step
+into it pauses at the next statement that may.
+
+#### D1009. A breakpoint's condition is evaluated by the debugger's session over the paused frame's values
+
+The target, paused, should run nothing for the debugger, as it may be
+inside a statement. So the debugger's own session evaluates a
+breakpoint's condition, as the search condition of a query of one row
+whose columns are the paused frame's parameters and variables, named as
+they are and cast to their types, given their values as dynamic
+parameters. Where it is not true the debugger tells the target to go on
+and the wait goes on, so the pause is never an event.
+
+#### D1010. Detaching, dropping the debugger and the target's end let the target go on; a cancel ends the pause
+
+Nothing a debugger does may leave its target stuck. Detaching, which
+dropping the debugger does, as a server does when its connection drops,
+clears its breakpoints and lets a pause go on as if nothing had paused
+it; the target's next debugger may attach. The target session's end
+tells its debugger (`Event::Ended`), whose waits then return at once. A
+paused statement cancelled fails as cancelled (SQLCODE -920), as a lock
+wait does, the pause looking at its Stop as a lock wait does, every 20
+ms, and the debugger is told (`Event::Cancelled`).
+
+#### D1011. A pause ends by itself after DEBUGGER.PAUSE_TIMEOUT_MS, a database setting
+
+A paused session holds its locks, and a debugger may go quiet. The
+pause waits at most DEBUGGER.PAUSE_TIMEOUT_MS, then goes on to its next
+breakpoint and tells the debugger (`Event::TimedOut`). Its default, five
+minutes, is long enough to read a frame and short enough that no lock is
+held for long. It is the database's setting, not a session's, so the
+session paused cannot lengthen it; 0 goes on at once.
+
+#### D1012. The stack is one thread's: a function run on another thread is not debugged
+
+A function a parallel query evaluates may run on a worker thread of its
+own, with no frame beneath it and no way to stop its siblings. The link
+holds the thread whose frames its stack holds, while it holds any; a
+frame of another thread is not pushed, and its run is not debugged. So
+the stack is always one thread's calls, from the outermost down.
+
+#### D1013. A debugger's request its target's state refuses fails with SQLSTATE TBD01
+
+Attaching to oneself, to a session with a debugger attached, resuming
+what is not paused, and clearing a breakpoint there is none of are
+misuses of the interface, not errors of an SQL statement. Each fails
+with SQLCODE -910 and SQLSTATE TBD01 of class TB, the implementation's
+own; a breakpoint in no routine, or past its last line, is -103, as a
+name of no object is, and in one its user may not debug, -104.
 
 ## 2. Project layout
 

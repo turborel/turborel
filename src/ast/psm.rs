@@ -64,7 +64,7 @@ pub struct CompoundStatement {
     /// list>`.
     pub handlers: Vec<HandlerDeclaration>,
     /// Its `<SQL statement list>`.
-    pub statements: Vec<SqlStatement>,
+    pub statements: StatementList,
     /// The `<ending label>`, if written.
     pub ending: Option<Label>,
     /// Where BEGIN is written.
@@ -158,6 +158,8 @@ pub struct HandlerDeclaration {
     pub conditions: Vec<(ConditionValue, usize)>,
     /// The `<handler action>`: an `<SQL procedure statement>`.
     pub action: Box<SqlStatement>,
+    /// \[DESIGN\] Where its `<handler action>` begins (RULES.md D1003).
+    pub action_at: usize,
     /// Where DECLARE is written.
     pub at: usize,
 }
@@ -216,9 +218,9 @@ pub struct CaseStatement {
     /// Each WHEN: of a simple one, its `<when operand list>` (Feature
     /// P008); of a searched one, its `<search condition>`; and its `<SQL
     /// statement list>`.
-    pub whens: Vec<(CaseWhen, Vec<SqlStatement>)>,
+    pub whens: Vec<(CaseWhen, StatementList)>,
     /// The `<SQL statement list>` of the `<case statement else clause>`.
-    pub otherwise: Option<Vec<SqlStatement>>,
+    pub otherwise: Option<StatementList>,
     /// Where CASE is written.
     pub at: usize,
 }
@@ -241,9 +243,9 @@ pub enum CaseWhen {
 pub struct IfStatement {
     /// The condition of IF, then of each ELSEIF, with its `<SQL statement
     /// list>`.
-    pub branches: Vec<(SearchCondition, Vec<SqlStatement>)>,
+    pub branches: Vec<(SearchCondition, StatementList)>,
     /// The `<SQL statement list>` of ELSE.
-    pub otherwise: Option<Vec<SqlStatement>>,
+    pub otherwise: Option<StatementList>,
     /// Where IF is written.
     pub at: usize,
 }
@@ -270,7 +272,7 @@ pub struct Iterated {
     /// How it repeats.
     pub iteration: Iteration,
     /// Its `<SQL statement list>`.
-    pub statements: Vec<SqlStatement>,
+    pub statements: StatementList,
     /// The `<ending label>`, if written.
     pub ending: Option<Label>,
     /// Where LOOP, WHILE or REPEAT is written.
@@ -296,7 +298,7 @@ pub struct ForStatement {
     /// The `<cursor specification>` as written.
     pub text: String,
     /// Its `<SQL statement list>`.
-    pub statements: Vec<SqlStatement>,
+    pub statements: StatementList,
     /// The `<ending label>`, if written.
     pub ending: Option<Label>,
     /// Where FOR is written.
@@ -350,5 +352,49 @@ impl ControlStatement {
             ControlStatement::Iterated(l) => l.statements.iter().collect(),
             ControlStatement::For(f) => f.statements.iter().collect(),
         }
+    }
+}
+
+/// [ISO/IEC 9075-4:2006 draft §14.1] An `<SQL statement list>`: its
+/// statements, and \[DESIGN\] where each begins, which a debugger places
+/// a statement by (RULES.md D1003).
+#[derive(Debug, Clone, Default)]
+pub struct StatementList {
+    statements: Vec<SqlStatement>,
+    at: Vec<usize>,
+}
+
+impl StatementList {
+    /// The statements `placed`, each with where it begins.
+    pub fn of(placed: Vec<(usize, SqlStatement)>) -> StatementList {
+        let (at, statements) = placed.into_iter().unzip();
+        StatementList { statements, at }
+    }
+
+    /// Each statement, with where it begins.
+    pub fn placed(&self) -> impl Iterator<Item = (usize, &SqlStatement)> {
+        self.at.iter().copied().zip(&self.statements)
+    }
+
+    /// Its statements, where each begins let go.
+    pub fn into_statements(self) -> Vec<SqlStatement> {
+        self.statements
+    }
+}
+
+impl std::ops::Deref for StatementList {
+    type Target = [SqlStatement];
+
+    fn deref(&self) -> &[SqlStatement] {
+        &self.statements
+    }
+}
+
+impl<'a> IntoIterator for &'a StatementList {
+    type Item = &'a SqlStatement;
+    type IntoIter = std::slice::Iter<'a, SqlStatement>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.statements.iter()
     }
 }

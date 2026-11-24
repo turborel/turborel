@@ -13,6 +13,7 @@
 mod backup;
 mod builtin;
 mod configurable;
+mod debugger;
 pub(crate) mod escrow;
 pub(crate) mod executor;
 mod extension;
@@ -49,6 +50,7 @@ pub use builtin::{
 };
 use builtin::{builtin, whole};
 pub use configurable::Configurable;
+pub use debugger::DEBUGGER_PAUSE_TIMEOUT_MS;
 pub use executor::{
     DEFAULT_MORSEL_ROWS, DEFAULT_PARALLEL_MIN_ROWS, EXECUTOR_DEGREE, EXECUTOR_DENSE_JOINS, EXECUTOR_KERNELS, EXECUTOR_MORSEL_ROWS,
     EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_POINT_OPERATIONS, EXECUTOR_RUNTIME_FILTERS, EXECUTOR_WORKERS, KEEP_SUBQUERY_PLANS,

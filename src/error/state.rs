@@ -516,6 +516,10 @@ impl SqlState {
     /// \[EXTENSION\] A restore's recovery target was not met in the
     /// records it had (SQLCODE -910, RULES.md D164).
     pub const RECOVERY_TARGET_NOT_REACHED: SqlState = SqlState(*b"TBB02");
+    /// \[EXTENSION\] A debugger's request its target's state does not
+    /// allow: attached already, not paused, no such breakpoint (SQLCODE
+    /// -910, RULES.md D1013).
+    pub const DEBUGGER: SqlState = SqlState(*b"TBD01");
 
     /// [ISO/IEC 9075-4:2006 draft §8.2 SR1, SR2] The SQLSTATE value of the
     /// `<sqlstate value>` `s`: five characters, each a digit or a simple

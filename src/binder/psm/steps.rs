@@ -8,7 +8,8 @@ use std::sync::Arc;
 use super::{ProgramBinder, cursor_key};
 use crate::ast::{
     self, AssignmentSource, AssignmentTarget, CaseExpression, CaseWhen, FetchOrientation, Iteration, Literal, QueryExpression,
-    QuerySpecification, ReturnStatement, SignalStatement, SignalValue, SqlStatement, ValueExpression, ValueSpecification, ValuesRow,
+    QuerySpecification, ReturnStatement, SignalStatement, SignalValue, SqlStatement, StatementList, ValueExpression, ValueSpecification,
+    ValuesRow,
 };
 use crate::binder::{OutColumn, assignable, rule};
 use crate::db::{assignment_type, check_targets};
@@ -21,9 +22,15 @@ use crate::params::ScopedVariable;
 use crate::value::DataType;
 
 impl ProgramBinder<'_> {
-    /// The statements `list`, each bound.
-    pub(super) fn statements(&mut self, list: &[SqlStatement]) -> Result<Vec<Step>> {
-        list.iter().map(|s| self.statement(s)).collect()
+    /// The statements `list`, each bound, where each begins noted
+    /// (RULES.md D1003).
+    pub(super) fn statements(&mut self, list: &StatementList) -> Result<Vec<Step>> {
+        list.placed()
+            .map(|(at, s)| {
+                self.places.push(at);
+                self.statement(s)
+            })
+            .collect()
     }
 
     /// [§14.5] The assignment statement `a`: its source a row of a value
@@ -116,7 +123,7 @@ impl ProgramBinder<'_> {
         for (condition, list) in &i.branches {
             branches.push((self.condition(condition, i.at)?, self.statements(list)?));
         }
-        let otherwise = i.otherwise.as_deref().map(|list| self.statements(list)).transpose()?;
+        let otherwise = i.otherwise.as_ref().map(|list| self.statements(list)).transpose()?;
         Ok(Step::If(Box::new(Branches { arms: branches, otherwise, at: i.at })))
     }
 
@@ -144,7 +151,7 @@ impl ProgramBinder<'_> {
             };
             branches.push((leaf, self.statements(list)?));
         }
-        let otherwise = c.otherwise.as_deref().map(|list| self.statements(list)).transpose()?;
+        let otherwise = c.otherwise.as_ref().map(|list| self.statements(list)).transpose()?;
         Ok(Step::Case(Box::new(Branches { arms: branches, otherwise, at: c.at })))
     }
 
