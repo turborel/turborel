@@ -30,7 +30,7 @@ impl Statement {
     /// [ISO/IEC 9075-2:2023 §20.10 GR7] (RULES.md D977, D978) Each of its
     /// dynamic parameters, in order: its type, and, of a CALL, the mode
     /// and ordinal position of the parameter whose argument holds it
-    /// [GR7e], as a server granting `parameter-modes` tells them. Told
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e], as a server granting `parameter-modes` tells them. Told
     /// none, each is an input one.
     pub fn parameters(&self) -> Vec<DynamicParameter> {
         match &self.called {
