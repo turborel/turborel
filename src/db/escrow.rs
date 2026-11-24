@@ -1,6 +1,6 @@
 //! \[DESIGN\] Escrow of increments, the statement's side (RULES.md D452):
 //! which searched UPDATE may reserve its increments instead of writing its
-//! rows (`eligible`), the reservation of a row's (`State::reserve_row`),
+//! rows (`escrow_of`), the reservation of a row's (`State::reserve_row`),
 //! and their application as the transaction commits (`State::fold`). The
 //! reservations themselves are kept by each table (`txn/escrow.rs`).
 

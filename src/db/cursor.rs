@@ -92,7 +92,7 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// SQLCODE -900, SQLSTATE 42000, if the target is ONLY and the cursor's
+    /// SQLCODE -103, SQLSTATE 42000, if the target is ONLY and the cursor's
     /// table reference is not, or the other way about.
     pub(super) fn positioned_member(
         &self,
