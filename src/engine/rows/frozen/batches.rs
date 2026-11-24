@@ -124,17 +124,18 @@ impl Batched {
         }
     }
 
-    /// As `new`, of the rows of ids from `first` up to, not including,
-    /// `end`, if given, alone: a morsel of a split scan (RULES.md D290,
-    /// D354), whose `directory` holds only the groups within them, its
-    /// tree's rows those of the range, each batch of them whole.
+    /// As `new`, of a morsel of a split scan alone (RULES.md D290, D354),
+    /// whose `directory` holds only the groups within its row ids, its
+    /// tree's rows those of `zones`, the ranges of the morsel's ids the
+    /// condition may match, as the split judged its table's zones once
+    /// for all its morsels (RULES.md D1052), each batch of them whole.
     pub(in crate::engine::rows) fn within(
         table: Arc<RowTable>,
         (reader, directory): (Reader, Arc<Directory>),
         (columns, condition): (Vec<usize>, Option<Conjunction>),
-        range: (RowId, Option<RowId>),
+        zones: Vec<(RowId, Option<RowId>)>,
     ) -> Batched {
-        let delta = Some(RowTable::ranged(&table, table.zones.ranges_within(condition.as_ref(), range)));
+        let delta = Some(RowTable::ranged(&table, zones));
         Batched { delta, ramp: Ramp::whole(), ..Batched::new(table, (reader, directory), columns, condition) }
     }
 

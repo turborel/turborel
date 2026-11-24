@@ -17,7 +17,9 @@
 //! than the walk that finds it. So does one a serial scan by batch of a
 //! table kept by column serves better, with no hash join's probe nor
 //! window functions, while EXECUTOR.BATCHES is on, and a bare COUNT(*) its
-//! table's storage counts (RULES.md D351). So does a grouping or DISTINCT
+//! table's storage counts (RULES.md D351); the operand a part's hash join
+//! builds is a part by its rows alone, of either store, as its morsels
+//! are gathered by batch (RULES.md D1051). So does a grouping or DISTINCT
 //! of so many groups, as the statistics estimate them, that grouping each
 //! morsel apart barely shrinks it, its exchange of pieces costing what its
 //! threads gain, and with it the stream it reads, whose rows a channel
@@ -103,7 +105,12 @@ impl<'a> Asked<'a> {
         if crate::exec::batched(self.db) && by_batch(self.db, plan) {
             return 1;
         }
-        // The rule the costs anticipate (`cost/parallel.rs`, RULES.md D652).
+        self.by_rows(rows)
+    }
+
+    /// The degree of a part reading `rows` rows, by the rule the costs
+    /// anticipate (`cost/parallel.rs`, RULES.md D652).
+    fn by_rows(self, rows: usize) -> usize {
         super::Degrees { most: self.most, morsel: self.morsel, least: self.least }.degree(rows)
     }
 
@@ -172,9 +179,25 @@ fn outside(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
     let deeper = depth.saturating_add(1);
     if let Plan::HashJoin { left, right, .. } = plan {
         outside(asked, left, deeper);
-        return walk(asked, right, deeper);
+        return built(asked, right, deeper);
     }
     plan.each_input(&mut |input| outside(asked, input, deeper));
+}
+
+/// \[DESIGN\] (RULES.md D1051) Marks the parts of `plan`, the operand a
+/// hash join of a part builds. A pipeline is a part by its rows alone,
+/// of a table kept by column too: its morsels are read by batch and
+/// gathered into the join's table as vectors (`exec/parallel/probe.rs`),
+/// no row made of them, so the reason a scan by batch of such a table
+/// stays serial (RULES.md D291) does not hold of it.
+fn built(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
+    let degree = stream(plan).filter(|_| depth < MAX_DEPTH).map_or(1, |rows| asked.by_rows(rows));
+    if degree < 2 {
+        return walk(asked, plan, depth);
+    }
+    outside(asked, plan, depth.saturating_add(1));
+    let input = std::mem::replace(plan, Plan::Values { rows: Vec::new(), detail: String::new() });
+    *plan = Plan::Parallel(Box::new(Parallel { degree, input }));
 }
 
 /// Whether the stream `plan` has a filter.

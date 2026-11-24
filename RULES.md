@@ -661,6 +661,9 @@ verification approach DO-178C expects (§8).
 | D1034 | A connection learns its own ID by a Debug request, so Ready keeps its first form |
 | D1035 | The client's debugger is methods of its connection, the events kept in it until read |
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
+| D1050 | A hash join of a part builds an operand that gives batches of its vectors, not of rows made one by one |
+| D1051 | A hash join's built operand reading the column store is a part of its own |
+| D1052 | A column store's split judges its table's zones once for all its morsels |
 
 ### The project
 
@@ -18105,6 +18108,64 @@ name is read as SQL reads an identifier, folded to upper case unless
 quoted. A breakpoint is shown by the specific name of the routine it
 is in, as the engine keeps it, so an overloaded name's breakpoints
 are told apart.
+
+### Parallel joins
+
+#### D1050. A hash join of a part builds an operand that gives batches of its vectors, not of rows made one by one
+
+A hash join probed by a part run in parallel builds its right operand
+before the probing side is split (D292). An operand that was itself a
+part was read by its morsels. Any other was read through the row
+executor, one row of values at a time, and its rows pushed into vectors
+of values. Over the column store that undid everything its scan by
+batch does: no condition was judged on the encoded column, no column
+was decoded late, and every value of every row the scan read was made,
+kept or not. Such an operand is the usual one, as D291 keeps a filtered
+scan of the column store off the workers. So a join whose built operand
+was a filtered scan of a large table ran many times slower in a part
+than alone, where the serial join reads the operand by batch.
+
+Now an operand that gives batches (`stream::layout`) and whose tables
+read by batch is read by `stream::whole_batches`, as the serial join
+reads it. Each batch's kept rows are held as vectors of their kinds and
+charged to the part's grant, and the operand gives way past it as
+before. The table then hashes typed vectors, so keys of whole numbers
+dense in their span get a direct table (D601), which vectors of values
+never did. An operand that gives no batches, as a grouping or VALUES,
+and any operand while EXECUTOR.BATCHES is off, is read row by row as
+before.
+
+#### D1051. A hash join's built operand reading the column store is a part of its own
+
+D291 keeps a scan, filter or projection of a column store table off the
+workers, since a part's rows are made one by one where it hands them to
+the statement's thread. That reason does not hold of the operand a hash
+join of a part builds. Its morsels are read by batch on the workers and
+each morsel's kept rows are gathered into a batch of vectors
+(`exec/parallel/probe.rs`), with no row made. So the planner marks such
+an operand, if it is a pipeline, by its rows alone, whatever store its
+tables are of (`physical/parallel.rs`, `built`). An operand below
+EXECUTOR.PARALLEL_MIN_ROWS is no part and is read by batch on the
+statement's thread (D1050). An operand that is not a pipeline is walked
+for its parts as before.
+
+#### D1052. A column store's split judges its table's zones once for all its morsels
+
+A morsel of a column store table reads its groups, then the rows of its
+tree within its row ids, of the zones the scan's condition may match
+(D354). Each morsel asked the table's zones for those ranges itself, a
+pass over every zone of the table under each zone's lock, though it
+keeps only the few within its own ids. A scan of a large table in
+thousands of morsels so made thousands of passes over all its zones,
+and its threads spent a large share of their time there and on those
+locks. A split of the row store judged the zones once, as it was made
+(`engine/rows/split.rs`).
+
+Now a split of either store does. It holds the ranges the condition
+may match as they were when it was split, and hands each morsel those
+within its ids. A zone that would pass only later holds no row the
+split's reader sees, as its rows were written after the reader's
+snapshot, so each morsel still reads every row it would have.
 
 ## 2. Project layout
 

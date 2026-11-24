@@ -138,6 +138,45 @@ fn joins_build_and_probe_by_morsels() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1050, D1051 a hash join of a part whose
+/// built operand reads the column store builds it by batch: a filtered
+/// scan large enough is a part of its own, marked under the join's, its
+/// morsels gathered as vectors; one below EXECUTOR.PARALLEL_MIN_ROWS is
+/// no part, read by batch on the statement's thread, and a grouping is
+/// read row by row. Each join gives the rows it gives alone a row at a
+/// time.
+#[test]
+fn joins_build_by_batch() {
+    let (db, a) = tables();
+    a.run("CREATE TABLE E (K INTEGER, G INTEGER, N INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)").unwrap();
+    let values: Vec<String> =
+        (0..700_i64).map(|k| format!("({k}, {}, {})", k % 7, if k % 13 == 0 { "NULL".to_owned() } else { k.to_string() })).collect();
+    a.run(&format!("INSERT INTO E VALUES {}", values.join(", "))).unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    let sorted = |r: Result<Vec<String>, Code>| {
+        r.map(|mut r| {
+            r.sort();
+            r
+        })
+    };
+    for (sql, least, parts) in [
+        ("SELECT X.K, Y.K, Y.S FROM C AS X JOIN C AS Y ON X.N = Y.N WHERE Y.G = 3 AND X.S < 's5'", 0, 2),
+        ("SELECT X.G, COUNT(*), SUM(Y.K), MIN(Y.S) FROM C AS X JOIN C AS Y ON X.N = Y.N WHERE Y.G = 3 GROUP BY X.G", 0, 2),
+        ("SELECT C.K, E.K FROM C JOIN E ON C.N = E.N WHERE E.G = 3", 1000, 1),
+        ("SELECT C.G, COUNT(*), SUM(E.K) FROM C JOIN E ON C.N = E.N WHERE E.G < 5 GROUP BY C.G", 1000, 1),
+        ("SELECT C.K, T.M FROM C JOIN (SELECT G, MAX(N) AS M FROM E GROUP BY G) AS T ON C.G = T.G WHERE C.N < 50", 1000, 1),
+    ] {
+        let (alone, _, _) = both(&a, sql);
+        exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+        exec(&a, &format!("SET EXECUTOR.PARALLEL_MIN_ROWS = {least}")).unwrap();
+        let plan = a.physical_plan(sql, &Params::new()).unwrap();
+        assert_eq!(plan.matches("Parallel  (degree=4)").count(), parts, "{sql}: {plan}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(sorted(alone), sorted(rows(&a, sql)), "{sql}");
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D291 the planner leaves on the statement's
 /// thread a point query, a part reading fewer rows than
 /// EXECUTOR.PARALLEL_MIN_ROWS, a correlated subquery, its scan below it
