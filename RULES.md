@@ -666,6 +666,7 @@ verification approach DO-178C expects (§8).
 | D1042 | COPY DESCRIPTOR with TYPE copies a reference type's SCOPE components, each a character string |
 | D1043 | A slow statement's text is withheld only while an encryption is in use, not for a compression of the spill areas |
 | D1044 | An IVF directory whose write fails frees the pages it made |
+| D1045 | A range join is costed as a plan of no order |
 
 ### The project
 
@@ -18190,6 +18191,20 @@ with nothing referring to them.
 Both steps now fail through one place that frees every page made
 (`engine/ivf/lists.rs`). A free that fails still leaks its page alone,
 as before.
+
+#### D1045. A range join is costed as a plan of no order
+
+Join enumeration keeps the cheapest plan of each order of a set's rows
+(D303). A range join was offered with its left operand's order
+(`enumerate/methods.rs`), and its plan gives rows in no order
+(`physical/range/planned.rs`), as the plan made of it says
+(`ranged.rs`). The rows were right, as a sort is added by the order of
+the plan made. The costs were not. A range join stood as the plan of an
+order it does not give, in place of the nested loop or the join that
+does, and was chosen for an ORDER BY or a merge join at a cost without
+the sort it then needed.
+
+A range join is now offered as a plan of no order.
 
 ## 2. Project layout
 

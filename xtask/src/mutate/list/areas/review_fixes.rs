@@ -9,7 +9,7 @@
 use super::super::{Mutation, Package};
 
 /// Each fix of the review, taken back, which its test must then fail.
-pub const REVIEW_FIXES: [Mutation; 5] = [
+pub const REVIEW_FIXES: [Mutation; 6] = [
     Mutation {
         name: "direct-join-by-a-key-not-unique",
         package: Package::Core,
@@ -59,5 +59,15 @@ pub const REVIEW_FIXES: [Mutation; 5] = [
         replacement: "    let written = made(pool, file, chunks.len().max(1), &mut pages);\n    filled(pool, file, &pages, &chunks)?;",
         integration: &[],
         unit: &["engine::ivf::tests::ivf_directory_pages_are_freed_when_their_write_fails"],
+    },
+    Mutation {
+        name: "range-join-keeps-its-left-order",
+        package: Package::Core,
+        breaks: "a range join is costed as a plan of its left operand's order, which its rows do not keep",
+        file: "src/physical/enumerate/methods.rs",
+        original: "                out.push((Cand { cost, order: Order::None, tree: 0 }, tree(Method::Range, (cand.tree, build.tree))));",
+        replacement: "                out.push((Cand { cost, order, tree: 0 }, tree(Method::Range, (cand.tree, build.tree))));",
+        integration: &[],
+        unit: &["physical::enumerate::tests::a_range_join_is_a_plan_of_no_order"],
     },
 ];
