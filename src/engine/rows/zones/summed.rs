@@ -63,7 +63,12 @@ impl Zones {
     /// Whether a zone is due, and the zones are not resting after a pass
     /// over them (`REST`), so the maintenance thread is to be asked for.
     pub(in crate::engine::rows) fn wanted(&self) -> bool {
-        self.due() && self.elapsed() >= self.rest_until.load(AtomicOrdering::Acquire)
+        self.wanted_at(self.elapsed())
+    }
+
+    /// `wanted` at `clock` nanoseconds after the zones were made.
+    pub(in crate::engine::rows) fn wanted_at(&self, clock: u64) -> bool {
+        self.due() && clock >= self.rest_until.load(AtomicOrdering::Acquire)
     }
 
     /// The nanoseconds since the zones were made.
@@ -98,15 +103,16 @@ impl Zones {
         });
         let due: Vec<(usize, u64, u64)> = stale.take(MOST_SUMMED).collect();
         if self.swept(looked, zones) || due.len() < MOST_SUMMED {
-            self.rest();
+            self.rest(clock.unwrap_or_else(|| self.elapsed()));
         }
         due
     }
 
-    /// Rests the zones for `REST`, a pass over every zone due done.
-    fn rest(&self) {
+    /// Rests the zones for `REST` from `clock` nanoseconds after they were
+    /// made, a pass over every zone due done.
+    fn rest(&self, clock: u64) {
         self.swept.store(0, AtomicOrdering::Release);
-        self.rest_until.store(self.elapsed().saturating_add(nanos(REST)), AtomicOrdering::Release);
+        self.rest_until.store(clock.saturating_add(nanos(REST)), AtomicOrdering::Release);
     }
 }
 
