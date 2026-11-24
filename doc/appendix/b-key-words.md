@@ -215,7 +215,8 @@ is; and the four functions before a parenthesis, so a column of one of
 those names is written in double quotes only there. ORDINALITY, which
 SQL:2023 does not reserve, is read only after WITH, after UNNEST's
 arrays. Of the descriptor items, DEGREE, CARDINALITY,
-RETURNED_CARDINALITY and KEY_MEMBER are read only as items,
+RETURNED_CARDINALITY, KEY_MEMBER, PARAMETER_ORDINAL_POSITION and the
+three PARAMETER_SPECIFIC fields are read only as items,
 TOP_LEVEL_COUNT and KEY_TYPE only as header items, and NESTING and WITHOUT only after DESCRIBE's descriptor.
 
 MULTISET, MEMBER, SUBMULTISET, ELEMENT, COLLECT, FUSION and

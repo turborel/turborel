@@ -20,7 +20,8 @@ use turborel::db::{Completion, Cursor, Database, Direct, Prepared, Session};
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::storage::Row;
 use turborel::value::Value;
-use turborel_protocol::capability::DECLARED_TYPES;
+use turborel_protocol::Called;
+use turborel_protocol::capability::{DECLARED_TYPES, PARAMETER_MODES};
 use turborel_protocol::{Attributes, Capabilities, Column, Completed, Described, Failure, LobRequest, Reply, Timing, row_size};
 
 use super::copy::{self, Copy};
@@ -177,9 +178,14 @@ fn not_open() -> SqlError {
 }
 
 /// The reply that describes `prepared`, statement `n`, to a client
-/// granted `granted`.
+/// granted `granted`: of a CALL, with `parameter-modes`, each `?` with its
+/// parameter's mode (RULES.md D978).
 fn prepared_reply(n: u32, prepared: &Prepared, granted: Capabilities) -> Reply {
-    Reply::Prepared { statement: n, parameters: prepared.parameters().to_vec(), columns: described(prepared.columns(), granted) }
+    let called = prepared
+        .procedure()
+        .filter(|_| granted.has(PARAMETER_MODES))
+        .map(|procedure| Called { procedure: procedure.clone(), parameters: prepared.parameters().to_vec() });
+    Reply::Prepared { statement: n, parameters: prepared.inputs().to_vec(), columns: described(prepared.columns(), granted), called }
 }
 
 /// \[DESIGN\] RULES.md D396: the columns `of`, each with its declared

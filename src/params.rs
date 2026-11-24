@@ -21,8 +21,8 @@ pub(crate) use routine::{RoutineScope, ScopedVariable, local_key};
 pub(crate) use transition::Transitions;
 
 use dynamic::Dynamic;
-pub use dynamic::ParameterType;
 pub(crate) use dynamic::conformed;
+pub use dynamic::{DynamicParameter, ParameterType};
 pub use given::Load;
 pub(crate) use given::{Given, conformed_row, taken};
 

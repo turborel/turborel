@@ -70,6 +70,27 @@ impl ParameterMode {
             ParameterMode::InOut => "INOUT",
         }
     }
+
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e iv, Table 33] Its code, as an item
+    /// descriptor area's PARAMETER_MODE gives it: 1 of IN, 2 of INOUT, 4
+    /// of OUT.
+    pub const fn code(self) -> u8 {
+        match self {
+            ParameterMode::In => 1,
+            ParameterMode::InOut => 2,
+            ParameterMode::Out => 4,
+        }
+    }
+
+    /// The mode whose code [Table 33] is `code`, if one's is.
+    pub const fn of_code(code: u8) -> Option<ParameterMode> {
+        match code {
+            1 => Some(ParameterMode::In),
+            2 => Some(ParameterMode::InOut),
+            4 => Some(ParameterMode::Out),
+            _ => None,
+        }
+    }
 }
 
 /// [ISO/IEC 9075-2:2023 §11.60] `<SQL parameter declaration>` ::=
@@ -169,6 +190,10 @@ pub struct CallStatement {
     /// Of each argument, the `<SQL parameter name>` of its `<named
     /// argument specification>`, if it is one (Feature T521).
     pub names: Vec<Option<String>>,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e ii] Of each argument, the numbers
+    /// of the `<dynamic parameter specification>`s it simply contains, in
+    /// the order written.
+    pub dynamic: Vec<Vec<usize>>,
 }
 
 /// [ISO/IEC 9075-2:2023 §16.2] `<return statement>` ::= RETURN `<return

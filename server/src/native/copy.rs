@@ -115,7 +115,7 @@ fn prepared(session: &Session, table: &str, columns: &[String]) -> Result<Insert
         columns.iter().map(|c| column_name(c)).collect()
     };
     let one = session.prepare(&insert_text(&table, &columns))?;
-    let types = one.parameters().iter().map(|t| t.clone().data_type()).collect();
+    let types = one.inputs().iter().map(|t| t.clone().data_type()).collect();
     Ok(Insert { one, types, waiting: Vec::with_capacity(BATCH), rows: 0, batch: BATCH })
 }
 

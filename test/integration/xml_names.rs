@@ -68,7 +68,7 @@ fn what_the_mappings_take() {
     assert_eq!(refused(&s, "VALUES (IDENTIFIER_TO_XMLNAME('a', HALF ESCAPED))").0, -102);
     assert_eq!(refused(&s, "VALUES (IDENTIFIER_TO_XMLNAME('a', FULLY))").0, -102);
     let prepared = s.prepare("VALUES (XMLNAME_TO_IDENTIFIER(?))").unwrap();
-    assert_eq!(prepared.parameters().len(), 1);
+    assert_eq!(prepared.inputs().len(), 1);
     s.run("CREATE TABLE ESCAPED (FULLY VARCHAR(5), PARTIALLY INTEGER)").unwrap();
     s.run("INSERT INTO ESCAPED VALUES ('a b', 1)").unwrap();
     assert_eq!(one(&s, "(SELECT IDENTIFIER_TO_XMLNAME(FULLY, FULLY ESCAPED) FROM ESCAPED)"), "a_x0020_b");

@@ -2,20 +2,38 @@
 //! Notice and an Error with and without their conditions, and a reply
 //! compressed.
 
-use turborel::params::ParameterType;
+use turborel::catalog::{ParameterMode, QualifiedName};
+use turborel::params::{DynamicParameter, ParameterType};
 use turborel::value::{DataType, Decimal, Spelled, Value};
 
 use super::{Sample, Side, raw, server};
 use crate::capability::{
-    COMMIT_POSITION, COMPRESSION, CONDITIONS, DECLARED_TYPES, DIAGNOSTICS, GENERATED, MULTI_STATEMENT, NOTICES, PING, ROW_COUNTS, STATUS,
+    COMMIT_POSITION, COMPRESSION, CONDITIONS, DECLARED_TYPES, DIAGNOSTICS, GENERATED, MULTI_STATEMENT, NOTICES, PARAMETER_MODES, PING,
+    ROW_COUNTS, STATUS,
 };
 use crate::compress::compress_frames;
-use crate::{CancelKey, Column, Completed, Diagnostics, ERROR, Failure, KEY_BYTES, LobReply, Notice, Reply, Timing, WARNING};
+use crate::{Called, CancelKey, Column, Completed, Diagnostics, ERROR, Failure, KEY_BYTES, LobReply, Notice, Reply, Timing, WARNING};
 
 /// An INTEGER, its declared type told or not.
 fn integer(name: &str, declared: bool) -> Column {
     let column = Column { name: Some(name.into()), data_type: exact(10, 0, Spelled::Integer), not_null: true, declared: None };
     if declared { column.with_declared() } else { column }
+}
+
+/// A Prepared of `CALL S.P(?, ?)`, of an IN parameter and an OUT one G,
+/// told of its `?`s' modes.
+fn called() -> Reply {
+    let integer_type = ParameterType::Of(exact(10, 0, Spelled::Integer));
+    let of = |mode, ordinal| DynamicParameter { data_type: integer_type.clone(), mode, ordinal: Some(ordinal) };
+    let procedure = QualifiedName { auth: "S".into(), ident: "P".into() };
+    let called = Called { procedure, parameters: vec![of(ParameterMode::In, 1), of(ParameterMode::Out, 2)] };
+    Reply::Prepared { statement: 3, parameters: vec![integer_type.clone()], columns: vec![integer("G", false)], called: Some(called) }
+}
+
+/// A Prepared of statement `statement`, of `parameters` and `columns`,
+/// told of no `?`'s mode.
+fn untold(statement: u32, parameters: Vec<ParameterType>, columns: Vec<Column>) -> Reply {
+    Reply::Prepared { statement, parameters, columns, called: None }
 }
 
 /// An exact numeric type of `precision` and `scale`, written as `spelled`.
@@ -60,19 +78,19 @@ fn described() -> Vec<Sample> {
         server(
             "prepared",
             &[],
-            &Reply::Prepared { statement: 1, parameters: parameters.clone(), columns: vec![integer("K", false), unnamed.clone()] },
+            &untold(1, parameters.clone(), vec![integer("K", false), unnamed.clone()]),
             "Prepared statement 1, parameters CHARACTER VARYING flagged varying and exact numeric (10, 0), columns K exact numeric (10, 0) not null and an unnamed CHARACTER VARYING(5) in characters",
         ),
         server(
             "prepared-empty",
             &[],
-            &Reply::Prepared { statement: 2, parameters: Vec::new(), columns: Vec::new() },
+            &Reply::Prepared { statement: 2, parameters: Vec::new(), columns: Vec::new(), called: None },
             "Prepared statement 2, no parameters, no columns",
         ),
         server(
             "prepared-declared",
             &[DECLARED_TYPES],
-            &Reply::Prepared { statement: 1, parameters, columns: vec![integer("K", true)] },
+            &Reply::Prepared { statement: 1, parameters, columns: vec![integer("K", true)], called: None },
             "Prepared statement 1, two parameters, column K exact numeric (10, 0) not null, tail 19 declared INTEGER, INTEGER",
         ),
         server(
@@ -277,9 +295,20 @@ fn compressed() -> Sample {
     raw(Side::Server, ("rows-compressed", &[COMPRESSION]), bytes, &means)
 }
 
+/// The sample of a Prepared of a CALL, told of its `?`s' modes.
+fn told_modes() -> Sample {
+    server(
+        "prepared-called",
+        &[PARAMETER_MODES],
+        &called(),
+        "Prepared statement 3 of CALL S.P(?, ?): parameter exact numeric (10, 0), column G exact numeric (10, 0) not null, tail 20 called S.P, IN of parameter 1 and OUT of parameter 2, each exact numeric (10, 0)",
+    )
+}
+
 /// Every reply's samples.
 pub(super) fn samples() -> Vec<Sample> {
     let mut all = described();
+    all.push(told_modes());
     all.extend(completions());
     all.extend(conditions());
     all.extend(statuses());
