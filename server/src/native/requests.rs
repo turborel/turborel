@@ -29,11 +29,12 @@ use turborel_protocol::{
 use super::copy::{self, Copy};
 use super::debugging::Debugging;
 use super::status::Status;
-use crate::settings::DEFAULT_LOB_INLINE_BYTES;
 use crate::shown::{Present, Requests};
+pub(super) use outgoing::Outgoing;
 
 mod debugged;
 mod ended;
+mod outgoing;
 mod replied;
 mod timed;
 
@@ -207,55 +208,6 @@ fn prepared_reply(n: u32, prepared: &Prepared, granted: Capabilities) -> Reply {
 fn described(of: &[OutColumn], granted: Capabilities) -> Vec<Column> {
     let declared = granted.has(DECLARED_TYPES);
     of.iter().map(Column::from).map(|c| if declared { c.with_declared() } else { c }).collect()
-}
-
-/// A request's replies: those gathered, and what a batch's worth is sent
-/// through, ahead of the rest.
-pub(super) struct Outgoing<'a> {
-    sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>,
-    /// The bytes a batch of rows is.
-    batch: usize,
-    /// SERVER.LOB_INLINE_BYTES: the longest large object sent whole.
-    inline: usize,
-    /// Whether a locator was sent (`native/lobs.rs`).
-    located: bool,
-    pub(super) gathered: Vec<Reply>,
-    /// How many times what was gathered was sent ahead.
-    sends: usize,
-}
-
-impl<'a> Outgoing<'a> {
-    /// None gathered yet, batches of `batch` bytes sent through `sink`.
-    /// Room is made for one reply, a request's last, which most requests
-    /// gather alone: a vector grown from none took room for four.
-    pub(super) fn new(sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>, batch: usize) -> Outgoing<'a> {
-        Outgoing { sink, batch, inline: DEFAULT_LOB_INLINE_BYTES, located: false, gathered: Vec::with_capacity(1), sends: 0 }
-    }
-
-    /// As it is, large objects of at most `bytes` octets sent whole.
-    #[must_use]
-    pub(super) fn inlining(self, bytes: usize) -> Outgoing<'a> {
-        Outgoing { inline: bytes, ..self }
-    }
-
-    /// The replies gathered and not sent ahead: the request's last, for
-    /// the wire to send, or to queue before the next pipelined request's.
-    pub(super) fn finish(self) -> Vec<Reply> {
-        self.gathered
-    }
-
-    /// Sends what is gathered, ahead of the rest.
-    fn send(&mut self) -> std::result::Result<(), Cut> {
-        self.sends = self.sends.saturating_add(1);
-        (self.sink)(mem::take(&mut self.gathered)).map_err(Cut::Gone)
-    }
-
-    /// Gathers the rows of `rows`, if any.
-    fn rows(&mut self, rows: &mut Vec<Row>) {
-        if !rows.is_empty() {
-            self.gathered.push(Reply::Rows(mem::take(rows)));
-        }
-    }
 }
 
 impl Held {
