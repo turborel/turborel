@@ -8,7 +8,7 @@
 //! processor has to the kernels' contract and to the portable bodies, of
 //! random inputs of every length and alignment.
 //!
-//! `turboreld` and the client register `Simd::detect()` as a database's
+//! `turboreld` registers `Simd::detect()` as a database's
 //! kernels (`Database::register_kernels`); EXECUTOR.KERNELS = 'PORTABLE'
 //! sets them aside. A method these kernels have no body for is the
 //! portable one, `Kernels`' default.
