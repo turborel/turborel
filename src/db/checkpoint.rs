@@ -459,7 +459,7 @@ impl State {
         Ok(())
     }
 
-    /// The rest of a close's checkpoint, writers going on: the log made
+    /// The rest of a close's checkpoint: the log made
     /// durable past L, before the pages holding what it records are (a
     /// checkpoint record logged and synced, unless the close did), every
     /// engine's capture made durable, the image recorded with the tables'

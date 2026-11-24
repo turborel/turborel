@@ -366,14 +366,19 @@ impl Wire {
                 }
             }
         }
-        // A stream TLS secures may hold the last records back.
-        match direct.flush() {
-            Ok(()) => Ok(true),
-            Err(e) => {
-                if nothing_yet(&e) {
-                    return Ok(false);
+        // A stream TLS secures may hold the last records back, and a
+        // write of them a signal interrupts is made again (RULES.md D1047).
+        loop {
+            match direct.flush() {
+                Ok(()) => return Ok(true),
+                Err(e) => {
+                    if nothing_yet(&e) {
+                        return Ok(false);
+                    }
+                    if e.kind() != ErrorKind::Interrupted {
+                        return Err(cannot_send(&e));
+                    }
                 }
-                Err(cannot_send(&e))
             }
         }
     }
@@ -574,3 +579,8 @@ mod tests {
         });
     }
 }
+
+// A stream whose calls a signal interrupts, read and written apart from
+// the runtime (RULES.md D1047).
+#[cfg(test)]
+mod interrupted;

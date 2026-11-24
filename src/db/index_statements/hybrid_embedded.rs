@@ -154,8 +154,7 @@ impl Session {
     /// # Errors
     ///
     /// SQLCODE -103 if it names more than its text column, its table's
-    /// primary key is not one column, its MODEL is no name, or a name of
-    /// what it keeps beside it is taken.
+    /// primary key is not one column, or its MODEL is no name.
     pub(super) fn embedding(&self, st: &State, spec: &IndexSpec) -> Result<Embedding> {
         let [text] = spec.columns.as_slice() else {
             return Err(refused("a hybrid index of a MODEL indexes its text column alone, and embeds it"));

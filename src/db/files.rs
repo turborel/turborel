@@ -94,11 +94,10 @@ pub(super) const LOCK: &str = "lock";
 /// due together.
 pub const CHECKPOINT_AFTER: u64 = 4_000_000;
 /// \[DESIGN\] The bytes written to the tables file's side file after which
-/// a checkpoint is taken, by default: 1 GiB, as PostgreSQL's `max_wal_size`.
+/// a checkpoint is taken, by default: 1 GiB.
 pub const CHECKPOINT_BYTES: u64 = 1 << 30;
 
-/// \[DESIGN\] The bytes of a database's buffer pool, by default: 128 MiB, as
-/// PostgreSQL's `shared_buffers`.
+/// \[DESIGN\] The bytes of a database's buffer pool, by default: 128 MiB.
 pub const POOL_BYTES: usize = 128 << 20;
 
 /// \[DESIGN\] How a database kept in a directory is opened: what its

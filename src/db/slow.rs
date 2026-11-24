@@ -5,8 +5,9 @@
 //!
 //! A statement whose work took DIAGNOSTICS.SLOW_STATEMENT_MS or longer
 //! becomes an `Event::SlowStatement`, with its text and who ran it; with no
-//! text while anything of the database is encrypted, so no value meant for
-//! an encrypted table reaches a log in the clear (RULES.md D56, D48). It
+//! text while anything of the database is encrypted, its files, a table or
+//! its spill areas, so no value meant for an encrypted table reaches a log
+//! in the clear (RULES.md D56, D48, D1043). It
 //! carries the trace context of the client's request running it, if the
 //! client gave one (RULES.md D191).
 //!
@@ -78,7 +79,8 @@ impl Session {
 /// `st`'s DIAGNOSTICS.SLOW_STATEMENT_MS asks for it.
 fn slow<T>(st: &State, text: impl FnOnce() -> T, (user, stop): (&str, &Stop)) -> Option<Slow<T>> {
     let millis = u64::try_from(st.settings.integer(SLOW_STATEMENT_MS)).ok().filter(|&m| m > 0)?;
-    let text = st.spill_encodings().stages().is_empty().then(text);
+    // A compression of the spill areas alone hides nothing (RULES.md D1043).
+    let text = (!st.spill_encodings().confidential()).then(text);
     Some(Slow { text, user: user.to_owned(), trace: stop.served().trace(), after: Duration::from_millis(millis) })
 }
 

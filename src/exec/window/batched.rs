@@ -292,8 +292,8 @@ impl Iterator for Windowing {
     }
 }
 
-/// Of `call`'s frame bounds and count, prepared: unused of a call with no
-/// frame read.
+/// Of each call of `w`, its frame bounds and count, prepared: unused of a
+/// call with no frame read.
 fn prepared(w: &Window<()>, runner: &Runner) -> Result<Prepared> {
     let order = w.order.first().map(SortKey::order);
     w.calls.iter().map(|c| Ok((Bounds::of(&c.frame, order, runner)?, Count::of(&c.kind, runner)?))).collect()

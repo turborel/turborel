@@ -7,7 +7,7 @@
 //! The rows of a join are those of its operands times the fraction its
 //! predicates keep, its equalities by classes (`physical/cardinality/joins.rs`,
 //! the formula every estimate of a join uses, RULES.md D370). Other
-//! conjuncts are taken as independent, as the filters of a table are
+//! conjuncts are taken as independent, each by its own estimate
 //! (`physical/estimate.rs`). A join is estimated to give at least one row,
 //! if its operands' product has one, so no estimate of zero makes every
 //! join over it free (Leis et al., "How Good Are Query Optimizers,

@@ -14,7 +14,8 @@
 //! find the next (RULES.md D743). A row waited for is claimed for the
 //! first in its line, so a writer that comes later queues behind the line
 //! rather than writing the row between its writer's end and the first
-//! waiter's write (`claims.rs`, RULES.md D456).
+//! waiter's write, once that waiter was overtaken already (`claims.rs`,
+//! RULES.md D456).
 
 mod claims;
 mod overtaken;

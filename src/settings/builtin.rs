@@ -388,7 +388,7 @@ fn transaction_isolation() -> Definition {
     defined(
         ("TRANSACTION.ISOLATION", Kind::Choice(ISOLATION_LEVELS), text(READ_COMMITTED)),
         (true, Effect::Transaction),
-        "The isolation level of a transaction SET TRANSACTION gives none: READ COMMITTED as PostgreSQL's default is, where ISO/IEC 9075 says SERIALIZABLE [ISO/IEC 9075:1992 §14.1 SR2], so SERIALIZABLE here conforms.",
+        "The isolation level of a transaction SET TRANSACTION gives none: READ COMMITTED, where ISO/IEC 9075 says SERIALIZABLE [ISO/IEC 9075:1992 §14.1 SR2], so SERIALIZABLE here conforms.",
     )
 }
 

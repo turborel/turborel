@@ -2,8 +2,8 @@
 //! body of a procedure a CALL invokes, a triggered action, or an SQL
 //! control statement executed directly (RULES.md D76).
 //!
-//! The program is bound as it runs, as a procedure's body is read at each
-//! CALL, over a frame of the values of the statement's parameters: the
+//! The program is bound as it runs, a procedure's body once and kept
+//! (`kept.rs`), over a frame of the values of the statement's parameters: the
 //! procedure's SQL parameters, or the action's transition variables, then
 //! its variables. Once it has run, the parameters' values go back, so the
 //! CALL reads its output parameters and the BEFORE trigger its new row.

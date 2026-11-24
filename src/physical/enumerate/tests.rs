@@ -7,7 +7,7 @@ use super::bits::{Set, bit, through};
 use super::conflicts::{Kind, Shape};
 use super::graph::Graph;
 use super::model::{Conj, Model, Order, Pred, Rel};
-use super::space::{Space, Tree};
+use super::space::{Method, Space, Tree};
 use super::{Algorithm, adaptive};
 use crate::physical::CostModel;
 use crate::physical::cardinality::Classes;
@@ -214,4 +214,32 @@ fn a_class_implies_keys_of_relations_no_conjunct_joins() {
     outer.kinds = vec![Kind::Left, Kind::Inner];
     outer.implied = outer.implied_classes();
     assert_eq!(outer.implied_keys((bit(0), bit(1))), Vec::new());
+}
+
+/// Verifies: [DESIGN] RULES.md D1045: a range join is offered as a plan
+/// of no order, whatever its left's, as its rows keep none; the nested
+/// loop of the same operands is the plan of the left's order.
+#[test]
+fn a_range_join_is_a_plan_of_no_order() {
+    let (shapes, mut model) = inner(&[100.0_f64, 100.0_f64], &[(0_usize, 1_usize, 10.0_f64)]);
+    // The conjunct is a comparison by order, no equality, and the left is
+    // read in an order too, at a cost.
+    model.conjuncts[0].key = None;
+    model.conjuncts[0].class = None;
+    model.ranged = super::ranged::Ranges { conjuncts: vec![true], preds: Vec::new() };
+    model.rels[0].reads.push((Order::Class(0), 150.0_f64));
+    model.rels[1].reads.push((Order::Class(0), 150.0_f64));
+    model.implied = model.implied_classes();
+    let g = graph(&shapes, &model);
+    let mut space = Space::new(&g, &model);
+    space.dphyp(g.all());
+    let entry = &space.table[&g.all()];
+    let how = |tree: usize| match space.trees.get(tree) {
+        Some(Tree::Join { how, .. }) => Some(*how),
+        Some(Tree::Leaf { .. }) | None => None,
+    };
+    let ranged: Vec<Order> = entry.cands.iter().filter(|c| how(c.tree) == Some(Method::Range)).map(|c| c.order).collect();
+    assert_eq!(ranged, [Order::None], "{:?}", entry.cands);
+    let ordered = entry.of_order(Order::Class(0)).expect("a plan of the left's order");
+    assert_eq!(how(ordered.tree), Some(Method::Nested));
 }

@@ -48,7 +48,7 @@ A mode not written takes its default:
 | Isolation level | READ COMMITTED, or what TRANSACTION.ISOLATION says |
 | Access mode | READ ONLY under READ UNCOMMITTED; READ WRITE otherwise |
 
-The default isolation level follows PostgreSQL. The standard says
+The default isolation level is READ COMMITTED. The standard says
 SERIALIZABLE, and a database or session gets that by setting
 [TRANSACTION.ISOLATION](../../appendix/c-settings.md) to SERIALIZABLE.
 

@@ -51,7 +51,7 @@ const MOST_BRANCHES: usize = 64;
 const MOST_EDGE_SCANS: usize = 4;
 
 /// One join: the element table each used variable binds, in the order of
-/// `Rigid::used`, and of each hop whether it is walked from its source.
+/// `Rigid::vars`, and of each hop whether it is walked from its source.
 #[derive(Clone)]
 struct Branch {
     tables: Vec<usize>,

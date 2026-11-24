@@ -1,6 +1,6 @@
 //! \[DESIGN\] The thread manager (RULES.md D55): every thread a database
 //! runs, and its background work, started, run and stopped in one place,
-//! each labelled, with a state an operator sees (`Database::threads`).
+//! each labelled, with a state an operator sees (`Database::jobs`).
 //!
 //! Background work is a job: a function of the database, its checkpoints,
 //! its maintenance, its log's syncs or its scans' read-ahead, that a session asks for as it comes

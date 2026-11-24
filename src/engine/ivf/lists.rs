@@ -253,20 +253,31 @@ pub fn pages_of(pool: &BufferPool, file: FileId, head: PageId) -> Result<Vec<Pag
 ///
 /// # Errors
 ///
-/// The buffer pool's; the pages written are freed then.
+/// The buffer pool's, of a page made or of one written; the pages made
+/// are freed then (RULES.md D1044).
 pub fn write_directory(pool: &BufferPool, file: FileId, layout: &Layout, lists: &[List]) -> Result<Vec<PageId>> {
     let chunks: Vec<&[List]> = lists.chunks(layout.per_directory.max(1)).collect();
     let mut pages = Vec::with_capacity(chunks.len().max(1));
-    for _ in 0..chunks.len().max(1) {
-        match pool.new_page(file) {
-            Ok((id, _)) => pages.push(id),
-            Err(error) => {
-                // Unpublished; a failed free leaks pages only.
-                let _ = crate::engine::hnsw::free_pages(pool, file, &pages);
-                return Err(error);
-            }
-        }
+    let written = made(pool, file, chunks.len().max(1), &mut pages).and_then(|()| filled(pool, file, &pages, &chunks));
+    if let Err(error) = written {
+        // Unpublished; a failed free leaks pages only.
+        let _ = crate::engine::hnsw::free_pages(pool, file, &pages);
+        return Err(error);
     }
+    Ok(pages)
+}
+
+/// Makes `count` pages, each pushed to `pages` as it is made.
+fn made(pool: &BufferPool, file: FileId, count: usize, pages: &mut Vec<PageId>) -> Result<()> {
+    for _ in 0..count {
+        pages.push(pool.new_page(file)?.0);
+    }
+    Ok(())
+}
+
+/// Writes each of `chunks`, a directory page's lists, to its page of
+/// `pages`, linked to the next.
+fn filled(pool: &BufferPool, file: FileId, pages: &[PageId], chunks: &[&[List]]) -> Result<()> {
     for (at, id) in pages.iter().enumerate() {
         let next = pages.get(at.saturating_add(1)).map_or(NO_PAGE, |p| p.0);
         let mut bytes = header(DIRECTORY_TAG, next);
@@ -275,7 +286,7 @@ pub fn write_directory(pool: &BufferPool, file: FileId, layout: &Layout, lists: 
         }
         *pool.write(file, *id)? = bytes;
     }
-    Ok(pages)
+    Ok(())
 }
 
 /// A list's directory record, appended to `out`.

@@ -307,7 +307,7 @@ struct Alloc {
 pub struct Counts {
     /// Nodes searches return.
     pub live: u64,
-    /// Tombstoned or unfinished nodes awaiting consolidation.
+    /// Tombstoned nodes awaiting consolidation.
     pub dead: u64,
     /// Node numbers allocated, free slots included.
     pub allocated: u32,

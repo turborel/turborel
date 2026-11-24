@@ -62,7 +62,7 @@ impl Database {
 pub(super) type SchemaMade = (String, Vec<(String, String)>, bool, Vec<QualifiedName>, Made);
 
 impl State {
-    /// \[EXTENSION\] A secondary index on `columns` of table `qn`, built over
+    /// \[EXTENSION\] The secondary index `spec` describes, built over
     /// every version of its rows: for recovery, and for an engine leaving
     /// concurrency to the coordinator, whose caller holds the table's
     /// exclusive lock (`Database::create_index`).
@@ -81,7 +81,7 @@ impl State {
     /// \[EXTENSION\] Defines a secondary index on `columns` of table `qn`:
     /// in the catalog, with its structure, empty unless reopened, so every
     /// write from this snapshot on keeps it up to date. Returns the
-    /// structure, its columns' positions, and whether it was reopened.
+    /// structure, its descriptor, and whether it was reopened.
     pub(super) fn define_index(&mut self, spec: &IndexSpec) -> Result<(Arc<dyn Index>, IndexDesc, bool)> {
         let IndexSpec { name, table: qn, columns, method, options, nulls, expressions } = spec;
         let desc = self.catalog.table(qn).cloned().ok_or_else(|| api(format!("[EXTENSION] no table {qn}")))?;

@@ -17,10 +17,9 @@ use crate::value::types::MAX_TYPE_NESTING;
 use crate::value::{DataType, Value};
 
 /// [ISO/IEC 9075-2:2023 §20.6 GR7h iii 2] The components of an item that
-/// describe its type, which COPY DESCRIPTOR with TYPE copies: of those an
-/// item has, which has no SCOPE components, as there are no reference
-/// types.
-const TYPE_FIELDS: [DescriptorItem; 15] = [
+/// describe its type, which COPY DESCRIPTOR with TYPE copies, the SCOPE
+/// components of a reference type among them (RULES.md D1042).
+const TYPE_FIELDS: [DescriptorItem; 18] = [
     DescriptorItem::Type,
     DescriptorItem::Length,
     DescriptorItem::Precision,
@@ -36,6 +35,9 @@ const TYPE_FIELDS: [DescriptorItem; 15] = [
     DescriptorItem::UserDefinedTypeCatalog,
     DescriptorItem::UserDefinedTypeSchema,
     DescriptorItem::UserDefinedTypeName,
+    DescriptorItem::ScopeCatalog,
+    DescriptorItem::ScopeSchema,
+    DescriptorItem::ScopeName,
 ];
 
 /// [ISO/IEC 9075-2:2023 §9.24 GR2d ii 3, GR2e iii] The most item descriptor

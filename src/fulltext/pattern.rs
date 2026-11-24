@@ -3,7 +3,7 @@
 //! FullText value's Contains method looks for, and what its Rank method
 //! scores. A pattern is read once (`parse.rs`) and evaluated over a
 //! document's tokens (`eval.rs`) or answered by a full-text index
-//! (`index/fulltext/pattern.rs`). Thesaurus expansions are replaced by the
+//! (`index/fulltext/plan.rs`). Thesaurus expansions are replaced by the
 //! terms they expand to before either (`Pattern::expanded`).
 
 pub mod eval;

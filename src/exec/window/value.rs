@@ -126,7 +126,7 @@ impl<'a> Picked<'a> {
     }
 
     /// How many of the sequence are before the place `place` of `part`,
-    /// read by `reader`.
+    /// read by `which`.
     fn before(&mut self, place: usize, part: &mut Partition, which: ReadBy) -> Result<usize> {
         let len = match &self.sequence {
             Sequence::Each => return Ok(place),

@@ -48,16 +48,29 @@ struct Scripted {
     /// The last bound set on it, shared so a test reads it once the
     /// connection is gone.
     bound: Rc<Cell<Option<Duration>>>,
+    /// Whether a signal interrupts each read and each flush once before
+    /// it is done, and whether the next is the one interrupted.
+    interrupted: bool,
+    next: bool,
 }
 
 impl Scripted {
     fn new(script: Vec<Vec<u8>>, closes: bool) -> Scripted {
-        Scripted { script: script.into(), readable: VecDeque::new(), written: Vec::new(), closes, bound: Rc::default() }
+        let (readable, written) = (VecDeque::new(), Vec::new());
+        Scripted { script: script.into(), readable, written, closes, bound: Rc::default(), interrupted: false, next: false }
+    }
+
+    /// Fails as a call a signal interrupts does, every other time, if it
+    /// is interrupted at all.
+    fn interrupt(&mut self) -> io::Result<()> {
+        self.next = self.interrupted && !self.next;
+        if self.next { Err(io::Error::from(io::ErrorKind::Interrupted)) } else { Ok(()) }
     }
 }
 
 impl Read for Scripted {
     fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        self.interrupt()?;
         if self.readable.is_empty() && !self.closes {
             return Err(match self.bound.get() {
                 Some(_) => io::Error::from(io::ErrorKind::TimedOut),
@@ -82,7 +95,7 @@ impl Write for Scripted {
         Ok(bytes.len())
     }
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        self.interrupt()
     }
 }
 
@@ -311,6 +324,25 @@ fn terminate_reads_past_a_notice_to_its_error() {
     let c = connected(&[], vec![encoded(&[notice.clone(), status, Reply::Error(error.clone())])]);
     assert_eq!(c.terminate().unwrap_err(), error);
     connected(&[], vec![encoded(&[notice])]).terminate().unwrap();
+}
+
+/// Verifies: [DESIGN] RULES.md D1047: a read or a flush a signal
+/// interrupts is asked again, and is no failure of the connection. On a
+/// stream whose every read and flush is interrupted once, a connection
+/// opens, runs a statement, and ends by Terminate, its Notice read past.
+/// Regression test (R-TEST-7). Terminate's wait for the close, a read
+/// made once, failed with "cannot receive: Interrupted system call" when
+/// its process was frozen and thawed as it waited.
+#[test]
+fn a_read_or_a_flush_interrupted_is_asked_again() {
+    let notice = Reply::Notice(Notice { sqlstate: "01000".into(), message: "a warning".into(), diagnostics: Diagnostics::default() });
+    let mut stream = Scripted::new(vec![ready(&[]), no_data(), encoded(&[notice])], true);
+    stream.interrupted = true;
+    let mut c = Connection::open(stream, "X", &mut Trust).unwrap();
+    let Outcome::Done(done) = c.query("DELETE FROM T").unwrap() else { panic!("rows for a DELETE") };
+    assert_eq!(done.sqlstate.as_str(), "02000");
+    assert!(!c.is_lost());
+    c.terminate().unwrap();
 }
 
 /// Verifies: [EXTENSION] RULES.md D1032, D1035: an Event that comes among

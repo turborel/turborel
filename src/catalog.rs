@@ -7,8 +7,7 @@
 //! the extension point; `MemoryCatalog`, held in memory, is the one built
 //! in, made durable by the log and a checkpoint's image of it
 //! (`catalog/codec.rs`). Another catalog would implement the same trait
-//! over files, or over ordinary tables in one of the storage engines, as
-//! PostgreSQL does.
+//! over files, or over ordinary tables in one of the storage engines.
 
 use std::fmt;
 

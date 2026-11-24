@@ -69,8 +69,7 @@ fn merges(t: Option<&DataType>) -> bool {
 }
 
 impl PhysicalPlanner<'_> {
-    /// The model of `q`, the chain asked for the order `want`; none if a
-    /// relation's rows are not known.
+    /// The model of `q`, the chain asked for the order `want`.
     pub(super) fn model(&self, q: &Query, want: &[SortKey]) -> Option<Model> {
         let cost = self.weights();
         let inner: Vec<Option<(usize, usize)>> = q.conjuncts.iter().map(|(_, c)| equated(c, q)).collect();
@@ -123,8 +122,7 @@ impl PhysicalPlanner<'_> {
 
     /// The classes of the equalities `inner` of the inner joins, by union of
     /// their columns, with the columns of the equalities `pred_keys` of the
-    /// other operators each in its own unless an inner one joins it; none
-    /// if a column's distinct values are not known.
+    /// other operators each in its own unless an inner one joins it.
     fn classed(&self, q: &Query, inner: &[Option<(usize, usize)>], pred_keys: &[Vec<(usize, usize)>]) -> Option<Classed> {
         let mut parents: Vec<usize> = (0..q.columns()).collect();
         for &(a, b) in inner.iter().flatten() {

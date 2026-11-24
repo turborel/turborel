@@ -10,7 +10,8 @@
 //! fixed:   for each column whose type has a width in a record
 //!          (`SqlType::record_width`), in column order, its bytes as its
 //!          type writes them: an exact number's units at the column's
-//!          scale (i64), an approximate number's IEEE-754 bits, a
+//!          scale (i64, or i128 for a column of more than 18 digits), an
+//!          approximate number's IEEE-754 bits, a
 //!          datetime's instant in UTC (i64, a zone i16 after it if zoned),
 //!          an interval's units (i128), a BINARY string's octets; zeros for
 //!          NULL

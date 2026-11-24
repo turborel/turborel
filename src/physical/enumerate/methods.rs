@@ -25,7 +25,8 @@
 //! * A nested loop, which pairs every row, when no equality joins them.
 //! * A range join, of an inner or LEFT join judging a comparison by order
 //!   of a value of each operand: the right sorted, each left row searching
-//!   it (`enumerate/ranged.rs`, RULES.md D580).
+//!   it (`enumerate/ranged.rs`, RULES.md D580). Its rows keep no order, so
+//!   it is offered as a plan of none (D1045).
 
 use super::bits::Set;
 use super::conflicts::Kind;
@@ -59,7 +60,8 @@ impl Space<'_> {
             let base = cand.cost + rows;
             if ranges {
                 let cost = base + build.cost + range_join_cost(&self.model.cost, (left.rows, right.rows), rows);
-                out.push((Cand { cost, order, tree: 0 }, tree(Method::Range, (cand.tree, build.tree))));
+                // Its rows keep no order (RULES.md D1045).
+                out.push((Cand { cost, order: Order::None, tree: 0 }, tree(Method::Range, (cand.tree, build.tree))));
             }
             if keys.is_empty() {
                 let cost = base + build.cost + left.rows * right.rows;
@@ -115,7 +117,8 @@ impl Space<'_> {
     }
 
     /// The cost of a probe of an index of `r`'s table by one of `keys`, if
-    /// the join is inner or LEFT and `r` is one relation one answers.
+    /// the join is inner, LEFT, a semi join or an antijoin and `r` is one
+    /// relation one answers.
     fn probe_cost(&self, kind: Kind, keys: &[(usize, usize)], r: Set) -> Option<f64> {
         if !matches!(kind, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) {
             return None;

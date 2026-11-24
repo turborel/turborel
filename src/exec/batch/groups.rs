@@ -78,8 +78,8 @@ impl Numbers<'_> {
 /// The groups of the rows of `batches`, as `read` reads them, each its
 /// grouping values and the finished set functions `aggs`, in the order
 /// their first rows came, in a work area of `db`, for the statement of
-/// `tx`. Groups are made partly before they spill if every set function
-/// writes its state.
+/// `tx`. Groups are made partly before they spill again if every set
+/// function writes its state.
 pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Db, TxId), batches: Batches) -> Result<RowIter> {
     let (mut work, runner) = (Work::of(db, tx), Runner::new(db, tx));
     let partial = aggs.iter().all(|a| a.func.0.accumulator(a.result.clone()).write_state(&mut Vec::new()));

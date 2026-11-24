@@ -137,7 +137,7 @@ fn masked_halves_avx512(values: &[i64], words: &[u64]) -> i128 {
     }
     let added = |v| {
         let mut lanes = [0_u64; 8];
-        // SAFETY: `words` is 64 bytes, and an unaligned store writes exactly them.
+        // SAFETY: `lanes` is 64 bytes, and an unaligned store writes exactly them.
         unsafe { _mm512_storeu_si512(lanes.as_mut_ptr().cast(), v) };
         lanes.iter().fold(0_u64, |s, &w| s.wrapping_add(w))
     };

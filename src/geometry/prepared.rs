@@ -176,7 +176,7 @@ impl Prepared {
 
     /// "`f(other, polygon) op value`", or the polygon first, of `other` a
     /// point: decided from the polygon's cells where a distance within a
-    /// constant needs no measure (`within_cells`), else by the call's
+    /// constant needs no measure (`within_bounded`), else by the call's
     /// value, compared as SQL compares it [X3.135-1986 §5.11 GR2, GR3];
     /// raising what the call would. None of no point.
     fn point_decided(&self, other: &Geometry, op: CompOp, value: &Value) -> Option<Result<Option<bool>>> {

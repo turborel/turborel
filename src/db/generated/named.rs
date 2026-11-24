@@ -104,9 +104,10 @@ impl State {
                 columns.dedup();
                 columns
             }
-            // No generation expression names a registered XML Schema; one
-            // that imports a registered XQuery module keeps it from being
-            // dropped (`definitions/xquery_modules.rs`).
+            // A generation expression that names a registered XML Schema,
+            // or imports a registered XQuery module, keeps it from being
+            // dropped (`definitions/xml_schemas.rs`,
+            // `definitions/xquery_modules.rs`).
             DropTarget::Table(_)
             | DropTarget::View(_)
             | DropTarget::Assertion(_)

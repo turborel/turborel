@@ -288,7 +288,7 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR2, GR4, §5.13,
-/// §5.15]: a conjunct judged over approximate numbers (`judge/floats.rs`)
+/// §5.15]: a conjunct judged over approximate numbers (`judge/kinds.rs`)
 /// keeps the rows it keeps of their values: comparisons of every operator
 /// with approximate and exact constants, -0 equal to 0, one with a string
 /// true of none; IS NULL and IS NOT NULL; IN and NOT IN, a null among

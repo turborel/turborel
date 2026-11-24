@@ -133,6 +133,25 @@ pub(crate) fn io_failed(what: &str, e: &io::Error) -> crate::Failure {
     failed(&format!("[DESIGN] cannot {what}: {e}"))
 }
 
+/// \[DESIGN\] What `io` gives, asked again each time a signal interrupts
+/// it (`ErrorKind::Interrupted`), as `Read::read_exact` and
+/// `Write::write_all` ask again (RULES.md D1047). A read or a write that
+/// waits under a timeout is interrupted by a signal, or by its process
+/// frozen and thawed, with nothing lost, so it is no failure of the
+/// connection.
+pub(crate) fn uninterrupted<T>(mut io: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match io() {
+            Ok(done) => return Ok(done),
+            Err(e) => {
+                if e.kind() != io::ErrorKind::Interrupted {
+                    return Err(e);
+                }
+            }
+        }
+    }
+}
+
 /// A TCP connection to `address`, made within `within` if given: each of
 /// its addresses tried in turn, until one is connected to.
 ///
@@ -143,10 +162,10 @@ pub(crate) fn tcp_to(address: impl ToSocketAddrs, within: Option<Duration>) -> R
     let addresses: Vec<SocketAddr> = address.to_socket_addrs().map_err(|e| io_failed("connect", &e))?.collect();
     let mut last = io::Error::new(io::ErrorKind::InvalidInput, "no address to connect to");
     for at in &addresses {
-        let made = match within {
+        let made = uninterrupted(|| match within {
             Some(limit) => TcpStream::connect_timeout(at, limit),
             None => TcpStream::connect(at),
-        };
+        });
         match made {
             Ok(stream) => return Ok(stream),
             Err(e) => last = e,

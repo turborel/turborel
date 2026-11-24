@@ -48,7 +48,7 @@ fn half(hash: u64) -> u64 {
 }
 
 impl Slots {
-    /// Slots for `groups` groups, placed by `hashes`, each group's.
+    /// Slots for the groups placed by `hashes`, each group's.
     pub(super) fn of(hashes: &[u64]) -> Slots {
         let mut slots = Slots::default();
         slots.rebuilt(hashes);

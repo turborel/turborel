@@ -133,7 +133,7 @@ impl State {
 
     /// [ISO/IEC 9075-2:2023 §6.1, §5.4] The type `name` names, no domain's,
     /// in schema `schema` if it names none (the SQL-path, RULES.md D69):
-    /// a user-defined type, if `auth` holds USAGE on it [AR1]; else, not
+    /// a user-defined type, if `who` holds USAGE on it [AR1]; else, not
     /// qualified, a type beyond the standard (RULES.md D53).
     ///
     /// # Errors

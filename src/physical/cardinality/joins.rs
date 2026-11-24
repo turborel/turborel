@@ -9,7 +9,7 @@
 //! are, form a class, and a set's class keeps one row in as many as each
 //! of its columns but the least distinct has values, so an equality the
 //! others imply, which predicate transitivity adds, is not counted again.
-//! Other conjuncts are taken as independent. Two relations joined on
+//! Other conjuncts are estimated a table at a time. Two relations joined on
 //! several columns, or on a key, are corrected as a pair
 //! (`cardinality/composite.rs`), and a join's rows are at most the bound
 //! the most rows of one value prove (`cardinality/bounds.rs`).

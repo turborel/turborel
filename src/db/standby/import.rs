@@ -28,8 +28,6 @@ use crate::txn::Transactions;
 /// \[DESIGN\] The bytes read from an export's file at a time.
 const PIECE: usize = 1 << 20;
 
-/// Writes the export `source`'s files into `dir` of `fs`, where its
-/// manifest says, each synced.
 /// Removes the files of `dir` that hold the database's state, the
 /// export's replacing them: the data file and its side files, the
 /// plug-ins' and the catalog's; the log's and the lock stay.
@@ -48,6 +46,8 @@ pub(in crate::db) fn clear_state_files(fs: &dyn FileSystem, dir: &Path) -> Resul
     Ok(())
 }
 
+/// Writes the export `source`'s files into `dir` of `fs`, where its
+/// manifest says, each synced.
 fn write_files(fs: &dyn FileSystem, dir: &Path, source: &mut dyn StateSource) -> Result<()> {
     let mut piece = vec![0; PIECE];
     for (index, file) in source.files().to_vec().iter().enumerate() {

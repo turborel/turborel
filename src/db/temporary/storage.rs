@@ -421,8 +421,8 @@ impl Entries {
         )
     }
 
-    /// The entries made, if they are not, in the instance's pages: of a
-    /// hash index if its index is one, else of a B-link tree.
+    /// The entries made, if they are not, in the instance's pages: of its
+    /// index's method if it is a built-in one, else of a B-link tree.
     ///
     /// # Errors
     ///

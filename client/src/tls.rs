@@ -21,7 +21,7 @@ use turborel_protocol::scram::{EXPORTER_BYTES, EXPORTER_LABEL};
 use crate::Failure;
 use crate::connection::{Connection, Mechanism, Result, TlsChannel, failed};
 use crate::target::Target;
-use crate::timeouts::{Bound, Timeouts, limit, tcp_to};
+use crate::timeouts::{Bound, Timeouts, limit, tcp_to, uninterrupted};
 
 /// A connection's stream, secured.
 pub type TlsStream = StreamOwned<ClientConnection, TcpStream>;
@@ -213,7 +213,7 @@ pub(crate) fn secured(mut tcp: TcpStream, (name, config): (&str, &Arc<ClientConf
     let mut session = ClientConnection::new(Arc::clone(config), server).map_err(|e| failed(&format!("[DESIGN] cannot begin TLS: {e}")))?;
     tcp.set_nodelay(true).map_err(|e| failed(&format!("[DESIGN] cannot set the connection up: {e}")))?;
     while session.is_handshaking() {
-        session.complete_io(&mut tcp).map_err(|e| failed(&format!("[DESIGN] the TLS handshake failed: {e}")))?;
+        uninterrupted(|| session.complete_io(&mut tcp)).map_err(|e| failed(&format!("[DESIGN] the TLS handshake failed: {e}")))?;
     }
     Ok(StreamOwned::new(session, tcp))
 }
