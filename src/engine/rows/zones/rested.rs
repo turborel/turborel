@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use super::summed::{REST, nanos};
 use super::tests::{TYPES, files, row, warmed};
 use super::{MOST_SUMMED, ZONE_ROWS};
 use crate::engine::rows::{RowTable, TableOptions};
@@ -47,14 +48,17 @@ fn zones_rest_after_a_pass_over_every_zone_due() {
 fn zones_kept_due_rest_after_a_pass_over_every_zone() {
     let zones = MOST_SUMMED.checked_add(1).unwrap();
     let (table, ids) = table_of(zones);
-    assert!(table.sum_zones(u64::MAX, false).unwrap());
-    assert!(table.zones.wanted(), "one zone not looked at yet: no rest");
+    // The zones' own clock, not the wall's, so a slow sum up does not end
+    // the rest before it is looked at.
+    let (first, second) = (0_u64, nanos(REST));
+    assert!(table.sum_zones_at(u64::MAX, Some(first)).unwrap());
+    assert!(table.zones.wanted_at(first), "one zone not looked at yet: no rest");
     // Each zone the first call summed up made due again by a write.
     let zone_ids = usize::try_from(ZONE_ROWS).unwrap();
     for zone in 0..MOST_SUMMED {
         table.update(NO_TRANSACTION, ids[zone.checked_mul(zone_ids).unwrap()], row(-1)).unwrap();
     }
-    assert!(table.sum_zones(u64::MAX, false).is_ok());
+    assert!(table.sum_zones_at(u64::MAX, Some(second)).is_ok());
     assert!(table.zones.due(), "the zones summed last are due still");
-    assert!(!table.zones.wanted(), "every one of the {zones} zones looked at: resting");
+    assert!(!table.zones.wanted_at(second), "every one of the {zones} zones looked at: resting");
 }
