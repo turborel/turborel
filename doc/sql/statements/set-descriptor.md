@@ -91,8 +91,8 @@ literals or parameters. It begins a transaction if none is active.
    the item's type.
 4. LEVEL is set in the order above.
 5. Neither TOP_LEVEL_COUNT, KEY_TYPE, NAME (but of PTF), UNNAMED, NULLABLE, OCTET_LENGTH, RETURNED_LENGTH,
-   RETURNED_OCTET_LENGTH, RETURNED_CARDINALITY, KEY_MEMBER nor the collation's
-   fields is set; no field twice.
+   RETURNED_OCTET_LENGTH, RETURNED_CARDINALITY, KEY_MEMBER, the
+   PARAMETER fields nor the collation's fields is set; no field twice.
 6. DATA is not set of an item of TYPE ROW, nor of an item that is part of
    an array's element.
 
