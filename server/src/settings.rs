@@ -83,8 +83,7 @@ pub const BATCH_BYTES: &str = "SERVER.BATCH_BYTES";
 /// The milliseconds a connection has, from when it is taken, to be secured
 /// and authenticated, the two together; 0 for no limit.
 pub const LOGIN_TIMEOUT_MS: &str = "SERVER.LOGIN_TIMEOUT_MS";
-/// \[DESIGN\] The default of `LOGIN_TIMEOUT_MS`: a minute, as PostgreSQL's
-/// authentication_timeout.
+/// \[DESIGN\] The default of `LOGIN_TIMEOUT_MS`: a minute.
 pub const DEFAULT_LOGIN_TIMEOUT_MS: usize = 60_000;
 /// The milliseconds the server waits on a client, for its next request or
 /// to take what it is sent, before it closes the connection; 0 for no
