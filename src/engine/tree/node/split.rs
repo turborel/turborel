@@ -1,8 +1,7 @@
 //! \[DESIGN\] A full node split in two (RULES.md D31; Lehman and Yao 1981,
 //! §4): where it splits, by bytes or where a run of inserts goes on
 //! (`node.rs`), and the separator, suffix-truncated for a leaf. Each half
-//! is built with its own prefix, what its first and last keys share with
-//! its new high key.
+//! is built with its own prefix, what its first and last keys share.
 
 use super::build::{Shape, built_in, built_size};
 use super::{KeyRef, child_of, corrupt, entry_size};
