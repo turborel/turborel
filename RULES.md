@@ -622,6 +622,7 @@ verification approach DO-178C expects (§8).
 | D956 | An integer of an integer column is written as its key with no anchor made of it |
 | D960 | A character string of at most 32 octets is held in its value, a longer one in a buffer its clones share |
 | D961 | A binary string of at most 22 octets is held in its value, a longer one in a buffer its clones share |
+| D972 | The check of threads finds scoped threads, imports of what starts them, and passes over the files of modules of tests |
 
 ### The project
 
@@ -17423,6 +17424,27 @@ instant, zone and precision, an interval its units and qualifier, a
 truth value itself. A large object, a value of the JSON type, an
 array, a multiset, a row, a structured value and an XML value were
 already shared by count.
+
+### Conditions
+
+#### D972. The check of threads finds scoped threads, imports of what starts them, and passes over the files of modules of tests
+
+`cargo xtask verify` checks R-SAFE-5 by reading production sources for
+what starts a thread (`xtask/src/threads.rs`). It knew `thread::spawn`,
+`thread::Builder` and a runtime's builders, so a scoped thread,
+`std::thread::scope` and `spawn_scoped`, or a starter imported and
+called by its bare name, passed unseen. It told tests apart by a file's
+path and by an inline `#[cfg(test)]` module, so a module of tests in a
+file of its own, as `src/engine/rows/zones/costs.rs`, read as
+production code.
+
+The check now finds scoped threads and any `use std::thread::` that
+names `spawn`, `Builder` or `scope`. It reads each production file's
+`#[cfg(test)]` declarations of `mod name;` and passes over the file each
+names and that file's submodules, as tests may start their own threads.
+A module whose body is inline is passed over to its closing brace as
+before, and the line after a declaration of a file's module is read, as
+it was not.
 
 ## 2. Project layout
 
