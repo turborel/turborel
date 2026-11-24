@@ -129,3 +129,52 @@ fn a_subquery_holding_a_sum_s_subquery_is_a_semi_join() {
     assert_eq!(on, Err(Code::Cardinality));
     assert_eq!(off, Err(Code::Cardinality));
 }
+
+/// Whether, in the optimized plan EXPLAIN shows of `sql`, an operator
+/// whose line holds `above` has the first operator whose line holds
+/// `below` under it.
+fn over(s: &Session, sql: &str, above: &str, below: &str) -> bool {
+    let plan = s.explain(sql, &Params::new()).unwrap();
+    let optimized = plan.split("-- optimized:").nth(1).unwrap().split("-- physical:").next().unwrap();
+    let lines: Vec<&str> = optimized.lines().collect();
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let Some(at) = lines.iter().position(|l| l.contains(below)) else { return false };
+    let mut depth = indent(lines[at]);
+    let mut found = false;
+    for line in lines[..at].iter().rev() {
+        if indent(line) < depth {
+            depth = indent(line);
+            found = found || line.contains(above);
+        }
+    }
+    found
+}
+
+/// Verifies: [X3.135-1986 §5.21 GR2] [DESIGN] RULES.md D1064, D15: a
+/// WHERE conjunct that compares with a correlated subquery, beside IN of
+/// another, is judged of the rows the semi join keeps, the subquery's
+/// grouping joined above the semi join, where it cannot raise; one that
+/// can raise, a quotient by a column, stays below it, judged of every
+/// row; and beside NOT IN it stays below the antijoin. Each query gives
+/// the rows, or the error, it gives with no rule.
+#[test]
+fn a_subquery_s_conjunct_is_judged_after_a_semi_join() {
+    let db = tables();
+    let s = db.session("T");
+    let summed = "(SELECT 0.5 * SUM(X.W) FROM S AS X WHERE X.K = S.K)";
+    let quiet = format!("SELECT K, W FROM S WHERE K IN (SELECT R.K FROM R WHERE R.V > 1.50) AND W > {summed}");
+    assert!(unnested(&s, &quiet) && over(&s, &quiet, "SUM(X.W)", "Semi join"), "{}", s.explain(&quiet, &Params::new()).unwrap());
+    let (on, off) = both(&db, &s, &quiet);
+    assert_eq!(on, Ok(vec!["[1],[4.00]".to_owned()]));
+    assert_eq!(off, on);
+    let raising = format!("SELECT K, W FROM S WHERE K IN (SELECT R.K FROM R WHERE R.V > 1.50) AND 10 / (W - 8.00) > {summed}");
+    assert!(!over(&s, &raising, "SUM(X.W)", "Semi join"), "{}", s.explain(&raising, &Params::new()).unwrap());
+    let (on, off) = both(&db, &s, &raising);
+    assert_eq!(on, Err(Code::Data), "the row of key 7, which the semi join drops, divides by zero");
+    assert_eq!(off, on);
+    let anti = format!("SELECT K, W FROM S WHERE K NOT IN (SELECT R.K FROM R WHERE R.K IS NOT NULL) AND W > {summed}");
+    assert!(!over(&s, &anti, "SUM(X.W)", "Anti"), "{}", s.explain(&anti, &Params::new()).unwrap());
+    let (on, off) = both(&db, &s, &anti);
+    assert_eq!(on, Ok(vec!["[7],[8.00]".to_owned()]));
+    assert_eq!(off, on);
+}

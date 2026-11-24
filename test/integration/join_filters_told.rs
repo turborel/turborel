@@ -179,3 +179,35 @@ fn a_grouping_told_a_filter_warns_as_of_every_row() {
         assert_eq!(a.warning(), None, "filters {filters}, no null");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D1063, D15 [ISO/IEC 9075-2:2023 §10.9
+/// GR4b]: a grouping run in parallel whose SUM is of a column declared
+/// NOT NULL takes the filter of the few keys of D to its pipeline, so it
+/// makes the groups of those keys alone, where with the filters off it
+/// makes every group, and gives the same sums; one whose SUM is of a
+/// column that may hold a null takes none, and warns of the null of a
+/// row the filter would have dropped, with the filters on as off.
+#[test]
+fn a_filter_reaches_a_grouping_run_in_parallel() {
+    let (_db, a) = tables(31);
+    exec(&a, "CREATE TABLE N (G INTEGER, H INTEGER NOT NULL) USING columnstore").unwrap();
+    exec(&a, "INSERT INTO N SELECT G, COALESCE(H, 0) FROM F").unwrap();
+    exec(&a, "UPDATE F SET H = 1 WHERE H IS NULL").unwrap();
+    exec(&a, "INSERT INTO F VALUES (90001, 150, NULL)").unwrap();
+    a.commit().unwrap();
+    for set in ["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"] {
+        exec(&a, set).unwrap();
+    }
+    let summed =
+        |t: &str| format!("SELECT X.G, X.S FROM (SELECT G, SUM(H) AS S FROM {t} GROUP BY G) AS X JOIN D ON X.G = D.K WHERE D.TAG = 3");
+    let ((groups_on, plan), sums_on) = (given(&a, &summed("N"), "Aggregate"), sorted(&a, &summed("N")));
+    assert!(plan.contains("Parallel"), "{plan}");
+    rows(&a, &summed("F")).unwrap();
+    assert_eq!(a.warning(), SqlState::parse("01003"), "filters on");
+    exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
+    let (groups_off, _) = given(&a, &summed("N"), "Aggregate");
+    assert_eq!(sums_on, sorted(&a, &summed("N")), "the sums with the filters off");
+    assert!(groups_on <= 6 && groups_off > 100, "{groups_on} groups told, {groups_off} untold, of\n{plan}");
+    rows(&a, &summed("F")).unwrap();
+    assert_eq!(a.warning(), SqlState::parse("01003"), "filters off");
+}

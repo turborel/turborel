@@ -40,6 +40,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(super) use self::batches::streamed_batches;
+pub(super) use self::grouped::grouped_told;
 use self::pipeline::Pipeline;
 pub(super) use self::probe::pipelined;
 pub(super) use self::run::Morsels;

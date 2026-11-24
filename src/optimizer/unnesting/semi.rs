@@ -20,7 +20,9 @@
 //! The join stops at the first row that matches, so it is made only of a
 //! subquery and a condition that cannot raise (D15). The node's other
 //! conjuncts filter its input below the join, so they are evaluated on
-//! every row, as they were.
+//! every row, as they were; but one that reads a correlated subquery and
+//! cannot raise filters the rows a semi join keeps, so its subquery is
+//! unnested over those rows alone (RULES.md D1064).
 //!
 //! A NOT IN, `NOT (x = SOME s)`, is the antijoin on `(x = y) IS NOT
 //! FALSE`, which a null on either side satisfies, as the standard's truth
@@ -74,17 +76,26 @@ fn semi_joined(node: &Node<'_>, cond: &Cond, found: &Found, ctx: &RuleContext<'_
     if !plain || raises || !pure {
         return None;
     }
-    let left = match and_all(rest) {
+    // A conjunct that reads a correlated subquery is judged of the rows a
+    // semi join keeps, not of every row, if it cannot raise (RULES.md
+    // D1064): its subquery is then unnested over those rows alone.
+    let later = |c: &Cond| !anti && c.all_subqueries().iter().any(|s| !s.outer.is_empty()) && !pure::cond_raises_over(c, input, ctx);
+    let (above, below): (Vec<Cond>, Vec<Cond>) = rest.into_iter().partition(later);
+    let left = match and_all(below) {
         Some(c) => LogicalPlan::Filter { cond: c, input: Box::new(input.clone()) },
         None => input.clone(),
     };
     let w = input.width();
-    if let Some((on, right, _)) = direct(sub, w) {
-        return Some(LogicalPlan::SemiJoin { anti, cond: on, left: Box::new(left), right: Box::new(right) });
-    }
-    let bound = simple::pulled(sub, ctx).filter(|b| b.defaults.is_none());
-    let bound = bound.or_else(|| domain::pushed(sub, input))?;
-    keyed((anti, bound), left, w)
+    let joined = if let Some((on, right, _)) = direct(sub, w) {
+        LogicalPlan::SemiJoin { anti, cond: on, left: Box::new(left), right: Box::new(right) }
+    } else {
+        let bound = simple::pulled(sub, ctx).filter(|b| b.defaults.is_none());
+        keyed((anti, bound.or_else(|| domain::pushed(sub, input))?), left, w)?
+    };
+    Some(match and_all(above) {
+        Some(c) => LogicalPlan::Filter { cond: c, input: Box::new(joined) },
+        None => joined,
+    })
 }
 
 /// Whether the conjunct of `cond` that uses `target`'s subquery makes an

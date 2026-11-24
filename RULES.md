@@ -664,6 +664,8 @@ verification approach DO-178C expects (§8).
 | D1060 | SUM and AVG of exact values whose sum the declared types keep within 38 digits raise nothing, so their subqueries are unnested as COUNT's are |
 | D1061 | A WHERE conjunct over both operands of an outer join that is never true of a null operand makes the join the join it is |
 | D1062 | A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null |
+| D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
+| D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
 
 ### The project
 
@@ -18230,6 +18232,60 @@ The scan then read and decoded every row. A column declared NOT NULL has
 no null to eliminate and no warning to keep. When every column the set
 functions take is such a column, the filter is told to the grouping's
 scans, which judge it before they decode the other columns.
+
+#### D1063. A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches
+
+A grouping read by batches took a runtime filter of a grouping column
+to its input (D600, D1062), but only run alone. A grouping over a large
+table is run in parallel (D293), and a part run in parallel took no
+filter from a join above it. The join read the part's groups row by row
+and dropped the groups its other operand has no key for after every one
+was made. A join of a few keys with a grouping of a whole table, as
+unnesting makes of a correlated subquery of a set function (D1060), paid
+for every group.
+
+A hash join now reads such a part by batch, as it reads the grouping run
+alone, and tells it its filters (`exec/batch/parted.rs`). The part's
+pipeline is told the filters of the grouping's input columns
+(`Pipeline::told`). Their ranges go down to the scans, as the ranges of
+the pipeline's own joins do (D389), so a morsel outside them is skipped.
+A step at the pipeline's end judges the filters of each morsel's
+batches, their key sets and Bloom filters too. D389 left those out of a
+morsel's scan because the probe of the filter's join follows in the same
+morsel and drops the rows anyway. Here no probe follows. The grouping
+follows, so each row the step drops is one the grouping does not hash.
+The columns no step reads before that one are decoded of the rows it
+keeps alone (D361).
+
+The filters are told only when no set function takes a column that may
+hold a null. One that does warns of a null it eliminates, and a morsel
+has no one place to raise the warning of a row it dropped, so that
+grouping is told none and groups every row, as before. A part that gives
+way is grouped alone with the filters, as D600 has it. The groups come
+in the order of their first rows either way.
+
+#### D1064. A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps
+
+When a conjunct of WHERE or HAVING is made a semi join or an antijoin
+(D541), the node's other conjuncts filter the join's left operand, below
+the join, so each is judged of every row as it was (D15). A conjunct
+that compares with a correlated subquery was placed there too. Its
+subquery was then unnested over every row of the operand, grouping the
+whole inner table and joining it with the whole operand, before the semi
+join dropped most of the rows.
+
+Such a conjunct now filters the rows the semi join keeps, above the
+join, if it cannot raise, by the typed judgment of D1060. A conjunct
+that cannot raise may be judged of any rows. Its subquery is then
+unnested over the rows the semi join keeps alone, so the join with its
+grouping has those few rows on one side, and their keys reach the
+grouping as a runtime filter (D1062, D1063).
+
+Three cases stay as they were. A conjunct that can raise stays below,
+judged of every row. A conjunct of no subquery, or of an uncorrelated
+one, stays below, where it is cheap and may be told to a scan. Beside an
+antijoin every conjunct stays below, as an antijoin often keeps most of
+its rows and the conjunct may keep few.
 
 ## 2. Project layout
 

@@ -88,9 +88,25 @@ impl Pipeline {
     ///
     /// As building an operand fails.
     pub(super) fn of(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Pipeline>> {
+        Pipeline::told(plan, (db, tx), limit, Vec::new())
+    }
+
+    /// \[DESIGN\] (RULES.md D1063) As `of`, `told` the runtime filters of
+    /// the stream's columns a join above the part tells it, as a grouping
+    /// run in parallel is told those of its grouping columns. Their ranges
+    /// go down to the scans as the pipeline's own joins' do, and a step
+    /// at the pipeline's end judges them of each morsel's batches: no
+    /// probe of their join follows in the morsel to drop the rows, so
+    /// judging them there spares what reads the pipeline every row they
+    /// drop.
+    ///
+    /// # Errors
+    ///
+    /// As building an operand fails.
+    pub(super) fn told(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit, told: Vec<Told>) -> Result<Held<Pipeline>> {
         let rows = db.settings.count(EXECUTOR_MORSEL_ROWS).max(1);
         let mut branches = Vec::new();
-        if !branched(plan, (db, tx, rows), (limit, &[]), &mut branches)? {
+        if !branched(plan, (db, tx, rows), (limit, &told), &mut branches)? || !stepped(&mut branches, 0, judged(told)) {
             return Ok(Held::GaveWay);
         }
         let batched = super::batched::by_batch(&branches, db);

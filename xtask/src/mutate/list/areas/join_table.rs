@@ -14,12 +14,14 @@
 //! null it dropped, and an antijoin's right operand told none; of D601, a
 //! direct table's span at its bound, its counting sort keeping build
 //! order, and a bitmap filter's span at its bound; of D1062, a filter
-//! stopped at a projection the declared types prove cannot raise.
+//! stopped at a projection the declared types prove cannot raise; of
+//! D1063, a grouping run in parallel that judges no filter, and one
+//! told a filter over a column that may hold a null.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the join table's requirements.
-pub const JOIN_TABLE: [Mutation; 23] = [
+pub const JOIN_TABLE: [Mutation; 25] = [
     Mutation {
         name: "join-table-build-order",
         package: Package::Core,
@@ -248,6 +250,26 @@ pub const JOIN_TABLE: [Mutation; 23] = [
         original: "exprs.iter().any(|e| e.can_raise() && can_raise_typed(e, &|c| column_type(input, c, db)))",
         replacement: "exprs.iter().any(|e| e.can_raise() || can_raise_typed(e, &|c| column_type(input, c, db)))",
         integration: &["join_filters_told::a_filter_reaches_the_scan_below_a_grouping"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-grouping-filters-unjudged",
+        package: Package::Core,
+        breaks: "a grouping run in parallel judges the filters it is told of each morsel's batches (D1063)",
+        file: "src/exec/parallel/pipeline.rs",
+        original: "|| !stepped(&mut branches, 0, judged(told)) {",
+        replacement: "|| !stepped(&mut branches, 0, judged(told.into_iter().skip(usize::MAX).collect())) {",
+        integration: &["join_filters_told::a_filter_reaches_a_grouping_run_in_parallel"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-grouping-told-over-nulls",
+        package: Package::Core,
+        breaks: "a grouping run in parallel whose set function may eliminate a null is told no filter, so it warns of every row's (D1063)",
+        file: "src/exec/batch/parted.rs",
+        original: "let below = if read.taken.iter().any(warns) {",
+        replacement: "let below = if read.taken.iter().any(warns) && read.taken.is_empty() {",
+        integration: &["join_filters_told::a_filter_reaches_a_grouping_run_in_parallel"],
         unit: &[],
     },
 ];

@@ -189,6 +189,16 @@ fn raises_at(plan: &LogicalPlan, ctx: &RuleContext<'_>, depth: usize) -> bool {
     own || plan.inputs().any(|p| raises_at(p, ctx, depth))
 }
 
+/// Whether evaluating `c`, a condition over the rows of `input`, can
+/// raise an error, its constants computed and its subqueries judged as
+/// `plan_raises` judges a plan's.
+pub(super) fn cond_raises_over(c: &Cond, input: &LogicalPlan, ctx: &RuleContext<'_>) -> bool {
+    let folded = c.clone().map_exprs(&mut |e| fold_expr(&e, &ctx.db.memory).unwrap_or(e));
+    let catalog = &*ctx.db.catalog;
+    let subquery = |s: &Subquery, one: bool| (one && !s.plan.one_row_at_most()) || judged(&s.plan, ctx, 1);
+    cond_raises(&folded, &Judge { types: &|column| plan_column_type(input, column, catalog), subquery: &subquery })
+}
+
 /// Whether evaluating `c` can raise an error: as `Cond::can_raise` judges
 /// it, and as its columns' types and its subqueries' plans do not disprove.
 fn cond_raises(c: &Cond, judge: &Judge<'_>) -> bool {

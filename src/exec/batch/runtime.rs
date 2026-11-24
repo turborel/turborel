@@ -110,8 +110,13 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..)
         | Plan::Transfer(_) => None,
+        // A grouping run in parallel that takes filters, as it does run
+        // alone (RULES.md D1063).
+        Plan::Parallel(_) => {
+            let grouping = super::parted::grouping_of(plan).filter(|_| super::parted::grouping(plan, db))?;
+            row_by_row(grouping, column, db)
+        }
         // An analyzed plan's count of an operator's rows passes them on.
         Plan::Counted(_) => Some((column, false)),
     }
@@ -250,7 +255,7 @@ pub(super) fn reaches(plan: &Plan, column: usize, db: &State) -> bool {
     match below(plan) {
         Some(input) => reaches(input, next, db),
         // A grouping judges it of its input's batches at least.
-        None => matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Aggregate { .. }),
+        None => matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Aggregate { .. } | Plan::Parallel(_)),
     }
 }
 

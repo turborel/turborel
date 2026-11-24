@@ -7,7 +7,8 @@
 //! subquery left a product. Of D1060, a SUM taken as never raising, the
 //! rows a sum is of left uncounted, a grouping's SUM typed as its
 //! argument, a scalar subquery of any number of rows taken as raising
-//! nothing, and a CASE bounded by its first result.
+//! nothing, and a CASE bounded by its first result. Of D1064, a conjunct
+//! that can raise moved above a semi join.
 
 use super::super::{Mutation, Package};
 
@@ -30,7 +31,7 @@ const GROUPED: &str = "logical::raises::totals::tests::a_grouping_s_columns_are_
 const HELD: &str = "decorrelation::totals::a_subquery_holding_a_sum_s_subquery_is_a_semi_join";
 
 /// The mutations of unnesting and inlining.
-pub const UNNESTING: [Mutation; 17] = [
+pub const UNNESTING: [Mutation; 18] = [
     Mutation {
         name: "unnest-two-rows-pass",
         package: Package::Core,
@@ -200,5 +201,15 @@ pub const UNNESTING: [Mutation; 17] = [
         replacement: "|(w, held): (u32, u32)| (w, held.max(s))",
         integration: &[],
         unit: &["logical::raises::tests::a_case_is_bounded_by_its_widest_results"],
+    },
+    Mutation {
+        name: "semi-join-raising-conjunct-above",
+        package: Package::Core,
+        breaks: "a conjunct of a correlated subquery that can raise is judged of every row, below the semi join (D1064, D15)",
+        file: "src/optimizer/unnesting/semi.rs",
+        original: "&& !pure::cond_raises_over(c, input, ctx);",
+        replacement: "&& (c.has_subquery() || !pure::cond_raises_over(c, input, ctx));",
+        integration: &["decorrelation::totals::a_subquery_s_conjunct_is_judged_after_a_semi_join"],
+        unit: &[],
     },
 ];
