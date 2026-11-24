@@ -1,6 +1,6 @@
 //! \[DESIGN\] Cancelling a running statement (RULES.md D44). A session's
-//! `Stop` is shared with a `Canceller` any thread may hold. Each call into
-//! the session, and each fetch of its cursors, is a window: the first
+//! `Stop` is a handle any thread may hold (`Session::canceller`). Each call
+//! into the session, and each fetch of its cursors, is a window: the first
 //! window opened while none is takes a new generation; a cancel marks the
 //! generation running then, and only it, so one that arrives as a statement
 //! ends never stops the next.
