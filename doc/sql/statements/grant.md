@@ -169,8 +169,8 @@ grantor WITH ADMIN OPTION (SQLSTATE 0P000).
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not written as the synopsis shows: a column list of SELECT, among others |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | The statement is not written as the synopsis shows: a column list of SELECT, among others |
+| 42000 | -103 | A rule above is broken |
 | 0A000 | -900 | The object is a character set or a translation |
 | 0P000 | -104 | The grantor holds a role granted not WITH ADMIN OPTION |
 | 25000 | -917 | The transaction is READ ONLY |
@@ -202,7 +202,7 @@ GRANT DELETE ON ANN.STAFF TO CAROL;
 --------------------------------
  Ada
 (1 row)
-turborel: SQLCODE -104 (SQLSTATE 2A000): BOB has no UPDATE(NAME) privilege on ANN.STAFF [X3.135-1986 §8.12 SR1, §6.6 SR3] (at character 7)
+turborel: SQLCODE -104 (SQLSTATE 42000): BOB has no UPDATE(NAME) privilege on ANN.STAFF [X3.135-1986 §8.12 SR1, §6.6 SR3] (at character 7)
 OK
 OK
 OK, with a warning: SQLSTATE 01007
@@ -234,9 +234,9 @@ GRANT SELECT (NAME) ON STAFF TO BOB;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 16)
-turborel: SQLCODE -103 (SQLSTATE 2A000): USAGE is granted on a domain, not on table ANN.STAFF [ISO/IEC 9075:1992 §11.36 SR1] (at character 15)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected ON, found "(" (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): USAGE is granted on a domain, not on table ANN.STAFF [ISO/IEC 9075:1992 §11.36 SR1] (at character 15)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected ON, found "(" (at character 13)
 ```
 
 EXECUTE on the observer and the mutator of an attribute of a type
@@ -255,7 +255,7 @@ COMMIT;
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): METHOD Y FOR ANN.POINT designates both the observer and the mutator of its attribute [ISO/IEC 9075-2:2023 §10.6 SR3c] (at character 24)
+turborel: SQLCODE -103 (SQLSTATE 42000): METHOD Y FOR ANN.POINT designates both the observer and the mutator of its attribute [ISO/IEC 9075-2:2023 §10.6 SR3c] (at character 24)
 OK
 ```
 
@@ -275,7 +275,7 @@ OK
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): CLERK is SENIOR or a role applicable for it, a cycle [ISO/IEC 9075-2:2023 §12.5 SR1] (at character 6)
+turborel: SQLCODE -103 (SQLSTATE 42000): CLERK is SENIOR or a role applicable for it, a cycle [ISO/IEC 9075-2:2023 §12.5 SR1] (at character 6)
 OK
 ```
 

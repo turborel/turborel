@@ -376,8 +376,8 @@ fn all_information_assigned_and_refused_23_1() {
     assert_eq!((long.len(), long.trim_end()), (400, all(&a, "STATEMENT").as_str()), "padded");
     assert_eq!(statement(&a, "COMMAND_FUNCTION"), "INSERT", "the area as it was");
     for (sql, code) in [
-        ("GET DIAGNOSTICS NUM = ALL", Some((Code::SyntaxRule, "2A000".to_owned()))),
-        ("GET DIAGNOSTICS TXT = ALL CONDITION 1.5", Some((Code::SyntaxRule, "2A000".to_owned()))),
+        ("GET DIAGNOSTICS NUM = ALL", Some((Code::SyntaxRule, "42000".to_owned()))),
+        ("GET DIAGNOSTICS TXT = ALL CONDITION 1.5", Some((Code::SyntaxRule, "42000".to_owned()))),
         ("GET DIAGNOSTICS TXT = ALL CONDITION 2", Some((Code::Data, "35000".to_owned()))),
         ("GET DIAGNOSTICS TXT = ALL CONDITION 0", Some((Code::Data, "35000".to_owned()))),
     ] {
@@ -454,15 +454,15 @@ fn the_manual_examples_23_1() {
     };
     assert!(s.run("INSERT INTO STAFF VALUES (-1, 'Edsger')").is_err());
     for (sql, message) in [
-        ("GET DIAGNOSTICS X = NUMBER", "-103 (2A000): parameter X is not declared [X3.135-1986 §7.3 SR3]"),
-        ("GET DIAGNOSTICS N = NOPE", "-102 (2A000): expected a <statement information item name>, found NOPE"),
+        ("GET DIAGNOSTICS X = NUMBER", "-103 (42000): parameter X is not declared [X3.135-1986 §7.3 SR3]"),
+        ("GET DIAGNOSTICS N = NOPE", "-102 (42000): expected a <statement information item name>, found NOPE"),
         (
             "GET DIAGNOSTICS N = MORE",
-            "-103 (2A000): a CHARACTER VARYING(32767) item cannot be assigned to N (NUMERIC(9,0)) [ISO/IEC 9075-2:2023 §23.1 SR1, §9.1 SR3]",
+            "-103 (42000): a CHARACTER VARYING(32767) item cannot be assigned to N (NUMERIC(9,0)) [ISO/IEC 9075-2:2023 §23.1 SR1, §9.1 SR3]",
         ),
         (
             "GET DIAGNOSTICS N = ALL",
-            "-103 (2A000): target N of ALL is NUMERIC(9,0), not a character string [ISO/IEC 9075-2:2023 §23.1 SR2]",
+            "-103 (42000): target N of ALL is NUMERIC(9,0), not a character string [ISO/IEC 9075-2:2023 §23.1 SR2]",
         ),
         (
             "GET DIAGNOSTICS CONDITION 5 STATE = RETURNED_SQLSTATE",

@@ -47,8 +47,8 @@ Those of its statements.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed, as a LOOP ended by END WHILE |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | It is not well formed, as a LOOP ended by END WHILE |
+| 42000 | -103 | A rule above is broken |
 | TB920 | -920 | It is cancelled |
 
 ## EXAMPLES
@@ -94,9 +94,9 @@ BEGIN L: LOOP L: LOOP LEAVE L; END LOOP; END LOOP; END;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the <ending label> M is not L [ISO/IEC 9075-4:2006 draft §14.1 SR3] (at character 32)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected LOOP, found WHILE (at character 27)
-turborel: SQLCODE -103 (SQLSTATE 2A000): L is the <beginning label> of a statement this one is in [ISO/IEC 9075-4:2006 draft §14.1 SR4] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): the <ending label> M is not L [ISO/IEC 9075-4:2006 draft §14.1 SR3] (at character 32)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected LOOP, found WHILE (at character 27)
+turborel: SQLCODE -103 (SQLSTATE 42000): L is the <beginning label> of a statement this one is in [ISO/IEC 9075-4:2006 draft §14.1 SR4] (at character 14)
 ```
 
 ## STANDARD

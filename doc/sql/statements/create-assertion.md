@@ -51,8 +51,8 @@ if it names none, on one column of each table it reads.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or lacks the REFERENCES it needs |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema, or lacks the REFERENCES it needs |
 | 23000 | -201 | The condition is false as it is made |
 | 25000 | -917 | The transaction is READ ONLY |
 

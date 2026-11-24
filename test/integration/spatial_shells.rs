@@ -104,14 +104,14 @@ fn solid_and_compound_constructors_9_2_2() {
     let placed = format!("ST_BREPSOLID(TREAT(ST_GEOMFROMTEXT('{}', 4326) AS ST_SURFACE), 4326)", tetrahedron("Z", ""));
     assert_eq!(one(&a, &format!("ST_SRID({placed})")), "4326");
     assert_eq!(one(&a, "ST_BREPSOLID(CAST(NULL AS ST_SURFACE)) IS NULL"), "TRUE");
-    assert_eq!(state(&a, "VALUES ST_BREPSOLID(ST_POINT(1, 2))"), "2A000");
+    assert_eq!(state(&a, "VALUES ST_BREPSOLID(ST_POINT(1, 2))"), "42000");
     let polygon = "TREAT(ST_GEOMFROMTEXT('POLYGON ((0 0, 1 0, 0 1, 0 0))', 4326) AS ST_POLYGON)";
     assert_eq!(one(&a, &format!("ST_SRID(ST_COMPOUNDSURFACE({polygon}, 4326))")), "4326");
     assert_eq!(one(&a, "ST_COMPOUNDSURFACE(CAST(NULL AS ST_POLYGON)) IS NULL"), "TRUE");
-    assert_eq!(state(&a, "VALUES ST_COMPOUNDSURFACE(ST_POINT(1, 2))"), "2A000");
+    assert_eq!(state(&a, "VALUES ST_COMPOUNDSURFACE(ST_POINT(1, 2))"), "42000");
     let surfaces = "ARRAY[ST_POLYFROMTEXT('POLYGON ((0 0, 1 0, 0 1, 0 0))')]";
     assert_eq!(one(&a, &format!("CAST(NULL AS ST_COMPOUNDSURFACE).ST_SURFACES({surfaces}) IS NULL")), "TRUE");
-    assert_eq!(state(&a, &format!("VALUES ST_POINT(1, 2).ST_SURFACES({surfaces})")), "2A000");
+    assert_eq!(state(&a, &format!("VALUES ST_POINT(1, 2).ST_SURFACES({surfaces})")), "42000");
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §5.1.16, §7.1.2]
@@ -122,8 +122,8 @@ fn routines_in_space_take_their_types_5_1() {
     let (_db, a) = session();
     let line = "ST_GEOMFROMTEXT('LINESTRING ZM (0 0 0 0, 10 0 0 10)')";
     assert_eq!(one(&a, &format!("ST_ASTEXT(ST_3DLOCATEBETWEEN({line}, 2, 4))")), "MULTILINESTRING ZM ((2 0 0 2, 4 0 0 4))");
-    assert_eq!(state(&a, "VALUES ST_3DLENGTH(ST_POINT(1, 2))"), "2A000");
-    assert_eq!(state(&a, &format!("VALUES ST_3DLENGTH({line}, 'metre', 1)")), "2A000");
+    assert_eq!(state(&a, "VALUES ST_3DLENGTH(ST_POINT(1, 2))"), "42000");
+    assert_eq!(state(&a, &format!("VALUES ST_3DLENGTH({line}, 'metre', 1)")), "42000");
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §8.6.5 Description
@@ -148,5 +148,5 @@ fn tins_from_tables_named_8_6_5() {
     assert_eq!(state(&a, &format!("VALUES {tin}.ST_TINTABLE('X.A.R', {columns}, 7)")), "2FF02");
     assert_eq!(state(&a, &format!("VALUES {tin}.ST_TINTABLE('R', {columns}, CAST(NULL AS DOUBLE PRECISION))")), "2FF03");
     assert_eq!(one(&a, &format!("CAST(NULL AS ST_TIN).ST_TINTABLE('R', {columns}, 7) IS NULL")), "TRUE");
-    assert_eq!(state(&a, &format!("VALUES {tin}.ST_TINTABLE('R', 'ITEM')")), "2A000");
+    assert_eq!(state(&a, &format!("VALUES {tin}.ST_TINTABLE('R', 'ITEM')")), "42000");
 }

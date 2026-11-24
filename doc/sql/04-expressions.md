@@ -430,7 +430,7 @@ VALUES GREATEST(1, 'one');
             3 |     6000.00 |     5400.00 | Bob
             4 |        NULL |        NULL | Barbara
 (4 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the arguments of GREATEST are each comparable with each, not NUMERIC(1,0), CHARACTER(3) [ISO/IEC 9075-2:2023 §6.15 SR4] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): the arguments of GREATEST are each comparable with each, not NUMERIC(1,0), CHARACTER(3) [ISO/IEC 9075-2:2023 §6.15 SR4] (at character 7)
 ```
 
 ## UUID_V4 and UUID_V7
@@ -475,7 +475,7 @@ OK
             2
             3
 (3 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): UUID_V4 takes no arguments (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): UUID_V4 takes no arguments (at character 7)
 ```
 
 ## Set functions
@@ -585,14 +585,14 @@ SELECT ID FROM STAFF WHERE SALARY > AVG(SALARY);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): when the select list has a set function, every column reference must be inside one, or of a column functionally dependent on none (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 7)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a <set function specification> is in a <where clause> only in a <having clause>'s <subquery>, of an outer reference [X3.135-1986 §5.21 SR3] (at character 36)
+turborel: SQLCODE -103 (SQLSTATE 42000): when the select list has a set function, every column reference must be inside one, or of a column functionally dependent on none (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): a <set function specification> is in a <where clause> only in a <having clause>'s <subquery>, of an outer reference [X3.135-1986 §5.21 SR3] (at character 36)
 ```
 
 The statistical set functions are of numbers. Each is DOUBLE
 PRECISION, or DECFLOAT(34) if an argument is DECFLOAT, but REGR_COUNT,
 which is exact. VAR_POP, VAR_SAMP, STDDEV_POP and STDDEV_SAMP take no
-DISTINCT or ALL (SQLSTATE 2A000, SQLCODE -103). Those of two arguments,
+DISTINCT or ALL (SQLSTATE 42000, SQLCODE -103). Those of two arguments,
 y and x, leave out each row in which either is null, with the warning
 01003. Of no rows REGR_COUNT is 0 and the others null; of one row
 VAR_SAMP, STDDEV_SAMP and COVAR_SAMP are null, the variance of a sample
@@ -628,7 +628,7 @@ SELECT VAR_POP(DISTINCT SALARY) FROM STAFF;
 --------------------------+--------------------------+--------------------------+--------------------------+--------------------------
                     2.2E0 |                    -5E-1 |     9.307692307692307E-1 |     9.647638212377321E-1 |     3.6666666666666665E0
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): VAR_POP takes no <set quantifier>: neither DISTINCT nor ALL [ISO/IEC 9075-2:2023 §10.9 SR2] (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): VAR_POP takes no <set quantifier>: neither DISTINCT nor ALL [ISO/IEC 9075-2:2023 §10.9 SR2] (at character 15)
 ```
 
 The mean is found by a subquery: `WHERE SALARY > (SELECT AVG(SALARY)
@@ -705,7 +705,7 @@ SELECT COUNT(*) FILTER (WHERE SALARY > AVG(SALARY)) FROM STAFF;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): a <filter clause> cannot contain a set function [ISO/IEC 9075-2:2023 §6.9 SR5] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): a <filter clause> cannot contain a set function [ISO/IEC 9075-2:2023 §6.9 SR5] (at character 7)
 ```
 
 RANK, DENSE_RANK, PERCENT_RANK and CUME_DIST of values, followed by
@@ -743,7 +743,7 @@ SELECT RANK(7500) WITHIN GROUP (ORDER BY SALARY) OVER () FROM STAFF;
  OPS  |                    1 |                      1E0
  NULL |                    2 |                     5E-1
 (3 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): RANK WITHIN GROUP, a hypothetical set function, is over no window [ISO/IEC 9075-2:2023 §9.23 SR8c] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): RANK WITHIN GROUP, a hypothetical set function, is over no window [ISO/IEC 9075-2:2023 §9.23 SR8c] (at character 7)
 ```
 
 Barbara's null salary is placed first descending, before 7500, and
@@ -799,7 +799,7 @@ SELECT PERCENTILE_DISC(0.5) WITHIN GROUP (ORDER BY SALARY) OVER (ORDER BY ID) FR
             4 | Barbara                        |                     NULL
 (4 rows, with a warning: SQLSTATE 01003)
 turborel: SQLCODE -301 (SQLSTATE 22003): the fraction of an inverse distribution function is from 0 to 1, not 1.5 [ISO/IEC 9075-2:2023 §10.9 GR10c]
-turborel: SQLCODE -103 (SQLSTATE 2A000): PERCENTILE_DISC is over a window of no ordering and no frame [ISO/IEC 9075-2:2023 §9.23 SR8d i] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): PERCENTILE_DISC is over a window of no ordering and no frame [ISO/IEC 9075-2:2023 §9.23 SR8d i] (at character 7)
 ```
 
 Engineering's upper quarter, sorted from the highest salary, is a
@@ -1271,7 +1271,7 @@ VALUES JSON_VALUE('{}', 'lax $n' PASSING 2 AS n);
             1 | A1    |            1
             2 | NULL  |         NULL
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the named variable $n of the SQL/JSON path expression is passed no value [ISO/IEC 9075-2:2023 §9.46 SR4] (at character 24)
+turborel: SQLCODE -103 (SQLSTATE 42000): the named variable $n of the SQL/JSON path expression is passed no value [ISO/IEC 9075-2:2023 §9.46 SR4] (at character 24)
 ```
 
 A cast that cuts a string to the RETURNING type completes with the

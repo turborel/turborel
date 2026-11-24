@@ -204,7 +204,7 @@ partition gives it once, as updated.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The result option names rows the statement makes none of; the statement is FOR PORTION OF; the delta table stands anywhere but where it may; its subject is a view without CASCADED CHECK OPTION |
+| 42000 | -103 | The result option names rows the statement makes none of; the statement is FOR PORTION OF; the delta table stands anywhere but where it may; its subject is a view without CASCADED CHECK OPTION |
 | 27001 | -911 | Under FINAL, a referential action of the statement changes the subject table |
 | 09000 | | Under FINAL, an AFTER trigger changes the subject table, and the triggered action exception holds SQLSTATE 0W001 |
 

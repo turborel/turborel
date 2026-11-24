@@ -80,7 +80,7 @@ None.
 |---|---|---|
 | 2D000 | -917 | It runs in a handler's action while an ATOMIC compound statement runs, without TO SAVEPOINT |
 | 3B001 | -917 | No savepoint of that name is established at the current savepoint level, or it was established before the function, trigger's action or ATOMIC compound statement running began |
-| 2A000 | -103 | AND CHAIN with TO SAVEPOINT; or TO SAVEPOINT in a FOR or a trigger's action |
+| 42000 | -103 | AND CHAIN with TO SAVEPOINT; or TO SAVEPOINT in a FOR or a trigger's action |
 | 0A000 | -900 | AND CHAIN without TO SAVEPOINT; or TO SAVEPOINT in a routine's body would cancel a change of definitions the statement that invoked it runs on |
 | 09000 | -917 | TO SAVEPOINT runs in a procedure a trigger's action calls (SQLSTATE 0W000) |
 | TB914 | -914 | A change could not be undone. The transaction still ends; each table concerned is damaged, and refuses every later statement but DROP TABLE until it is repaired |

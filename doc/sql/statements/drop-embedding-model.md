@@ -42,9 +42,9 @@ The model's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not of the form above |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the model's schema |
+| 42000 | -102 | The statement is not of the form above |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the model's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -59,7 +59,7 @@ DROP EMBEDDING MODEL WORDS;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): generated column ANN.NOTES.E embeds by model ANN.WORDS, so it is dropped only with CASCADE (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): generated column ANN.NOTES.E embeds by model ANN.WORDS, so it is dropped only with CASCADE (at character 21)
 ```
 
 With CASCADE, the column goes with it:

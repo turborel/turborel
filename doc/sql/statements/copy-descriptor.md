@@ -53,7 +53,7 @@ None.
 |---|---|---|
 | 33000 | -921 | A name is of no area (rule 1) |
 | 07009 | -921 | An item number is of no item, or not of LEVEL 0, or the source does not fit (rules 2, 3) |
-| 2A000 | -103 | The target is no `<PTF descriptor name>`, or an item number is not exact with scale 0 |
+| 42000 | -103 | The target is no `<PTF descriptor name>`, or an item number is not exact with scale 0 |
 
 ## EXAMPLES
 
@@ -118,7 +118,7 @@ OK
           100
           200
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the PTF describe component procedure left the status variable '22023' [ISO/IEC 9075-2:2023 §9.18 SR12j] (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): the PTF describe component procedure left the status variable '22023' [ISO/IEC 9075-2:2023 §9.18 SR12j] (at character 21)
 ```
 
 ## STANDARD

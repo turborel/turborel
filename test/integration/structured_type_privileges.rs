@@ -83,9 +83,9 @@ fn udt_privileges(s: &Session) -> Vec<String> {
 }
 
 /// The SQLCODE class and SQLSTATE of a Syntax Rule broken.
-const SR: (Code, &str) = (Code::SyntaxRule, "2A000");
+const SR: (Code, &str) = (Code::SyntaxRule, "42000");
 /// The SQLCODE class and SQLSTATE of a privilege not held.
-const HELD: (Code, &str) = (Code::Privilege, "2A000");
+const HELD: (Code, &str) = (Code::Privilege, "42000");
 /// The SQLCODE class and SQLSTATE of a revoke that abandons what depends
 /// on it.
 const DEPENDENT: (Code, &str) = (Code::SyntaxRule, "2B000");
@@ -310,7 +310,7 @@ fn a_grant_depending_on_a_grant_option_is_abandoned_12_7() {
     refused(&a, "REVOKE USAGE ON TYPE PT FROM B RESTRICT", dependent, &["§12.7 GR12q"]);
     ok(&a, &["REVOKE GRANT OPTION FOR USAGE ON TYPE PT FROM B CASCADE"]);
     assert_eq!(udt_privileges(&a), ["A,B,TYPE USAGE,NO"]);
-    refused(&c, "CREATE TABLE T (P A.PT)", (Code::Privilege, "2A000"), &["§6.1 AR1"]);
+    refused(&c, "CREATE TABLE T (P A.PT)", (Code::Privilege, "42000"), &["§6.1 AR1"]);
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §12.7 GR12o, GR12q] A routine of a

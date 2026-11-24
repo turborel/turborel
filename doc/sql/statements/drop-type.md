@@ -53,9 +53,9 @@ The type's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | No `<drop behavior>` is written |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the type's schema |
+| 42000 | -102 | No `<drop behavior>` is written |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the type's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -82,7 +82,7 @@ OK
 ----------------------
                     0
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): column ANN.PARCELS.PRICE is of a type based on ANN.MONEY, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.59 SR4b] (at character 10)
+turborel: SQLCODE -103 (SQLSTATE 42000): column ANN.PARCELS.PRICE is of a type based on ANN.MONEY, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.59 SR4b] (at character 10)
 ```
 
 ```sql
@@ -90,7 +90,7 @@ DROP TYPE NOPE CASCADE;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no type ANN.NOPE [ISO/IEC 9075-2:2023 §11.59 SR3] (at character 10)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no type ANN.NOPE [ISO/IEC 9075-2:2023 §11.59 SR3] (at character 10)
 ```
 
 ## STANDARD

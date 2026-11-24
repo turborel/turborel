@@ -173,7 +173,7 @@ fn passing_t823() {
              JSON_EXISTS('{}', 'lax $A' PASSING CAST(NULL AS VARCHAR(2)) FORMAT JSON AS A),
              JSON_VALUE('{}', 'lax $A' PASSING INTERVAL '2' DAY AS A), JSON_VALUE('{}', 'lax $A.type()' PASSING DATE '2024-01-01' AS A))"#;
     assert_eq!(rows(&s, q), expected(&[r#"1,2,5,4,{"b":4},null,FALSE,2,date"#]));
-    let sr4 = broke(-103, "2A000", "§9.46 SR4");
+    let sr4 = broke(-103, "42000", "§9.46 SR4");
     assert_eq!(refused(&s, "VALUES JSON_VALUE('{}', 'lax $x' PASSING 1 AS x)"), sr4);
     assert_eq!(refused(&s, "VALUES JSON_VALUE('{}', 'lax $X' PASSING 1 AS \"x\")"), sr4);
     assert_eq!(refused(&s, "VALUES JSON_EXISTS('{}', 'lax $ ? (exists($B))' PASSING 1 AS A)"), sr4);
@@ -193,7 +193,7 @@ fn starts_with_9_46() {
     let q = r#"VALUES (JSON_EXISTS('["ab","b"]', 'lax $[*] ? (@ starts with $P)' PASSING 'a' AS P),
              JSON_VALUE('["ab","b"]', 'lax $[*] ? (@ starts with "b")'), JSON_VALUE('[1,2]', 'lax $[$I]' PASSING 1 AS I))"#;
     assert_eq!(rows(&s, q), expected(&["TRUE,b,2"]));
-    let sr8 = broke(-103, "2A000", "§9.46 SR8");
+    let sr8 = broke(-103, "42000", "§9.46 SR8");
     assert_eq!(refused(&s, "VALUES JSON_EXISTS('[]', 'lax $[*] ? (@ starts with $P)' PASSING 1 AS P)"), sr8);
     assert_eq!(refused(&s, "VALUES JSON_EXISTS('[]', 'lax $[*] ? (@ starts with $P)' PASSING '\"a\"' FORMAT JSON AS P)"), sr8);
     let nested = "VALUES JSON_EXISTS('[]', 'lax $[*] ? (!(@ == 1) && (exists(@.a) || (@ starts with $P) is unknown)).b[0 to last]' \
@@ -221,30 +221,30 @@ fn starts_with_9_46() {
 fn refusals_10_14() {
     let db = setup();
     let s = db.session("APP");
-    let cast_rule = (-103, "2A000".to_owned(), Some("ISO/IEC 9075:1992 §6.10 SR4".to_owned()));
+    let cast_rule = (-103, "42000".to_owned(), Some("ISO/IEC 9075:1992 §6.10 SR4".to_owned()));
     let cases = [
-        ("VALUES JSON_VALUE(1, 'lax $')", broke(-103, "2A000", "§10.14 SR1")),
+        ("VALUES JSON_VALUE(1, 'lax $')", broke(-103, "42000", "§10.14 SR1")),
         ("VALUES JSON_EXISTS(X'00', 'lax $')", (-900, "0A000".to_owned(), None)),
-        ("VALUES JSON_VALUE('1', 'lax $' AS P)", broke(-103, "2A000", "§10.14 SR2a")),
-        ("VALUES JSON_VALUE('1' FORMAT JSON ENCODING UTF8, 'lax $')", broke(-103, "2A000", "§10.12 SR8")),
-        ("VALUES JSON_VALUE('1', 'lax $' RETURNING INTERVAL DAY)", broke(-103, "2A000", "§6.28 SR2")),
-        ("VALUES JSON_VALUE('1', 'lax $' RETURNING BINARY(2))", broke(-103, "2A000", "§6.28 SR2")),
-        ("VALUES JSON_VALUE('1', 'lax $' RETURNING INTEGER ARRAY)", broke(-103, "2A000", "§6.28 SR2")),
-        ("VALUES JSON_QUERY('1', 'lax $' RETURNING INTEGER)", broke(-103, "2A000", "§10.13 SR2")),
-        ("VALUES JSON_QUERY('1', 'lax $' RETURNING ROW(A INTEGER))", broke(-103, "2A000", "§10.13 SR2")),
+        ("VALUES JSON_VALUE('1', 'lax $' AS P)", broke(-103, "42000", "§10.14 SR2a")),
+        ("VALUES JSON_VALUE('1' FORMAT JSON ENCODING UTF8, 'lax $')", broke(-103, "42000", "§10.12 SR8")),
+        ("VALUES JSON_VALUE('1', 'lax $' RETURNING INTERVAL DAY)", broke(-103, "42000", "§6.28 SR2")),
+        ("VALUES JSON_VALUE('1', 'lax $' RETURNING BINARY(2))", broke(-103, "42000", "§6.28 SR2")),
+        ("VALUES JSON_VALUE('1', 'lax $' RETURNING INTEGER ARRAY)", broke(-103, "42000", "§6.28 SR2")),
+        ("VALUES JSON_QUERY('1', 'lax $' RETURNING INTEGER)", broke(-103, "42000", "§10.13 SR2")),
+        ("VALUES JSON_QUERY('1', 'lax $' RETURNING ROW(A INTEGER))", broke(-103, "42000", "§10.13 SR2")),
         ("VALUES JSON_QUERY('1', 'lax $' RETURNING BLOB)", (-900, "0A000".to_owned(), None)),
-        ("VALUES JSON_QUERY('1', 'lax $' RETURNING CLOB FORMAT JSON ENCODING UTF16)", broke(-103, "2A000", "§10.13 SR2a")),
-        ("VALUES JSON_QUERY('1', 'lax $' WITH WRAPPER KEEP QUOTES)", broke(-103, "2A000", "§6.35 SR8")),
-        ("VALUES JSON_QUERY('1', 'lax $' WITH CONDITIONAL WRAPPER OMIT QUOTES)", broke(-103, "2A000", "§6.35 SR8")),
-        ("VALUES JSON_VALUE('1', 'lax $A' PASSING X'00' AS A)", broke(-103, "2A000", "§10.12 SR7")),
+        ("VALUES JSON_QUERY('1', 'lax $' RETURNING CLOB FORMAT JSON ENCODING UTF16)", broke(-103, "42000", "§10.13 SR2a")),
+        ("VALUES JSON_QUERY('1', 'lax $' WITH WRAPPER KEEP QUOTES)", broke(-103, "42000", "§6.35 SR8")),
+        ("VALUES JSON_QUERY('1', 'lax $' WITH CONDITIONAL WRAPPER OMIT QUOTES)", broke(-103, "42000", "§6.35 SR8")),
+        ("VALUES JSON_VALUE('1', 'lax $A' PASSING X'00' AS A)", broke(-103, "42000", "§10.12 SR7")),
         ("VALUES JSON_VALUE('1', 'lax $A' PASSING X'00' FORMAT JSON AS A)", (-900, "0A000".to_owned(), None)),
-        ("VALUES JSON_VALUE('1', 'lax $A' PASSING ARRAY[1] AS A)", broke(-103, "2A000", "§10.12 SR3")),
-        ("VALUES JSON_VALUE('1', 'lax $A' PASSING 1 FORMAT JSON AS A)", broke(-103, "2A000", "§10.12 SR6")),
-        ("VALUES JSON_VALUE('1', 'lax $A' PASSING '1' FORMAT JSON ENCODING UTF32 AS A)", broke(-103, "2A000", "§10.12 SR8")),
+        ("VALUES JSON_VALUE('1', 'lax $A' PASSING ARRAY[1] AS A)", broke(-103, "42000", "§10.12 SR3")),
+        ("VALUES JSON_VALUE('1', 'lax $A' PASSING 1 FORMAT JSON AS A)", broke(-103, "42000", "§10.12 SR6")),
+        ("VALUES JSON_VALUE('1', 'lax $A' PASSING '1' FORMAT JSON ENCODING UTF32 AS A)", broke(-103, "42000", "§10.12 SR8")),
         ("VALUES JSON_VALUE('1', 'lax $' RETURNING INTEGER DEFAULT DATE '2024-01-01' ON EMPTY)", cast_rule.clone()),
         ("VALUES JSON_VALUE('1', 'lax $' RETURNING DATE DEFAULT 1 ON ERROR)", cast_rule),
-        ("VALUES JSON_VALUE('1', '$')", broke(-102, "2A000", "§9.46 F")),
-        ("VALUES JSON_VALUE('1', 'lax @')", broke(-103, "2A000", "§9.46 SR5")),
+        ("VALUES JSON_VALUE('1', '$')", broke(-102, "42000", "§9.46 F")),
+        ("VALUES JSON_VALUE('1', 'lax @')", broke(-103, "42000", "§9.46 SR5")),
     ];
     for (sql, refusal) in cases {
         assert_eq!(refused(&s, sql), refusal, "{sql}");
@@ -310,7 +310,7 @@ fn where_written_8_23() {
     let s = db.session("APP");
     exec(&s, "CREATE TABLE DOCS (ID INTEGER, J VARCHAR(100))").unwrap();
     exec(&s, r#"INSERT INTO DOCS (ID, J) VALUES (1, '{"id":1,"n":5,"tags":["a","b"]}'), (2, '{"id":2,"n":7}')"#).unwrap();
-    let source = |item: &str| broke(-103, "2A000", &format!("§9.16 SR1{item}, §11.9 CR2"));
+    let source = |item: &str| broke(-103, "42000", &format!("§9.16 SR1{item}, §11.9 CR2"));
     for (sql, item) in [
         ("CREATE TABLE C1 (J VARCHAR(9) CHECK (JSON_EXISTS(J, 'strict $.id')))", "al"),
         ("CREATE TABLE C2 (J VARCHAR(9) CHECK (JSON_VALUE(J, 'lax $.n' RETURNING INTEGER) > 0))", "g"),
@@ -402,7 +402,7 @@ fn datetime_templates_t832() {
     let unread = "VALUES JSON_VALUE('\"2023-02-29\"', 'lax $.datetime(\"YYYY-MM-DD\")' RETURNING DATE ERROR ON ERROR)";
     assert_eq!(refused(&s, unread), broke(-301, "22031", "§9.46 GR11g ii 6 C VII 1 b"));
     let zoned = "VALUES JSON_VALUE('\"2024\"', 'lax $.datetime(\"YYYY TZH\")' NULL ON ERROR)";
-    assert_eq!(refused(&s, zoned), broke(-103, "2A000", "§9.46 SR10d"));
+    assert_eq!(refused(&s, zoned), broke(-103, "42000", "§9.46 SR10d"));
     let lexical = "VALUES JSON_VALUE('\"2024\"', 'lax $.datetime(\"yyyy\")' NULL ON ERROR)";
-    assert_eq!(refused(&s, lexical), broke(-103, "2A000", "§9.52 SR2"));
+    assert_eq!(refused(&s, lexical), broke(-103, "42000", "§9.52 SR2"));
 }

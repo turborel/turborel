@@ -72,7 +72,7 @@ Those of the values, such as SELECT on a table a subquery reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -103 | A rule above is broken |
 | 21000 | -811 | The row's subquery gives more than one row |
 | 2202A | -301 | A field is assigned of a target whose row is null |
 | 22001 | -301 | A value is too long for its target |
@@ -133,8 +133,8 @@ BEGIN DECLARE P, Q INTEGER; SET (P, Q) = (1, 2, 3); END;
 
 ```
 turborel: SQLCODE -811 (SQLSTATE 21000): the assigned row's subquery gives more than one row [ISO/IEC 9075:1992 §7.11 GR1; ISO/IEC 9075-4:2006 draft §14.5 SR1f]
-turborel: SQLCODE -103 (SQLSTATE 2A000): a value of CHARACTER(4) cannot be stored in P (INTEGER) [ISO/IEC 9075-2:2023 §9.2 SR2] (at character 29)
-turborel: SQLCODE -103 (SQLSTATE 2A000): 2 targets are assigned a row of degree 3 [ISO/IEC 9075-4:2006 draft §14.5 SR1b] (at character 28)
+turborel: SQLCODE -103 (SQLSTATE 42000): a value of CHARACTER(4) cannot be stored in P (INTEGER) [ISO/IEC 9075-2:2023 §9.2 SR2] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 42000): 2 targets are assigned a row of degree 3 [ISO/IEC 9075-4:2006 draft §14.5 SR1b] (at character 28)
 ```
 
 ## STANDARD

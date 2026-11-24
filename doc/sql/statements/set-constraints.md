@@ -52,7 +52,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A name is not a constraint's, or names one that is not deferrable |
+| 42000 | -103 | A name is not a constraint's, or names one that is not deferrable |
 | 23000 | -201 | Of IMMEDIATE, a constraint made immediate is not satisfied |
 
 ## EXAMPLES
@@ -98,8 +98,8 @@ SET CONSTRAINTS NOPE IMMEDIATE;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): constraint ANN.FIXED is not DEFERRABLE [ISO/IEC 9075:1992 §14.2 SR2] (at character 16)
-turborel: SQLCODE -103 (SQLSTATE 2A000): no constraint is named ANN.NOPE [ISO/IEC 9075:1992 §14.2 SR1] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): constraint ANN.FIXED is not DEFERRABLE [ISO/IEC 9075:1992 §14.2 SR2] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): no constraint is named ANN.NOPE [ISO/IEC 9075:1992 §14.2 SR1] (at character 16)
 ```
 
 ## STANDARD

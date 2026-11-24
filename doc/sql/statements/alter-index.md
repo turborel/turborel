@@ -56,8 +56,8 @@ The schema of the index's table is its user's.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema of the index's table |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema of the index's table |
 
 ## EXAMPLES
 
@@ -69,7 +69,7 @@ ALTER INDEX STAFF_NAME SET (FILL = 50);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): hash takes no option FILL (at character 28)
+turborel: SQLCODE -103 (SQLSTATE 42000): hash takes no option FILL (at character 28)
 ```
 
 ## STANDARD

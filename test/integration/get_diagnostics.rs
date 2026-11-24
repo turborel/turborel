@@ -89,7 +89,7 @@ fn statement_information_18_1() {
     a.execute_prepared(&insert, &[Value::Exact(Decimal::new(6, 0))]).unwrap();
     assert_eq!((statement(&a, "COMMAND_FUNCTION"), statement(&a, "DYNAMIC_FUNCTION")), ("EXECUTE".into(), "INSERT".into()));
     assert!(a.run("NOT A STATEMENT").is_err());
-    assert_eq!((statement(&a, "COMMAND_FUNCTION"), condition(&a, "RETURNED_SQLSTATE")), (String::new(), "2A000".into()));
+    assert_eq!((statement(&a, "COMMAND_FUNCTION"), condition(&a, "RETURNED_SQLSTATE")), (String::new(), "42000".into()));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.18, §18.1 GR2, GR3a–GR3d,
@@ -143,7 +143,7 @@ fn what_a_condition_names_18_1() {
     assert_eq!((condition(&a, "RETURNED_SQLSTATE"), condition(&a, "CURSOR_NAME")), ("24000".into(), "CR".into()));
     let p = db.session("P");
     assert!(p.run("DELETE FROM A.C").is_err());
-    assert_eq!((condition(&p, "RETURNED_SQLSTATE"), condition(&p, "TABLE_NAME")), ("2A000".into(), "C".into()), "access rule");
+    assert_eq!((condition(&p, "RETURNED_SQLSTATE"), condition(&p, "TABLE_NAME")), ("42000".into(), "C".into()), "access rule");
     let refused = p.run("DELETE FROM A.T WHERE K = 1").unwrap_err();
     assert_eq!(refused.code, Code::Constraint, "C references it: {refused:?}");
     assert_eq!(condition(&p, "RETURNED_SQLSTATE"), "23000");
@@ -249,7 +249,7 @@ fn more_says_a_condition_was_left_out_18_1() {
 /// ISO/IEC 9075-2:2023 §23.1 SR1); a condition
 /// number not exact with scale 0 (-103), or of no condition (-301,
 /// SQLSTATE 35000); an indicator on a target, or an item of no name, is a
-/// syntax error; GET DIAGNOSTICS is not prepared (SQLSTATE 37000).
+/// syntax error; GET DIAGNOSTICS is not prepared (SQLSTATE 42000).
 #[test]
 fn what_get_diagnostics_refuses_18_1() {
     let db = diagnosed();
@@ -269,7 +269,7 @@ fn what_get_diagnostics_refuses_18_1() {
     assert_eq!(code("GET DIAGNOSTICS NUM = NOTHING", &mut p).map(|c| c.0), Some(Code::Syntax));
     assert_eq!(statement(&a, "COMMAND_FUNCTION"), "INSERT", "the refusals left the area");
     let prepared = a.prepare("GET DIAGNOSTICS ? = NUMBER").err().map(|e| e.sqlstate().as_str().to_owned());
-    assert_eq!(prepared.as_deref(), Some("37000"));
+    assert_eq!(prepared.as_deref(), Some("42000"));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §11.8 GR8, §18.1 GR3e] a
@@ -311,15 +311,15 @@ fn an_inaccessible_column_is_named_18_1() {
     let b = db.session("B");
     let named = |s: &Session| ["RETURNED_SQLSTATE", "TABLE_NAME", "COLUMN_NAME"].map(|item| condition(s, item));
     assert!(b.run("UPDATE A.T SET N = 1").is_err());
-    assert_eq!(named(&b), ["2A000", "T", "N"], "UPDATE(N)");
+    assert_eq!(named(&b), ["42000", "T", "N"], "UPDATE(N)");
     assert!(crate::common::rows(&b, "SELECT A.T.M FROM A.T").is_err());
-    assert_eq!(named(&b), ["2A000", "T", "M"], "no column M");
+    assert_eq!(named(&b), ["42000", "T", "M"], "no column M");
     assert!(b.run("UPDATE A.T SET M = 1").is_err());
-    assert_eq!(named(&b), ["2A000", "T", "M"], "no column M to set");
+    assert_eq!(named(&b), ["42000", "T", "M"], "no column M to set");
     assert!(b.run("INSERT INTO A.T (M) VALUES (1)").is_err());
-    assert_eq!(named(&b), ["2A000", "T", "M"], "no column M to insert");
+    assert_eq!(named(&b), ["42000", "T", "M"], "no column M to insert");
     assert!(b.run("DELETE FROM A.T").is_err());
-    assert_eq!(named(&b), ["2A000", "T", ""], "DELETE, on the table");
+    assert_eq!(named(&b), ["42000", "T", ""], "DELETE, on the table");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §9.1 GR3b, §18.1 GR1a] a string

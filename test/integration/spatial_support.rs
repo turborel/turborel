@@ -196,10 +196,10 @@ fn spatial_ref_sys_is_equals_only() {
         ),
         "0,1"
     );
-    assert_eq!(state(&a, "SELECT S FROM T ORDER BY S"), "2A000");
-    assert_eq!(state(&a, "VALUES ST_SPATIALREFSYS(4326) < ST_SPATIALREFSYS(4269)"), "2A000");
-    assert_eq!(state(&a, "SELECT S FROM T GROUP BY S"), "2A000");
-    assert_eq!(state(&a, "VALUES ST_ORDERINGEQUALS(ST_SPATIALREFSYS(4326), ST_VECTOR(1e0, 2e0))"), "2A000");
+    assert_eq!(state(&a, "SELECT S FROM T ORDER BY S"), "42000");
+    assert_eq!(state(&a, "VALUES ST_SPATIALREFSYS(4326) < ST_SPATIALREFSYS(4269)"), "42000");
+    assert_eq!(state(&a, "SELECT S FROM T GROUP BY S"), "42000");
+    assert_eq!(state(&a, "VALUES ST_ORDERINGEQUALS(ST_SPATIALREFSYS(4326), ST_VECTOR(1e0, 2e0))"), "42000");
 }
 
 /// Verifies: [ISO/IEC 13249-3:2016 (DIS, SC32 N2593) §14.1.9, §20.5]

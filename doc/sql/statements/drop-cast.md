@@ -37,8 +37,8 @@ The owner of the cast's user-defined type.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the type |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the type |
 
 ## EXAMPLES
 
@@ -55,7 +55,7 @@ OK
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.HOT binds only with the cast from ANN.TEMP to INTEGER, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.64 SR7] (at character 5)
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.HOT binds only with the cast from ANN.TEMP to INTEGER, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.64 SR7] (at character 5)
 ```
 
 ```sql
@@ -65,7 +65,7 @@ SELECT CAST(NEW TEMP().DEGREES(40) AS INTEGER) FROM (VALUES (1)) AS T (N);
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): no user-defined cast takes ANN.TEMP to INTEGER, nor is INTEGER a supertype of it [ISO/IEC 9075-2:2023 §6.13 SR12] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): no user-defined cast takes ANN.TEMP to INTEGER, nor is INTEGER a supertype of it [ISO/IEC 9075-2:2023 §6.13 SR12] (at character 7)
 ```
 
 ## STANDARD

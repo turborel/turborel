@@ -39,7 +39,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The value is not a character string |
+| 42000 | -103 | The value is not a character string |
 | 3D000 | -301 | The value is not the catalog's name |
 
 ## EXAMPLES
@@ -53,7 +53,7 @@ SET CATALOG 1;
 ```
 OK
 turborel: SQLCODE -301 (SQLSTATE 3D000): 'OTHER' is not the one catalog, TURBOREL [ISO/IEC 9075:1992 §16.1 GR2, §5.4 SR20]
-turborel: SQLCODE -103 (SQLSTATE 2A000): SET CATALOG takes a character string [ISO/IEC 9075:1992 §16.1 SR1]
+turborel: SQLCODE -103 (SQLSTATE 42000): SET CATALOG takes a character string [ISO/IEC 9075:1992 §16.1 SR1]
 ```
 
 ## STANDARD

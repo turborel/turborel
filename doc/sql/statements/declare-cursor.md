@@ -110,8 +110,8 @@ UPDATE or DELETE needs UPDATE on the columns set, or DELETE.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | Declared by `Session::execute`, as a statement |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | Declared by `Session::execute`, as a statement |
+| 42000 | -103 | A rule above is broken |
 | 24000 | -501 | A positioned UPDATE or DELETE of a cursor not open, or on no row |
 | 0A000 | -900 | An updatable cursor ordered by a window function is opened |
 
@@ -142,9 +142,9 @@ s.execute("COMMIT", &mut p)?;
 The refusals, and declaring a name twice:
 
 ```
-UPDATE STAFF SET NAME = 'x' WHERE CURRENT OF U   -103 (2A000): cursor U is not FOR UPDATE of NAME [ISO/IEC 9075:1992 §13.9 SR8]
+UPDATE STAFF SET NAME = 'x' WHERE CURRENT OF U   -103 (42000): cursor U is not FOR UPDATE of NAME [ISO/IEC 9075:1992 §13.9 SR8]
 DELETE FROM STAFF WHERE CURRENT OF U             -501 (24000): cursor U is not positioned on a row [X3.135-1986 §8.4 GR1]
-DECLARE U CURSOR FOR SELECT ID FROM STAFF        -103 (2A000): cursor U is already declared [X3.135-1986 §8.3 SR1]
+DECLARE U CURSOR FOR SELECT ID FROM STAFF        -103 (42000): cursor U is already declared [X3.135-1986 §8.3 SR1]
 ```
 
 STAFF is left of 1, 7300.00 and 3, 6900.00.

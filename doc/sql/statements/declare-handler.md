@@ -91,8 +91,8 @@ Those of the action.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed, or follows a statement |
-| 2A000 | -103 | A rule above is broken, or an SQLSTATE value is not five digits or upper case letters, or is of class 00 |
+| 42000 | -102 | It is not well formed, or follows a statement |
+| 42000 | -103 | A rule above is broken, or an SQLSTATE value is not five digits or upper case letters, or is of class 00 |
 | 0Z002 | -301 | GET STACKED DIAGNOSTICS where no handler is active |
 
 ## EXAMPLES
@@ -175,10 +175,10 @@ BEGIN DECLARE EXIT HANDLER FOR MISSING BEGIN END; END;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): an UNDO handler is of an ATOMIC compound statement [ISO/IEC 9075-4:2006 draft §14.1 SR17] (at character 6)
-turborel: SQLCODE -103 (SQLSTATE 2A000): two handlers of one compound statement handle one condition [ISO/IEC 9075-4:2006 draft §14.2 SR4] (at character 92)
-turborel: SQLCODE -103 (SQLSTATE 2A000): SQLEXCEPTION, SQLWARNING or NOT FOUND is the one condition value of its handler [ISO/IEC 9075-4:2006 draft §14.2 SR3] (at character 6)
-turborel: SQLCODE -103 (SQLSTATE 2A000): no condition MISSING is declared here [ISO/IEC 9075-4:2006 draft §14.2 SR2] (at character 31)
+turborel: SQLCODE -103 (SQLSTATE 42000): an UNDO handler is of an ATOMIC compound statement [ISO/IEC 9075-4:2006 draft §14.1 SR17] (at character 6)
+turborel: SQLCODE -103 (SQLSTATE 42000): two handlers of one compound statement handle one condition [ISO/IEC 9075-4:2006 draft §14.2 SR4] (at character 92)
+turborel: SQLCODE -103 (SQLSTATE 42000): SQLEXCEPTION, SQLWARNING or NOT FOUND is the one condition value of its handler [ISO/IEC 9075-4:2006 draft §14.2 SR3] (at character 6)
+turborel: SQLCODE -103 (SQLSTATE 42000): no condition MISSING is declared here [ISO/IEC 9075-4:2006 draft §14.2 SR2] (at character 31)
 ```
 
 ## STANDARD

@@ -92,7 +92,7 @@ ROLLBACK;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): cannot assign a CHARACTER(15) value to column BODY (FULLTEXT) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075:1992 §9.2 SR2] (at character 41)
+turborel: SQLCODE -103 (SQLSTATE 42000): cannot assign a CHARACTER(15) value to column BODY (FULLTEXT) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075:1992 §9.2 SR2] (at character 41)
 turborel: SQLCODE -301 (SQLSTATE 2FF02): [ISO/IEC 13249-2:2002 §5.1.9] no language is named KLINGON
 OK
 ```
@@ -318,8 +318,8 @@ SELECT TOKENIZE('plain') FROM ARTICLES WHERE ID = 1;
 --------------------------------------------------------------+--------------+--------------
  swim                                                         |         NULL |         NULL
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): [ISO/IEC 13249-2:2002 §5.1.1] invalid arguments to TOKENIZE (at character 7)
-turborel: SQLCODE -103 (SQLSTATE 2A000): argument 1 of TOKENIZE, a CHARACTER(5) value, cannot be assigned to its type FULLTEXT [ISO/IEC 9075:1992 §9.2 SR2] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): [ISO/IEC 13249-2:2002 §5.1.1] invalid arguments to TOKENIZE (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): argument 1 of TOKENIZE, a CHARACTER(5) value, cannot be assigned to its type FULLTEXT [ISO/IEC 9075:1992 §9.2 SR2] (at character 7)
 ```
 
 An array holds at most 65,535 elements, and a document of more words
@@ -512,7 +512,7 @@ OK
             4 |                      0E0
 (4 rows)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): FULLTEXT.RANKING is one of BM25, not TFIDF
+turborel: SQLCODE -103 (SQLSTATE 42000): FULLTEXT.RANKING is one of BM25, not TFIDF
 OK
  OPTION_NAME                                                  | OPTION_VALUE                                                 | VALUE_SOURCE
 --------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
@@ -876,9 +876,9 @@ The maximum length of a pattern, FT_MaxPatternLength, is 32,767 too.
 | 2FF03 | -301 | Every word of a pattern is a stop word |
 | 22001 | -301 | A text or pattern is longer than 32,767 characters |
 | 2202F | -301 | A tokenizing method's array would hold more than 65,535 elements |
-| 2A000 | -103 | A character string is stored in a FULLTEXT column without FULLTEXT(...) or CAST |
-| 2A000 | -103 | An index option is not one of the method's, its value is out of range, or FULLTEXT.RANKING names no ranking |
-| 2A000 | -103 | An encrypted table is indexed in files that are not encrypted |
+| 42000 | -103 | A character string is stored in a FULLTEXT column without FULLTEXT(...) or CAST |
+| 42000 | -103 | An index option is not one of the method's, its value is out of range, or FULLTEXT.RANKING names no ranking |
+| 42000 | -103 | An encrypted table is indexed in files that are not encrypted |
 | 0A000 | -900 | The index is of more than one column, or of a column not of FULLTEXT or a character string type, or of a collated one |
 | TB910 | -910 | A ranking breaks its contract, or the ranking an index names is not registered |
 

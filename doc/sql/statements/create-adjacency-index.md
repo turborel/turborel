@@ -53,9 +53,9 @@ The table's schema is its user's.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -102 | The DIRECTION is none of FORWARD, REVERSE and BOTH |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the table's schema |
+| 42000 | -102 | The DIRECTION is none of FORWARD, REVERSE and BOTH |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the table's schema |
 | 0A000 | -900 | A column INCLUDE names may be null |
 
 ## EXAMPLES

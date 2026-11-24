@@ -40,7 +40,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -103 | A rule above is broken |
 
 ## EXAMPLES
 
@@ -89,8 +89,8 @@ B: BEGIN DECLARE EXIT HANDLER FOR SQLEXCEPTION LEAVE B; SIGNAL SQLSTATE '75001';
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): LEAVE NOWHERE names no statement it is in [ISO/IEC 9075-4:2006 draft §14.9 SR1] (at character 12)
-turborel: SQLCODE -103 (SQLSTATE 2A000): LEAVE B names no statement it is in [ISO/IEC 9075-4:2006 draft §14.9 SR1] (at character 53)
+turborel: SQLCODE -103 (SQLSTATE 42000): LEAVE NOWHERE names no statement it is in [ISO/IEC 9075-4:2006 draft §14.9 SR1] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): LEAVE B names no statement it is in [ISO/IEC 9075-4:2006 draft §14.9 SR1] (at character 53)
 ```
 
 ## STANDARD

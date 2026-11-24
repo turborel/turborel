@@ -126,9 +126,9 @@ revoker holds each WITH ADMIN OPTION.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | No `<drop behavior>` is written, or the statement is not written as the synopsis shows |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | The revoker holds a role named not WITH ADMIN OPTION |
+| 42000 | -102 | No `<drop behavior>` is written, or the statement is not written as the synopsis shows |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | The revoker holds a role named not WITH ADMIN OPTION |
 | 2B000 | -103 | RESTRICT, and a privilege, view, constraint, assertion, trigger or routine would be abandoned, a column or domain of a schema left without USAGE is of the collation, a grant of USAGE on the sequence generator, the registered XML Schema or the registered XQuery module, or a registered XML Schema or XQuery module using it, would be abandoned, or a column, view, constraint, generated column or grant would be lost or abandoned with a privilege on a distinct type or its function |
 | 23000 | -201 | A constraint no longer holds of the rows of a table reverted |
 | 25000 | -917 | The transaction is READ ONLY |
@@ -151,7 +151,7 @@ REVOKE DELETE ON STAFF FROM BOB RESTRICT;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): REVOKE ... RESTRICT would abandon a privilege BOB granted CAROL on ANN.STAFF [ISO/IEC 9075:1992 §11.37 SR18]
+turborel: SQLCODE -103 (SQLSTATE 42000): REVOKE ... RESTRICT would abandon a privilege BOB granted CAROL on ANN.STAFF [ISO/IEC 9075:1992 §11.37 SR18]
 OK
  GRANTOR                                                      | GRANTEE                                                      | PRIVILEGE_TYPE                                               | IS_GRANTABLE
 --------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------

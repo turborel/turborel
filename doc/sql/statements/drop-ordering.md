@@ -40,8 +40,8 @@ The owner of the type.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the type |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the type |
 
 ## EXAMPLES
 
@@ -56,7 +56,7 @@ DROP ORDERING FOR DIMS RESTRICT;
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.SAME binds only with the ordering of ANN.DIMS, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.66 SR4] (at character 18)
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.SAME binds only with the ordering of ANN.DIMS, so it is dropped only with CASCADE [ISO/IEC 9075-2:2023 §11.66 SR4] (at character 18)
 ```
 
 ```sql
@@ -66,7 +66,7 @@ SELECT NEW DIMS() = NEW DIMS() FROM (VALUES (1)) AS T (N);
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): the comparison compares values of ANN.DIMS, which has no ordering [ISO/IEC 9075-2:2023 §9.10 SR3] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): the comparison compares values of ANN.DIMS, which has no ordering [ISO/IEC 9075-2:2023 §9.10 SR3] (at character 7)
 ```
 
 ## STANDARD

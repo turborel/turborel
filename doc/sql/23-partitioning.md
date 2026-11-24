@@ -308,4 +308,4 @@ SELECT TABLE_NAME, PARENT_TABLE_NAME, BOUND FROM INFORMATION_SCHEMA.PARTITIONS O
 | SQLSTATE | SQLCODE | Cause |
 |---|---|---|
 | 23T01 | -201 | No partition holds a row written to a partitioned table, or a row written to a partition or attached is not one its bound holds |
-| 2A000 | -103 | A bound overlaps another's, a second DEFAULT, a DEFAULT of HASH, a key of a column not there, a strategy not registered, a table attached not of the partitioned table's columns, schema, kind or periods, or an ALTER TABLE of a tree's columns |
+| 42000 | -103 | A bound overlaps another's, a second DEFAULT, a DEFAULT of HASH, a key of a column not there, a strategy not registered, a table attached not of the partitioned table's columns, schema, kind or periods, or an ALTER TABLE of a tree's columns |

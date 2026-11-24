@@ -42,8 +42,8 @@ Those the statement prepared needs.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The operand is not a character string (rule 1) |
-| 37000 | -102, -103, -104 | A rule of its statement is broken, or a privilege it needs is not held (rule 2) |
+| 42000 | -103 | The operand is not a character string (rule 1) |
+| 42000 | -102, -103, -104 | A rule of its statement is broken, or a privilege it needs is not held (rule 2) |
 
 The statement prepared raises its own errors as it runs.
 
@@ -82,10 +82,10 @@ EXECUTE IMMEDIATE 42;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 37000): a statement executed immediately is no query, and has no <dynamic parameter specification> [ISO/IEC 9075:1992 §17.11 GR3a, GR3c]
-turborel: SQLCODE -103 (SQLSTATE 37000): a statement executed immediately is no query, and has no <dynamic parameter specification> [ISO/IEC 9075:1992 §17.11 GR3a, GR3c]
-turborel: SQLCODE -103 (SQLSTATE 37000): table ANN.STAF is not defined [X3.135-1986 §5.4 SR5]
-turborel: SQLCODE -103 (SQLSTATE 2A000): an <SQL statement variable> is a character string [ISO/IEC 9075:1992 §17.11 SR1]
+turborel: SQLCODE -103 (SQLSTATE 42000): a statement executed immediately is no query, and has no <dynamic parameter specification> [ISO/IEC 9075:1992 §17.11 GR3a, GR3c]
+turborel: SQLCODE -103 (SQLSTATE 42000): a statement executed immediately is no query, and has no <dynamic parameter specification> [ISO/IEC 9075:1992 §17.11 GR3a, GR3c]
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.STAF is not defined [X3.135-1986 §5.4 SR5]
+turborel: SQLCODE -103 (SQLSTATE 42000): an <SQL statement variable> is a character string [ISO/IEC 9075:1992 §17.11 SR1]
 ```
 
 ## STANDARD

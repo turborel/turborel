@@ -223,7 +223,7 @@ fn domains_in_the_information_schema_21_2() {
 /// loses USAGE on it keeps the revoke from RESTRICT, and goes under
 /// CASCADE.
 ///
-/// Regression test (R-TEST-7): the refusal gave SQLSTATE 2A000, not 2B000
+/// Regression test (R-TEST-7): the refusal gave SQLSTATE 42000, not 2B000
 /// [ISO/IEC 9075-2:2023 §12.7 GR12q].
 #[test]
 fn views_that_cast_to_a_domain_11_27() {
