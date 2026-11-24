@@ -653,7 +653,8 @@ OK
 | CONNECTIONS | ID, USER_NAME, PEER, SECURE, STATE, APPLICATION, STATEMENT_TEXT, STATEMENT_BEGAN, TRANSACTION_BEGAN, WAITING_ON, LOCK_NAME, LOCK_HOLDER | connection a server serves: its user once authenticated, or NULL; where it came from, an address or `local`; whether it is secure; LOGIN, IDLE or RUNNING a statement; the attribute `application` its client gave, or NULL; the statement it runs and when it began, when its transaction began, and LOCK, IO or WORKER if it waits, with the lock and the connection holding it ([Monitoring](../operator/11-monitoring.md)) |
 | STATEMENT_STATISTICS | USER_NAME, STATEMENT_ID, STATEMENT_TEXT, CALLS, TOTAL_MICROS, MEAN_MICROS, MAX_MICROS, ROW_COUNT, ROWS_READ, BYTES_SPILLED, LAST_RUN | statement run since the database was opened, by normalized text and user: its calls, their microseconds of work, the rows they gave or changed, read and spilled, and the last run's start; another user's text NULL unless the user is the owner or holds MONITOR ([Monitoring](../operator/11-monitoring.md)) |
 | TABLE_STATISTICS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ENGINE_NAME, ROW_COUNT, BYTES, BYTES_ESTIMATED, LAST_CHANGED, LAST_COMPACTED | base table: its engine, its rows, the bytes it takes or NULL if its engine does not know them, YES if some are estimated, when a transaction that wrote it last committed and when its engine's maintenance last did some work on it, each NULL if never since the database was opened; every table to the owner and a holder of MONITOR, else those the user holds a privilege on ([Monitoring](../operator/11-monitoring.md)) |
-| INDEX_STATISTICS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, SEARCHES, ENTRIES_READ, ENTRY_COUNT, HEIGHT, BYTES | index: its method, the searches made of it and the entries they gave since the database was opened or the index made, and its entries, its tree's levels and its bytes, each NULL if its method does not know it; shown as TABLE_STATISTICS shows its table ([Monitoring](../operator/11-monitoring.md)) |
+| INDEX_STATISTICS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, SEARCHES, ENTRIES_READ, ENTRY_COUNT, HEIGHT, BYTES, DISTINCT_KEYS | index: its method, the searches made of it and the entries they gave since the database was opened or the index made, its entries, its tree's levels and its bytes, and the distinct keys it counts for the planner, each NULL if its method does not know it; shown as TABLE_STATISTICS shows its table ([Monitoring](../operator/11-monitoring.md)) |
+| COLUMN_STATISTICS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, ROW_COUNT, GATHERED, NULL_FRACTION, DISTINCT_VALUES, AVERAGE_WIDTH, MIN_VALUE, MAX_VALUE, MOST_COMMON_VALUES, MOST_COMMON_FREQUENCIES, HISTOGRAM_BOUNDS | column of a base table: what the planner's statistics hold of it, each NULL until they are gathered; every column to the owner and a holder of MONITOR, else those the user holds a privilege on ([Column statistics](#column-statistics)) |
 | CONNECTION_ATTRIBUTES | CONNECTION_ID, ATTRIBUTE_NAME, ATTRIBUTE_VALUE | attribute a connection's client gave as it opened, by the connection's ID *(extension)* ([The Native Protocol](../client/05-protocol.md)) |
 | SERVER | WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD, COMMITTED, ROLLED_BACK | one row: the workers running a statement, the statements waiting for one, the connections, those refused past SERVER.MAX_CONNECTIONS, told why or closed at once, and the database's transactions committed and rolled back since it was opened, of every session, served or embedded |
 | REPLICAS | MEMBER, ADDRESS, IS_SELF, ROLE, EPOCH, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS | member of the database's replica group ([Replication](../operator/09-replication.md)), in the epoch this node is in, to the owner: its number and address; whether it is this node; PRIMARY, BACKUP or UNKNOWN in the view this node knows; the epoch, and that view, or NULL; whether this node's link to it is up; the milliseconds since a frame from it arrived, or NULL |
@@ -723,6 +724,81 @@ CONNECTION_ATTRIBUTES and SERVER are a server's: a database a server serves, as 
 they show no connection, and counts of none, while it does not serve.
 JOBS.POLICY says how the jobs JOBS lists are run
 ([Settings](../appendix/c-settings.md)).
+
+## Column statistics
+
+COLUMN_STATISTICS *(extension)* shows what the planner's statistics
+hold of each column of a base table, the figures it estimates the rows
+of a query by. The database's maintenance gathers a table's statistics
+once a plan reads them, and again as the table changes. Reading the
+view reads them as a plan does, so a table's not yet gathered are
+gathered soon after. Until then each figure is NULL.
+
+| Column | |
+|---|---|
+| ROW_COUNT | the rows the last pass over the table found |
+| GATHERED | when that pass was made, or NULL if the database has not stamped one |
+| NULL_FRACTION | the share of the rows whose value of the column is NULL |
+| DISTINCT_VALUES | the distinct values of the column but NULL, counted by an index whose key is the column alone where there is one |
+| AVERAGE_WIDTH | the bytes of a row read for the column; a row store reads whole rows, so of a row store table it is a row's |
+| MIN_VALUE, MAX_VALUE | the least and greatest values, each as its text |
+| MOST_COMMON_VALUES | the values that each hold a large share of the rows, most frequent first, as an array of texts |
+| MOST_COMMON_FREQUENCIES | the share of all the rows each of those holds, in the same order |
+| HISTOGRAM_BOUNDS | the bounds of an equi-depth histogram of the other values, ascending, as an array of texts |
+
+A value is shown as its text, as the client shows it, in CHARACTER
+VARYING(4096) whatever its column's type, as one column of a view has
+one type in every row. A CAST to the column's type reads it back, as
+`CAST(MIN_VALUE AS DATE)` does a date's. A large table is
+sampled, so its figures are estimates. The owner and a holder of
+MONITOR see every column. Any other user sees the columns on which it
+holds a privilege, as COLUMNS shows them: SELECT on the table, or
+INSERT, UPDATE or REFERENCES on the column.
+
+```sql
+CREATE TABLE PART (ID INTEGER, COLOUR VARCHAR(10), SHIPPED DATE, NOTE VARCHAR(20));
+INSERT INTO PART VALUES (1, 'red', DATE '2026-01-05', NULL), (2, 'red', DATE '2026-02-11', NULL),
+    (3, 'red', DATE '2026-03-20', NULL), (4, 'blue', DATE '2026-03-20', NULL), (5, 'green', NULL, NULL);
+COMMIT;
+```
+
+```
+OK
+OK
+OK
+```
+
+Once the maintenance has gathered PART's statistics:
+
+```sql
+SELECT COLUMN_NAME, ROW_COUNT, GATHERED, NULL_FRACTION, DISTINCT_VALUES, MIN_VALUE, MAX_VALUE
+  FROM INFORMATION_SCHEMA.COLUMN_STATISTICS WHERE TABLE_NAME = 'PART' ORDER BY ORDINAL_POSITION;
+SELECT MOST_COMMON_VALUES, MOST_COMMON_FREQUENCIES, HISTOGRAM_BOUNDS
+  FROM INFORMATION_SCHEMA.COLUMN_STATISTICS WHERE TABLE_NAME = 'PART' AND COLUMN_NAME = 'COLOUR';
+```
+
+```
+ COLUMN_NAME                                                  |            ROW_COUNT | GATHERED                         |        NULL_FRACTION |      DISTINCT_VALUES | MIN_VALUE                                                    | MAX_VALUE
+--------------------------------------------------------------+----------------------+----------------------------------+----------------------+----------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ ID                                                           |                    5 | 2026-11-20 12:00:00.000000+00:00 |               0.0000 |                    5 | 1                                                            | 5
+ COLOUR                                                       |                    5 | 2026-11-20 12:00:00.000000+00:00 |               0.0000 |                    3 | blue                                                         | red
+ SHIPPED                                                      |                    5 | 2026-11-20 12:00:00.000000+00:00 |               0.2000 |                    3 | 2026-01-05                                                   | 2026-03-20
+ NOTE                                                         |                    5 | 2026-11-20 12:00:00.000000+00:00 |               1.0000 |                    0 | NULL                                                         | NULL
+(4 rows)
+ MOST_COMMON_VALUES                                           | MOST_COMMON_FREQUENCIES                                      | HISTOGRAM_BOUNDS
+--------------------------------------------------------------+--------------------------------------------------------------+--------------------------------------------------------------
+ ARRAY['red']                                                 | ARRAY[0.6000]                                                | ARRAY['blue', 'blue', 'green']
+(1 row)
+```
+
+'red' holds three of the five rows, more than its share of the three
+colours, so it is kept apart with its share. The histogram is of the
+rest, 'blue' and 'green'. NOTE is always NULL, so it has no value to
+show.
+
+The standard: an implementation may add views to INFORMATION_SCHEMA
+[ISO/IEC 9075:1992 §21.1]; one showing the planner's statistics is an
+extension, and so is the column DISTINCT_KEYS of INDEX_STATISTICS.
 
 ## Graph statistics
 

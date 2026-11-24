@@ -159,6 +159,7 @@ them soon after.
 | ENTRY_COUNT | its entries, or NULL if its method does not know them yet |
 | HEIGHT | the levels of its tree, 1 while the root is a leaf, or NULL of a method keeping none |
 | BYTES | its bytes, or NULL if its method does not know them |
+| DISTINCT_KEYS | the distinct keys it counts, which the planner estimates an equality on all its columns by, or NULL while it has not counted them |
 
 An index whose SEARCHES stays 0 under a workload costs its writes and
 helps no read.
@@ -196,3 +197,9 @@ OK
 
 Eight rows are read faster by a scan than through T_K, so the query did
 not search it, and its SEARCHES stays 0.
+
+What the planner's statistics hold of each column, its rows, share
+NULL, distinct values, least and greatest values, most common values and
+histogram, is in COLUMN_STATISTICS
+([Column statistics](../sql/07-information-schema.md#column-statistics)).
+A user sees there the columns on which they hold a privilege.
