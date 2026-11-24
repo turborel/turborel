@@ -14,9 +14,12 @@
 //! (`Telling`). The database serves as its replica does: as primary of a
 //! view, taking changes; as backup, reads alone (SQLCODE -917).
 //!
-//! Not yet: state transfer, log retention, recovery of a journal lost,
-//! reconfiguration: a database so far behind is opened again from a copy
-//! of the primary's files.
+//! The node keeps REPLICATION.RETAIN_BYTES of the group's log
+//! (`Retention`), so a backup behind by less catches up from the log, and
+//! one behind by more by a state transfer staged in the directory's
+//! `transfer/`. A replica whose journal holds nothing recovers from the
+//! group (`Vr::restart`), and a reconfiguration changes the members linked
+//! (`Links::reconfigured`).
 
 mod net;
 mod shown;
