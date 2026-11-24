@@ -19,7 +19,7 @@ use crate::value::Value;
 ///
 /// # Errors
 ///
-/// SQLCODE -910 if `id` is no identity.
+/// SQLCODE -301 if `id` is no identity.
 fn alias_of(id: &str) -> Result<String> {
     let item = crate::json::parse(id, Keys::Any)?;
     let table = item.as_object().and_then(|m| m.iter().find(|m| m.key == "table")).map(|m| &m.value);
@@ -35,7 +35,7 @@ fn alias_of(id: &str) -> Result<String> {
 ///
 /// # Errors
 ///
-/// SQLCODE -910 if it is none of `graph`'s.
+/// SQLCODE -301 if it is none of `graph`'s.
 pub(super) fn table_of<'g>(graph: &'g Graph, id: &str) -> Result<&'g ElementTableDesc> {
     let alias = alias_of(id)?;
     graph
@@ -58,7 +58,7 @@ pub(super) fn identity_of(e: &ElementTableDesc, key: &[Value]) -> Result<String>
 ///
 /// # Errors
 ///
-/// SQLCODE -910 if it has none.
+/// SQLCODE -301 if it has none.
 pub(super) fn open_element(graph: &Graph, kind: ElementKind) -> Result<&ElementTableDesc> {
     graph
         .desc
@@ -81,7 +81,7 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// SQLCODE -910 if `e`'s table is not there.
+    /// SQLCODE -301 if `e`'s table is not there.
     pub(super) fn keyed(&self, e: &ElementTableDesc, q: &str, param: &str) -> Result<String> {
         let st = self.gql_state()?;
         let Some(t) = st.catalog.table(&e.table) else {
