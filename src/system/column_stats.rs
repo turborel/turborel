@@ -122,8 +122,7 @@ fn figures(stats: Option<&dyn Statistics>, column: usize, gathered: Option<i64>)
 /// The rows of `t`'s columns `columns`, as `seen` reads its statistics.
 fn rows_of(seen: &Seen<'_>, t: &TableDesc, columns: &[usize]) -> Vec<Row> {
     let stats = seen.state.statistics(&t.name);
-    // A stamp outlasts statistics a new storage of the table has none of.
-    let gathered = stats.as_ref().and_then(|_| seen.state.lock_of(&t.name).ok()?.gathered(None));
+    let gathered = seen.state.lock_of(&t.name).ok().and_then(|lock| lock.gathered(None));
     let mut rows = Vec::new();
     for &at in columns {
         let Some(c) = t.columns.get(at) else { continue };

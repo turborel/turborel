@@ -106,8 +106,8 @@ fn an_empty_tables_statistics_are_of_no_rows() {
 /// Verifies: [DESIGN] RULES.md D990, D991: statistics not gathered show
 /// NULL; reading the view makes them due, as a plan's reading them does,
 /// and the statistics job then gathers them and stamps when, its clock's
-/// instant; a table emptied by TRUNCATE has none again, and no stamp
-/// shown from the storage it replaced.
+/// instant; a table emptied by TRUNCATE has none again, and no stamp,
+/// its lock made anew with its storage.
 #[test]
 fn statistics_gathered_by_the_job_are_stamped_when() {
     let (db, clock) = owned();

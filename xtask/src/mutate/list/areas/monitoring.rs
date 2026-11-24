@@ -6,14 +6,13 @@
 //! stamps, who sees which table, and the user a session's tallies keep;
 //! and of the planner's statistics of columns and indexes (D990, D991,
 //! D992): who sees which column, a value's text, the stamp of a pass
-//! and the pass counted, a stamp outlasting its statistics, and an index's
-//! distinct keys.
+//! and the pass counted, and an index's distinct keys.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the sessions' and statements' views whose removal must
 /// fail their tests.
-pub const MONITORING: [Mutation; 19] = [
+pub const MONITORING: [Mutation; 18] = [
     Mutation {
         name: "monitoring-wait-not-shown",
         package: Package::Server,
@@ -182,16 +181,6 @@ pub const MONITORING: [Mutation; 19] = [
         original: "        self.gathered.passes.fetch_add(1, Ordering::Release);\n",
         replacement: "",
         integration: &["column_statistics::each_columns_statistics_are_shown_after_analyze"],
-        unit: &[],
-    },
-    Mutation {
-        name: "colstats-stamp-outlasts",
-        package: Package::Core,
-        breaks: "a table given a new storage shows the stamp of statistics it no longer has",
-        file: "src/system/column_stats.rs",
-        original: "let gathered = stats.as_ref().and_then(|_| seen.state.lock_of(&t.name).ok()?.gathered(None));",
-        replacement: "let gathered = seen.state.lock_of(&t.name).ok().and_then(|l| l.gathered(None));",
-        integration: &["column_statistics::statistics_gathered_by_the_job_are_stamped_when"],
         unit: &[],
     },
     Mutation {

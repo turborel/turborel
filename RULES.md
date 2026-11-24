@@ -17622,8 +17622,8 @@ count before and after it has the engine gather, by ANALYZE
 (`Database::analyze`) or by its maintenance, and stores its clock's
 instant in the table's lock if the count moved. The stamp sits beside
 the commit and compaction stamps of D522, which every snapshot shares.
-A table given a new storage, as TRUNCATE TABLE gives it, has no
-statistics until a pass, so the view shows no stamp for it until then.
+TRUNCATE TABLE gives a table a new storage and a new lock, so its
+statistics and their stamp both begin again from none.
 
 #### D992. INDEX_STATISTICS shows the distinct keys an index counts, as the planner reads them
 
