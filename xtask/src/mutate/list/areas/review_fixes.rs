@@ -9,7 +9,7 @@
 use super::super::{Mutation, Package};
 
 /// Each fix of the review, taken back, which its test must then fail.
-pub const REVIEW_FIXES: [Mutation; 4] = [
+pub const REVIEW_FIXES: [Mutation; 5] = [
     Mutation {
         name: "direct-join-by-a-key-not-unique",
         package: Package::Core,
@@ -49,5 +49,15 @@ pub const REVIEW_FIXES: [Mutation; 4] = [
         replacement: "    let text = st.spill_encodings().stages().is_empty().then(text);",
         integration: &["diagnostics::a_slow_statement_is_told_with_its_text_while_spills_are_only_compressed"],
         unit: &[],
+    },
+    Mutation {
+        name: "ivf-directory-pages-leaked",
+        package: Package::Core,
+        breaks: "an IVF directory whose write of a page fails leaves the pages it made in use",
+        file: "src/engine/ivf/lists.rs",
+        original: "    let written = made(pool, file, chunks.len().max(1), &mut pages).and_then(|()| filled(pool, file, &pages, &chunks));",
+        replacement: "    let written = made(pool, file, chunks.len().max(1), &mut pages);\n    filled(pool, file, &pages, &chunks)?;",
+        integration: &[],
+        unit: &["engine::ivf::tests::ivf_directory_pages_are_freed_when_their_write_fails"],
     },
 ];

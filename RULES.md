@@ -665,6 +665,7 @@ verification approach DO-178C expects (§8).
 | D1041 | A filter goes below a projection only if each of its expressions is deterministic |
 | D1042 | COPY DESCRIPTOR with TYPE copies a reference type's SCOPE components, each a character string |
 | D1043 | A slow statement's text is withheld only while an encryption is in use, not for a compression of the spill areas |
+| D1044 | An IVF directory whose write fails frees the pages it made |
 
 ### The project
 
@@ -18177,6 +18178,18 @@ The test is now whether that pipeline holds an encryption
 (`Pipeline::confidential`). It does while the database's files or a
 table are encrypted, whose encryption the spill areas take (D48), or
 while SPILL.ENCODINGS names one itself.
+
+#### D1044. An IVF directory whose write fails frees the pages it made
+
+`lists::write_directory` makes the directory's pages and then writes
+each. It freed the pages made when making one failed, and not when a
+write of one failed, as its page could not be held or read back. Its
+callers free only the pages it returns, so those pages stayed in use
+with nothing referring to them.
+
+Both steps now fail through one place that frees every page made
+(`engine/ivf/lists.rs`). A free that fails still leaks its page alone,
+as before.
 
 ## 2. Project layout
 
