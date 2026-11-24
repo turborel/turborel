@@ -85,9 +85,8 @@ pub(super) const ROW_FETCH_DISK: f64 = 5900.0;
 /// \[DESIGN\] STORAGE.SYSTEM_CACHE_BYTES by default: the bytes of the
 /// data file the system's cache is taken to hold beyond the pool. A
 /// machine of the default budget (MEMORY.BUDGET_BYTES, 1 GiB) is taken to
-/// leave its cache a few times as much, as PostgreSQL's
-/// `effective_cache_size` does; a file up to this past its pool is priced
-/// as it was measured, in the cache.
+/// leave its cache a few times as much; a file up to this past its pool is
+/// priced as it was measured, in the cache.
 pub const SYSTEM_CACHE_BYTES: u64 = 4 << 30;
 /// \[DESIGN\] Bytes of a row's entry in the tree besides its record: its
 /// key, its version and its slot.

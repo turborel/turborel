@@ -56,8 +56,7 @@ const LAYOUTS: &[&str] = &["COLUMNS", "PAX"];
 /// What COLUMNSTORE.IMPRINTS takes.
 const SWITCH: &[&str] = &["ON", "OFF"];
 /// \[DESIGN\] The default of COLUMNSTORE.REWRITE_FRACTION: a fifth of a group's
-/// rows changed, deleted or added to before it is written again, as
-/// Vertica's mergeout purges and SQL Server's guidance has it.
+/// rows changed, deleted or added to before it is written again.
 pub const DEFAULT_REWRITE_FRACTION: f64 = 0.2;
 
 /// \[DESIGN\] The default of COLUMNSTORE.GROUP_ROWS: the rows of a frozen row
