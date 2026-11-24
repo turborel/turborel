@@ -20,8 +20,8 @@ fn asked(name: &'static str, request: DebugRequest, means: &str) -> Sample {
 }
 
 /// The sample of the reply `reply`.
-fn told(name: &'static str, reply: Reply, means: &str) -> Sample {
-    server(name, &[DEBUGGER], &reply, means)
+fn told(name: &'static str, reply: &Reply, means: &str) -> Sample {
+    server(name, &[DEBUGGER], reply, means)
 }
 
 /// The samples of every Debug request.
@@ -62,23 +62,23 @@ fn pause() -> Paused {
 fn replies() -> Vec<Sample> {
     let set = DebugBreakpoint { number: 1, routine: raise_pay(), line: 4, condition: None };
     vec![
-        told("debugged-connection", Reply::Debug(DebugReply::Connection(2)), "Debugged connection, sub-kind 0, ID 2"),
+        told("debugged-connection", &Reply::Debug(DebugReply::Connection(2)), "Debugged connection, sub-kind 0, ID 2"),
         told(
             "debugged-breakpoint",
-            Reply::Debug(DebugReply::Breakpoint(set.clone())),
+            &Reply::Debug(DebugReply::Breakpoint(set.clone())),
             "Debugged breakpoint, sub-kind 1, number 1, ANN.RAISE_PAY, line 4, no condition",
         ),
-        told("debugged-breakpoints", Reply::Debug(DebugReply::Breakpoints(vec![set])), "Debugged breakpoints, sub-kind 2, one of them"),
-        told("debugged-running", Reply::Debug(DebugReply::Stack(None)), "Debugged stack, sub-kind 3, none: running"),
+        told("debugged-breakpoints", &Reply::Debug(DebugReply::Breakpoints(vec![set])), "Debugged breakpoints, sub-kind 2, one of them"),
+        told("debugged-running", &Reply::Debug(DebugReply::Stack(None)), "Debugged stack, sub-kind 3, none: running"),
         told(
             "debugged-stack",
-            Reply::Debug(DebugReply::Stack(Some(pause()))),
+            &Reply::Debug(DebugReply::Stack(Some(pause()))),
             "Debugged stack, sub-kind 3, a pause at breakpoint 1, one frame of ANN.RAISE_PAY at line 4, column 3, PCT 10, N null, cursor C closed",
         ),
-        told("event-paused", Reply::Event(Event::Paused(pause())), "Event paused, sub-kind 0, the pause of debugged-stack"),
-        told("event-timed-out", Reply::Event(Event::TimedOut), "Event timed out, sub-kind 1"),
-        told("event-cancelled", Reply::Event(Event::Cancelled), "Event cancelled, sub-kind 2"),
-        told("event-ended", Reply::Event(Event::Ended), "Event ended, sub-kind 3"),
+        told("event-paused", &Reply::Event(Event::Paused(pause())), "Event paused, sub-kind 0, the pause of debugged-stack"),
+        told("event-timed-out", &Reply::Event(Event::TimedOut), "Event timed out, sub-kind 1"),
+        told("event-cancelled", &Reply::Event(Event::Cancelled), "Event cancelled, sub-kind 2"),
+        told("event-ended", &Reply::Event(Event::Ended), "Event ended, sub-kind 3"),
     ]
 }
 

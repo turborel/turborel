@@ -98,7 +98,7 @@ fn an_event_ends_no_request() {
     Reply::Event(Event::Ended).encode(&mut event);
     let mut debugged = Vec::new();
     Reply::Debug(DebugReply::Connection(1)).encode(&mut debugged);
-    let body = |bytes: &[u8]| bytes.get(HEADER..).unwrap().to_vec();
+    let body = |bytes: &[u8]| bytes[HEADER..].to_vec();
     assert!(!Reply::ends_request(b'W', &body(&event)));
     assert!(Reply::ends_request(b'V', &body(&debugged)));
 }
