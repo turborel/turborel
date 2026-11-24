@@ -20,7 +20,7 @@ mod ptf;
 pub(super) use define::{Home, of_schema_routine};
 pub(super) use kept::KeptRoutines;
 pub(super) use program::atomic;
-pub(super) use program::{Hosted, hosted_rows};
+pub(super) use program::{Hosted, compiled_procedures, evaluates, hosted_rows, runs_straight};
 pub(crate) use program::{run_component, run_unhosted};
 
 use super::Completion;

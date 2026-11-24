@@ -154,6 +154,7 @@ mod escrow;
 mod escrow_delta;
 mod escrow_point;
 mod explain_analyze;
+mod explain_changes;
 mod expression_indexes;
 mod expressions;
 mod extension_types;

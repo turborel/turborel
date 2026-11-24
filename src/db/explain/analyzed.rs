@@ -110,7 +110,7 @@ impl Session {
 /// # Errors
 ///
 /// `sql` is not made of tokens.
-fn changes(sql: &str) -> Result<bool> {
+pub(super) fn changes(sql: &str) -> Result<bool> {
     let tokens = lex(sql)?;
     let mut words = tokens.iter().map(|t| &t.tok);
     Ok(begins_change(words.next(), words.next()))

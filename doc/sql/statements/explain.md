@@ -4,19 +4,21 @@
 
 ## NAME
 
-EXPLAIN: show how a query is planned, or run it or a data change and count what each step did *(extension)*
+EXPLAIN: show how a query or a data change is planned, or run it and count what each step did *(extension)*
 
 ## SYNOPSIS
 
 ```
 <explain statement> ::=
     EXPLAIN [ ANALYZE ] <cursor specification>
-  | EXPLAIN ANALYZE <data change statement>
+  | EXPLAIN [ ANALYZE ] <data change statement>
 
 <data change statement> ::=
     <insert statement>
   | <update statement: searched>
   | <delete statement: searched>
+  | <update statement: positioned>
+  | <delete statement: positioned>
   | <merge statement>
 ```
 
@@ -67,7 +69,52 @@ none.
 
 EXPLAIN is not a key word. A table may be named EXPLAIN, and EXPLAIN is
 read as this statement only before SELECT, VALUES, TABLE, WITH or a
-parenthesis.
+parenthesis, or before INSERT, UPDATE, DELETE, or MERGE followed by INTO
+or WITH.
+
+### EXPLAIN of a data change
+
+EXPLAIN also takes INSERT, UPDATE, DELETE and MERGE, and shows what the
+statement would do without running it. It reads no row, locks no row or
+table, writes nothing and fires no trigger, so the database's files
+stay byte for byte as they were. The statement is bound as preparing it
+binds it, and its rows are planned as running it would plan them.
+
+The text is the one EXPLAIN ANALYZE shows of the statement, without
+what a run counts. The first line after `-- physical:` names the
+statement and its table. Below it is the plan of the rows the statement
+would read: an INSERT's query, the rows an UPDATE or DELETE changes,
+with the probe of an index that finds them, or the rows MERGE joins. An
+INSERT of a row of values that reads no table has no plan, as its
+values are evaluated. A positioned UPDATE or DELETE shows its cursor's
+row, `CurrentRow of cursor C`, its cursor declared, open or not. Direct
+SQL declares no cursor, so a positioned one is shown through the
+library or a module.
+
+Lines after the plan say what the change would do beside:
+
+- `-- maintains:` names the indexes whose entries it would write. An
+  INSERT or a DELETE writes every index of the table. An UPDATE writes
+  those whose keys read a column it sets, and every index where a BEFORE
+  row trigger may set any column.
+- `-- cascades:` names each referential action that would write the rows
+  referencing the table: ON DELETE or ON UPDATE CASCADE, SET NULL or SET
+  DEFAULT, the table it writes and the constraint. The tables they write
+  are followed in turn.
+- `-- trigger:` names each trigger the change, or an action it cascades
+  to, would fire, with its time, event, level and table. A change of a
+  view that an INSTEAD OF trigger takes in place shows that trigger
+  alone.
+- `-- point path:` says whether a path past the executor's operators
+  would run it. A searched UPDATE or DELETE that finds its row by a
+  whole unique key runs as one read of that index when it is prepared
+  or a procedure's (EXECUTOR.POINT_OPERATIONS). Of a table no trigger or
+  referential action reaches, a procedure's body compiled writes the row
+  straight (EXECUTOR.COMPILED_PROCEDURES), and so an INSERT's rows. An
+  INSERT of values says they are evaluated. Otherwise it says `none`.
+
+A program reaches the same text by `Session::explain`, which takes
+values for the parameters a statement of a module or a procedure names.
 
 ### EXPLAIN ANALYZE
 
@@ -137,21 +184,27 @@ ANALYZE is read as before.
    for a query run directly.
 2. It is bound as a query run then would be, so it refers only to tables
    and columns that exist.
-3. EXPLAIN without ANALYZE takes only a query. EXPLAIN ANALYZE takes a
-   query, an INSERT, a searched UPDATE or DELETE, or a MERGE.
+3. EXPLAIN and EXPLAIN ANALYZE take a query, an INSERT, a searched or
+   positioned UPDATE or DELETE, or a MERGE.
+4. A positioned UPDATE or DELETE names a cursor the session declared.
 
 ## PRIVILEGES
 
 Those the query needs. EXPLAIN reads no row, but binding the query
-checks them. EXPLAIN ANALYZE reads the rows, as the query would. Of a
-data change, those the statement needs.
+checks them. EXPLAIN ANALYZE reads the rows, as the query would.
+
+Of a data change, EXPLAIN needs the privileges preparing the statement
+needs, those of its access rules, such as UPDATE on the columns it sets
+and SELECT on those it reads. It is shown in a READ ONLY transaction
+too, where the change itself may not run. EXPLAIN ANALYZE needs those
+running the statement needs.
 
 ## ERRORS
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The query refers to a table or column that does not exist, or is otherwise invalid |
-| 42000 | -104 | Its user lacks a privilege the query needs |
+| 2A000 | -103 | The query or data change refers to a table, column or cursor that does not exist, or is otherwise invalid |
+| 42000 | -104 | Its user lacks a privilege the query, or preparing the data change, needs |
 | any | any | EXPLAIN ANALYZE raises any exception the query or data change raises as it runs |
 
 ## EXAMPLES
@@ -647,10 +700,141 @@ EXPLAIN SELECT S.REGION, P.NAME FROM PARTS P, SALES S
 (18 rows)
 ```
 
+An INSERT of a row of values, shown without running it. Its values are
+evaluated, with no plan, and its row is written to the index of PARTS's
+key and to PARTS_NAME. A procedure's body would write its row straight
+on the table, which no trigger or referential action reaches:
+
+```sql
+EXPLAIN INSERT INTO PARTS VALUES (1001, 'part 1001');
+SELECT COUNT(*) FROM PARTS;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Insert into ANN.PARTS
+ -- maintains: ANN.PARTS.UNIQUE1 [btree], PARTS_NAME [btree]
+ -- point path: its values evaluated, with no plan, its rows written straight in a procedure
+(4 rows)
+
+----------------------
+                 1000
+(1 row)
+```
+
+An INSERT of a query's rows shows the query's plan:
+
+```sql
+EXPLAIN INSERT INTO SALES SELECT 'west', SUPPLIER, PRICE FROM OFFERS WHERE PART = 1;
+```
+
+```
+ PLAN
+---------------------------------------------------------
+ -- physical:
+ Insert into ANN.SALES
+   Project 'west', OFFERS.SUPPLIER, OFFERS.PRICE
+     Filter OFFERS.PART = 1  (est. rows=4999)
+       SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
+ -- maintains: none
+ -- point path: its rows written straight in a procedure
+(7 rows)
+```
+
+An UPDATE of a part by its key. The plan probes the key's index, and the
+UPDATE writes PARTS_NAME, whose key reads the column it sets. Prepared,
+or in a procedure, its row would be read by one probe of the key:
+
+```sql
+EXPLAIN UPDATE PARTS SET NAME = 'bolt' WHERE ID = 7;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Update ANN.PARTS
+   IndexScan ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: PARTS.ID = 7  (est. rows=1, cost=20.6)
+ -- maintains: PARTS_NAME [btree]
+ -- point path: one read of ANN.PARTS.UNIQUE1 when prepared or in a procedure, its row written straight in a procedure
+(5 rows)
+```
+
+Orders whose rows go with their part, and a trigger that notes each
+order deleted. A DELETE of a part cascades to its orders, and the
+trigger would fire for them. Nothing is deleted, and GONE stays empty:
+
+```sql
+CREATE TABLE ORDERS (ID INTEGER PRIMARY KEY, PART INTEGER REFERENCES PARTS ON DELETE CASCADE);
+CREATE TABLE GONE (ID INTEGER);
+CREATE TRIGGER ORDER_GONE AFTER DELETE ON ORDERS REFERENCING OLD ROW AS O
+  FOR EACH ROW INSERT INTO GONE VALUES (O.ID);
+INSERT INTO ORDERS VALUES (1, 7), (2, 7), (3, 8);
+COMMIT;
+EXPLAIN DELETE FROM PARTS WHERE ID = 7;
+SELECT COUNT(*) FROM ORDERS;
+SELECT COUNT(*) FROM GONE;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Delete from ANN.PARTS
+   IndexScan ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: PARTS.ID = 7  (est. rows=1, cost=20.6)
+ -- maintains: ANN.PARTS.UNIQUE1 [btree], PARTS_NAME [btree]
+ -- cascades: ON DELETE CASCADE to ANN.ORDERS by ANN.ORDERS_FOREIGN1
+ -- trigger: ANN.ORDER_GONE, AFTER DELETE FOR EACH ROW on ANN.ORDERS
+ -- point path: one read of ANN.PARTS.UNIQUE1 when prepared or in a procedure
+(7 rows)
+
+----------------------
+                    3
+(1 row)
+
+----------------------
+                    0
+(1 row)
+```
+
+A MERGE of the sales into the parts, by their customers. The plan is
+that of the rows it joins, sorted by the target's rows, and its clauses
+would write both indexes of PARTS:
+
+```sql
+EXPLAIN MERGE INTO PARTS P USING SALES S ON P.ID = S.CUSTOMER
+  WHEN MATCHED THEN UPDATE SET NAME = S.REGION
+  WHEN NOT MATCHED THEN INSERT VALUES (S.CUSTOMER, S.REGION);
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- physical:
+ Merge into ANN.PARTS
+   Sort row id
+     Project P.ID, P.NAME, S.REGION, S.CUSTOMER, S.AMOUNT, row id
+       LeftOuterIndexNestedLoop ANN.PARTS using ANN.PARTS.UNIQUE1 [btree]: S.CUSTOMER = P.ID  (est. rows each=1, cost=82.4)
+         Project S.REGION, S.CUSTOMER, S.AMOUNT
+           SeqScan ANN.SALES  (rows=4, cost=4.0)
+ -- maintains: ANN.PARTS.UNIQUE1 [btree], PARTS_NAME [btree]
+ -- point path: none
+(9 rows)
+```
+
 ## STANDARD
 
 EXPLAIN is an extension of turborel. No part of ISO/IEC 9075 shows how
-a statement is planned. In GET DIAGNOSTICS it is COMMAND_FUNCTION
+a statement is planned. EXPLAIN of a data change checks what preparing
+it checks, its Format, Syntax Rules and Access Rules [ISO/IEC 9075-2:2023
+§20.7 GR6]. In GET DIAGNOSTICS it is COMMAND_FUNCTION
 `EXPLAIN`, code -14, with or without ANALYZE.
 
 ## SEE ALSO

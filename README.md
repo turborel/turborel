@@ -95,6 +95,8 @@ behind it, and each can be replaced or added to.
   query or a data change and shows each operator's rows beside its
   estimate, its batches, spills and index reads, and a program may give
   the planner true row counts to test its plans.
+- [EXPLAIN of a data change](doc/sql/statements/explain.md#explain-of-a-data-change)
+  shows its plan, indexes, cascades, triggers and point path, running nothing.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.

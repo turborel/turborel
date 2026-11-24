@@ -4319,8 +4319,17 @@ the leaf pages it read of a B-tree, an index's or its table's (D620, D621, `note
 statement runs for real in the session's transaction, which keeps its
 changes until it commits or rolls back. Its plan is headed by a line
 naming the statement and its table with the rows it changed (D622,
-`db/explain/changed.rs`). EXPLAIN without ANALYZE still takes only a
-query.
+`db/explain/changed.rs`).
+
+`EXPLAIN` without ANALYZE takes them too, searched or positioned, and
+runs nothing: no row is read, locked or written and no trigger fires
+(D980, D982, `db/explain/unrun.rs`). It shows the plan EXPLAIN ANALYZE
+shows without the figures of a run, then the indexes the change
+maintains, the referential actions that cascade from it and the
+triggers that would fire (D983), and whether a point path runs it when
+prepared or in a procedure (D984). It is bound as preparing the
+statement binds it, so it needs the privileges its access rules need
+[ISO/IEC 9075-2:2023 §20.7 GR6] and no other (D981).
 
 ### Plug-ins
 

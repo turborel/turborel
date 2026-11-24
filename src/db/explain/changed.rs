@@ -87,7 +87,7 @@ fn time_of(micros: Option<u64>) -> String {
 
 /// The line naming the data change `stmt` and its table, its unqualified
 /// name in `schema`.
-fn label_of(stmt: &SqlStatement, schema: &str) -> String {
+pub(super) fn label_of(stmt: &SqlStatement, schema: &str) -> String {
     let kind = if matches!(stmt, SqlStatement::Insert(_)) {
         "Insert into"
     } else if matches!(stmt, SqlStatement::UpdateSearched { .. } | SqlStatement::UpdatePositioned { .. }) {

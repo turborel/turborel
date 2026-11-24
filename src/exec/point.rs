@@ -99,6 +99,11 @@ impl PointRead {
         })
     }
 
+    /// The index it reads, which EXPLAIN names (RULES.md D980).
+    pub(crate) fn index(&self) -> &str {
+        &self.index
+    }
+
     /// The row `tx` sees under the probe placed with `values`, its slots'
     /// values, of the columns given; none if it sees none.
     ///
