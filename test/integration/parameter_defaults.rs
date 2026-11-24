@@ -131,7 +131,10 @@ fn a_default_is_checked_as_the_procedure_is_defined_11_60() {
     assert_eq!(made("IN X INTEGER DEFAULT 'a', OUT N INTEGER"), (-103, rule("SR16e i, §9.2 SR2")));
     assert_eq!(made("INOUT N INTEGER DEFAULT DATE '2026-01-01'"), (-103, rule("SR16e i, §9.2 SR2")));
     assert_eq!(made("OUT N INTEGER DEFAULT 1").0, -103, "SR16e ii");
-    assert!(a.run("CREATE PROCEDURE P (IN X INTEGER, IN Z INTEGER DEFAULT X) MODIFIES SQL DATA DELETE FROM L").is_err(), "no parameter X in scope");
+    assert!(
+        a.run("CREATE PROCEDURE P (IN X INTEGER, IN Z INTEGER DEFAULT X) MODIFIES SQL DATA DELETE FROM L").is_err(),
+        "no parameter X in scope"
+    );
     assert!(a.run("CREATE PROCEDURE P (IN X INTEGER DEFAULT (SELECT MAX(K) FROM NOWHERE)) MODIFIES SQL DATA DELETE FROM L").is_err());
     let function = refused(&a, "CREATE FUNCTION F (X INTEGER DEFAULT 1) RETURNS INTEGER CONTAINS SQL RETURN X");
     assert_eq!(function, (-900, rule("CR34")));
@@ -176,10 +179,8 @@ fn what_a_default_names_is_kept_with_the_procedure_11_31() {
 fn a_call_invokes_the_procedure_of_fewest_parameters_9_18() {
     let (_db, a) = defined();
     a.run("CREATE PROCEDURE PICK (IN W INTEGER, OUT G INTEGER) SPECIFIC PICK_TWO CONTAINS SQL SET G = 2").unwrap();
-    a.run(
-        "CREATE PROCEDURE PICK (IN W INTEGER, OUT G INTEGER, IN B INTEGER DEFAULT 100) SPECIFIC PICK_THREE CONTAINS SQL SET G = 3",
-    )
-    .unwrap();
+    a.run("CREATE PROCEDURE PICK (IN W INTEGER, OUT G INTEGER, IN B INTEGER DEFAULT 100) SPECIFIC PICK_THREE CONTAINS SQL SET G = 3")
+        .unwrap();
     a.commit().unwrap();
     let mut p = Params::new().declare("V", integer(), Value::Null);
     let mut picked = |call: &str| {
@@ -261,9 +262,11 @@ fn defaults_are_shown_and_kept_across_reopening_11_60() {
         let db = Database::open(&dir).unwrap();
         db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE L (K INTEGER, N INTEGER, TAG VARCHAR(10))").unwrap();
         let a = db.session("A");
-        a.run("CREATE PROCEDURE KEPT (IN K INTEGER, IN N INTEGER DEFAULT 6 * 7, INOUT TAG VARCHAR(10) DEFAULT NULL) MODIFIES SQL DATA \
-               INSERT INTO L VALUES (K, N, TAG)")
-            .unwrap();
+        a.run(
+            "CREATE PROCEDURE KEPT (IN K INTEGER, IN N INTEGER DEFAULT 6 * 7, INOUT TAG VARCHAR(10) DEFAULT NULL) MODIFIES SQL DATA \
+               INSERT INTO L VALUES (K, N, TAG)",
+        )
+        .unwrap();
         a.commit().unwrap();
         assert_eq!(shown(&a), ["K,NULL", "N,6 * 7", "TAG,NULL"]);
     }

@@ -45,8 +45,10 @@ fn column(name: &str) -> ColumnDesc {
 /// returning INTEGER, deterministic and of CONTAINS SQL, its body RETURN
 /// `value`; EXECUTE granted to no one.
 fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc {
-    let parameters =
-        params.iter().map(|(n, t)| SqlParameter { name: (*n).into(), data_type: ty(t), mode: ParameterMode::In, generic: None, default: None }).collect();
+    let parameters = params
+        .iter()
+        .map(|(n, t)| SqlParameter { name: (*n).into(), data_type: ty(t), mode: ParameterMode::In, generic: None, default: None })
+        .collect();
     let declared: Vec<String> = params.iter().map(|(n, t)| format!("{n} {t}")).collect();
     SqlRoutineDesc {
         method: None,

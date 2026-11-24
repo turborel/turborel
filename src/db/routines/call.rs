@@ -29,11 +29,11 @@ use super::super::compiled::plan;
 use super::super::prepared::{Keeping, KeptPlan};
 use super::super::savepoints::Level;
 use super::super::{Completion, Session, State, StatementContext, rule};
+use super::defaults::default_input;
 use super::program::{Hosted, hosted_rows};
 use crate::ast::{
     CallStatement, Composite, ElementPosition, ParameterSpecification, SqlArgument, TargetKind, ValueExpression, ValueSpecification,
 };
-use super::defaults::default_input;
 use crate::binder::named::{all_or_none, placed};
 use crate::binder::{Context, OutColumn, bind_argument, qualify, resolve_procedure, takes};
 use crate::catalog::{DataAccess, ParameterMode, RoutineKind, SqlParameter, SqlRoutineDesc, owner_of, routine_path};

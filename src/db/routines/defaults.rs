@@ -97,5 +97,8 @@ impl State {
 
 /// The value expressions of the `<parameter default>`s of `definition`.
 pub(super) fn default_values(definition: &RoutineDefinition) -> impl Iterator<Item = &ValueExpression> {
-    definition.parameters.iter().filter_map(|p| if let Some(ParameterDefault { value: SqlArgument::Value(v), .. }) = &p.default { Some(v) } else { None })
+    definition
+        .parameters
+        .iter()
+        .filter_map(|p| if let Some(ParameterDefault { value: SqlArgument::Value(v), .. }) = &p.default { Some(v) } else { None })
 }

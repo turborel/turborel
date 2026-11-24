@@ -22,8 +22,8 @@ pub(super) use designator::{CONSTRUCTOR, INSTANCE, METHOD};
 use super::Parser;
 use super::ptf::{ReturnsTable, has_table_parameter};
 use crate::ast::{
-    ParameterDeclaration, ParameterDefault, ParameterMode, ParameterSpecification, ParameterType, RoutineBody, RoutineDefinition, RoutineKind, SqlArgument,
-    SqlStatement, TargetKind, TypeName,
+    ParameterDeclaration, ParameterDefault, ParameterMode, ParameterSpecification, ParameterType, RoutineBody, RoutineDefinition,
+    RoutineKind, SqlArgument, SqlStatement, TargetKind, TypeName,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -138,8 +138,9 @@ fn default_refusal(kind: RoutineKind, mode: Option<ParameterMode>, at: usize) ->
                    parameters of SQL-invoked functions”, which turborel does not support";
         return Some(not_supported(at, msg));
     }
-    (mode == Some(ParameterMode::Out))
-        .then(|| SqlError::at(Code::SyntaxRule, at, "[ISO/IEC 9075-2:2023 §11.60 SR16e ii] an output SQL parameter has no <parameter default>"))
+    (mode == Some(ParameterMode::Out)).then(|| {
+        SqlError::at(Code::SyntaxRule, at, "[ISO/IEC 9075-2:2023 §11.60 SR16e ii] an output SQL parameter has no <parameter default>")
+    })
 }
 
 impl Parser {
@@ -339,7 +340,12 @@ impl Parser {
     /// descriptor parameter it is a `<descriptor value constructor>`, which
     /// no other's is [SR10g iii]. As the routine's body, it contains no
     /// host or dynamic parameter [§11.60 SR19].
-    fn parameter_default(&mut self, kind: RoutineKind, mode: Option<ParameterMode>, of: &ParameterType) -> Result<Option<ParameterDefault>> {
+    fn parameter_default(
+        &mut self,
+        kind: RoutineKind,
+        mode: Option<ParameterMode>,
+        of: &ParameterType,
+    ) -> Result<Option<ParameterDefault>> {
         let refused = default_refusal(kind, mode, self.here());
         if let Some(e) = refused.as_ref().filter(|e| e.code == Code::SyntaxRule) {
             return Err(e.clone());

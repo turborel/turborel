@@ -119,11 +119,11 @@ mod xml;
 use from::FromItem;
 pub use generated::{bind_generation, generations, noting_generation, written_generations};
 pub use graph_properties::{PropertyBinding, element_columns, property_bound, property_expression, property_type, query_columns};
+pub(crate) use invocation::takes;
 pub use invocation::{
     Candidate, FunctionBody, alike, bind_function_body, definition_of, functions_named, grantably_held, held, resolve_procedure,
     routine_definition, sql_statement,
 };
-pub(crate) use invocation::takes;
 pub use merge::{BoundAction, BoundMerge, BoundWhen, bind_merge};
 pub use parameters::{assigned_argument, bind_argument};
 pub(crate) use psm::{Frame, bind_program};

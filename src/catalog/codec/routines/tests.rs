@@ -62,7 +62,8 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
 /// THROUGH and a fulfill component procedure alone.
 fn polymorphic(only_pass_through: bool) -> SqlRoutineDesc {
     let varying = DataType::Varying { length: 128, units: crate::value::CharUnits::Characters };
-    let generic = |n: &str, g| SqlParameter { name: n.into(), data_type: varying.clone(), mode: ParameterMode::In, generic: Some(g), default: None };
+    let generic =
+        |n: &str, g| SqlParameter { name: n.into(), data_type: varying.clone(), mode: ParameterMode::In, generic: Some(g), default: None };
     let table = |pass_through, semantics| GenericParameter::Table(GenericTable { pass_through, semantics });
     let parameters = vec![
         generic("R", table(true, TableSemantics::Row)),
