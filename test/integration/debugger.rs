@@ -92,8 +92,8 @@ fn top(p: &Paused) -> &Frame {
 }
 
 /// The value of `name` among the frame's parameters and variables.
-fn value(f: &Frame, name: &str) -> Value {
-    f.parameters.iter().chain(&f.variables).find(|n| n.name == name).map(|n| n.value.clone()).unwrap()
+fn value(f: &Frame, name: &str) -> String {
+    f.parameters.iter().chain(&f.variables).find(|n| n.name == name).map(|n| n.value.to_string().trim().to_owned()).unwrap()
 }
 
 fn int(n: i128) -> Value {
@@ -120,8 +120,8 @@ fn a_breakpoint_pauses_and_shows_the_frame() {
     let a = db.session("A");
     let (t, go, thread) = target(&db, "A", "CALL P (5)");
     let debugger = a.attach(&t).unwrap();
-    let b = debugger.break_at(&a, (Kind::Procedure, &named("P")), 8, None).unwrap();
-    assert_eq!((b.number, b.line), (1, 8));
+    let point = debugger.break_at(&a, (Kind::Procedure, &named("P")), 8, None).unwrap();
+    assert_eq!((point.number, point.line), (1, 8));
     go.send(()).unwrap();
     let p = paused(&debugger, &a);
     assert_eq!(p.reason, Reason::Breakpoint(1));
@@ -129,7 +129,7 @@ fn a_breakpoint_pauses_and_shows_the_frame() {
     let f = top(&p);
     assert_eq!(f.origin.as_ref().map(|o| (o.kind, o.shown.ident.as_str())), Some((Kind::Procedure, "P")));
     assert_eq!(f.line, Some((8, 3)), "INSERT is the line's statement, at its third character");
-    assert_eq!((value(f, "X"), value(f, "Y")), (int(5), int(10)));
+    assert_eq!((value(f, "X"), value(f, "Y")), ("5".to_owned(), "10".to_owned()));
     assert_eq!(f.cursors.iter().map(|c| (c.name.as_str(), c.open)).collect::<Vec<_>>(), [("C", true)]);
     assert!(debugger.paused().unwrap().is_some());
     debugger.resume(Action::Continue).unwrap();
@@ -154,7 +154,7 @@ fn steps_go_into_over_and_out_of_calls() {
     let p = paused(&debugger, &a);
     let names: Vec<_> = p.frames.iter().map(|f| f.origin.as_ref().map(|o| o.shown.ident.clone()).unwrap_or_default()).collect();
     assert_eq!(names, ["P", "Q"]);
-    assert_eq!((p.reason, top(&p).line.map(|l| l.0), value(top(&p), "Z")), (Reason::Step, Some(3), int(10)));
+    assert_eq!((p.reason, top(&p).line.map(|l| l.0), value(top(&p), "Z")), (Reason::Step, Some(3), "10".to_owned()));
     debugger.resume(Action::Out).unwrap();
     let p = paused(&debugger, &a);
     assert_eq!((p.frames.len(), top(&p).line.map(|l| l.0)), (1, Some(7)), "OPEN C, next in P");
@@ -164,7 +164,7 @@ fn steps_go_into_over_and_out_of_calls() {
     let p = paused(&debugger, &a);
     let f = top(&p);
     assert_eq!((p.frames.len(), f.origin.as_ref().map(|o| o.kind)), (2, Some(Kind::Function)));
-    assert_eq!((f.line.map(|l| l.0), value(f, "V")), (Some(4), int(10)));
+    assert_eq!((f.line.map(|l| l.0), value(f, "V")), (Some(4), "10".to_owned()));
     debugger.resume(Action::Continue).unwrap();
     assert_eq!(thread.join().unwrap(), None);
     assert_eq!(keys(&a), ["11", "12", "110"]);
@@ -213,7 +213,7 @@ fn a_compiled_call_pauses_interpreted() {
     debugger.break_at(&a, (Kind::Procedure, &named("Q")), 4, None).unwrap();
     go.send(()).unwrap();
     let p = paused(&debugger, &a);
-    assert_eq!((top(&p).line.map(|l| l.0), value(top(&p), "Z")), (Some(4), int(10)));
+    assert_eq!((top(&p).line.map(|l| l.0), value(top(&p), "Z")), (Some(4), "10".to_owned()));
     debugger.detach();
     go.send(()).unwrap();
     thread.join().unwrap();
@@ -231,7 +231,7 @@ fn a_conditional_breakpoint_pauses_where_it_holds() {
     debugger.break_at(&a, (Kind::Procedure, &named("Q")), 3, Some("Z > 5")).unwrap();
     go.send(()).unwrap();
     let p = paused(&debugger, &a);
-    assert_eq!(value(top(&p), "Z"), int(7), "Z = 1 passed by");
+    assert_eq!(value(top(&p), "Z"), "7".to_owned(), "Z = 1 passed by");
     debugger.resume(Action::Continue).unwrap();
     assert_eq!(thread.join().unwrap(), None);
 }
@@ -323,14 +323,44 @@ fn a_debugger_sees_into_what_it_may_debug() {
     let b = db.session("B");
     let (t, go, thread) = target(&db, "B", "CALL A.P (5)");
     let debugger = b.attach(&t).unwrap();
-    let e = debugger.break_at(&b, (Kind::Procedure, &named("Q")), 3, None).unwrap_err();
-    assert_eq!(e.code, Code::Privilege);
+    let refusal = debugger.break_at(&b, (Kind::Procedure, &named("Q")), 3, None).unwrap_err();
+    assert_eq!(refusal.code, Code::Privilege);
     debugger.break_at(&b, (Kind::Procedure, &named("P")), 6, None).unwrap();
     go.send(()).unwrap();
     paused(&debugger, &b);
     debugger.resume(Action::Into).unwrap();
     let p = paused(&debugger, &b);
     assert_eq!((p.frames.len(), top(&p).line.map(|l| l.0)), (1, Some(7)), "Q is stepped over");
+    debugger.resume(Action::Continue).unwrap();
+    assert_eq!(thread.join().unwrap(), None);
+}
+
+/// Verifies: [EXTENSION] RULES.md D1004, D1008: a triggered action pauses
+/// at a breakpoint of its trigger set by the owner of its schema, its frame
+/// showing its transition variables' columns and its variables.
+#[test]
+fn a_triggered_action_pauses() {
+    let db = defined();
+    let a = db.session("A");
+    a.run("CREATE TABLE U (K INTEGER)").unwrap();
+    a.run(
+        "CREATE TRIGGER TR AFTER INSERT ON T REFERENCING NEW ROW AS N FOR EACH ROW\n\
+         BEGIN ATOMIC\n\
+         \x20 DECLARE V INTEGER;\n\
+         \x20 SET V = N.K * 3;\n\
+         \x20 INSERT INTO U VALUES (V);\n\
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    let (t, go, thread) = target(&db, "A", "INSERT INTO T VALUES (4)");
+    let debugger = a.attach(&t).unwrap();
+    debugger.break_at(&a, (Kind::Trigger, &named("TR")), 5, None).unwrap();
+    go.send(()).unwrap();
+    let p = paused(&debugger, &a);
+    let f = top(&p);
+    assert_eq!(f.origin.as_ref().map(|o| (o.kind, o.name.ident.as_str())), Some((Kind::Trigger, "TR")));
+    assert_eq!((f.line.map(|l| l.0), value(f, "N.K"), value(f, "V")), (Some(5), "4".to_owned(), "12".to_owned()));
     debugger.resume(Action::Continue).unwrap();
     assert_eq!(thread.join().unwrap(), None);
 }
@@ -357,7 +387,7 @@ fn a_debuggers_refusals() {
     assert_eq!(line.code, Code::SyntaxRule, "no line 99");
     let b = debugger.break_at(&a, (Kind::Function, &named("F")), 4, None).unwrap();
     debugger.clear(b.number).unwrap();
-    assert!(debugger.breakpoints().unwrap().is_empty());
+    assert_eq!(debugger.breakpoints().unwrap(), []);
     debugger.detach();
     db.session("A").attach(&other.debug_target()).unwrap();
 }

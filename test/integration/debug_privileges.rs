@@ -122,7 +122,7 @@ fn debug_revokes_cascade() {
     assert_eq!(debugs(&a), ["P,B,A,NO"], "C's grant went with B's option");
     a.run("REVOKE DEBUG ON PROCEDURE P FROM B CASCADE").unwrap();
     a.commit().unwrap();
-    assert!(debugs(&a).is_empty());
+    assert_eq!(debugs(&a), Vec::<String>::new());
     assert_eq!(a.run("REVOKE DEBUG ON PROCEDURE P FROM B CASCADE").unwrap().sqlstate().as_str(), "01006");
 }
 
