@@ -46,9 +46,9 @@ The module's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | No `<drop behavior>` is written |
-| 2A000 | -103 | There is no such module, or a rule above is broken |
-| 2A000 | -104 | Its user does not own the module's schema |
+| 42000 | -102 | No `<drop behavior>` is written |
+| 42000 | -103 | There is no such module, or a rule above is broken |
+| 42000 | -104 | Its user does not own the module's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -71,10 +71,10 @@ SELECT COUNT(*) FROM INFORMATION_SCHEMA.ROUTINES WHERE ROUTINE_SCHEMA = 'ANN';
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): routine ANN.NONE is of module ANN.COUNTS, not a schema-level routine: it goes with DROP MODULE [ISO/IEC 9075-2:2023 §11.62 SR2] (at character 14)
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.SIZES invokes a routine of module ANN.COUNTS: drop it with CASCADE [ISO/IEC 9075-4:2006 draft §9.22 SR3] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): routine ANN.NONE is of module ANN.COUNTS, not a schema-level routine: it goes with DROP MODULE [ISO/IEC 9075-2:2023 §11.62 SR2] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.SIZES invokes a routine of module ANN.COUNTS: drop it with CASCADE [ISO/IEC 9075-4:2006 draft §9.22 SR3] (at character 12)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.SIZES is not defined [X3.135-1986 §5.4 SR5] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.SIZES is not defined [X3.135-1986 §5.4 SR5] (at character 14)
 
 ----------------------
                     0

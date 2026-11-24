@@ -16,7 +16,7 @@ use crate::ast::{DescriptorItem, DynamicName, ExecuteStatement, ExtendedName, Us
 use crate::binder::{DescribedKey, OutColumn};
 use crate::catalog::ParameterMode;
 use crate::db::area::commands::{self, Command};
-use crate::db::prepared::{Preparer, in_dynamic};
+use crate::db::prepared::Preparer;
 use crate::db::{Completion, Prepared, Session, State, cursor_error};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::params::{DynamicParameter, Params};
@@ -64,7 +64,7 @@ impl Session {
     /// # Errors
     ///
     /// SQLSTATE 26000 if the extended name is no `<identifier>` \[GR8\];
-    /// 37000 if the statement is not a `<preparable statement>`, or breaks
+    /// 42000 if the statement is not a `<preparable statement>`, or breaks
     /// a rule of GR4; 07005 if the name is a dynamic cursor's, and the
     /// statement is not a `<cursor specification>` \[GR9b ii\]; those of
     /// DEALLOCATE PREPARE.
@@ -74,7 +74,7 @@ impl Session {
         if self.inner.borrow().dynamic.statements.contains_key(&key) {
             self.deallocate(&key)?;
         }
-        let prepared = self.prepared_with(st, &text, Preparer::Sql).map_err(|e| unplaced(in_dynamic(e)))?;
+        let prepared = self.prepared_with(st, &text, Preparer::Sql).map_err(unplaced)?;
         let declared = self.inner.borrow().cursors.iter().any(|(n, c)| n.scope.is_none() && c.statement.as_ref() == Some(&key));
         if declared && !prepared.is_query() {
             let msg = format!("[ISO/IEC 9075:1992 §17.6 GR9b ii] statement {key} is a dynamic cursor's, so a <cursor specification>");
@@ -272,7 +272,7 @@ impl Session {
     ///
     /// # Errors
     ///
-    /// SQLSTATE 37000 if it is not a `<preparable statement>`, or a query,
+    /// SQLSTATE 42000 if it is not a `<preparable statement>`, or a query,
     /// or has a `<comment>` or a `<dynamic parameter specification>`
     /// \[GR3\]; the statement's.
     fn execute_immediate(&self, source: &ValueSpecification, params: &Params) -> Result<Completion> {
@@ -280,7 +280,7 @@ impl Session {
         let prepared = self.prepared_quietly(&text).map_err(unplaced)?;
         if prepared.is_query() || !prepared.inputs().is_empty() || prepared.has_outputs() {
             let msg = "[ISO/IEC 9075:1992 §17.11 GR3a, GR3c] a statement executed immediately is no query, and has no <dynamic parameter specification>";
-            return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::DYNAMIC_SYNTAX_ERROR));
+            return Err(SqlError::new(Code::SyntaxRule, msg));
         }
         self.run_prepared(&prepared, Vec::new(), commands::EXECUTE_IMMEDIATE)
     }

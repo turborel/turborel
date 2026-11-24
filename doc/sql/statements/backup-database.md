@@ -64,7 +64,7 @@ The database's owner's alone.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -104 | Its user is not the database's owner |
 | TB910 | -910 | The database is in memory, no provider has the scheme, or the backup it follows is not in the target |
 | TBB01 | -916 | The backup it follows is damaged |
 | TB915 | -915 | The target cannot be written |

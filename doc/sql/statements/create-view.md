@@ -88,8 +88,8 @@ owner.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or lacks SELECT on a table read |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema, or lacks SELECT on a table read |
 | 25000 | -917 | The transaction is READ ONLY |
 
 Through the view, a row WITH CHECK OPTION refuses fails with SQLSTATE
@@ -116,7 +116,7 @@ OK
  OPS  |              5400.00
 (2 rows)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.PAYROLL is a read-only table [X3.135-1986 §8.7 SR2, §4.4] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.PAYROLL is a read-only table [X3.135-1986 §8.7 SR2, §4.4] (at character 12)
 ```
 
 A column added to STAFF later is not one of ENGINEERS':
@@ -145,8 +145,8 @@ CREATE VIEW BAD3 AS SELECT DEPT, COUNT(*) AS N FROM STAFF GROUP BY DEPT WITH CHE
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.BAD needs a <view column list>: its query has an unnamed column or two of one name [X3.135-1986 §6.5 SR4] (at character 12)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.BAD3 is WITH CHECK OPTION, so must be updatable [X3.135-1986 §6.5 SR9] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.BAD needs a <view column list>: its query has an unnamed column or two of one name [X3.135-1986 §6.5 SR4] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.BAD3 is WITH CHECK OPTION, so must be updatable [X3.135-1986 §6.5 SR9] (at character 12)
 ```
 
 ## STANDARD

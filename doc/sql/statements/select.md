@@ -366,8 +366,8 @@ SELECT on each table and view the query names.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken, or one of WITH's XML options of [XML Values](../19-xml.md#xml-options-of-a-scope): a table or column not found or ambiguous, a sort key or a row count breaking rule 3, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
-| 2A000 | -104 | Its user lacks SELECT on a table or view |
+| 42000 | -103 | A rule above is broken, or one of WITH's XML options of [XML Values](../19-xml.md#xml-options-of-a-scope): a table or column not found or ambiguous, a sort key or a row count breaking rule 3, a column not grouped, operands of a set operation not alike; or FOR UPDATE is written |
+| 42000 | -104 | Its user lacks SELECT on a table or view |
 | 21000 | -811 | A scalar subquery gives more than one row |
 | TB918 | -918 | A recursive query takes more iterations than EXECUTOR.MAX_ITERATIONS |
 | 2201X | -301 | An offset below 0, or null |
@@ -478,7 +478,7 @@ SELECT NOPE FROM STAFF;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): no table in the FROM clause has a column NOPE [X3.135-1986 §5.7 SR3b] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): no table in the FROM clause has a column NOPE [X3.135-1986 §5.7 SR3b] (at character 7)
 ```
 
 ## SELECT INTO
@@ -495,7 +495,7 @@ for each column. It runs only in a program that embeds turborel, whose
 procedure declares the parameters; it is not direct SQL, and the
 `turborel` client does not run it. No row sets SQLCODE 100 (SQLSTATE
 02000), the targets unchanged; more than one is SQLSTATE 21000, SQLCODE
--811; targets not as many as the columns are SQLSTATE 2A000, SQLCODE
+-811; targets not as many as the columns are SQLSTATE 42000, SQLCODE
 -103. A value is assigned to its target as [FETCH](fetch.md) assigns
 it: a string cut to fit is a warning, SQLSTATE 01004.
 

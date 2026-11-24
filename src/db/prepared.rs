@@ -169,13 +169,6 @@ pub(super) enum Preparer {
     Sql,
 }
 
-/// [ISO/IEC 9075:1992 §17.6 GR4] `e`, raised preparing a statement: a
-/// statement that breaks a Format, a Syntax Rule or an Access Rule is of
-/// class 37 here, not of direct SQL's 2A [§20.1 GR5].
-pub(super) fn in_dynamic(e: SqlError) -> SqlError {
-    if e.sqlstate() == SqlState::SYNTAX_ERROR_IN_DIRECT_STATEMENT { e.with_state(SqlState::DYNAMIC_SYNTAX_ERROR) } else { e }
-}
-
 /// [ISO/IEC 9075:1992 §17.6 GR4q] Whether `sql`, made of `tokens`, has a
 /// `<comment>` in a `<separator>`: between them, or between the parts of a
 /// literal continued over lines [§5.3 SR1-SR4], one token.
@@ -218,10 +211,9 @@ const COMMENT_START: char = '-';
 const QUOTE: char = '\'';
 
 /// [§17.6 GR4a] A statement that is not a `<preparable statement>`
-/// (SQLSTATE 37000).
+/// (SQLSTATE 42000 [ISO/IEC 9075-2:2023 §20.7 GR6c]).
 fn not_preparable(what: &str) -> SqlError {
     SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075:1992 §17.6 GR4a] {what} is not a <preparable statement>"))
-        .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
 }
 
 /// A dynamic SQL error of SQLSTATE `state`.
@@ -267,14 +259,15 @@ impl Session {
     /// # Errors
     ///
     /// Those of the statement's Format, Syntax and Access Rules, of SQLSTATE
-    /// 37000 \[GR4a\]: so too if it is not a `<preparable statement>`, or a
+    /// 42000 as when it runs directly \[ISO/IEC 9075-2:2023 §20.7 GR6c,
+    /// §22.1 GR6a\] (RULES.md D971): so too if it is not a `<preparable statement>`, or a
     /// `?` takes no type where it stands \[GR4\]; of a positioned DELETE or
     /// UPDATE that names no table, SQLSTATE 34000 if no cursor of its name
     /// is declared or allocated; of any, 3C000 if more than one is \[GR2\].
     /// \[DESIGN\] A `<comment>` is taken, which SQL's PREPARE refuses
     /// \[GR4q\] (RULES.md D58).
     pub fn prepare(&self, sql: &str) -> Result<Prepared> {
-        let made = self.prepared(sql).map_err(in_dynamic);
+        let made = self.prepared(sql);
         self.diagnosed(made, |_| SqlState::SUCCESSFUL_COMPLETION)
     }
 
@@ -290,7 +283,7 @@ impl Session {
     /// as it is: of EXECUTE IMMEDIATE [ISO/IEC 9075:1992 §17.11 GR4].
     pub(super) fn prepared_quietly(&self, sql: &str) -> Result<Prepared> {
         let call = self.enter()?;
-        self.prepared_with(call.state(), sql, Preparer::Sql).map_err(in_dynamic)
+        self.prepared_with(call.state(), sql, Preparer::Sql)
     }
 
     /// `sql` prepared against the definitions `st`, by `by`.
@@ -298,7 +291,7 @@ impl Session {
         let tokens = lex(sql)?;
         if by == Preparer::Sql && has_comment(sql, &tokens) {
             let msg = "[ISO/IEC 9075:1992 §17.6 GR4q] a statement prepared has no <comment>";
-            return Err(SqlError::new(Code::SyntaxRule, msg).with_state(SqlState::DYNAMIC_SYNTAX_ERROR));
+            return Err(SqlError::new(Code::SyntaxRule, msg));
         }
         let kind = kind_of(&tokens);
         let (cursor, implicit) = self.positioned_reference(st, &tokens, by)?;
@@ -579,6 +572,5 @@ impl Session {
 fn dynamic_parameters(params: &Params, outputs: &Outputs) -> Result<Vec<DynamicParameter>> {
     params.dynamic_types().into_iter().collect::<Option<Vec<_>>>().map(|all| outputs.described(all)).ok_or_else(|| {
         SqlError::new(Code::SyntaxRule, "[ISO/IEC 9075:1992 §17.6 GR4] a <dynamic parameter specification> takes no type where it stands")
-            .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
     })
 }

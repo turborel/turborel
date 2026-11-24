@@ -48,7 +48,7 @@ fn rows_are_copied_in_all_or_nothing() {
     copying.send(row(2000, "d")).unwrap();
     copying.abandon().unwrap();
     let missing = c.copy_rows("NOPE", &[], vec![row(1, "a")]).unwrap_err();
-    assert_eq!(state(&missing).0, "37000", "{missing}");
+    assert_eq!(state(&missing).0, "42000", "{missing}");
     assert_eq!(rows(&c.query("SELECT COUNT(*), MAX(K) FROM T").unwrap()), ["201,500"]);
     let mut ending = server.connect("X");
     ending.query("INSERT INTO T VALUES (3000, 'e')").unwrap();

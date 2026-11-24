@@ -58,7 +58,7 @@ None.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3B002 | -917 | The transaction has 1,024 savepoints already |
-| 2A000 | -103 | It is the action of a trigger |
+| 42000 | -103 | It is the action of a trigger |
 | 09000 | -917 | A procedure a trigger's action calls runs it (SQLSTATE 0W000, prohibited statement encountered during trigger execution) |
 
 ## EXAMPLES

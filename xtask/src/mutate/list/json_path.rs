@@ -226,9 +226,9 @@ pub const JSON_PATH: [Mutation; 23] = [
     Mutation {
         name: "json-path-literal-out-of-range-22003",
         package: Package::Core,
-        breaks: "a path's number literal past the limits is a data exception 22003, not SQLCODE -900",
+        breaks: "a path's number literal past the limits is a data exception 22003, not SQLCODE -103",
         file: "src/json/path/lex.rs",
-        original: "    parsed.map_err(|e| beyond(&e.msg))",
+        original: "    parsed.map_err(|e| unheld(&e.msg))",
         replacement: "    parsed",
         integration: &[],
         unit: &["json::path::lex::tests::hex_integer_literals_are_exact_numbers"],

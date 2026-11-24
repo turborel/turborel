@@ -64,7 +64,7 @@ fn the_owner_configures_a_running_server() {
     let server = start(&db, &[]);
     let mut ann = server.connect("ann");
     let mut bob = server.connect("bob");
-    assert_eq!(state(&bob.query("SET DATABASE SERVER.MAX_CONNECTIONS = 1").unwrap_err()), ("2A000", -104));
+    assert_eq!(state(&bob.query("SET DATABASE SERVER.MAX_CONNECTIONS = 1").unwrap_err()), ("42000", -104));
     assert_eq!(done(&ann.query("SET DATABASE SERVER.MAX_CONNECTIONS = 2").unwrap()), 0);
     assert_eq!(db.setting(MAX_CONNECTIONS).unwrap().to_string(), "2");
     let refused = connection::connect(server.address, "carol", &mut Trust).err().unwrap();

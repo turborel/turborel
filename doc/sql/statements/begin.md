@@ -134,8 +134,8 @@ Those of each statement within, as above.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed, or a declaration follows a statement |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | It is not well formed, or a declaration follows a statement |
+| 42000 | -103 | A rule above is broken |
 | 2D000 | -917 | COMMIT or ROLLBACK runs while an ATOMIC compound statement does |
 | 24000 | -501 | A cursor COMMIT or ROLLBACK closed is fetched from |
 | TB920 | -920 | It is cancelled |
@@ -233,10 +233,10 @@ BEGIN ATOMIC INSERT INTO STEPS VALUES (4); COMMIT; END;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the <ending label> B2 is not B1 [ISO/IEC 9075-4:2006 draft §14.1 SR3] (at character 14)
-turborel: SQLCODE -102 (SQLSTATE 2A000): a compound statement declares its variables and conditions, then its cursors, then its handlers, before its statements, found DECLARE [ISO/IEC 9075-4:2006 draft §14.1] (at character 36)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the compound statement declares the variable Y twice [ISO/IEC 9075-4:2006 draft §14.1 SR10] (at character 33)
-turborel: SQLCODE -103 (SQLSTATE 2A000): an ATOMIC compound statement or a FOR holds no COMMIT or ROLLBACK [ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9] (at character 43)
+turborel: SQLCODE -103 (SQLSTATE 42000): the <ending label> B2 is not B1 [ISO/IEC 9075-4:2006 draft §14.1 SR3] (at character 14)
+turborel: SQLCODE -102 (SQLSTATE 42000): a compound statement declares its variables and conditions, then its cursors, then its handlers, before its statements, found DECLARE [ISO/IEC 9075-4:2006 draft §14.1] (at character 36)
+turborel: SQLCODE -103 (SQLSTATE 42000): the compound statement declares the variable Y twice [ISO/IEC 9075-4:2006 draft §14.1 SR10] (at character 33)
+turborel: SQLCODE -103 (SQLSTATE 42000): an ATOMIC compound statement or a FOR holds no COMMIT or ROLLBACK [ISO/IEC 9075-4:2006 draft §14.1 SR6, §14.13 SR9] (at character 43)
 ```
 
 ## STANDARD

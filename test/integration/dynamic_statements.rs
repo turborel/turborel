@@ -70,7 +70,7 @@ fn extended_statement_names_5_4_17_6() {
 /// §17.7 GR1, §17.10 GR1, GR4, §17.9 GR5a, GR5e] what PREPARE, EXECUTE
 /// and DEALLOCATE PREPARE refuse: a literal for the statement (SQLCODE
 /// -103) or a variable of no character string (-103); a statement that is
-/// not preparable, or has a comment (37000); one not prepared (26000);
+/// not preparable, or has a comment (42000); one not prepared (26000);
 /// COMMIT AND CHAIN, as Feature T261 is not supported (0A000);
 /// dynamic parameters with no using clause (07004), or arguments not one
 /// for each (07001), or of a type not cast to its (07006).
@@ -87,7 +87,7 @@ fn what_prepare_and_execute_refuse_17_6_17_10() {
     assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("0A000".to_owned()), "COMMIT AND CHAIN");
     for refused in ["PREPARE X FROM TEXT", "GET DIAGNOSTICS N = NUMBER", "DELETE FROM T -- all\n", continued] {
         text(&mut p, refused);
-        assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000".to_owned()), "{refused}");
+        assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("42000".to_owned()), "{refused}");
     }
     assert_eq!(run(&s, "EXECUTE S", &mut p), Err("26000".to_owned()), "§17.10 GR1");
     assert_eq!(run(&s, "DEALLOCATE PREPARE S", &mut p), Err("26000".to_owned()), "§17.7 GR1");
@@ -161,7 +161,7 @@ fn a_single_row_select_executed_into_arguments_17_10() {
 /// GR1d, §4.22.6] EXECUTE IMMEDIATE prepares and executes the statement,
 /// a `<literal>` too, in direct SQL as well; the diagnostics area names
 /// EXECUTE IMMEDIATE and the statement; it refuses a query, a dynamic
-/// parameter and a comment (37000); a statement prepared so begins a
+/// parameter and a comment (42000); a statement prepared so begins a
 /// transaction as the statement does.
 #[test]
 fn execute_immediate_17_11() {
@@ -179,7 +179,7 @@ fn execute_immediate_17_11() {
     assert!(s.transaction_mode().is_none(), "SET TRANSACTION begins none");
     for refused in ["SELECT ID FROM T", "DELETE FROM T WHERE ID = ?", "DELETE FROM T -- all\n", "EXECUTE IMMEDIATE 'COMMIT'"] {
         text(&mut p, refused);
-        assert_eq!(run(&s, "EXECUTE IMMEDIATE TEXT", &mut p), Err("37000".to_owned()), "{refused}");
+        assert_eq!(run(&s, "EXECUTE IMMEDIATE TEXT", &mut p), Err("42000".to_owned()), "{refused}");
     }
     assert_eq!(code(&s, "EXECUTE IMMEDIATE K", &mut p), Code::SyntaxRule, "§17.11 SR1");
 }
@@ -204,14 +204,14 @@ fn prepared_statements_outlive_their_transaction_17_6() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR4a] a statement of
-/// dynamic SQL is no `<preparable statement>` (37000), through the API
+/// dynamic SQL is no `<preparable statement>` (42000), through the API
 /// too; nor is it executed by `execute_prepared`.
 #[test]
 fn dynamic_statements_are_not_prepared_17_6() {
     let db = setup();
     let s = db.session("APP");
     for refused in ["PREPARE S FROM X", "EXECUTE S", "ALLOCATE DESCRIPTOR 'D'", "DEALLOCATE PREPARE S"] {
-        assert_eq!(s.prepare(refused).err().map(|e| e.sqlstate().to_string()).as_deref(), Some("37000"), "{refused}");
+        assert_eq!(s.prepare(refused).err().map(|e| e.sqlstate().to_string()).as_deref(), Some("42000"), "{refused}");
     }
 }
 
@@ -219,7 +219,7 @@ fn dynamic_statements_are_not_prepared_17_6() {
 /// GR4q] Regression test (R-TEST-7): the API's prepare, not §17's PREPARE,
 /// takes a statement with a `<comment>`, and a positioned one whose cursor
 /// is not declared yet, which finds it as it runs; PREPARE in SQL text
-/// refuses both (37000, 34000).
+/// refuses both (42000, 34000).
 #[test]
 fn the_api_prepare_takes_comments_and_later_cursors_d58() {
     let db = setup();
@@ -233,7 +233,7 @@ fn the_api_prepare_takes_comments_and_later_cursors_d58() {
     run(&s, "FETCH LATER INTO N", &mut p).unwrap();
     assert_eq!(s.execute_prepared(&positioned, &[]).unwrap(), Completion::Success, "found as it runs");
     text(&mut p, "-- the first row\nDELETE FROM T WHERE ID = 3");
-    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("37000".to_owned()), "GR4q");
+    assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("42000".to_owned()), "GR4q");
     text(&mut p, "DELETE FROM T WHERE CURRENT OF NONE");
     assert_eq!(run(&s, "PREPARE S FROM TEXT", &mut p), Err("34000".to_owned()), "GR2b");
     assert_eq!(rows(&s, "SELECT ID FROM T").unwrap(), ["3"]);

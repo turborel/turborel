@@ -101,7 +101,7 @@ fn constructors_in_definitions_6_34() {
 /// form: the context item, a PASSING argument, a DEFAULT, IS JSON's
 /// input, a constructor's name and value, an aggregate's, its name and
 /// its value FORMAT JSON typed as a constructor's are, and JSON's. A
-/// regression test: a `?` as JSON_OBJECTAGG's name was refused 37000.
+/// regression test: a `?` as JSON_OBJECTAGG's name was refused 42000.
 #[test]
 fn dynamic_parameters_in_every_form_20_6() {
     let db = setup();
@@ -127,14 +127,14 @@ fn dynamic_parameters_in_every_form_20_6() {
     assert_eq!(read(q, &[int(10), text("n")]), r#"[11],{"n":1}"#);
     // [§20.7 GR5a] JSON_OBJECTAGG types a `?` as JSON_OBJECT does: its
     // name, and its value FORMAT JSON, CHARACTER VARYING; a value without
-    // FORMAT JSON none, refused 37000 [GR5b].
+    // FORMAT JSON none, refused 42000 [GR5b].
     let named = s.prepare("SELECT JSON_OBJECTAGG(? VALUE ID) FROM T WHERE ID = 1").unwrap();
     assert_eq!(named.inputs().first().map(|t| t.clone().data_type().is_character()), Some(true));
     assert_eq!(read("SELECT JSON_OBJECTAGG(? VALUE ID) FROM T WHERE ID = 1", &[text("n")]), r#"{"n":1}"#);
     assert_eq!(read("SELECT JSON_OBJECTAGG('k' VALUE ? FORMAT JSON) FROM T WHERE ID = 1", &[text("[1]")]), r#"{"k":[1]}"#);
     assert_eq!(read("SELECT JSON_ARRAYAGG(? FORMAT JSON) FROM T WHERE ID = 1", &[text("{}")]), "[{}]");
     let untyped = s.prepare("SELECT JSON_OBJECTAGG('k' VALUE ?) FROM T").err().map(|e| e.sqlstate().as_str().to_owned());
-    assert_eq!(untyped.as_deref(), Some("37000"), "a value without FORMAT JSON takes no type");
+    assert_eq!(untyped.as_deref(), Some("42000"), "a value without FORMAT JSON takes no type");
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.46 GR11g ii 3 E III, 6 C III 1 a,

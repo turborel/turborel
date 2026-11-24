@@ -290,7 +290,7 @@ VALUES JSON_QUERY('{"price":4,"qty":3}', 'lax $.keyvalue() ? (@.value > 3).key' 
 one. A regular identifier is upper case, so `PASSING 2 AS n` is `$N`. A
 string, number, truth value or datetime is the item it is; FORMAT JSON
 makes a string's JSON text the item. A variable the path names and
-PASSING does not is SQLSTATE 2A000, SQLCODE -103, as the statement is
+PASSING does not is SQLSTATE 42000, SQLCODE -103, as the statement is
 prepared.
 
 ```sql
@@ -351,7 +351,7 @@ turborel: SQLCODE -301 (SQLSTATE 22003): the number is too great for an approxim
 | 2203A | -301 | in strict mode, a member accessor of an item that is no object with the member |
 | 2203B | -301 | a sign of an item that is no number |
 | 2203C | -301 | in strict mode `.*`, or `keyvalue()`, of an item that is no object |
-| 2A000 | -103 | a variable PASSING does not give, or a path that is not one |
+| 42000 | -103 | a variable PASSING does not give, or a path that is not one |
 | | -900 | a path nested deeper than 64, or a number literal past the limits |
 
 Each exception condition of class 22 is one ON ERROR replaces.

@@ -131,7 +131,7 @@ SELECT a.name, b.name, LAST_VALUE(x.name) WITHIN GROUP (GRAPH PATH) AS meet
 Unlike SQL Server, MATCH may stand under OR and NOT, an edge alias may
 be written twice, and a group may be quantified outside SHORTEST_PATH.
 A MATCH under OR or NOT has no FOR PATH table or GRAPH PATH aggregate.
-A MATCH anywhere but a WHERE clause is refused with SQLCODE -103 (SQLSTATE 2A000),
+A MATCH anywhere but a WHERE clause is refused with SQLCODE -103 (SQLSTATE 42000),
 and so is one whose tables are of no one graph.
 
 ## GRAPH_TABLE as Oracle writes it

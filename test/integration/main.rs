@@ -428,6 +428,7 @@ mod structured_values;
 mod subqueries;
 mod subquery_plans;
 mod sums;
+mod syntax_states;
 mod system_tables;
 mod system_time_queries;
 mod system_versioned;

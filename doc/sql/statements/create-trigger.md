@@ -132,9 +132,9 @@ the privileges its statements need, held by the schema's owner.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist |
-| 2A000 | -102 | The definition is not well formed |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or the owner lacks a privilege it needs |
+| 42000 | -102 | The definition is not well formed |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema, or the owner lacks a privilege it needs |
 | 25000 | -917 | The transaction is READ ONLY |
 
 Once made, a statement whose trigger's action fails fails with SQLSTATE
@@ -247,7 +247,7 @@ SELECT COUNT(*) FROM ACCOUNTS;
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.TOTAL is a read-only table [X3.135-1986 §8.5 SR2; X3.135-1986 §4.4] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.TOTAL is a read-only table [X3.135-1986 §8.5 SR2; X3.135-1986 §4.4] (at character 12)
 OK
 OK
 
@@ -267,7 +267,7 @@ SELECT COUNT(*) FROM ACCOUNTS;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the <triggered action> of a BEFORE trigger shall not contain an SQL-statement that possibly modifies SQL-data, which turborel refuses (implementation-defined, IA047) [ISO/IEC 9075-2:2023 §11.49 SR14a] (at character 47)
+turborel: SQLCODE -103 (SQLSTATE 42000): the <triggered action> of a BEFORE trigger shall not contain an SQL-statement that possibly modifies SQL-data, which turborel refuses (implementation-defined, IA047) [ISO/IEC 9075-2:2023 §11.49 SR14a] (at character 47)
 OK
 turborel: SQLCODE -201 (SQLSTATE 09000): the triggered action of trigger ANN.LIMITED failed: SQLSTATE 23000: PRIMARY KEY ANN.ACCOUNTS_PRIMARY1 (ID) of ANN.ACCOUNTS would be violated: a row of these values is there [X3.135-1986 §6.4 GR2] [ISO/IEC 9075-2:2023 §15.21 GR6m]
 

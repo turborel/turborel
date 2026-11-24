@@ -45,7 +45,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The value is not a character string |
+| 42000 | -103 | The value is not a character string |
 | 3F000 | -301 | The value is not a schema name |
 | 3D000 | -301 | The value names a catalog other than the one there is |
 
@@ -80,7 +80,7 @@ SELECT N FROM ORDERS;
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.ORDERS is not defined [X3.135-1986 §5.4 SR5] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.ORDERS is not defined [X3.135-1986 §5.4 SR5] (at character 14)
 ```
 
 The value is a name as SQL reads it, and may name the catalog:

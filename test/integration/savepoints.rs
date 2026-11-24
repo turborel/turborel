@@ -121,7 +121,7 @@ fn rollback_to_keeps_the_savepoint_17_8() {
 /// GR2c, Table 41] the savepoint exceptions: RELEASE and ROLLBACK TO of a
 /// name none has is 3B001, with no transaction active too; SAVEPOINT
 /// initiates a transaction; COMMIT and ROLLBACK destroy every savepoint;
-/// AND CHAIN with TO SAVEPOINT is a syntax error (2A000); 3B001 is of
+/// AND CHAIN with TO SAVEPOINT is a syntax error (42000); 3B001 is of
 /// the class 3B000, and an SQLEXCEPTION handler takes it, its
 /// RETURNED_SQLSTATE 3B001.
 #[test]
@@ -139,8 +139,8 @@ fn savepoint_exceptions_17_8() {
     a.rollback().unwrap();
     assert_eq!(state(a.run("RELEASE SAVEPOINT S")), "3B001", "ROLLBACK destroyed it");
     a.run("SAVEPOINT S").unwrap();
-    assert_eq!(state(a.run("ROLLBACK AND CHAIN TO SAVEPOINT S")), "2A000");
-    assert_eq!(state(a.run("SAVEPOINT")), "2A000");
+    assert_eq!(state(a.run("ROLLBACK AND CHAIN TO SAVEPOINT S")), "42000");
+    assert_eq!(state(a.run("SAVEPOINT")), "42000");
     let raised = a.run("RELEASE SAVEPOINT NONE").unwrap_err().sqlstate();
     assert_eq!(raised.class(), SqlState::SAVEPOINT_EXCEPTION.class());
     a.run(

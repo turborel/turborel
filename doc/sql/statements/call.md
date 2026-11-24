@@ -107,9 +107,9 @@ EXECUTE on the procedure.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not well formed |
-| 2A000 | -103 | No procedure takes the arguments, or a rule above is broken |
-| 2A000 | -104 | Its user holds no EXECUTE on the procedure |
+| 42000 | -102 | The statement is not well formed |
+| 42000 | -103 | No procedure takes the arguments, or a rule above is broken |
+| 42000 | -104 | Its user holds no EXECUTE on the procedure |
 | 22001 | -301 | A value is too long for a parameter or a target |
 | 22003 | -301 | A value is out of the range of a parameter or a target |
 | 0A000 | -900 | A feature not supported is used, or the nesting limit is passed |
@@ -162,7 +162,7 @@ CALL TAKE(99999999999, 1);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the argument of parameter N of procedure ANN.LEFT_OF shall be a target specification [ISO/IEC 9075-2:2023 §9.18 SR9h iii 1]
+turborel: SQLCODE -103 (SQLSTATE 42000): the argument of parameter N of procedure ANN.LEFT_OF shall be a target specification [ISO/IEC 9075-2:2023 §9.18 SR9h iii 1]
 turborel: SQLCODE -900 (SQLSTATE 0A000): NULL or DEFAULT as an argument of an input parameter of CALL is of Feature T522, not supported [ISO/IEC 9075-2:2023 §10.4 CR6] (at character 13)
 turborel: SQLCODE -301 (SQLSTATE 22003): 99999999999 does not fit INTEGER without losing leading digits [ISO/IEC 9075-2:2023 §9.18 GR4c i; ISO/IEC 9075:1992 §9.2 GR3k]
 ```

@@ -112,7 +112,7 @@ impl<S: Read + Write> Connection<S> {
     ///
     /// # Errors
     ///
-    /// The server's: SQLSTATE 37000 if it is not preparable, or a `?` takes
+    /// The server's: SQLSTATE 42000 if it is not preparable, or a `?` takes
     /// no type where it stands; a connection failure.
     pub fn prepare(&mut self, sql: &str) -> Result<Statement> {
         let number = self.next_statement;

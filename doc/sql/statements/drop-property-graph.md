@@ -43,8 +43,8 @@ The graph's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken; GRF-0001 of no such graph ([Appendix A](../../appendix/a-sqlstate.md)) |
-| 2A000 | -104 | Its user does not own the graph's schema |
+| 42000 | -103 | A rule above is broken; GRF-0001 of no such graph ([Appendix A](../../appendix/a-sqlstate.md)) |
+| 42000 | -104 | Its user does not own the graph's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -60,9 +60,9 @@ SELECT COUNT(*) FROM INFORMATION_SCHEMA.PROPERTY_GRAPHS;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.KNOWS is read by property graph ANN.FRIENDS, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.18 SR4] (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.KNOWS is read by property graph ANN.FRIENDS, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.18 SR4] (at character 11)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): GRF-0001 there is no property graph ANN.FRIENDS (at character 20)
+turborel: SQLCODE -103 (SQLSTATE 42000): GRF-0001 there is no property graph ANN.FRIENDS (at character 20)
 OK
 
 ----------------------

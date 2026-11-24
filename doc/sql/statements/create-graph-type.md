@@ -56,8 +56,8 @@ The graph type's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES

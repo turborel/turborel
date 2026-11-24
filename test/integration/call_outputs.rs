@@ -73,7 +73,7 @@ fn a_prepared_call_gives_back_its_outputs_20_7() {
 /// its `<result using clause>` says, SQLSTATE 07007 if it has none; a
 /// statement of none takes a result using clause of no target; DESCRIBE
 /// OUTPUT describes the outputs and DESCRIBE INPUT the inputs; EXECUTE
-/// IMMEDIATE takes no statement of output dynamic parameters (37000).
+/// IMMEDIATE takes no statement of output dynamic parameters (42000).
 #[test]
 fn execute_puts_the_outputs_where_its_result_clause_says_20_13() {
     let (_db, a) = defined();
@@ -95,5 +95,5 @@ fn execute_puts_the_outputs_where_its_result_clause_says_20_13() {
     run(&a, "PREPARE I FROM TEXT", &mut p).unwrap();
     assert_eq!(run(&a, "EXECUTE I INTO VAL", &mut p), Err("07002".to_owned()), "§20.12: a target for no output");
     text(&mut p, "CALL FIND(1, ?)");
-    assert_eq!(run(&a, "EXECUTE IMMEDIATE TEXT", &mut p), Err("37000".to_owned()));
+    assert_eq!(run(&a, "EXECUTE IMMEDIATE TEXT", &mut p), Err("42000".to_owned()));
 }

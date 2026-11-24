@@ -127,8 +127,8 @@ table the graph reads.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist |
-| 2A000 | -103 | A rule above is broken; the message names the condition, as GRF-0003 ([Appendix A](../../appendix/a-sqlstate.md)) |
-| 2A000 | -104 | Its user does not own the schema, or lacks SELECT on an element table |
+| 42000 | -103 | A rule above is broken; the message names the condition, as GRF-0003 ([Appendix A](../../appendix/a-sqlstate.md)) |
+| 42000 | -104 | Its user does not own the schema, or lacks SELECT on an element table |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -167,10 +167,10 @@ CREATE PROPERTY GRAPH IF NOT EXISTS FRIENDS VERTEX TABLES (PERSON);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): GRF-0003 ANN.KNOWS has no one FOREIGN KEY to ANN.PERSON, so write SOURCE KEY (...) REFERENCES PERSON (R4.2) (at character 73)
-turborel: SQLCODE -103 (SQLSTATE 2A000): KEY (NAME) of ANN.PERSON is no PRIMARY KEY or UNIQUE key of NOT NULL columns, as ENFORCED MODE needs (R4.3) (at character 39)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a property that is no column alone is named with AS (R4.5) (at character 66)
-turborel: SQLCODE -103 (SQLSTATE 2A000): schema ANN has a table, view or property graph PERSON already, whose names are one namespace (at character 22)
+turborel: SQLCODE -103 (SQLSTATE 42000): GRF-0003 ANN.KNOWS has no one FOREIGN KEY to ANN.PERSON, so write SOURCE KEY (...) REFERENCES PERSON (R4.2) (at character 73)
+turborel: SQLCODE -103 (SQLSTATE 42000): KEY (NAME) of ANN.PERSON is no PRIMARY KEY or UNIQUE key of NOT NULL columns, as ENFORCED MODE needs (R4.3) (at character 39)
+turborel: SQLCODE -103 (SQLSTATE 42000): a property that is no column alone is named with AS (R4.5) (at character 66)
+turborel: SQLCODE -103 (SQLSTATE 42000): schema ANN has a table, view or property graph PERSON already, whose names are one namespace (at character 22)
 OK
 ```
 

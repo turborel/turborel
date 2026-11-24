@@ -53,7 +53,7 @@ None, beyond rule 4.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The value is not a character string |
+| 42000 | -103 | The value is not a character string |
 | 25000 | -917 | A transaction is active |
 | 28000 | -104 | The value is not an authorization identifier, or is a role's name; or the session was not begun by the database's owner, and the value is not the identifier it began with |
 

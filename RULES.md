@@ -622,6 +622,9 @@ verification approach DO-178C expects (§8).
 | D956 | An integer of an integer column is written as its key with no anchor made of it |
 | D960 | A character string of at most 32 octets is held in its value, a longer one in a buffer its clones share |
 | D961 | A binary string of at most 22 octets is held in its value, a longer one in a buffer its clones share |
+| D970 | A numeric literal no number type holds breaks a Syntax Rule, and text of such a number cast or given is out of range |
+| D971 | A statement that breaks a Format, Syntax Rule or Access Rule is SQLSTATE 42000, prepared or run directly |
+| D972 | The check of threads finds scoped threads, imports of what starts them, and passes over the files of modules of tests |
 | D975 | An export writes each large object as its value, read by its locator a chunk at a time between a cursor's fetches |
 | D976 | An import reads a binary string column's field as its octets' hexits, as an export writes them |
 | D977 | Each `?` of a prepared CALL is described with its parameter's mode and ordinal position and the procedure's specific name |
@@ -833,6 +836,9 @@ conforming SQL to be processed.
 
 The parser reads the whole Format before refusing
 (`Parser::refuse_later`), so SQL breaking a Format still gets -102.
+
+A numeric literal that no number type of turborel's holds is no such
+limit, since SQL:2023 makes a type that holds it a Syntax Rule (D970).
 
 #### D19. A failed undo damages its table
 
@@ -3128,7 +3134,8 @@ long.
 Prepared statements are SQL-92's dynamic SQL [ISO/IEC 9075:1992 §17], which
 drivers expect. `Session::prepare` checks a `<preparable statement>` once
 [§17.6], types each `?` by context [§17.6 GR5] and describes the result.
-Failures to prepare are SQLSTATE 37000. Unlike SQL's PREPARE it accepts a
+Failures to prepare are SQLSTATE 42000, as those of a statement run
+directly are (D971). Unlike SQL's PREPARE it accepts a
 `<comment>`, as drivers send them (D58).
 
 A statement keeps its parsed text and bound plan. Each execution fills the
@@ -17427,6 +17434,87 @@ instant, zone and precision, an interval its units and qualifier, a
 truth value itself. A large object, a value of the JSON type, an
 array, a multiset, a row, a structured value and an XML value were
 already shared by count.
+
+### Conditions
+
+#### D970. A numeric literal no number type holds breaks a Syntax Rule, and text of such a number cast or given is out of range
+
+An exact numeric literal of more than 38 digits, and an approximate one
+beyond the range of DOUBLE PRECISION, were refused as valid SQL beyond a
+limit (D18), SQLCODE -900 and SQLSTATE 0A000. The same number given as
+a parameter or computed was 22003, and text of it cast was 22018, as
+though it were no number at all.
+
+SQL:2023 settles each case. "There shall be an exact numeric type
+capable of representing the value" of an exact literal [ISO/IEC
+9075-2:2023 §5.3 SR29], and an approximate one shall be within the
+range of the approximate types [SR30], whose NOTE 130 calls overflow its
+one syntax error. The maximum precision is implementation-defined, but
+the rule a literal past it breaks is a Syntax Rule, so the literal is
+SQLCODE -103 and syntax error or access rule violation, 42000 (D971),
+whether the statement is run directly, prepared or sent by a client.
+Underflow, a literal too near zero for its type, is no error [NOTE 130]
+and is read as zero.
+
+A value is another matter. A cast of text reads the `<signed numeric
+literal>` it holds and casts that [§6.13 GR8b ii, GR9b ii], as a value
+of the target type, so text of more whole digits than 38 is a value an
+exact type does not fit, 22003 [GR8a ii], as a parameter or a result
+out of range is, and cast to DOUBLE PRECISION is the nearest number
+[GR9a i]. It is read as an approximate number, as no exact one holds
+it, and text past every approximate number's range is 22003 cast to
+any type [GR9a ii]. Text that is no literal stays 22018 [GR8b i]. A
+fraction's digits past those its whole digits leave of 38 are
+truncated as the text is read, as every exact target truncates them,
+so a long fraction is no error.
+
+A numeric literal of the SQL/JSON path language has the value of the
+`<signed numeric literal>` of its characters [§9.45 GR1a], so one no
+number holds breaks a Syntax Rule as that literal would, SQLCODE -103.
+
+#### D971. A statement that breaks a Format, Syntax Rule or Access Rule is SQLSTATE 42000, prepared or run directly
+
+SQL-92 gives the condition three classes: 42, and 2A when a statement
+is invoked directly [ISO/IEC 9075:1992 §3.3.4.3, §20.1 GR5] and 37 when
+it is prepared [§17.6 GR4]. Turborel raised 2A000 of a statement run
+and 37000 of one prepared, so a query naming a missing table was 2A000
+run and 37000 prepared.
+
+SQL:2023 has the one class. A `<direct SQL statement>` that breaks a
+Format, Syntax Rule or Access Rule raises syntax error or access rule
+violation, 42000 [ISO/IEC 9075-2:2023 §22.1 GR6a], and so does a
+`<preparable statement>` that does [§20.7 GR6c]. Its table of
+SQLSTATE values has no class 2A or 37 [§24.1, Table 39], and classes
+beginning with 2 or 3 are the standard's to define, so turborel may not
+keep them as its own. Turborel reads the standards as one language, the
+newer prevailing (doc/README.md), so every such error is 42000:
+of PREPARE, EXECUTE IMMEDIATE, `Session::prepare`, a client's prepared
+statement and a statement run directly alike.
+
+The SQLCODE still tells which rule is broken, -101 a token, -102 a
+Format, -103 a Syntax Rule and -104 a privilege. GET DIAGNOSTICS fills the names
+of what was referenced of a condition of class 42 [§23.1 GR4h].
+
+#### D972. The check of threads finds scoped threads, imports of what starts them, and passes over the files of modules of tests
+
+`cargo xtask verify` checks R-SAFE-5 by reading production sources for
+what starts a thread (`xtask/src/threads.rs`). It knew `thread::spawn`,
+`thread::Builder` and a runtime's builders, so a scoped thread,
+`std::thread::scope` and `spawn_scoped`, or a starter imported and
+called by its bare name, passed unseen. It told tests apart by a file's
+path and by an inline `#[cfg(test)]` module, so a module of tests in a
+file of its own, as `src/engine/rows/zones/costs.rs`, read as
+production code.
+
+The check now finds scoped threads and any `use std::thread::` that
+names `spawn`, `Builder` or `scope`. It reads each production file's
+`#[cfg(test)]` declarations of `mod name;` and passes over the file each
+names and that file's submodules, as tests may start their own threads.
+A module whose body is inline is passed over to its closing brace as
+before, and the line after a declaration of a file's module is read, as
+it was not.
+
+### The client
 
 #### D975. An export writes each large object as its value, read by its locator a chunk at a time between a cursor's fetches
 

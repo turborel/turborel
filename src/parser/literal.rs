@@ -1,7 +1,8 @@
 //! The `<value specification>` and `<literal>` grammar [X3.135-1986 §5.2,
 //! §5.6]: USER and the other user functions, parameters, character and bit
-//! strings and exact and approximate numbers, with this implementation's
-//! limits on them (RULES.md D18); datetime and interval literals are read in
+//! strings and exact and approximate numbers, a number no type of this
+//! implementation holds breaking a Syntax Rule [ISO/IEC 9075-2:2023 §5.3
+//! SR29, SR30] (RULES.md D970); datetime and interval literals are read in
 //! `parser/datetime.rs` and `parser/interval.rs`.
 
 use super::Parser;
@@ -144,8 +145,9 @@ impl Parser {
             Tok::CharacterString(s) => Literal::Character(s),
             Tok::BinaryString(b) => Literal::Binary(b),
             Tok::ExactNumeric(t) => {
-                // [X3.135-1986 §5.2 SR4] sets no maximum number of digits (RULES.md D18).
-                let d = parse_exact(&t).map_err(|m| SqlError::at(Code::Unsupported, at, m))?;
+                // [ISO/IEC 9075-2:2023 §5.3 SR29] a literal no exact type
+                // holds breaks a Syntax Rule (RULES.md D970).
+                let d = parse_exact(&t).map_err(|m| SqlError::at(Code::SyntaxRule, at, m))?;
                 Literal::Exact(if negative { d.negated() } else { d })
             }
             Tok::ApproximateNumeric(t) => {
@@ -166,14 +168,17 @@ impl Parser {
     }
 }
 
-/// [X3.135-1986 §5.2 GR2, SR3, SR4] the value, precision and scale of an `<exact numeric literal>`.
+/// [X3.135-1986 §5.2 GR2, SR3, SR4] the value, precision and scale of an
+/// `<exact numeric literal>`; one of more digits than the maximum
+/// precision, which no exact numeric type holds, breaks [ISO/IEC
+/// 9075-2:2023 §5.3 SR29].
 fn parse_exact(text: &str) -> std::result::Result<Decimal, String> {
     let (int, frac) = text.split_once('.').unwrap_or((text, ""));
     // [X3.135-1986 §5.2 SR4] precision is the number of <digit>s it contains.
     let digits = u32::try_from(int.len().saturating_add(frac.len())).unwrap_or(u32::MAX);
     if digits > MAX_EXACT_PRECISION {
         return Err(format!(
-            "[X3.135-1986 §5.2 SR4] <exact numeric literal> {text} has {digits} digits; this implementation's maximum exact precision is {MAX_EXACT_PRECISION}"
+            "[ISO/IEC 9075-2:2023 §5.3 SR29] no exact type holds {text}, of {digits} digits; the maximum precision is {MAX_EXACT_PRECISION}"
         ));
     }
     // At most MAX_EXACT_PRECISION digits, which the lexer guarantees are
@@ -184,7 +189,9 @@ fn parse_exact(text: &str) -> std::result::Result<Decimal, String> {
 }
 
 /// [X3.135-1986 §5.2 GR3] mantissa times 10 to the exponent, for the
-/// `<approximate numeric literal>` `text` at character `at`.
+/// `<approximate numeric literal>` `text` at character `at`; one beyond
+/// the range of the approximate types breaks [ISO/IEC 9075-2:2023 §5.3
+/// SR30], its one syntax error [NOTE 130] (RULES.md D970).
 fn parse_approximate(text: &str, at: usize) -> Result<f64> {
     let Some((mantissa, exponent)) = text.split_once(['E', 'e']) else {
         return Err(SqlError::at(Code::Syntax, at, format!("[X3.135-1986 §5.2 F] {text} is not an <approximate numeric literal>")));
@@ -193,9 +200,9 @@ fn parse_approximate(text: &str, at: usize) -> Result<f64> {
     let mantissa = if mantissa.contains('.') { format!("0{mantissa}0") } else { mantissa.to_string() };
     format!("{mantissa}e{exponent}").parse::<f64>().ok().filter(|f| f.is_finite()).ok_or_else(|| {
         SqlError::at(
-            Code::Unsupported,
+            Code::SyntaxRule,
             at,
-            format!("[X3.135-1986 §5.2 SR5] {text} is outside the range of this implementation's approximate numbers"),
+            format!("[ISO/IEC 9075-2:2023 §5.3 SR30] {text} is outside the range of this implementation's approximate numbers"),
         )
     })
 }

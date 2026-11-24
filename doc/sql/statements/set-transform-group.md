@@ -52,7 +52,7 @@ None.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 0S000 | -301 | The value is no group name |
-| 2A000 | -103 | The type does not exist, or the value is not a character string |
+| 42000 | -103 | The type does not exist, or the value is not a character string |
 
 ## EXAMPLES
 

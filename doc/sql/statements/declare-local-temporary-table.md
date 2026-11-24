@@ -55,9 +55,9 @@ refer to.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The name is not qualified by MODULE |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user lacks a privilege a constraint needs |
+| 42000 | -102 | The name is not qualified by MODULE |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user lacks a privilege a constraint needs |
 
 ## EXAMPLES
 
@@ -97,14 +97,14 @@ DECLARE LOCAL TEMPORARY TABLE ANN.X (K INTEGER);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): MODULE.F1 may not refer to ANN.PERS: a declared local temporary table, to a persistent base one [ISO/IEC 9075:1992 §11.8 SR4] (at character 62)
-turborel: SQLCODE -103 (SQLSTATE 2A000): MODULE.SCRATCH is a declared local temporary table: it goes with the session [ISO/IEC 9075:1992 §11.18 SR3] (at character 11)
-turborel: SQLCODE -103 (SQLSTATE 2A000): MODULE.SCRATCH is a declared local temporary table: it is not altered [ISO/IEC 9075:1992 §11.10 SR5]
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.SV names MODULE.SCRATCH, a declared local temporary table [ISO/IEC 9075:1992 §11.19 SR5] (at character 12)
-turborel: SQLCODE -103 (SQLSTATE 2A000): MODULE.SCRATCH is a declared local temporary table: no privilege on it is granted or revoked [ISO/IEC 9075:1992 §10.3 SR1] (at character 16)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.P may not refer to MODULE.SCRATCH: a persistent base table, to a declared local temporary one [ISO/IEC 9075:1992 §11.9 SR3] (at character 13)
-turborel: SQLCODE -103 (SQLSTATE 2A000): MODULE.SCRATCH is declared already [ISO/IEC 9075:1992 §13.11 SR1]
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected MODULE, found ANN (at character 30)
+turborel: SQLCODE -103 (SQLSTATE 42000): MODULE.F1 may not refer to ANN.PERS: a declared local temporary table, to a persistent base one [ISO/IEC 9075:1992 §11.8 SR4] (at character 62)
+turborel: SQLCODE -103 (SQLSTATE 42000): MODULE.SCRATCH is a declared local temporary table: it goes with the session [ISO/IEC 9075:1992 §11.18 SR3] (at character 11)
+turborel: SQLCODE -103 (SQLSTATE 42000): MODULE.SCRATCH is a declared local temporary table: it is not altered [ISO/IEC 9075:1992 §11.10 SR5]
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.SV names MODULE.SCRATCH, a declared local temporary table [ISO/IEC 9075:1992 §11.19 SR5] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): MODULE.SCRATCH is a declared local temporary table: no privilege on it is granted or revoked [ISO/IEC 9075:1992 §10.3 SR1] (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.P may not refer to MODULE.SCRATCH: a persistent base table, to a declared local temporary one [ISO/IEC 9075:1992 §11.9 SR3] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): MODULE.SCRATCH is declared already [ISO/IEC 9075:1992 §13.11 SR1]
+turborel: SQLCODE -102 (SQLSTATE 42000): expected MODULE, found ANN (at character 30)
 ```
 
 ## STANDARD

@@ -79,7 +79,7 @@ turborel: SQLCODE -301 (SQLSTATE 22037): two members of a JSON object have the k
 ------------------------------------------
  {"buyer":"Bob","items":[],"paid":false}
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): CAST of NUMERIC(1,0) to JSON is not valid [ISO/IEC 9075-2:2023 §6.13 SR5, SR6, SR7, SR8, SR12] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): CAST of NUMERIC(1,0) to JSON is not valid [ISO/IEC 9075-2:2023 §6.13 SR5, SR6, SR7, SR8, SR12] (at character 7)
 ```
 
 ## Reading values
@@ -192,7 +192,7 @@ SELECT PAID, COUNT(*) FROM (SELECT DOC."paid" AS PAID FROM ORDERS) AS P
 | 22032 | -301 | JSON ( ), CAST or a stored string of no JSON text; JSON_SERIALIZE or CAST to a string of a datetime scalar, which no JSON text holds |
 | 22037 | -301 | JSON ( ) WITH UNIQUE KEYS of an object with two members of one key |
 | 22001 | -301 | JSON_SERIALIZE of text longer than its type |
-| 2A000 | -103 | CAST of JSON to or from another type than a character string; a comparison of JSON with another type, or JSON brought together with it; JSON_SCALAR of a type it does not take; JSON_SERIALIZE of no JSON value or RETURNING JSON; JSON_QUERY RETURNING JSON with OMIT QUOTES |
+| 42000 | -103 | CAST of JSON to or from another type than a character string; a comparison of JSON with another type, or JSON brought together with it; JSON_SCALAR of a type it does not take; JSON_SERIALIZE of no JSON value or RETURNING JSON; JSON_QUERY RETURNING JSON with OMIT QUOTES |
 
 ## Standard
 

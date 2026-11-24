@@ -297,10 +297,10 @@ says.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The action is not written as the synopsis shows |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | The action is not written as the synopsis shows |
+| 42000 | -103 | A rule above is broken |
 | 3F000 | -103 | The schema of a constraint added does not exist |
-| 2A000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |
+| 42000 | -104 | Its user does not own the table's schema, or lacks a privilege a column or constraint needs |
 | 23000 | -201 | A row breaks the constraint added; a NOT NULL column added has no default, and the table has rows; SET NOT NULL of a column a row holds a null in |
 | 23T01 | -201 | A row of a table attached is not one the bound holds *(extension)* |
 | 25000 | -917 | The transaction is READ ONLY |
@@ -351,9 +351,9 @@ SELECT * FROM PAY;
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.PAY refers to ANN.STAFF.SALARY, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.15 SR4]
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.PAY refers to ANN.STAFF.SALARY, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.15 SR4]
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.PAY is not defined [X3.135-1986 §5.4 SR5] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.PAY is not defined [X3.135-1986 §5.4 SR5] (at character 14)
 ```
 
 An identity column added to a table of rows numbers them, and is then
@@ -420,11 +420,11 @@ ALTER TABLE STAFF DROP COLUMN DEPT;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.STAFF already has a column ID [ISO/IEC 9075:1992 §11.4 SR1] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.STAFF already has a column ID [ISO/IEC 9075:1992 §11.4 SR1] (at character 29)
 turborel: SQLCODE -201 (SQLSTATE 23000): ANN.STAFF has rows, in which NOT NULL column HIRED would be null [ISO/IEC 9075:1992 §11.11 GR2]
-turborel: SQLCODE -103 (SQLSTATE 2A000): column NAME of ANN.STAFF has no default to drop [ISO/IEC 9075:1992 §11.14 SR2] (at character 31)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.NOPE is not defined [ISO/IEC 9075:1992 §11.10 SR2] (at character 12)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected CASCADE or RESTRICT, found end of statement (at character 34)
+turborel: SQLCODE -103 (SQLSTATE 42000): column NAME of ANN.STAFF has no default to drop [ISO/IEC 9075:1992 §11.14 SR2] (at character 31)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.NOPE is not defined [ISO/IEC 9075:1992 §11.10 SR2] (at character 12)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected CASCADE or RESTRICT, found end of statement (at character 34)
 ```
 
 A column renamed, and a rename a view refuses:
@@ -439,7 +439,7 @@ SELECT ID, FULL_NAME FROM STAFF WHERE ID = 1;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.WHO names ANN.STAFF.FULL_NAME or GIVEN in its text, so the column is renamed only once nothing does (at character 32)
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.WHO names ANN.STAFF.FULL_NAME or GIVEN in its text, so the column is renamed only once nothing does (at character 32)
            ID | FULL_NAME
 --------------+--------------------------------
             1 | Ada
@@ -488,9 +488,9 @@ ALTER TABLE STOCK ALTER COLUMN SKU DROP NOT NULL;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): column LABEL of ANN.STOCK is of CHARACTER VARYING(20), which CHARACTER VARYING(4) may not replace [ISO/IEC 9075-2:2023 §11.19 SR15a] (at character 31)
-turborel: SQLCODE -103 (SQLSTATE 2A000): column QTY of ANN.STOCK is of INTEGER, which CHARACTER(10) may not replace [ISO/IEC 9075-2:2023 §11.19 SR15c] (at character 31)
-turborel: SQLCODE -103 (SQLSTATE 2A000): column SKU of ANN.STOCK is in its PRIMARY KEY, so it stays NOT NULL [ISO/IEC 9075-2:2023 §11.16 SR4] (at character 31)
+turborel: SQLCODE -103 (SQLSTATE 42000): column LABEL of ANN.STOCK is of CHARACTER VARYING(20), which CHARACTER VARYING(4) may not replace [ISO/IEC 9075-2:2023 §11.19 SR15a] (at character 31)
+turborel: SQLCODE -103 (SQLSTATE 42000): column QTY of ANN.STOCK is of INTEGER, which CHARACTER(10) may not replace [ISO/IEC 9075-2:2023 §11.19 SR15c] (at character 31)
+turborel: SQLCODE -103 (SQLSTATE 42000): column SKU of ANN.STOCK is in its PRIMARY KEY, so it stays NOT NULL [ISO/IEC 9075-2:2023 §11.16 SR4] (at character 31)
 ```
 
 STOCK renamed GOODS *(extension)*, once no view names it:
@@ -505,7 +505,7 @@ SELECT * FROM GOODS ORDER BY SKU;
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): view ANN.LOW names ANN.STOCK in its text, so the table is renamed only once nothing does
+turborel: SQLCODE -103 (SQLSTATE 42000): view ANN.LOW names ANN.STOCK in its text, so the table is renamed only once nothing does
 OK
 OK
           SKU | LABEL                |          QTY

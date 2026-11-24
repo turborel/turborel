@@ -102,7 +102,7 @@ fn statement_errors_are_placed_at_their_construct() {
 /// an overflow, a LIKE escape not followed by itself, _ or %, a null with
 /// no indicator parameter (data exceptions, by subclass); a UNIQUE or NOT
 /// NULL constraint; more than one row; a cursor not open; a Syntax Rule in
-/// a statement invoked directly [§20.1 GR5]; a conflict undoing a
+/// a statement invoked directly [ISO/IEC 9075-2:2023 §22.1 GR6a]; a conflict undoing a
 /// statement (implementation-defined, TB911) and one rolling back a
 /// commit (serialization failure).
 #[test]
@@ -125,8 +125,8 @@ fn outcomes_have_their_sqlstates() {
         ("INSERT INTO T VALUES (1, 'X', 1, 1)", "23000"),
         ("INSERT INTO U (ID, CODE) VALUES (NULL, 'Z')", "23000"),
         ("SELECT ID INTO N FROM T", "21000"),
-        ("FETCH C INTO N", "2A000"),
-        ("SELECT NOPE INTO N FROM T", "2A000"),
+        ("FETCH C INTO N", "42000"),
+        ("SELECT NOPE INTO N FROM T", "42000"),
     ];
     s.declare_cursor("DECLARE D CURSOR FOR SELECT ID FROM T").unwrap();
     for (sql, expected) in cases {

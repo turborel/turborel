@@ -124,7 +124,7 @@ fn deallocate_prepare_destroys_its_cursors_17_7() {
 /// prepared names a cursor declared, dynamic or not, or allocated: one of
 /// no table changes the table of the cursor's specification; through the
 /// API too. No cursor of the name is refused (34000); one of each kind
-/// (3C000); a cursor of no updatable table, for one of no table (37000).
+/// (3C000); a cursor of no updatable table, for one of no table (42000).
 #[test]
 fn positioned_statements_prepared_17_19_17_20() {
     let db = setup();
@@ -158,7 +158,7 @@ fn positioned_statements_prepared_17_19_17_20() {
     assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("3C000".to_owned()), "GR2a");
     s.declare_cursor("DECLARE R CURSOR FOR SELECT ID FROM T UNION SELECT ID FROM U").unwrap();
     text(&mut p, "DELETE WHERE CURRENT OF R");
-    assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("37000".to_owned()), "§17.19 SR2: no table");
+    assert_eq!(run(&s, "PREPARE D FROM TEXT", &mut p), Err("42000".to_owned()), "§17.19 SR2: no table");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.17, §17.18, §17.16, §13.6

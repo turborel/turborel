@@ -13,8 +13,8 @@
 //! though it is an ECMAScript punctuator, since no SQL/JSON path
 //! expression holds one.
 
-use super::{beyond, lexical};
-use crate::error::Result;
+use super::lexical;
+use crate::error::{Code, Result, SqlError};
 use crate::json::Item;
 use crate::json::text::{HEX, HIGH_SURROGATES, approximate, exact, paired};
 use crate::regex::general_category;
@@ -211,7 +211,7 @@ struct Lexer {
 /// # Errors
 ///
 /// SQLCODE -101 if `text` is not of the path language's tokens and
-/// separators; SQLCODE -900 for a numeric literal out of every number's
+/// separators; SQLCODE -103 for a numeric literal out of every number's
 /// range.
 pub(super) fn lex(text: &str) -> Result<Vec<Lexeme>> {
     let mut lexer = Lexer { chars: text.chars().collect(), at: 0 };
@@ -225,13 +225,16 @@ pub(super) fn lex(text: &str) -> Result<Vec<Lexeme>> {
     }
 }
 
-/// A numeric literal's number, `parsed` as a JSON number is: one no number
-/// of turborel's holds exactly, which JSON text makes the exception
-/// condition 22003, is in a path expression's text a limit of turborel's,
-/// SQLCODE -900, as an SQL `<approximate numeric literal>` past its range
-/// is (RULES.md D18), refused as the statement is prepared.
+/// A numeric literal's number, `parsed` as JSON text's: the value of the
+/// `<signed numeric literal>` it is [ISO/IEC 9075-2:2023 §9.45 GR1a], so one
+/// no number holds breaks a Syntax Rule as that does [§5.3 SR29, SR30] (D970).
 fn held(parsed: Result<Item>) -> Result<Item> {
-    parsed.map_err(|e| beyond(&e.msg))
+    parsed.map_err(|e| unheld(&e.msg))
+}
+
+/// The error of a numeric literal no number holds, `why`.
+fn unheld(why: &str) -> SqlError {
+    SqlError::new(Code::SyntaxRule, format!("[ISO/IEC 9075-2:2023 §9.45 GR1a, §5.3 SR29, SR30] no number holds the literal: {why}"))
 }
 
 /// [ECMAScript 5.1 §7.3] Whether `c` is a LineTerminator.
@@ -461,7 +464,7 @@ impl Lexer {
     ///
     /// # Errors
     ///
-    /// SQLCODE -900 if it has more significant digits than 34, or is out
+    /// SQLCODE -103 if it has more significant digits than 34, or is out
     /// of the range of a decimal floating-point number.
     fn hex_integer(&mut self) -> Result<Item> {
         self.at = self.at.saturating_add(HEX_PREFIX_LENGTH);
@@ -470,7 +473,7 @@ impl Lexer {
             self.bump();
             times_sixteen_plus(&mut decimal, digit);
             if decimal.len() > MAX_HEX_VALUE_DIGITS {
-                return Err(beyond("a number is out of the range of a decimal floating-point number"));
+                return Err(unheld("a number is out of the range of a decimal floating-point number"));
             }
         }
         let digits: String = decimal.iter().rev().filter_map(|d| char::from_digit(*d, DECIMAL)).collect();

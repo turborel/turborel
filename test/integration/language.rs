@@ -6,7 +6,7 @@ use turborel::lexer::MAX_IDENTIFIER_LENGTH;
 use turborel::parser::MAX_NESTING_DEPTH;
 use turborel::value::MAX_EXACT_PRECISION;
 
-use crate::common::{code, exec, rows, setup};
+use crate::common::{code, exec, failure, rows, setup};
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.2 SR10, SR11, SR13, SR15],
 /// which take priority over X3.135-1986 §5.3: a key word is one in any case,
@@ -171,27 +171,35 @@ fn underscores_in_numeric_literals_5_3() {
     assert!(rows(&s, "SELECT _A FROM (VALUES 1) AS X (_A)").is_err(), "an identifier begins with a letter still");
 }
 
-/// Verifies: [X3.135-1986 §5.2 SR4]; [DESIGN] an exact literal of the maximum
-/// precision is accepted, and one digit more gets SQLCODE -900.
+/// Verifies: [ISO/IEC 9075-2:2023 §5.3 SR29] RULES.md D970: an exact
+/// literal of the maximum precision is accepted, either sign, and one
+/// digit more, which no exact type holds, breaks the Syntax Rule, SQLCODE
+/// -103 and SQLSTATE 42000, as a regression test: it was -900 before the
+/// fix.
 #[test]
-fn an_exact_literal_beyond_the_maximum_precision_is_unsupported_5_2() {
+fn an_exact_literal_beyond_the_maximum_precision_breaks_a_syntax_rule_5_3() {
     let db = setup();
     let s = db.session("APP");
-    // [X3.135-1986 §5.2 SR4, SR5] set no limit on digits or range; beyond this
-    // implementation's, a literal is valid SQL-86 it does not process.
     let nines = |n: u32| "9".repeat(usize::try_from(n).unwrap());
     let longest = nines(MAX_EXACT_PRECISION);
-    assert_eq!(rows(&s, &format!("SELECT {longest} FROM T WHERE ID = 1")), Ok(vec![longest.clone()]));
-    assert_eq!(code(&s, &format!("SELECT {} FROM T", nines(MAX_EXACT_PRECISION + 1))), Code::Unsupported);
+    assert_eq!(rows(&s, &format!("SELECT {longest}, -{longest} FROM T WHERE ID = 1")), Ok(vec![format!("{longest},-{longest}")]));
+    for sql in [format!("SELECT {} FROM T", nines(MAX_EXACT_PRECISION + 1)), format!("SELECT -{} FROM T", nines(MAX_EXACT_PRECISION + 1))] {
+        assert_eq!(failure(s.open_cursor(&sql).map(|_| ())), (Code::SyntaxRule, "42000".to_owned()), "{sql}");
+    }
 }
 
-/// Verifies: [X3.135-1986 §5.2 SR5]; [DESIGN] an approximate literal outside
-/// the range of `f64` gets SQLCODE -900.
+/// Verifies: [ISO/IEC 9075-2:2023 §5.3 SR30, NOTE 130] RULES.md D970: an
+/// approximate literal past DOUBLE PRECISION's range breaks the Syntax
+/// Rule, of either sign, SQLCODE -103 and SQLSTATE 42000, as a regression
+/// test: it was -900 before the fix; one too near zero is zero.
 #[test]
-fn an_approximate_literal_out_of_range_is_unsupported_5_2() {
+fn an_approximate_literal_out_of_range_breaks_a_syntax_rule_5_3() {
     let db = setup();
     let s = db.session("APP");
-    assert_eq!(code(&s, "SELECT 1E999 FROM T"), Code::Unsupported);
+    for sql in ["SELECT 1E999 FROM T", "SELECT -1E999 FROM T"] {
+        assert_eq!(failure(s.open_cursor(sql).map(|_| ())), (Code::SyntaxRule, "42000".to_owned()), "{sql}");
+    }
+    assert_eq!(rows(&s, "SELECT 1E-999 FROM T WHERE ID = 1"), Ok(vec!["0E0".into()]));
 }
 
 /// Verifies: [X3.135-1986 §5.9 SR4b, SR4c, GR7] scales of sums and products,
