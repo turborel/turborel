@@ -64,13 +64,13 @@ pub const DEBUGGER_API: [Mutation; 8] = [
     },
     Mutation {
         name: "debug-event-ends-request",
-        package: Package::Server,
+        package: Package::Client,
         breaks: "an event read as a request's last reply ends the request it came within",
         file: "protocol/src/reply.rs",
         original: "            DESCRIPTION | ROWS | NOTICE | STATUS | EVENT => false,",
         replacement: "            DESCRIPTION | ROWS | NOTICE | STATUS => false,",
-        integration: &["debugging::a_debugger_drives_another_connections_procedure"],
-        unit: &[],
+        integration: &[],
+        unit: &["frames::tests::an_event_read_past_ends_no_request"],
     },
     Mutation {
         name: "debug-events-not-kept",

@@ -335,3 +335,19 @@ fn an_event_is_kept_until_waited_for() {
     assert_eq!(c.read_timeout(), read, "its timeout put back");
     assert!(!c.is_lost());
 }
+
+/// Verifies: [EXTENSION] RULES.md D393, D1032: an Event among the replies
+/// read past after a bad value ends no request, so the next statement
+/// still takes its own reply, and the Event is kept for a wait.
+#[test]
+fn an_event_read_past_ends_no_request() {
+    use turborel::debugger::Event;
+    let description = encoded(&[Reply::Description(Vec::new())]);
+    let event = encoded(&[Reply::Event(Event::Ended)]);
+    let bad = [description, row_of(&[TRUTH, 2]), event, encoded(&[complete(0, "00000")])].concat();
+    let mut c = connected(&[turborel_protocol::capability::DEBUGGER], vec![bad, no_data()]);
+    assert!(!c.query("SELECT V FROM T").unwrap_err().ends_connection());
+    let Outcome::Done(done) = c.query("DELETE FROM T").unwrap() else { panic!("rows for a DELETE") };
+    assert_eq!(done.sqlcode, 100_i32, "its own reply, not the bad statement's");
+    assert!(matches!(c.debug_wait(Some(SHORT)).unwrap(), Some(Event::Ended)), "kept");
+}
