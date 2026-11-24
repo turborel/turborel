@@ -330,21 +330,21 @@ SELECT * FROM HYBRID_SEARCH(INDEX = HELP_H, QUERY_TEXT = 'gift', TOP_N = 1) AS H
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): HYBRID_SEARCH names its QUERY_VECTOR, as HELP_H embeds no text by a MODEL (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): HYBRID_SEARCH names its QUERY_VECTOR, as HELP_H embeds no text by a MODEL (at character 14)
 ```
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A required argument is missing, or one is written twice |
-| 2A000 | -103 | QUERY_VECTOR is left out of a search of an index of no MODEL |
-| 2A000 | -103 | INDEX names no hybrid index, or its table's primary key is not one column |
-| 2A000 | -103 | A weight is not a number |
-| 2A000 | -102 | An argument is not one of those above, or FUSION is neither RRF nor WEIGHTED |
-| 2A000 | -103 | A hybrid index of a MODEL names two columns, or its table's primary key is not one column, or its model is not there |
+| 42000 | -103 | A required argument is missing, or one is written twice |
+| 42000 | -103 | QUERY_VECTOR is left out of a search of an index of no MODEL |
+| 42000 | -103 | INDEX names no hybrid index, or its table's primary key is not one column |
+| 42000 | -103 | A weight is not a number |
+| 42000 | -102 | An argument is not one of those above, or FUSION is neither RRF nor WEIGHTED |
+| 42000 | -103 | A hybrid index of a MODEL names two columns, or its table's primary key is not one column, or its model is not there |
 | 22000 | -301 | CHUNKER is no chunking CHUNK_TEXT reads |
-| 2A000 | -103 | A hybrid index of no MODEL is given a CHUNKER or a MODE, or HYBRID.STATE is given |
-| 2A000 | -103 | ALTER INDEX gives an index of two columns a MODEL, or takes one's MODEL away, or names a model not there |
-| 2A000 | -103 | A table, pipeline or index of the name an index of a MODEL gives its own is there |
+| 42000 | -103 | A hybrid index of no MODEL is given a CHUNKER or a MODE, or HYBRID.STATE is given |
+| 42000 | -103 | ALTER INDEX gives an index of two columns a MODEL, or takes one's MODEL away, or names a model not there |
+| 42000 | -103 | A table, pipeline or index of the name an index of a MODEL gives its own is there |
 | 0A000 | -900 | A hybrid index of no MODEL names one column |
 
 ## See also

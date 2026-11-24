@@ -8,6 +8,7 @@ use std::net::TcpStream;
 use turborel::db::Database;
 use turborel_cli::{FileSource, Input, Io, Outcome, Statements, Terminal};
 use turborel_client::connection::{Connection, Sink, Streamed};
+use turborel_client::export::Layout;
 use turborel_client::import::{Import, ImportError, Imported, Rejected};
 use turborel_client::{Canceller, Failure};
 
@@ -99,8 +100,8 @@ impl Statements for Untold<'_> {
     fn warning(&self) -> Option<&str> {
         self.0.warning()
     }
-    fn export_native(&mut self, sql: &str, out: &mut dyn Write) -> Result<u64, Failure> {
-        Statements::export_native(&mut self.0, sql, out)
+    fn export(&mut self, sql: &str, out: &mut dyn Write, layout: &mut dyn Layout) -> Result<u64, Failure> {
+        Statements::export(&mut self.0, sql, out, layout)
     }
     fn in_transaction(&mut self) -> bool {
         self.0.in_transaction()

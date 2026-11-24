@@ -46,8 +46,8 @@ The owner of the type, who needs EXECUTE on each function added.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken, or a function added breaks a rule of CREATE TRANSFORM |
-| 2A000 | -104 | Its user does not own the type, or lacks EXECUTE on a function |
+| 42000 | -103 | A rule above is broken, or a function added breaks a rule of CREATE TRANSFORM |
+| 42000 | -104 | Its user does not own the type, or lacks EXECUTE on a function |
 
 ## EXAMPLES
 
@@ -79,7 +79,7 @@ ALTER TRANSFORM FOR TEMP HOST (DROP (FROM SQL RESTRICT));
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): group HOST has a FROM SQL function, dropped once [ISO/IEC 9075-2:2023 §11.70 SR3 to SR5] (at character 25)
+turborel: SQLCODE -103 (SQLSTATE 42000): group HOST has a FROM SQL function, dropped once [ISO/IEC 9075-2:2023 §11.70 SR3 to SR5] (at character 25)
 ```
 
 ## STANDARD

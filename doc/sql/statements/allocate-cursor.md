@@ -63,7 +63,7 @@ As it is opened, those of its query.
 | 26000 | -921 | No statement of the name is prepared (rule 1) |
 | 07005 | -921 | The statement is not a query (rule 1) |
 | 34000 | -921 | The cursor's name is not an identifier, or one allocated (rule 2); OPEN, FETCH, CLOSE, UPDATE or DELETE of a cursor not allocated |
-| 2A000 | -103 | A name written as a literal |
+| 42000 | -103 | A name written as a literal |
 
 ## EXAMPLES
 
@@ -90,7 +90,7 @@ statement LOCAL BY_PAY, which is not prepared:
 ALLOCATE CUR CURSOR FOR GLOBAL STMT       -921 (34000): cursor 'RICH' is allocated already [ISO/IEC 9075:1992 §17.13 GR5]
 ALLOCATE GLOBAL CUR CURSOR FOR STMT       -921 (26000): no statement BY_PAY is prepared [ISO/IEC 9075:1992 §17.13 GR1]
 OPEN GLOBAL CUR USING FLOOR               -921 (34000): no cursor 'RICH' is allocated [ISO/IEC 9075:1992 §17.14 GR2]
-ALLOCATE 'RICH' CURSOR FOR GLOBAL STMT    -103 (2A000): an <extended statement name> or <extended cursor name> is not a <literal> [ISO/IEC 9075:1992 §5.4 SR13]
+ALLOCATE 'RICH' CURSOR FOR GLOBAL STMT    -103 (42000): an <extended statement name> or <extended cursor name> is not a <literal> [ISO/IEC 9075:1992 §5.4 SR13]
 ```
 
 ## STANDARD

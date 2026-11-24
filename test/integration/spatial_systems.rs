@@ -195,5 +195,5 @@ fn transforms_move_every_kind_of_value() {
     for text in refused {
         assert_eq!(state(&a, &format!("VALUES ST_TRANSFORM(ST_GEOMFROMTEXT('{text}', 4326), 3857)")), "2FF15", "{text}");
     }
-    assert_eq!(state(&a, "VALUES ST_TRANSFORM(ST_POINT(1, 0, 4326), 'x')"), "2A000");
+    assert_eq!(state(&a, "VALUES ST_TRANSFORM(ST_POINT(1, 0, 4326), 'x')"), "42000");
 }

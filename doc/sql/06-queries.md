@@ -697,7 +697,7 @@ SELECT DEPT, NAME FROM STAFF GROUP BY DEPT;
 ------+----------------------+------------------------------------------
  ENG  |                    2 |                                 15300.00
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): outside a set function, a grouped query may only reference grouping columns and columns functionally dependent on them (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): outside a set function, a grouped query may only reference grouping columns and columns functionally dependent on them (found STAFF.NAME) [X3.135-1986 §5.25 SR7; ISO/IEC 9075-2:2023 §6.7 SR8] (at character 13)
 ```
 
 ### Functionally dependent columns
@@ -1099,7 +1099,7 @@ SELECT NAME, LAG(SALARY) OVER () FROM STAFF;
             3 | Edsger                         | OPS  | Edsger                         | Edsger                         | NULL
             4 | Barbara                        | NULL | Barbara                        | Barbara                        | NULL
 (4 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the window of LEAD or LAG has an ordering [ISO/IEC 9075-2:2023 §9.23 SR5a] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): the window of LEAD or LAG has an ordering [ISO/IEC 9075-2:2023 §9.23 SR5a] (at character 13)
 ```
 
 ### Nested window functions
@@ -1148,7 +1148,7 @@ SELECT ROW_NUMBER(CURRENT_ROW) FROM STAFF;
             3 | Edsger                         |     5400.00 |                                 18900.00 |        NULL | Barbara
             4 | Barbara                        |        NULL |                                  5400.00 |        0.00 | Barbara
 (4 rows, with a warning: SQLSTATE 01003)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a nested window function is only in the argument of a set function a window function contains [ISO/IEC 9075-2:2023 §6.11 SR1] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): a nested window function is only in the argument of a set function a window function contains [ISO/IEC 9075-2:2023 §6.11 SR1] (at character 7)
 ```
 
 A nested window function is only in the argument of a set function OVER
@@ -1189,7 +1189,7 @@ SELECT SUM(DISTINCT SALARY) OVER (ORDER BY ID) FROM STAFF;
  ENG  |                                 15300.00 |                    2
  OPS  |                                  5400.00 |                    3
 (3 rows, with a warning: SQLSTATE 01003)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a window function is only in the select list of a query specification [ISO/IEC 9075-2:2023 §6.10 SR2b] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 42000): a window function is only in the select list of a query specification [ISO/IEC 9075-2:2023 §6.10 SR2b] (at character 29)
            ID |                DEPTS
 --------------+----------------------
             1 |                    1
@@ -1197,7 +1197,7 @@ turborel: SQLCODE -103 (SQLSTATE 2A000): a window function is only in the select
             3 |                    2
             4 |                    1
 (4 rows, with a warning: SQLSTATE 01003)
-turborel: SQLCODE -103 (SQLSTATE 2A000): SUM(DISTINCT ...) is over a window of no ordering and no frame [ISO/IEC 9075-2:2023 §9.23 SR8d ii] (at character 7)
+turborel: SQLCODE -103 (SQLSTATE 42000): SUM(DISTINCT ...) is over a window of no ordering and no frame [ISO/IEC 9075-2:2023 §9.23 SR8d ii] (at character 7)
 ```
 
 ## Set operations
@@ -1235,7 +1235,7 @@ SELECT ID FROM STAFF UNION SELECT TITLE FROM DEPT;
  OPS
  NULL
 (4 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): character strings and numbers are brought together [ISO/IEC 9075:1992 §7.10 SR12b ii, §9.3 SR2, SR3a] (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): character strings and numbers are brought together [ISO/IEC 9075:1992 §7.10 SR12b ii, §9.3 SR2, SR3a] (at character 21)
 ```
 
 ## ORDER BY
@@ -1319,9 +1319,9 @@ SELECT DEPT FROM STAFF GROUP BY DEPT ORDER BY ID;
  HR
  ENG
 (2 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a sort key contains no set function; name it in the select list, and sort by that column [ISO/IEC 9075-2:2023 §7.17 SR26b] (at character 46)
-turborel: SQLCODE -103 (SQLSTATE 2A000): SELECT DISTINCT is ordered by columns of its result alone [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B II] (at character 41)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a sort key of a grouped query that its select list leaves out may only reference grouping columns and columns functionally dependent on them (found STAFF.ID) [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I] (at character 46)
+turborel: SQLCODE -103 (SQLSTATE 42000): a sort key contains no set function; name it in the select list, and sort by that column [ISO/IEC 9075-2:2023 §7.17 SR26b] (at character 46)
+turborel: SQLCODE -103 (SQLSTATE 42000): SELECT DISTINCT is ordered by columns of its result alone [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B II] (at character 41)
+turborel: SQLCODE -103 (SQLSTATE 42000): a sort key of a grouped query that its select list leaves out may only reference grouping columns and columns functionally dependent on them (found STAFF.ID) [ISO/IEC 9075-2:2023 §7.17 SR26 d i 9 B I] (at character 46)
 ```
 
 The keys of a set operation, a VALUES list or any other query that is
@@ -1340,7 +1340,7 @@ SELECT DEPT FROM STAFF UNION SELECT DEPT FROM DEPT ORDER BY TITLE;
  OPS
  NULL
 (4 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the result has no column TITLE [ISO/IEC 9075:1992 §13.1 SR10a] (at character 60)
+turborel: SQLCODE -103 (SQLSTATE 42000): the result has no column TITLE [ISO/IEC 9075:1992 §13.1 SR10a] (at character 60)
 ```
 
 ### OFFSET and FETCH FIRST
@@ -1441,8 +1441,8 @@ SELECT NAME FROM STAFF FETCH FIRST 2 ROWS WITH TIES;
 
 ```
 turborel: SQLCODE -301 (SQLSTATE 2201W): the fetch first row count is 0, less than 1 [ISO/IEC 9075-2:2023 §7.17 GR7c]
-turborel: SQLCODE -103 (SQLSTATE 2A000): the offset row count is an exact number of scale 0, not NUMERIC(2,1) [ISO/IEC 9075-2:2023 §7.17 SR27] (at character 30)
-turborel: SQLCODE -103 (SQLSTATE 2A000): FETCH FIRST WITH TIES is of a query expression with an ORDER BY [ISO/IEC 9075-2:2023 §7.17 SR30] (at character 23)
+turborel: SQLCODE -103 (SQLSTATE 42000): the offset row count is an exact number of scale 0, not NUMERIC(2,1) [ISO/IEC 9075-2:2023 §7.17 SR27] (at character 30)
+turborel: SQLCODE -103 (SQLSTATE 42000): FETCH FIRST WITH TIES is of a query expression with an ORDER BY [ISO/IEC 9075-2:2023 §7.17 SR30] (at character 23)
 ```
 
 ### FETCH APPROX and FETCH EXACT *(extension)*
@@ -1543,7 +1543,7 @@ may come in any order.
 
 APPROX is of a count of rows ONLY, so neither WITH TIES nor PERCENT, and
 a target accuracy is of APPROX alone. Either is SQLCODE -103 (SQLSTATE
-2A000).
+42000).
 
 ```sql
 SELECT NAME FROM STAFF ORDER BY SALARY FETCH APPROX FIRST 2 ROWS WITH TIES;
@@ -1551,8 +1551,8 @@ SELECT NAME FROM STAFF ORDER BY SALARY FETCH FIRST 2 ROWS ONLY WITH TARGET ACCUR
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): FETCH APPROX is of a count of rows ONLY: not WITH TIES, nor PERCENT (at character 39)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a target accuracy is of FETCH APPROX (at character 63)
+turborel: SQLCODE -103 (SQLSTATE 42000): FETCH APPROX is of a count of rows ONLY: not WITH TIES, nor PERCENT (at character 39)
+turborel: SQLCODE -103 (SQLSTATE 42000): a target accuracy is of FETCH APPROX (at character 63)
 ```
 
 ## Table value constructors

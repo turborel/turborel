@@ -203,7 +203,7 @@ running the statement needs.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The query or data change refers to a table, column or cursor that does not exist, or is otherwise invalid |
+| 42000 | -103 | The query or data change refers to a table, column or cursor that does not exist, or is otherwise invalid |
 | 42000 | -104 | Its user lacks a privilege the query, or preparing the data change, needs |
 | any | any | EXPLAIN ANALYZE raises any exception the query or data change raises as it runs |
 

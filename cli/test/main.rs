@@ -36,6 +36,7 @@ mod commands;
 mod common;
 mod connections;
 mod edits;
+mod exported;
 mod extensions;
 mod imports;
 mod manual;

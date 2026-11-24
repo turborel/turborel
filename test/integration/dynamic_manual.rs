@@ -95,14 +95,14 @@ fn the_prepare_page_runs_as_printed() {
     assert_eq!(value(&p, "MY_NAME"), "Ada");
     assert_eq!(
         refused(&s, "PREPARE GONE FROM 'DELETE FROM STAFF'", &mut p),
-        "-103 (2A000): an <SQL statement variable> is not a <literal> [ISO/IEC 9075:1992 §17.6 SR1]"
+        "-103 (42000): an <SQL statement variable> is not a <literal> [ISO/IEC 9075:1992 §17.6 SR1]"
     );
     set(&mut p, "TEXT", "DELETE FROM STAF");
-    assert_eq!(refused(&s, "PREPARE GONE FROM TEXT", &mut p), "-103 (37000): table ANN.STAF is not defined [X3.135-1986 §5.4 SR5]");
+    assert_eq!(refused(&s, "PREPARE GONE FROM TEXT", &mut p), "-103 (42000): table ANN.STAF is not defined [X3.135-1986 §5.4 SR5]");
     set(&mut p, "TEXT", "SELECT ? FROM STAFF");
     assert_eq!(
         refused(&s, "PREPARE GONE FROM TEXT", &mut p),
-        "-103 (37000): a <dynamic parameter specification> here takes no type from where it stands [ISO/IEC 9075:1992 §17.6 GR4]"
+        "-103 (42000): a <dynamic parameter specification> here takes no type from where it stands [ISO/IEC 9075:1992 §17.6 GR4]"
     );
     set(&mut p, "STMT", "TWO WORDS");
     assert_eq!(
@@ -187,7 +187,7 @@ fn the_get_descriptor_page_runs_as_printed() {
         ),
         (
             "GET DESCRIPTOR 'ROW' VALUE 1 WHAT = TYPE",
-            "-103 (2A000): the target of TYPE is not of its type [ISO/IEC 9075:1992 §17.4 SR3, Table 17]",
+            "-103 (42000): the target of TYPE is not of its type [ISO/IEC 9075:1992 §17.4 SR3, Table 17]",
         ),
         ("GET DESCRIPTOR 'NO_ROW' N = COUNT", "-921 (33000): no SQL descriptor area 'NO_ROW' is allocated [ISO/IEC 9075:1992 §17.4 GR1]"),
     ];
@@ -254,7 +254,7 @@ fn the_describe_page_runs_as_printed() {
         ),
         (
             "DESCRIBE PAY INTO SQL DESCRIPTOR 'PAY_ROW'",
-            "-103 (2A000): INTO is of a <dynamic fetch statement> or a <result using clause> alone [ISO/IEC 9075:1992 §17.9 SR1]",
+            "-103 (42000): INTO is of a <dynamic fetch statement> or a <result using clause> alone [ISO/IEC 9075:1992 §17.9 SR1]",
         ),
     ];
     for (sql, message) in refusals {
@@ -293,7 +293,7 @@ fn the_allocate_cursor_and_deallocate_prepare_pages_run_as_printed() {
         ("OPEN GLOBAL CUR USING FLOOR", "-921 (34000): no cursor 'RICH' is allocated [ISO/IEC 9075:1992 §17.14 GR2]"),
         (
             "ALLOCATE 'RICH' CURSOR FOR GLOBAL STMT",
-            "-103 (2A000): an <extended statement name> or <extended cursor name> is not a <literal> [ISO/IEC 9075:1992 §5.4 SR13]",
+            "-103 (42000): an <extended statement name> or <extended cursor name> is not a <literal> [ISO/IEC 9075:1992 §5.4 SR13]",
         ),
         ("DEALLOCATE PREPARE GLOBAL STMT", "-501 (24000): statement BY_PAY is of cursor RICH, which is open [ISO/IEC 9075:1992 §17.7 GR2]"),
     ];
@@ -345,7 +345,7 @@ fn the_dynamic_cursor_examples_run_as_printed() {
     assert_eq!(value(&p, "N"), "3", "the first row below 7000");
     assert_eq!(
         refused(&s, "FETCH D USING MY_ID, MY_NAME", &mut p),
-        "-103 (2A000): the <using clause> of a FETCH is of INTO [ISO/IEC 9075:1992 §17.15 SR2]"
+        "-103 (42000): the <using clause> of a FETCH is of INTO [ISO/IEC 9075:1992 §17.15 SR2]"
     );
     assert_eq!(refused(&s, "OPEN D USING FLOOR", &mut p), "-501 (24000): cursor D is already open [X3.135-1986 §8.8 GR1]");
     s.execute("CLOSE D", &mut p).unwrap();

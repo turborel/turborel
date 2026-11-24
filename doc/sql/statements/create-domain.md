@@ -74,8 +74,8 @@ REFERENCES a CHECK needs.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist, or a constraint's does not |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks a privilege a constraint needs |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema, or a constraint's, or lacks a privilege a constraint needs |
 | 25000 | -917 | The transaction is READ ONLY |
 
 A CAST to the domain of a value one of its constraints is false of fails

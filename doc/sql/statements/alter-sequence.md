@@ -51,8 +51,8 @@ The owner of the generator's schema.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the generator's schema |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the generator's schema |
 
 ## EXAMPLES
 
@@ -82,7 +82,7 @@ OK
 ----------------------
                    10
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a sequence generator's current base value is within its bounds, and 15 is not within 1 to 5 [ISO/IEC 9075-2:2023 §9.37 SR12] (at character 15)
+turborel: SQLCODE -103 (SQLSTATE 42000): a sequence generator's current base value is within its bounds, and 15 is not within 1 to 5 [ISO/IEC 9075-2:2023 §9.37 SR12] (at character 15)
 ```
 
 ## STANDARD

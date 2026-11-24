@@ -120,7 +120,7 @@ None.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 33000 | -921 | No area of the name is allocated (rule 1) |
-| 2A000 | -103 | The item number or a target not of its type (rules 2, 3) |
+| 42000 | -103 | The item number or a target not of its type (rules 2, 3) |
 | 07009 | -921 | The item number is not from 1 to the occurrences (rule 2) |
 | 22005 | -301 | DATA's target is not of the item's type (rule 3) |
 | 0700C | -921 | DATA of a row or of an array's element (rule 5) |
@@ -149,7 +149,7 @@ Refused, then:
 GET DESCRIPTOR 'ROW' VALUE 1 TEXT = DATA    -301 (22002): INDICATOR is negative, and DATA is got without it [ISO/IEC 9075:1992 §17.4 GR5]
 GET DESCRIPTOR 'ROW' VALUE 1 MY_ID = DATA   -301 (22005): NUMERIC(9,0) does not match the type the item describes [ISO/IEC 9075:1992 §17.4 GR2, §17.1 SR2]
 GET DESCRIPTOR 'ROW' VALUE 4 N = TYPE       -921 (07009): item 4 is not of 1 to 3, the area's occurrences [ISO/IEC 9075:1992 §17.4 GR3]
-GET DESCRIPTOR 'ROW' VALUE 1 WHAT = TYPE    -103 (2A000): the target of TYPE is not of its type [ISO/IEC 9075:1992 §17.4 SR3, Table 17]
+GET DESCRIPTOR 'ROW' VALUE 1 WHAT = TYPE    -103 (42000): the target of TYPE is not of its type [ISO/IEC 9075:1992 §17.4 SR3, Table 17]
 GET DESCRIPTOR 'NO_ROW' N = COUNT           -921 (33000): no SQL descriptor area 'NO_ROW' is allocated [ISO/IEC 9075:1992 §17.4 GR1]
 ```
 

@@ -141,7 +141,7 @@ SELECT TITLE FROM RECIPES ORDER BY EMBEDDING;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): ORDER BY orders, groups, compares or keys values of VECTOR(4), which have no order and no equality; VECTOR_EQUALS compares vectors
+turborel: SQLCODE -103 (SQLSTATE 42000): ORDER BY orders, groups, compares or keys values of VECTOR(4), which have no order and no equality; VECTOR_EQUALS compares vectors
 ```
 
 ## Working with vectors

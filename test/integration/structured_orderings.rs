@@ -189,9 +189,9 @@ fn state_and_equals_only_orderings_11_65() {
         a.run(s).unwrap_or_else(|e| panic!("{s}: {e}"));
     }
     a.commit().unwrap();
-    refused(&a, "CREATE ORDERING FOR N ORDER FULL BY STATE", (Code::SyntaxRule, "2A000", "§11.65 SR6a ii"));
+    refused(&a, "CREATE ORDERING FOR N ORDER FULL BY STATE", (Code::SyntaxRule, "42000", "§11.65 SR6a ii"));
     assert_eq!(query(&a, "SELECT K FROM T WHERE E = NEW E().X(1).Y(2)"), ["2"]);
     assert_eq!(query(&a, "SELECT K FROM T WHERE E <> NEW E().X(1).Y(2)"), ["1"]);
-    refused(&a, "SELECT K FROM T ORDER BY E", (Code::SyntaxRule, "2A000", "§9.14 SR3"));
-    refused(&a, "SELECT K FROM T WHERE N = N", (Code::SyntaxRule, "2A000", "§9.10 SR3"));
+    refused(&a, "SELECT K FROM T ORDER BY E", (Code::SyntaxRule, "42000", "§9.14 SR3"));
+    refused(&a, "SELECT K FROM T WHERE N = N", (Code::SyntaxRule, "42000", "§9.10 SR3"));
 }

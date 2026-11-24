@@ -85,9 +85,9 @@ Those the statement prepared needs.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The statement variable is a literal, or not a character string (rule 1) |
+| 42000 | -103 | The statement variable is a literal, or not a character string (rule 1) |
 | 26000 | -921 | An extended name is not an identifier (rule 2) |
-| 37000 | -102, -103, -104 | The statement is not one a program may prepare, or breaks a rule or lacks a privilege (rule 3) |
+| 42000 | -102, -103, -104 | The statement is not one a program may prepare, or breaks a rule or lacks a privilege (rule 3) |
 | 34000 | -921 | No cursor of the name of a positioned UPDATE or DELETE (rule 4) |
 | 3C000 | -921 | More than one cursor of that name, one declared and one allocated (rule 4) |
 | 07005 | -921 | A cursor is declared for the name, and the statement is not a query (rule 5) |
@@ -119,9 +119,9 @@ s.execute("EXECUTE GLOBAL STMT INTO MY_NAME INDICATOR NAME_IND USING MY_ID", &mu
 Refused, TEXT as shown:
 
 ```
-PREPARE GONE FROM 'DELETE FROM STAFF'    -103 (2A000): an <SQL statement variable> is not a <literal> [ISO/IEC 9075:1992 §17.6 SR1]
-PREPARE GONE FROM TEXT                   DELETE FROM STAF: -103 (37000): table ANN.STAF is not defined [X3.135-1986 §5.4 SR5]
-PREPARE GONE FROM TEXT                   SELECT ? FROM STAFF: -103 (37000): a <dynamic parameter specification> here takes no type from where it stands [ISO/IEC 9075:1992 §17.6 GR4]
+PREPARE GONE FROM 'DELETE FROM STAFF'    -103 (42000): an <SQL statement variable> is not a <literal> [ISO/IEC 9075:1992 §17.6 SR1]
+PREPARE GONE FROM TEXT                   DELETE FROM STAF: -103 (42000): table ANN.STAF is not defined [X3.135-1986 §5.4 SR5]
+PREPARE GONE FROM TEXT                   SELECT ? FROM STAFF: -103 (42000): a <dynamic parameter specification> here takes no type from where it stands [ISO/IEC 9075:1992 §17.6 GR4]
 PREPARE STMT FROM TEXT                   STMT TWO WORDS: -921 (26000): 'TWO WORDS' is not an <identifier> [ISO/IEC 9075:1992 §17.6 GR8]
 ```
 

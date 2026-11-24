@@ -67,9 +67,9 @@ is found if that owner owns its schema too, or holds USAGE on it (see
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | One of its name exists, or its target namespace is the empty string |
+| 42000 | -103 | One of its name exists, or its target namespace is the empty string |
 | 3F000 | -103 | Its schema does not exist |
-| 2A000 | -104 | Its user does not own the schema |
+| 42000 | -104 | Its user does not own the schema |
 | 10000 | -301 | The text is no library module, or raises a static error of XQuery |
 | 0A000 | -900 | Its modules import modules more deeply than turborel allows |
 
@@ -97,7 +97,7 @@ OK
 OK
 turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XQST0048: the function {http://www.w3.org/2005/xquery-local-functions}f is not in the target namespace urn:b of its library module [XQuery §4.2] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
 turborel: SQLCODE -301 (SQLSTATE 10000): XQuery error err:XPST0003: a registered XQuery module is a library module, which begins with a module declaration [XQuery §4] [ISO/IEC 9075-14:2006 draft §6.18 GR3]
-turborel: SQLCODE -103 (SQLSTATE 2A000): registered XQuery module ANN.NOTES_LIB exists: one name identifies one (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): registered XQuery module ANN.NOTES_LIB exists: one name identifies one (at character 21)
 ```
 
 LOUD_LIB imports NOTES_LIB, which is of the namespace it imports.

@@ -119,10 +119,10 @@ fn main() -> Result<(), turborel::error::SqlError> {
     assert_eq!(ann.run("DELETE FROM STAFF WHERE ID = 9")?, Completion::NoData);
     ann.commit()?;
     let refused = ann.run("DELETE FROM NOPE").unwrap_err();
-    assert_eq!((refused.sqlcode(), refused.sqlstate().to_string()), (-103, "2A000".to_owned()));
+    assert_eq!((refused.sqlcode(), refused.sqlstate().to_string()), (-103, "42000".to_owned()));
     assert_eq!(
         refused.to_string(),
-        "SQLCODE -103 (SQLSTATE 2A000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 12)"
+        "SQLCODE -103 (SQLSTATE 42000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 12)"
     );
     Ok(())
 }

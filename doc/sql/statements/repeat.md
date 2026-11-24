@@ -52,8 +52,8 @@ Those of its statements and condition.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | It is not well formed, as a REPEAT with no UNTIL |
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -102 | It is not well formed, as a REPEAT with no UNTIL |
+| 42000 | -103 | A rule above is broken |
 | TB920 | -920 | It is cancelled |
 
 ## EXAMPLES
@@ -112,7 +112,7 @@ OK
             2
             4
 (2 rows)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected UNTIL, found END (at character 57)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected UNTIL, found END (at character 57)
 ```
 
 ## STANDARD

@@ -139,7 +139,7 @@ fn a_session_is_pinged_reset_and_changed() {
     assert!(!c.in_transaction(), "renewed as Reset renews it, its transaction rolled back");
     assert_eq!(c.authorization(), "Y");
     assert_eq!(c.setting("AUTHORIZATION"), Some("Y"));
-    assert_eq!(state(&c.query("SELECT K FROM X.T").unwrap_err()).0, "2A000", "Y holds no privilege on X.T");
+    assert_eq!(state(&c.query("SELECT K FROM X.T").unwrap_err()).0, "42000", "Y holds no privilege on X.T");
     c.terminate().unwrap();
 }
 
@@ -184,7 +184,7 @@ fn several_statements_run_in_one_request() {
     let ran = c.query_many("INSERT INTO T VALUES (1); SELECT K FROM T; INSERT INTO T VALUES ('x'); INSERT INTO T VALUES (3)").unwrap();
     assert_eq!(ran.outcomes.len(), 2, "{ran:?}");
     assert!(matches!(&ran.outcomes[1], Outcome::Rows { rows, .. } if rows.len() == 1));
-    assert_eq!(state(ran.failure.as_ref().unwrap()).0, "2A000", "the third stopped the rest");
+    assert_eq!(state(ran.failure.as_ref().unwrap()).0, "42000", "the third stopped the rest");
     assert_eq!(rows(&c.query("SELECT COUNT(*) FROM T").unwrap()), ["1"]);
     assert_eq!(c.query_many("").unwrap().outcomes.len(), 1);
 }

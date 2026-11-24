@@ -91,7 +91,7 @@ SELECT SETTING_NAME, TAKES_EFFECT FROM INFORMATION_SCHEMA.SETTINGS
 A setting fixed when the database is made is refused after:
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): STORAGE.PAGE_BYTES is fixed when the database is created
+turborel: SQLCODE -103 (SQLSTATE 42000): STORAGE.PAGE_BYTES is fixed when the database is created
 ```
 
 A database kept in memory, as `turboreld --memory` serves, is created

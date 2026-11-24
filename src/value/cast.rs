@@ -121,14 +121,25 @@ pub(crate) fn padded(text: &str, length: u32) -> Result<Value> {
 ///
 /// # Errors
 ///
-/// SQLSTATE 22018 if it is none \[GR3b i, GR4b i\].
+/// SQLSTATE 22018 if it is none \[GR3b i, GR4b i\]; 22003 if it is one
+/// past the range of every number of this implementation, as the literal
+/// it is cast as fits no target [ISO/IEC 9075-2:2023 §6.13 GR8b ii, GR8a
+/// ii, GR9b ii, GR9a ii], where written in a statement it breaks a Syntax
+/// Rule [§5.3 SR30] (RULES.md D970).
 pub(crate) fn numeric_literal(s: &str) -> Result<Value> {
-    literal_value(s.trim_matches(' ')).map_or_else(
+    let Some(lit) = numeric_parts(s.trim_matches(' ')) else {
+        return fail_with(
+            Code::Data,
+            SqlState::INVALID_CHARACTER_VALUE_FOR_CAST,
+            format!("[ISO/IEC 9075:1992 §6.10 GR3b i, GR4b i] '{s}' is not a <signed numeric literal>"),
+        );
+    };
+    literal_value(&lit).map_or_else(
         || {
             fail_with(
                 Code::Data,
-                SqlState::INVALID_CHARACTER_VALUE_FOR_CAST,
-                format!("[ISO/IEC 9075:1992 §6.10 GR3b i, GR4b i] '{s}' is not a <signed numeric literal>"),
+                SqlState::NUMERIC_VALUE_OUT_OF_RANGE,
+                format!("[ISO/IEC 9075-2:2023 §6.13 GR8a ii, GR9a ii] '{s}' is outside the range of this implementation's numbers"),
             )
         },
         Ok,
@@ -196,18 +207,26 @@ pub(crate) fn numeric_parts(s: &str) -> Option<NumericLiteral> {
     Some(NumericLiteral { negative, fraction: fraction.len(), digits: format!("{whole}{fraction}"), exponent })
 }
 
-/// [ISO/IEC 9075:1992 §5.3] The value of `s` if it is a `<signed numeric
-/// literal>` (`numeric_parts`): of an exact one exact, of an approximate
-/// one approximate.
-fn literal_value(s: &str) -> Option<Value> {
-    let lit = numeric_parts(s)?;
+/// [ISO/IEC 9075:1992 §5.3] The value of the `<signed numeric literal>`
+/// `lit`, if a number of this implementation holds it. Of an exact one it
+/// is exact, its fraction's digits past those a number of its whole
+/// digits keeps within the maximum precision truncated, as every exact
+/// target truncates them \[GR3a, implementation-defined\]; of one whose
+/// whole digits are more than that, the approximate number nearest, as no
+/// exact one holds it. Of an approximate one it is approximate, if finite.
+fn literal_value(lit: &NumericLiteral) -> Option<Value> {
     let (whole, fraction) = lit.digits.split_at(lit.digits.len().checked_sub(lit.fraction)?);
+    let signed = |x: f64| Value::Approx(if lit.negative { -x } else { x });
     if let Some(e) = lit.exponent {
-        let x: f64 = format!("{whole}.{fraction}E{e}").parse().ok()?;
-        return Some(Value::Approx(if lit.negative { -x } else { x }));
+        return format!("{whole}.{fraction}E{e}").parse().ok().filter(|x: &f64| x.is_finite()).map(signed);
     }
-    let scale = u32::try_from(lit.fraction).ok()?;
-    let units: i128 = lit.digits.parse().ok()?;
+    let whole = whole.trim_start_matches('0');
+    let Some(room) = usize::try_from(MAX_EXACT_PRECISION).ok()?.checked_sub(whole.len()) else {
+        return format!("{whole}.{fraction}").parse().ok().filter(|x: &f64| x.is_finite()).map(signed);
+    };
+    let kept = fraction.get(..fraction.len().min(room))?;
+    let scale = u32::try_from(kept.len()).ok()?;
+    let units: i128 = format!("0{whole}{kept}").parse().ok()?;
     Some(Value::Exact(Decimal::new(if lit.negative { units.checked_neg()? } else { units }, scale)))
 }
 
@@ -225,6 +244,7 @@ mod tests {
     /// character neither digit nor underscore.
     #[test]
     fn numeric_literals() {
+        let literal_value = |s: &str| numeric_parts(s).and_then(|lit| literal_value(&lit));
         let exact = |s: &str| if let Some(Value::Exact(d)) = literal_value(s) { Some((d.units, d.scale)) } else { None };
         assert_eq!(exact("-12.50"), Some((-1250, 2)));
         assert_eq!(exact(".5"), Some((5, 1)));
@@ -239,5 +259,27 @@ mod tests {
         assert_eq!(approximate_literal(0.0), "0E0");
         assert_eq!(approximate_literal(100.0), "1.0E2");
         assert_eq!(approximate_literal(-1.5e-3), "-1.5E-3");
+    }
+
+    /// Verifies: [ISO/IEC 9075-2:2023 §6.13 GR8b, GR9b] RULES.md D970: a
+    /// literal's text no number holds is 22003, one that is no literal
+    /// 22018. Its leading zeros count toward no limit; a fraction past what
+    /// its whole digits leave of the maximum precision is truncated; whole
+    /// digits more than the maximum precision make the nearest approximate
+    /// number, and past every approximate number's range, none.
+    #[test]
+    fn literals_no_exact_number_holds() {
+        let exact = |s: &str| if let Ok(Value::Exact(d)) = numeric_literal(s) { Some((d.units, d.scale)) } else { None };
+        let state = |s: &str| numeric_literal(s).unwrap_err().sqlstate().to_string();
+        assert_eq!(exact(&format!("{}1", "0".repeat(60))), Some((1, 0)));
+        assert_eq!(exact(&format!("-0.{}", "3".repeat(60))), Some((-"3".repeat(38).parse::<i128>().unwrap(), 38)));
+        let whole = "9".repeat(36);
+        assert_eq!(exact(&format!("{whole}.125")), Some((pow10(38).unwrap() - 100 + 12, 2)), "two digits of the fraction left");
+        let Ok(Value::Approx(x)) = numeric_literal(&"9".repeat(39)) else { panic!("39 digits are approximate") };
+        assert!((x - 1e39_f64).abs() < 1e24_f64);
+        for beyond in ["9".repeat(400), "1E400".to_owned(), "-1e999".to_owned()] {
+            assert_eq!(state(&beyond), "22003", "{beyond}");
+        }
+        assert_eq!(state("1E"), "22018");
     }
 }

@@ -93,9 +93,9 @@ None, beyond rule 3; each element's own.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A schema of the name exists, or the name is MODULE; an element names an object in another schema; an element breaks a rule of its own |
+| 42000 | -103 | A schema of the name exists, or the name is MODULE; an element names an object in another schema; an element breaks a rule of its own |
 | 3D000 | -103 | It names a catalog other than the one there is |
-| 2A000 | -104 | Run by a session, its AUTHORIZATION is another's, not a role the session has enabled |
+| 42000 | -104 | Run by a session, its AUTHORIZATION is another's, not a role the session has enabled |
 | 25000 | -917 | The transaction, active or next, is READ ONLY |
 | TB911 | -911 | Another transaction holds the schema's name, and locking is no-wait |
 | 0A000 | -900 | It names a character set other than SQL_TEXT |
@@ -141,9 +141,9 @@ CREATE SCHEMA Y CREATE TABLE Z.T (K INTEGER);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): a schema SHOP already exists [X3.135-1986 §6.1 SR1; ISO/IEC 9075:1992 §11.1 SR3, §21.2.1, §21.3.2]
-turborel: SQLCODE -104 (SQLSTATE 2A000): ANN may create its own schema only, not BOB's [ISO/IEC 9075:1992 §11.1 AR1]
-turborel: SQLCODE -103 (SQLSTATE 2A000): table Z.T is not in schema Y [X3.135-1986 §6.2 SR1] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 42000): a schema SHOP already exists [X3.135-1986 §6.1 SR1; ISO/IEC 9075:1992 §11.1 SR3, §21.2.1, §21.3.2]
+turborel: SQLCODE -104 (SQLSTATE 42000): ANN may create its own schema only, not BOB's [ISO/IEC 9075:1992 §11.1 AR1]
+turborel: SQLCODE -103 (SQLSTATE 42000): table Z.T is not in schema Y [X3.135-1986 §6.2 SR1] (at character 29)
 ```
 
 ## STANDARD

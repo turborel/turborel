@@ -56,8 +56,8 @@ CAST invoking it needs EXECUTE on the function too.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the type, or lacks EXECUTE on the function |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the type, or lacks EXECUTE on the function |
 
 ## EXAMPLES
 
@@ -87,7 +87,7 @@ CREATE CAST (TEMP AS INTEGER) WITH FUNCTION TEMP_TO_INT (TEMP);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is a cast from ANN.TEMP to INTEGER already [ISO/IEC 9075-2:2023 §11.63 SR3] (at character 0)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is a cast from ANN.TEMP to INTEGER already [ISO/IEC 9075-2:2023 §11.63 SR3] (at character 0)
 ```
 
 ## STANDARD

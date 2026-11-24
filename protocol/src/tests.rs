@@ -164,7 +164,7 @@ fn every_reply() -> Vec<Reply> {
     ];
     let cited = Failure {
         sqlcode: -103,
-        sqlstate: "2A000".into(),
+        sqlstate: "42000".into(),
         message: "column K is ambiguous".into(),
         rule: Some("X3.135-1986 §5.7 SR3b".into()),
         position: Some(7),
@@ -260,9 +260,9 @@ fn malformed_messages_are_connection_failures() {
 fn a_failure_says_what_its_error_says() {
     let e = SqlError::at(Code::SyntaxRule, 7, "[X3.135-1986 §5.7 SR3b] column K is ambiguous");
     let f = Failure::from(&e);
-    assert_eq!((f.sqlcode, f.sqlstate.as_str()), (-103_i32, "2A000"));
+    assert_eq!((f.sqlcode, f.sqlstate.as_str()), (-103_i32, "42000"));
     assert_eq!((f.message.as_str(), f.rule.as_deref(), f.position), ("column K is ambiguous", Some("X3.135-1986 §5.7 SR3b"), Some(7)));
-    assert_eq!(f.to_string(), "SQLCODE -103 (SQLSTATE 2A000): column K is ambiguous [X3.135-1986 §5.7 SR3b] (at character 7)");
+    assert_eq!(f.to_string(), "SQLCODE -103 (SQLSTATE 42000): column K is ambiguous [X3.135-1986 §5.7 SR3b] (at character 7)");
     let refused = Failure::from(&broken("gone"));
     assert_eq!(refused.to_string(), "SQLCODE -919 (SQLSTATE 08006): gone");
     assert_eq!((refused.sqlcode, refused.sqlstate.as_str(), refused.rule, refused.position), (-919_i32, "08006", None, None));

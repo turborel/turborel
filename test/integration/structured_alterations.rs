@@ -53,9 +53,9 @@ fn refused(s: &Session, sql: &str, (code, state, cited): (Code, &str, &str)) {
 }
 
 /// Asserts `sql` in `s` is refused by a Syntax Rule (SQLCODE -103,
-/// SQLSTATE 2A000) with a message citing `cited`.
+/// SQLSTATE 42000) with a message citing `cited`.
 fn refused_by(s: &Session, sql: &str, cited: &str) {
-    refused(s, sql, (Code::SyntaxRule, "2A000", cited));
+    refused(s, sql, (Code::SyntaxRule, "42000", cited));
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §11.60 SR16, §11.51 SR9b vi, SR9b xi]

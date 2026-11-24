@@ -41,7 +41,7 @@ The database's owner alone.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -104 | Its user is not the database's owner |
 | 08003 | -919 | No connection of that ID is served |
 
 ## EXAMPLES

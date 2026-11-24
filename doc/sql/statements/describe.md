@@ -88,7 +88,7 @@ None.
 |---|---|---|
 | 26000 | -921 | No statement of the name is prepared (rule 1) |
 | 33000 | -921 | No area of the name is allocated (rule 2) |
-| 2A000 | -103 | INTO written for USING |
+| 42000 | -103 | INTO written for USING |
 | 01005 | 0 | Not an error: a warning, more columns or parameters than the area's occurrences |
 
 ## EXAMPLES
@@ -132,7 +132,7 @@ Refused, and an area SMALL, of 2 occurrences, too small:
 ```
 DESCRIBE GONE USING SQL DESCRIPTOR 'PAY_ROW'   -921 (26000): no statement GONE is prepared [ISO/IEC 9075:1992 §17.8 GR1]
 DESCRIBE PAY USING SQL DESCRIPTOR 'NO_ROW'     -921 (33000): no SQL descriptor area 'NO_ROW' is allocated [ISO/IEC 9075:1992 §17.9 GR2]
-DESCRIBE PAY INTO SQL DESCRIPTOR 'PAY_ROW'     -103 (2A000): INTO is of a <dynamic fetch statement> or a <result using clause> alone [ISO/IEC 9075:1992 §17.9 SR1]
+DESCRIBE PAY INTO SQL DESCRIPTOR 'PAY_ROW'     -103 (42000): INTO is of a <dynamic fetch statement> or a <result using clause> alone [ISO/IEC 9075:1992 §17.9 SR1]
 DESCRIBE PAY USING SQL DESCRIPTOR 'SMALL'      warning 01005: SMALL has 2 occurrences, COUNT 3, no item set
 ```
 

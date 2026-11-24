@@ -47,9 +47,9 @@ The domain's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | No `<drop behavior>` is written |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the domain's schema |
+| 42000 | -102 | No `<drop behavior>` is written |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the domain's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -68,7 +68,7 @@ DROP DOMAIN NOPE CASCADE;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): domain ANN.MONEY is used by column ANN.LEDGER.AMOUNT, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.27 SR2] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): domain ANN.MONEY is used by column ANN.LEDGER.AMOUNT, so it is dropped only with CASCADE [ISO/IEC 9075:1992 §11.27 SR2] (at character 12)
 OK
 OK
 turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.NOT_NEGATIVE ON LEDGER.AMOUNT of ANN.LEDGER is false for a row [ISO/IEC 9075:1992 §11.6 GR3]
@@ -76,7 +76,7 @@ turborel: SQLCODE -201 (SQLSTATE 23000): CHECK ANN.NOT_NEGATIVE ON LEDGER.AMOUNT
 --------------+-------------
             1 |        0.00
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no domain ANN.NOPE [ISO/IEC 9075:1992 §11.27 SR1] (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no domain ANN.NOPE [ISO/IEC 9075:1992 §11.27 SR1] (at character 12)
 ```
 
 AMOUNT kept the domain's default and its constraint.

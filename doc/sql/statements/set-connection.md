@@ -38,7 +38,7 @@ None.
 |---|---|---|
 | 0A001 | -900 | The current connection's transaction is active |
 | 08003 | -919 | There is no such connection |
-| 2A000 | -102 | The name is not a character string literal |
+| 42000 | -102 | The name is not a character string literal |
 | 0A000 | -900 | Run by a session of an embedded database |
 
 ## EXAMPLES

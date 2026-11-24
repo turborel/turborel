@@ -66,8 +66,8 @@ grant option. Invoking a method needs EXECUTE on it.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken, or no method takes the arguments |
-| 2A000 | -104 | Its user does not own the type's schema, or lacks EXECUTE on a method invoked |
+| 42000 | -103 | A rule above is broken, or no method takes the arguments |
+| 42000 | -104 | Its user does not own the type's schema, or lacks EXECUTE on a method invoked |
 
 ## EXAMPLES
 
@@ -105,7 +105,7 @@ CREATE METHOD AREA () RETURNS INTEGER FOR SHAPE RETURN 1;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): method AREA of type ANN.SHAPE has a body already, routine ANN.SHAPE_AREA_1 [ISO/IEC 9075-2:2023 §11.60 SR20b] (at character 0)
+turborel: SQLCODE -103 (SQLSTATE 42000): method AREA of type ANN.SHAPE has a body already, routine ANN.SHAPE_AREA_1 [ISO/IEC 9075-2:2023 §11.60 SR20b] (at character 0)
 ```
 
 ## STANDARD
