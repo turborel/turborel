@@ -279,9 +279,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
-/// kernels', compiled procedures' and rows in demand's last, as `last`
-/// holds no more.
-fn closing() -> [&'static [Mutation]; 21] {
+/// kernels', compiled procedures', rows in demand's and the routine
+/// debugger's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 22] {
     [
         &super::transport::TRANSPORT,
         &super::homes::HOMES,
@@ -304,6 +304,7 @@ fn closing() -> [&'static [Mutation]; 21] {
         &kernels::KERNELS,
         &compiled::COMPILED,
         &hot_rows::HOT_ROWS,
+        &debugger::DEBUGGER,
     ]
 }
 
@@ -329,8 +330,8 @@ fn plugins() -> [&'static [Mutation]; 9] {
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
 /// the memory budget's,
 /// the command-line client's, replication's, the server's, the native protocol's, the client library's,
-/// join enumeration's, the standard's gaps a benchmark found and the routine debugger's.
-fn last() -> [&'static [Mutation]; 49] {
+/// join enumeration's and the standard's gaps a benchmark found.
+fn last() -> [&'static [Mutation]; 48] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -380,6 +381,5 @@ fn last() -> [&'static [Mutation]; 49] {
         &super::client::CLIENT,
         &joins::JOINS,
         &super::std_gaps::STD_GAPS,
-        &debugger::DEBUGGER,
     ]
 }
