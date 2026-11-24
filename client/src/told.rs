@@ -86,6 +86,9 @@ pub(crate) struct Told {
     /// The shortest request sent compressed, if compression was granted.
     pub(crate) compress: Option<usize>,
     pub(crate) attributes: Attributes,
+    /// \[EXTENSION\] The events of the session this connection debugs
+    /// that came and were not yet read (RULES.md D1032).
+    pub(crate) events: std::collections::VecDeque<turborel::debugger::Event>,
 }
 
 /// \[DESIGN\] The most notices kept for a connection with no handler: the

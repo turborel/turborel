@@ -11,7 +11,7 @@ use turborel::value::types::TypeRegistry;
 
 use crate::fields::{flag, put_flag, put_row, put_strs, row, strs};
 use crate::tail::{ATTRIBUTES, CURSOR, MULTI, Tail, attributes, put_attributes, put_mark, put_number};
-use crate::{Attributes, CancelKey, KEY_BYTES, LobRequest, broken, frame};
+use crate::{Attributes, CancelKey, DebugRequest, KEY_BYTES, LobRequest, broken, frame};
 
 const HELLO: u8 = b'H';
 const ANSWER: u8 = b'A';
@@ -180,6 +180,9 @@ pub enum Request {
         /// Whether the client gives the copy up.
         abandon: bool,
     },
+    /// \[EXTENSION\] With `debugger`, what a debugger asks of the session
+    /// it debugs (`debug.rs`, RULES.md D1030).
+    Debug(DebugRequest),
 }
 
 impl Request {
@@ -232,7 +235,8 @@ impl Request {
             | Request::ChangeUser { .. }
             | Request::CopyIn { .. }
             | Request::CopyData(_)
-            | Request::CopyEnd { .. } => self.encode_added(out),
+            | Request::CopyEnd { .. }
+            | Request::Debug(_) => self.encode_added(out),
         }
     }
 

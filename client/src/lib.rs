@@ -11,6 +11,7 @@ pub mod agent;
 mod cancel;
 pub mod connection;
 pub mod copy;
+pub mod debug;
 pub mod export;
 mod failover;
 mod frames;

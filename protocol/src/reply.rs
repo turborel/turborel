@@ -5,20 +5,24 @@
 //! 'N' notice:     as `diagnostics.rs` says
 //! 'T' status:     name, value (strings)
 //! 'G' pong
+//! 'V' debugged:   as `debug.rs` says
+//! 'W' event:      as `debug.rs` says
 //! ```
 
 use turborel::bytes::{Put, Reader};
+use turborel::debugger::Event;
 use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 
+use crate::debug::{event, put_event};
 use crate::declared::{declared, put_declared};
 use crate::diagnostics::Notice;
 use crate::fields::{
     column, counted, failure, flag, parameter, put_column, put_count, put_failure, put_flag, put_parameter, put_row, put_strs, row, strs,
 };
 use crate::tail::{CONDITIONS, GENERATED, MORE, POSITION, ROWS as INSERTED, TIME, Tail, put_long, put_mark};
-use crate::{CancelKey, Column, Completed, Failure, KEY_BYTES, LobReply, Timing, broken, frame};
+use crate::{CancelKey, Column, Completed, DebugReply, Failure, KEY_BYTES, LobReply, Timing, broken, frame};
 
 const CHALLENGE: u8 = b'C';
 const READY: u8 = b'R';
@@ -32,6 +36,8 @@ const LOB: u8 = b'L';
 const NOTICE: u8 = b'N';
 const STATUS: u8 = b'T';
 const PONG: u8 = b'G';
+const DEBUGGED: u8 = b'V';
+const EVENT: u8 = b'W';
 
 /// What a server sends. Not comparable: its values compare as SQL
 /// says, not as data; compare the bytes they encode to.
@@ -90,6 +96,13 @@ pub enum Reply {
     },
     /// \[DESIGN\] With `ping`, Ping's answer (RULES.md D189).
     Pong,
+    /// \[EXTENSION\] With `debugger`, what a Debug request gave back but a
+    /// completion (`debug.rs`, RULES.md D1030).
+    Debug(DebugReply),
+    /// \[EXTENSION\] With `debugger`, what a debugger hears of the session
+    /// it debugs, sent unasked while the debugger's connection waits for a
+    /// request, never within another reply's (RULES.md D1032).
+    Event(Event),
 }
 
 impl Reply {
@@ -138,6 +151,8 @@ impl Reply {
                 b.put_str(value);
             }),
             Reply::Pong => frame(out, PONG, |_| ()),
+            Reply::Debug(debug) => frame(out, DEBUGGED, |b| debug.put(b)),
+            Reply::Event(e) => frame(out, EVENT, |b| put_event(b, e)),
         }
     }
 
@@ -165,6 +180,8 @@ impl Reply {
             NOTICE => Reply::Notice(Notice::read(&mut r)?),
             STATUS => Reply::Status { name: r.str()?, value: r.str()? },
             PONG => Reply::Pong,
+            DEBUGGED => Reply::Debug(DebugReply::read(&mut r)?),
+            EVENT => Reply::Event(event(&mut r)?),
             other => return Err(broken(format!("[DESIGN] no reply is of kind {other}"))),
         };
         r.finish()?;
@@ -174,13 +191,13 @@ impl Reply {
     /// \[DESIGN\] RULES.md D393: whether a reply of kind `kind` and body
     /// `body`, decoded or not, is the last its request is answered with,
     /// by the order of a statement's replies. A Description, Rows, a
-    /// Notice or a Status has more after it; a Complete has if its tail
+    /// Notice, a Status or an Event, sent unasked, has more after it; a Complete has if its tail
     /// says more (tag 5), read as `completed_head` reads it; any other
     /// reply ends its request's. A Describe of a cursor, answered by a
     /// Description alone, is its reader's to know.
     pub fn ends_request(kind: u8, body: &[u8]) -> bool {
         match kind {
-            DESCRIPTION | ROWS | NOTICE | STATUS => false,
+            DESCRIPTION | ROWS | NOTICE | STATUS | EVENT => false,
             COMPLETE => Reply::completed_head(kind, body).is_none_or(|c| !c.more),
             _ => true,
         }

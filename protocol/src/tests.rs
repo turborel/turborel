@@ -3,6 +3,7 @@
 //! connection failures (RULES.md R-TEST-1, R-TEST-2).
 
 mod added;
+mod debug;
 mod declared;
 mod frames;
 mod geometry;

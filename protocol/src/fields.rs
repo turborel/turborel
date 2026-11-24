@@ -303,7 +303,7 @@ pub(crate) fn parameter(r: &mut Reader<'_>) -> Result<ParameterType> {
 /// A value: its kind's tag, then its bytes, as its kind writes them; of a
 /// kind beyond the standard, its kind's name, the value as text and its
 /// kind's bytes, so a client without the kind still shows it.
-fn put_value(b: &mut Vec<u8>, v: &Value) {
+pub(crate) fn put_value(b: &mut Vec<u8>, v: &Value) {
     let tag = match v {
         Value::Null => NULL,
         Value::Char(_) => CHARACTER,
@@ -375,7 +375,7 @@ fn put_extension_value(b: &mut Vec<u8>, (v, e): (&Value, &types::ExtensionValue)
     b.put_bytes(&bytes);
 }
 
-fn value(r: &mut Reader<'_>) -> Result<Value> {
+pub(crate) fn value(r: &mut Reader<'_>) -> Result<Value> {
     match r.u8()? {
         NULL => Ok(Value::Null),
         EXTENSION => {

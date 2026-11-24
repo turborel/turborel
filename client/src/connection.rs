@@ -273,7 +273,9 @@ impl<S: Read + Write> Connection<S> {
                 | Reply::Lob(_)
                 | Reply::Notice(_)
                 | Reply::Status { .. }
-                | Reply::Pong => {
+                | Reply::Pong
+                | Reply::Debug(_)
+                | Reply::Event(_) => {
                     return Err(self.lose("[DESIGN] the server sent no Ready"));
                 }
             }
@@ -450,7 +452,9 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Suspended
             | Reply::Notice(_)
             | Reply::Status { .. }
-            | Reply::Pong => {
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => {
                 return Err(self.lose("[DESIGN] the server sent no result"));
             }
         };
@@ -478,7 +482,9 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Suspended
             | Reply::Notice(_)
             | Reply::Status { .. }
-            | Reply::Pong => {
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => {
                 return Err(self.lose("[DESIGN] the server sent no result"));
             }
         }
@@ -499,7 +505,9 @@ impl<S: Read + Write> Connection<S> {
                 | Reply::Suspended
                 | Reply::Notice(_)
                 | Reply::Status { .. }
-                | Reply::Pong => {
+                | Reply::Pong
+                | Reply::Debug(_)
+                | Reply::Event(_) => {
                     return Err(self.lose("[DESIGN] the server broke off its rows"));
                 }
             }
@@ -523,7 +531,9 @@ impl<S: Read + Write> Connection<S> {
                 | Reply::Description(_)
                 | Reply::Notice(_)
                 | Reply::Status { .. }
-                | Reply::Pong => {
+                | Reply::Pong
+                | Reply::Debug(_)
+                | Reply::Event(_) => {
                     return Err(self.lose("[DESIGN] the server broke off its rows"));
                 }
             }
@@ -553,7 +563,7 @@ impl<S: Read + Write> Connection<S> {
             match self.next_reply(Answer::One)? {
                 Reply::Error(failure) => return Err(failure),
                 // A notice or a status comes before the session's end is told.
-                Reply::Notice(_) | Reply::Status { .. } | Reply::Pong => {}
+                Reply::Notice(_) | Reply::Status { .. } | Reply::Pong | Reply::Event(_) => {}
                 Reply::Lob(_)
                 | Reply::Challenge(_)
                 | Reply::Ready { .. }
@@ -561,7 +571,8 @@ impl<S: Read + Write> Connection<S> {
                 | Reply::Description(_)
                 | Reply::Rows(_)
                 | Reply::Suspended
-                | Reply::Complete(_) => return Err(failed("[DESIGN] the server answered Terminate")),
+                | Reply::Complete(_)
+                | Reply::Debug(_) => return Err(failed("[DESIGN] the server answered Terminate")),
             }
         }
         Ok(())

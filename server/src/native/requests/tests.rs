@@ -9,7 +9,7 @@ use super::*;
 fn held() -> Held {
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER NOT NULL)").unwrap();
-    let serves = Serves { db: db.clone(), requests: Arc::default() };
+    let serves = Serves { db: db.clone(), requests: Arc::default(), present: None };
     Held::new(db.session("X"), serves, Capabilities::NONE)
 }
 

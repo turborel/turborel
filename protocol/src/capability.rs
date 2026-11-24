@@ -61,9 +61,13 @@ pub const CONDITIONS: &str = "conditions";
 /// was declared with, as INTEGER, which its tag alone does not tell
 /// (RULES.md D396).
 pub const DECLARED_TYPES: &str = "declared-types";
+/// \[EXTENSION\] Debug: one connection attaches to another's session and
+/// drives the routines it runs, breakpoints, steps and the call stack, and
+/// is sent an Event, unasked, as that session pauses (RULES.md D1030).
+pub const DEBUGGER: &str = "debugger";
 
 /// Every capability of version 1, in the order of their bits.
-pub const ALL: [&str; 19] = [
+pub const ALL: [&str; 20] = [
     NOTICES,
     STATUS,
     DIAGNOSTICS,
@@ -83,6 +87,7 @@ pub const ALL: [&str; 19] = [
     FETCH_ENDS,
     CONDITIONS,
     DECLARED_TYPES,
+    DEBUGGER,
 ];
 
 /// \[DESIGN\] A set of capabilities, one bit for each of `ALL`.

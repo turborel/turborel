@@ -36,6 +36,7 @@
 //! once the user is dropped (RULES.md D43).
 
 mod copy;
+mod debugging;
 mod home;
 mod lent;
 mod lobs;
@@ -244,6 +245,7 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
         | Request::CopyIn { .. }
         | Request::CopyData(_)
         | Request::CopyEnd { .. }
+        | Request::Debug(_)
         | Request::Terminate => Err(broken("[DESIGN] a connection begins with Hello, or Cancel")),
     }
 }
@@ -383,7 +385,7 @@ async fn run(wire: Wire, (services, present, peer): (&Services, &Present, &Peer)
     let Admitted { session, mut login, granted, told } = admitted;
     let slot = Slot::new();
     let mut running = Running::new(services, present, login.user.as_deref());
-    let serves = Serves { db: services.database().clone(), requests: Arc::clone(services.requests()) };
+    let serves = Serves { db: services.database().clone(), requests: Arc::clone(services.requests()), present: Some(present.clone()) };
     let mut fresh = Held::new(session, serves, granted);
     fresh.status = told;
     let mut lent = Lent::new(fresh, wire);
