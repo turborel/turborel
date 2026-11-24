@@ -190,7 +190,7 @@ fn a_parameter_point_in_time_is_of_the_periods_type_14_14() {
     let db = database();
     let s = db.session("A");
     let p = s.prepare("UPDATE PRICES FOR PORTION OF VALID FROM ? TO ? SET PRICE = PRICE * 10 WHERE ITEM = 1").unwrap();
-    assert_eq!(p.parameters().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(), [DataType::Date, DataType::Date]);
+    assert_eq!(p.inputs().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(), [DataType::Date, DataType::Date]);
     let day = |d: &str| s.open_cursor(&format!("VALUES DATE '{d}'")).unwrap().fetch().unwrap().unwrap().remove(0);
     s.execute_prepared(&p, &[day("2026-01-10"), day("2026-01-12")]).unwrap();
     s.execute_prepared(&p, &[day("2026-01-20"), day("2026-01-21")]).unwrap();

@@ -96,7 +96,7 @@ fn a_statement_has_several_cursors_described() {
     c.query("INSERT INTO T VALUES (1, 'a'), (2, 'b'), (3, 'c')").unwrap();
     let query = c.prepare("SELECT K FROM T WHERE K >= ? ORDER BY K").unwrap();
     let again = c.describe(&query).unwrap();
-    assert_eq!((again.parameters().len(), again.columns().len()), (1, 1));
+    assert_eq!((again.inputs().len(), again.columns().len()), (1, 1));
     let first = c.open_cursor_numbered((&query, 1), &[int(1)], 1).unwrap();
     let second = c.open_cursor_numbered((&query, 2), &[int(2)], 1).unwrap();
     assert_eq!((first.rows[0][0].to_string(), second.rows[0][0].to_string()), ("1".into(), "2".into()));

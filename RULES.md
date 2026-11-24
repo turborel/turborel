@@ -627,6 +627,8 @@ verification approach DO-178C expects (§8).
 | D972 | The check of threads finds scoped threads, imports of what starts them, and passes over the files of modules of tests |
 | D975 | An export writes each large object as its value, read by its locator a chunk at a time between a cursor's fetches |
 | D976 | An import reads a binary string column's field as its octets' hexits, as an export writes them |
+| D977 | Each `?` of a prepared CALL is described with its parameter's mode and ordinal position and the procedure's specific name |
+| D978 | With `parameter-modes`, a Prepared of a CALL carries its procedure and each `?` with its parameter's mode, tag 20 |
 | D990 | COLUMN_STATISTICS shows what the planner's statistics hold of each column, its values as text, to those holding a privilege on the column |
 | D991 | A table's lock stamps when its statistics were last gathered, as a pass the engine counts is seen |
 | D992 | INDEX_STATISTICS shows the distinct keys an index counts, as the planner reads them |
@@ -17574,6 +17576,45 @@ Anything else, or an odd number of hexits, fails the row with SQLSTATE
 22018. A BLOB longer than a value sent whole then goes by a locator, a
 piece at a time, as a CLOB's field does, and the bulk copy takes a
 BINARY or VARBINARY column's value as a binary string.
+
+#### D977. Each `?` of a prepared CALL is described with its parameter's mode and ordinal position and the procedure's specific name
+
+`Prepared::parameters` gave the types of the input `?`s alone, so a
+program could not tell which `?` of a CALL was an OUT parameter's, nor
+which parameter any was of. It now gives every `?` in the order
+written, a `DynamicParameter` of its type, its mode and its ordinal
+position, and `inputs` gives the types of those an execution takes
+values for, which callers that pass values use. Of a CALL of an
+SQL-invoked procedure each `?` an argument simply contains has the mode
+and the position of that argument's parameter, and `procedure` gives
+the procedure's specific name [ISO/IEC 9075-2:2023 §20.10 GR7e]. The
+parser keeps, of each argument, the numbers of the `?`s read within it,
+so several of an IN argument's expression each take that parameter's,
+and named arguments keep the order they are written in. A `?` of any
+other statement is IN, of no position, and so is one of a procedure
+written in Rust, which has no specific name. DESCRIBE INPUT and
+DESCRIBE OUTPUT set PARAMETER_MODE to Table 33's code, 1 IN, 2 INOUT
+and 4 OUT, PARAMETER_ORDINAL_POSITION, and the three
+PARAMETER_SPECIFIC items, of each top-level item of a CALL, and SET
+DESCRIPTOR sets none of them [§20.5 SR3a]. No parameter has a default
+(Features T522, T523), so DEFAULT as an argument stays refused, SQLCODE
+-900, and a CALL of fewer arguments than parameters finds no procedure.
+
+#### D978. With `parameter-modes`, a Prepared of a CALL carries its procedure and each `?` with its parameter's mode, tag 20
+
+A Prepared's head lists the input `?`s alone, those an Execute gives
+values for, and its columns the output ones, so a client could not tell
+a `?`'s mode nor match the two lists. A client that asks for
+`parameter-modes` and is granted it is sent, in a Prepared of a CALL of
+an SQL-invoked procedure, tail tag 20 after tag 19: the procedure's
+specific name, then every `?` of the statement in the order written,
+its mode's code, its parameter's ordinal position from 1, and its type.
+A mode of no code of Table 33, a position of 0, or the tag before tag
+19 fails the connection. The head is unchanged, so a client not granted
+it reads what it always read, and the protocol's version stays 1. The
+OUT and INOUT values still come back as the one row of the statement's
+columns, which `Statement::parameters` now matches by mode. The
+client's `parameters` gives the modes told, else the inputs, each IN.
 
 #### D990. COLUMN_STATISTICS shows what the planner's statistics hold of each column, its values as text, to those holding a privilege on the column
 

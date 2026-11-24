@@ -61,6 +61,10 @@ pub(crate) struct BoundCall {
     /// position, from 0, whose argument is a `?`, and that `?`'s place
     /// among the statement's.
     pub(crate) dynamic: Vec<(usize, usize)>,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e ii, iii] Each `?` an argument simply
+    /// contains, by its number, and the ordinal position, from 0, of the
+    /// parameter that argument is of, in the order of the parameters.
+    pub(crate) questions: Vec<(usize, usize)>,
     /// The scope of the procedure's body, made once as the CALL is bound
     /// and shared by its executions (RULES.md D940).
     pub(super) scope: Arc<RoutineScope>,
@@ -277,16 +281,19 @@ impl State {
         all_or_none(&call.names)?;
         let desc = resolve_procedure(cx, &call.name, call.arguments.len())?;
         let parameters: Vec<&str> = desc.parameters.iter().map(|p| p.name.as_str()).collect();
-        let Some(arguments) = arranged(&parameters, &call.arguments, &call.names) else {
+        let written: Vec<usize> = (0..call.arguments.len()).collect();
+        let Some(arguments) = arranged(&parameters, &written, &call.names) else {
             return Err(rule(format!(
                 "[ISO/IEC 9075-2:2023 §9.18 SR5d] the arguments of the CALL do not name each parameter of procedure {}",
                 desc.name
             )));
         };
         let mut outputs = Outputs::default();
-        let mut inputs = Vec::new();
-        for (k, (p, a)) in desc.parameters.iter().zip(arguments).enumerate() {
+        let (mut inputs, mut questions) = (Vec::new(), Vec::new());
+        for (k, (p, j)) in desc.parameters.iter().zip(arguments).enumerate() {
+            let Some(a) = call.arguments.get(*j) else { continue };
             inputs.push(argument(cx, (&desc, k, p), a, &mut outputs)?);
+            questions.extend(call.dynamic.get(*j).into_iter().flatten().map(|number| (*number, k)));
         }
         let Outputs { targets, dynamic } = outputs;
         let columns: Vec<OutColumn> = targets.iter().filter_map(|(k, _)| desc.parameters.get(*k)).map(out_column).collect();
@@ -297,7 +304,7 @@ impl State {
         // An output parameter's target that is no `?` is assigned as any CALL assigns it.
         let each = || inputs.iter().zip(&desc.parameters).map(|(input, p)| Given::of(input, &p.data_type)).collect();
         let given = if targets.is_empty() { each() } else { None };
-        Ok(BoundCall { desc, inputs, targets, dynamic, scope, given })
+        Ok(BoundCall { desc, inputs, targets, dynamic, questions, scope, given })
     }
 
     /// Whether `call`, its names in schema `schema`, invokes a procedure

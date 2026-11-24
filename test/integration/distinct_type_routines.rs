@@ -76,7 +76,7 @@ fn overloads_chosen_by_type_9_18() {
     assert_eq!(query(&a, "SELECT TEXT(CODE('ab')), TEXT(LABEL('ab')) FROM T"), ["ab ,ab"]);
     assert!(a.prepare("SELECT AMOUNT(?) FROM T").is_err(), "§9.18 SR10h: of two functions");
     let one = a.prepare("SELECT MONEY(?) FROM T").unwrap();
-    assert_eq!(one.parameters().len(), 1, "of one function, its parameter's type");
+    assert_eq!(one.inputs().len(), 1, "of one function, its parameter's type");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR6, §6.13 AR2, §6.1 AR1; §11.51

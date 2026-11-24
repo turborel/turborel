@@ -46,7 +46,7 @@ fn host() -> Params {
 fn a_prepared_parameter_of_a_distinct_type_20_7() {
     let (_db, a) = filled();
     let query = a.prepare("SELECT K FROM T WHERE P = ?").unwrap();
-    assert!(matches!(query.parameters(), [turborel::params::ParameterType::Of(DataType::Distinct(_))]));
+    assert!(matches!(query.inputs(), [turborel::params::ParameterType::Of(DataType::Distinct(_))]));
     let mut c = a.open_prepared(&query, &[exact(75, 1)]).unwrap();
     assert_eq!(c.fetch().unwrap().map(|r| r[0].to_string()), Some("2".to_owned()));
     drop(c);
@@ -55,7 +55,7 @@ fn a_prepared_parameter_of_a_distinct_type_20_7() {
     let e = a.execute_prepared(&insert, &[exact(4, 0), Value::Char("x".into())]).unwrap_err();
     assert_eq!(e.sqlstate().as_str(), "22018");
     let call = a.prepare("SELECT MONEY(?) FROM T WHERE K = 1").unwrap();
-    assert!(matches!(call.parameters(), [turborel::params::ParameterType::Of(DataType::Exact { precision: 10, scale: 2, .. })]));
+    assert!(matches!(call.inputs(), [turborel::params::ParameterType::Of(DataType::Exact { precision: 10, scale: 2, .. })]));
     assert_eq!(rows(&a, "SELECT K, P FROM T ORDER BY K").unwrap(), ["1,5.00", "2,7.50", "3,9.00"]);
 }
 

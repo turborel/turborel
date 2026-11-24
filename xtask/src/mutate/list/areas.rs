@@ -7,6 +7,7 @@ mod batches;
 mod btree;
 mod budget;
 mod bulk;
+mod call_modes;
 mod char_strings;
 mod checkpoint;
 mod checkpoint_cost;
@@ -276,15 +277,17 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
 }
 
-/// An export's large objects', the transport's, connections' homes', parallel queries', the client's
+/// A prepared CALL's parameter modes', an export's large objects', the
+/// transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures' and rows in demand's last, as `last`
 /// holds no more.
-fn closing() -> [&'static [Mutation]; 22] {
+fn closing() -> [&'static [Mutation]; 23] {
     [
+        &call_modes::CALL_MODES,
         &exports::EXPORTS,
         &super::transport::TRANSPORT,
         &super::homes::HOMES,

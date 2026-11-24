@@ -138,10 +138,26 @@ pub enum DescriptorItem {
     /// [ISO/IEC 9075-2:2023 §9.24 GR2b iii 2 D IV, Table 29]
     /// NULL_ORDERING: 1 of NULLS FIRST, -1 of NULLS LAST (Feature B209).
     NullOrdering,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e iv, Table 29] PARAMETER_MODE, of a
+    /// `?` of a CALL: its parameter's mode's code [Table 33].
+    ParameterMode,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e v, Table 29]
+    /// PARAMETER_ORDINAL_POSITION, of a `?` of a CALL: its parameter's.
+    ParameterOrdinalPosition,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e vi, Table 29]
+    /// PARAMETER_SPECIFIC_CATALOG, of a `?` of a CALL: of the procedure's
+    /// specific name.
+    ParameterSpecificCatalog,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e vi, Table 29]
+    /// PARAMETER_SPECIFIC_SCHEMA.
+    ParameterSpecificSchema,
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e vi, Table 29]
+    /// PARAMETER_SPECIFIC_NAME.
+    ParameterSpecificName,
 }
 
 /// [ISO/IEC 9075:1992 §17.4] Each `<descriptor item name>`, as written.
-const ITEM_NAMES: [(&str, DescriptorItem); 34] = [
+const ITEM_NAMES: [(&str, DescriptorItem); 39] = [
     ("TYPE", DescriptorItem::Type),
     ("LENGTH", DescriptorItem::Length),
     ("OCTET_LENGTH", DescriptorItem::OctetLength),
@@ -176,6 +192,11 @@ const ITEM_NAMES: [(&str, DescriptorItem); 34] = [
     ("KEY_MEMBER", DescriptorItem::KeyMember),
     ("SORT_DIRECTION", DescriptorItem::SortDirection),
     ("NULL_ORDERING", DescriptorItem::NullOrdering),
+    ("PARAMETER_MODE", DescriptorItem::ParameterMode),
+    ("PARAMETER_ORDINAL_POSITION", DescriptorItem::ParameterOrdinalPosition),
+    ("PARAMETER_SPECIFIC_CATALOG", DescriptorItem::ParameterSpecificCatalog),
+    ("PARAMETER_SPECIFIC_SCHEMA", DescriptorItem::ParameterSpecificSchema),
+    ("PARAMETER_SPECIFIC_NAME", DescriptorItem::ParameterSpecificName),
 ];
 
 impl DescriptorItem {

@@ -26,6 +26,8 @@ GET DESCRIPTOR: read fields of an SQL descriptor area *(in a program)*
     | COLLATION_CATALOG | COLLATION_SCHEMA | COLLATION_NAME
     | CHARACTER_SET_CATALOG | CHARACTER_SET_SCHEMA | CHARACTER_SET_NAME
     | SORT_DIRECTION | NULL_ORDERING
+    | PARAMETER_MODE | PARAMETER_ORDINAL_POSITION
+    | PARAMETER_SPECIFIC_CATALOG | PARAMETER_SPECIFIC_SCHEMA | PARAMETER_SPECIFIC_NAME
 
 <descriptor name> ::= <simple value specification> | PTF <simple value specification>
 ```
@@ -73,6 +75,9 @@ The fields of an item, of a dynamic parameter or a column, as
 | KEY_MEMBER | exact | 1 of a column of the key KEY_TYPE says, else 0 ([DESCRIBE](describe.md)) |
 | CHARACTER_SET_CATALOG, _SCHEMA, _NAME | character | A string's character set: the catalog, INFORMATION_SCHEMA, SQL_TEXT |
 | COLLATION_CATALOG, _SCHEMA, _NAME | character | A string's collation, named as its character set |
+| PARAMETER_MODE | exact | Of a `?` of a CALL, its parameter's mode: 1 IN, 2 INOUT, 4 OUT; else 0 ([DESCRIBE](describe.md)) |
+| PARAMETER_ORDINAL_POSITION | exact | Of a `?` of a CALL, its parameter's position, from 1; else 0 |
+| PARAMETER_SPECIFIC_CATALOG, _SCHEMA, _NAME | character | Of a `?` of a CALL, the procedure's specific name; else empty |
 
 The codes of TYPE:
 

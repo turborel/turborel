@@ -163,15 +163,36 @@ fails, within the same request, so no COMMIT is sent. A cursor
 
 `prepare` prepares a statement once, its dynamic parameters written
 `?`; `execute` runs it with values for them, as many times as wanted.
-`parameters` gives the type each `?` takes, `columns` a query's columns.
-`open_cursor` runs a prepared query and gives its first rows, `fetch`
-the next batch, `close` ends it; `deallocate` lets the statement go.
+`inputs` gives the type each `?` takes that `execute` gives a value
+for, `columns` a query's columns. `open_cursor` runs a prepared query
+and gives its first rows, `fetch` the next batch, `close` ends it;
+`deallocate` lets the statement go.
 
 ```rust
 let by_id = conn.prepare("SELECT NAME FROM STAFF WHERE ID = ?")?;
-// by_id.parameters(): [INTEGER], ID's type
+// by_id.inputs(): [INTEGER], ID's type
 if let Outcome::Rows { rows, .. } = conn.execute(&by_id, &[Value::Exact(Decimal::new(2, 0))])? {
     // rows: [["Grace"]]
+}
+```
+
+`parameters` gives every `?`, each a `DynamicParameter` of its type, its
+mode and its ordinal position. A `?` of a CALL has the mode and the
+ordinal position of the procedure's parameter whose argument holds it,
+IN, OUT or INOUT, and `procedure` gives the procedure's specific name.
+`execute` takes values for the IN and INOUT ones and gives back the OUT
+and INOUT ones' values as one row of the statement's `columns`. A `?`
+of any other statement is IN, of no position. The server tells the
+modes to a connection granted `parameter-modes`, which `connect` asks
+for. Without it, `parameters` holds the inputs alone, each IN.
+
+```rust
+// CREATE PROCEDURE MIXED (OUT TOTAL INTEGER, IN TIMES INTEGER, INOUT TAG VARCHAR(10)) ...
+let mixed = conn.prepare("CALL MIXED(?, ?, ?)")?;
+// mixed.parameters(): OUT of 1, IN of 2, INOUT of 3
+// mixed.inputs(): [INTEGER, VARCHAR(10)]
+if let Outcome::Rows { rows, .. } = conn.execute(&mixed, &[Value::Exact(Decimal::new(2, 0)), Value::Char("A".into())])? {
+    // rows: [[TOTAL, TAG]], the OUT and INOUT parameters' values
 }
 ```
 

@@ -251,7 +251,7 @@ pub fn import<S: Read + Write, R: Source>(
     let (insert, columns) = prepared(connection, source, how)?;
     if super::copied::copies(connection, &insert, how) {
         let table = table_name(&how.table).map_err(|msg| before(Cause::Input(msg)))?;
-        let types = insert.parameters().to_vec();
+        let types = insert.inputs().to_vec();
         // Its parameters' types known, the INSERT is of no more use.
         connection.deallocate(insert).map_err(|f| before(Cause::sql(f)))?;
         return super::copied::import(connection, source, (how, &table, columns), types);
@@ -328,12 +328,12 @@ impl<S: Read + Write> Run<'_, S> {
 
     /// Inserts `record`, committing its batch if it ends one.
     fn row(&mut self, record: &Record, rejected: &mut impl FnMut(Rejected)) -> Result<(), ImportError> {
-        let wanted = self.insert.parameters().len();
+        let wanted = self.insert.inputs().len();
         if record.values.len() != wanted {
             let msg = format!("[DESIGN] {} fields, for {wanted} columns", record.values.len());
             return self.reject(Rejected { position: record.position, cause: Cause::Input(msg) }, rejected);
         }
-        let values = assigned(&record.values, self.insert.parameters()).and_then(|v| self.located(v));
+        let values = assigned(&record.values, self.insert.inputs()).and_then(|v| self.located(v));
         match values.and_then(|v| self.connection.execute(&self.insert, &v)) {
             Ok(_) => {
                 self.in_batch = self.in_batch.saturating_add(1);
@@ -355,7 +355,7 @@ impl<S: Read + Write> Run<'_, S> {
     /// a piece at a time and given by its locator (`lobs.rs`), so no
     /// request holds it whole.
     fn located(&mut self, values: Vec<Value>) -> Result<Vec<Value>, Failure> {
-        let types = self.insert.parameters().to_vec();
+        let types = self.insert.inputs().to_vec();
         values
             .into_iter()
             .zip(types)

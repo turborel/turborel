@@ -29,13 +29,15 @@ impl Parser {
         self.expect_word(CALL)?;
         let name = self.table_name()?;
         self.expect_delim(delim::LEFT_PAREN)?;
-        let (mut arguments, mut names) = (Vec::new(), Vec::new());
+        let (mut arguments, mut names, mut dynamic) = (Vec::new(), Vec::new(), Vec::new());
         if self.accept_delim(delim::RIGHT_PAREN) {
-            return Ok(CallStatement { name, arguments, names });
+            return Ok(CallStatement { name, arguments, names, dynamic });
         }
         loop {
             names.push(self.named_argument(&names)?);
+            let before = self.questions_before();
             arguments.push(self.sql_argument()?);
+            dynamic.push(self.questions_since(before));
             if !self.accept_delim(delim::COMMA) {
                 break;
             }
@@ -44,7 +46,7 @@ impl Parser {
             return Err(self.rule(SR9A));
         }
         self.expect_delim(delim::RIGHT_PAREN)?;
-        Ok(CallStatement { name, arguments, names })
+        Ok(CallStatement { name, arguments, names, dynamic })
     }
 
     /// [ISO/IEC 9075-2:2023 §10.4] `<SQL argument>`, of those implemented:

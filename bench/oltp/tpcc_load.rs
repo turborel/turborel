@@ -65,7 +65,7 @@ impl<'a> Insert<'a> {
     pub fn new(session: &'a Session, table: &str, columns: &str) -> Insert<'a> {
         let marks = vec!["?"; columns.split(',').count()].join(", ");
         let one = session.prepare(&format!("INSERT INTO {table} ({columns}) VALUES ({marks})")).unwrap();
-        let types = one.parameters().iter().map(|t| t.clone().data_type()).collect();
+        let types = one.inputs().iter().map(|t| t.clone().data_type()).collect();
         Insert { session, one, types, rows: Vec::with_capacity(BATCH) }
     }
 
