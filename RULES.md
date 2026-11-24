@@ -664,6 +664,7 @@ verification approach DO-178C expects (§8).
 | D1050 | A hash join of a part builds an operand that gives batches of its vectors, not of rows made one by one |
 | D1051 | A hash join's built operand reading the column store is a part of its own |
 | D1052 | A column store's split judges its table's zones once for all its morsels |
+| D1053 | A join's built operand keeps datetimes and truth values as vectors, and is joined of its parts' words |
 
 ### The project
 
@@ -18166,6 +18167,25 @@ may match as they were when it was split, and hands each morsel those
 within its ids. A zone that would pass only later holds no row the
 split's reader sees, as its rows were written after the reader's
 snapshot, so each morsel still reads every row it would have.
+
+#### D1053. A join's built operand keeps datetimes and truth values as vectors, and is joined of its parts' words
+
+A hash join holds its built operand as one batch joined of the batches
+read (`Batch::joined`, D38). Integers of one scale, approximate numbers
+and character strings stayed vectors of their kind. A column of dates,
+times, timestamps or truth values became a vector of values, one made
+for each built row, so every row a probe gathered of it cloned a value
+and every expression over it above the join left the vectors. And each
+vector was put together a row at a time through the kind of its part,
+its nulls looked for in every row.
+
+Now datetimes of one type and truth values stay vectors of their kind
+(`storage/batch/joined.rs`). A vector of integers, approximate numbers
+or datetimes is made of its parts' words, a part all of whose rows are
+kept, in order, copied whole, and truth values a word of bits at a
+time. Nulls are looked for only if some part holds a mask of them or
+lacks the column. Datetimes of two types, or with displacements in
+some parts alone, are joined as values, as before.
 
 ## 2. Project layout
 

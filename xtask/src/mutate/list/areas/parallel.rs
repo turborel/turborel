@@ -8,7 +8,9 @@
 //! budget, a part's operators reserving the budget again, a column
 //! store's scan by batch run in parallel, a hash join's operand built
 //! of rows where it gives batches, one of the column store kept off the
-//! workers, and a morsel's tree rows read of zones not judged.
+//! workers, a morsel's tree rows read of zones not judged, and a built
+//! operand's datetimes joined whatever their types or without their
+//! nulls.
 
 use super::super::{Mutation, Package};
 
@@ -24,11 +26,13 @@ const GRANTS: &str = "spill::grant::tests::grants_halve_the_free_budget";
 const BUILT: &str = "exec::parallel::probe::tests::an_operand_that_gives_batches_is_built_of_its_vectors";
 /// The test of hash joins' built operands of the column store.
 const BUILDS: &str = "parallel::joins_build_by_batch";
+/// The unit test of vectors of words joined.
+const JOINED: &str = "storage::batch::joined::tests::datetimes_and_truth_values_stay_vectors_of_words";
 /// The unit test of grants inside a statement's grant.
 const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 16] = [
+pub const PARALLEL: [Mutation; 18] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -188,5 +192,25 @@ pub const PARALLEL: [Mutation; 16] = [
         replacement: "(self.reader, part), what, vec![range])",
         integration: &[],
         unit: &["engine::rows::frozen::tests::morsels::a_split_judges_its_zones_once_for_every_morsel"],
+    },
+    Mutation {
+        name: "joined-datetimes-of-two-types",
+        package: Package::Core,
+        breaks: "datetimes of two types are joined as one vector of the first's type (D1053)",
+        file: "src/storage/batch/joined.rs",
+        original: "parts.iter().all(|&(column, _)| kind(column) == Some(first)).then_some(first)",
+        replacement: "Some(first)",
+        integration: &[],
+        unit: &[JOINED],
+    },
+    Mutation {
+        name: "joined-nulls-not-looked-for",
+        package: Package::Core,
+        breaks: "a joined vector of datetimes loses the nulls of a part that holds some (D1053)",
+        file: "src/storage/batch/joined.rs",
+        original: "Column::Datetimes(datetimes) => datetimes.nulls.is_some(),",
+        replacement: "Column::Datetimes(_) => false,",
+        integration: &[],
+        unit: &[JOINED],
     },
 ];
