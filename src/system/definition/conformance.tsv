@@ -377,8 +377,8 @@ FEATURE	T501	 	Enhanced EXISTS predicate	 	NO
 FEATURE	T502	 	Period predicates	 	YES		CONFORMANCE.md, Periods
 FEATURE	T511	 	Transaction counts	 	YES		CONFORMANCE.md, Diagnostics
 FEATURE	T521	 	Named arguments in CALL statement	 	NO		
-FEATURE	T522	 	Default values for IN parameters of SQL-invoked procedures	 	NO		
-FEATURE	T523	 	Default values for INOUT parameters of SQL-invoked procedures	 	NO		
+FEATURE	T522	 	Default values for IN parameters of SQL-invoked procedures	 	YES		CONFORMANCE.md, SQL-invoked routines
+FEATURE	T523	 	Default values for INOUT parameters of SQL-invoked procedures	 	YES		CONFORMANCE.md, SQL-invoked routines
 FEATURE	T524	 	Named arguments in routine invocations other than a CALL statement	 	NO		
 FEATURE	T525	 	Default values for parameters of SQL-invoked functions	 	NO		
 FEATURE	T551	 	Optional key words for default syntax	 	NO		

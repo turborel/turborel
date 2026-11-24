@@ -38,6 +38,7 @@ pub use body::{FunctionBody, bind_function_body, definition_of, routine_definiti
 pub use candidates::{Candidate, alike, functions_named, grantably_held, held};
 pub(super) use resolve::note as note_specific;
 pub use resolve::resolve_procedure;
+pub(crate) use resolve::takes;
 
 use candidates::Chosen;
 pub(super) use candidates::shown_types;

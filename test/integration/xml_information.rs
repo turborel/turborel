@@ -225,7 +225,7 @@ fn routines_and_parameters_20_10() {
 /// 9075-11's RESULT_CAST_DTD_IDENTIFIER, the `<result cast>`'s type's,
 /// then the associated string type's, the XML option and the XML return
 /// mechanism last, each once; PARAMETERS has them all last, in the draft's
-/// order.
+/// order, then PARAMETER_DEFAULT.
 #[test]
 fn routine_columns_in_their_places_20_11() {
     let db = described();
@@ -247,7 +247,8 @@ fn routine_columns_in_their_places_20_11() {
     let cast = xml_columns_after("RESULT_CAST_DTD_IDENTIFIER").into_iter().map(|c| c.replacen("XML_", "RESULT_CAST_XML_", 1));
     let last = [cast.collect(), owned(&string_type), owned(&["XML_RETURN_MECHANISM"])].concat();
     assert_eq!(columns_of(&a, "ROUTINES", ("RESULT_CAST_DTD_IDENTIFIER", 20)), last);
-    let parameters = [xml_columns_after("DTD_IDENTIFIER"), owned(&string_type), owned(&["XML_PASSING_MECHANISM"])].concat();
+    let parameters =
+        [xml_columns_after("DTD_IDENTIFIER"), owned(&string_type), owned(&["XML_PASSING_MECHANISM", "PARAMETER_DEFAULT"])].concat();
     assert_eq!(columns_of(&a, "PARAMETERS", ("DTD_IDENTIFIER", 21)), parameters);
     let named = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS \
                  WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA' AND TABLE_NAME = 'ROUTINES' AND COLUMN_NAME = 'XML_CHAR_TYPE'";

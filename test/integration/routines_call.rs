@@ -65,10 +65,10 @@ fn call_passes_parameters_by_mode_16_1() {
     assert_eq!(none.state, Some(SqlState::NULL_VALUE_NO_INDICATOR), "no row: the output parameter is null, and V has no indicator");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR9h iii, §10.4 CR6, CR7] an
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR9h iii, iv, GR3b ii] an
 /// output parameter's argument is a target specification; NULL or
-/// DEFAULT of an input parameter, and DEFAULT of one both, are of
-/// Features T522 and T523, not supported.
+/// DEFAULT of an input parameter, and DEFAULT of one both, its null value
+/// as it has no default (Features T522 and T523).
 #[test]
 fn arguments_are_as_their_modes_allow_9_18() {
     let db = defined();
@@ -80,9 +80,9 @@ fn arguments_are_as_their_modes_allow_9_18() {
     assert_eq!(run(&mut p, "CALL GIVE(1, 2, W)"), Err(Code::SyntaxRule), "an output parameter takes a target");
     assert_eq!(run(&mut p, "CALL GIVE(1, V, 3)"), Err(Code::SyntaxRule), "so does one both");
     assert_eq!(run(&mut p, "CALL GIVE(1, V, NULL)"), Err(Code::SyntaxRule));
-    assert_eq!(run(&mut p, "CALL GIVE(NULL, V, W)"), Err(Code::Unsupported), "T522");
-    assert_eq!(run(&mut p, "CALL GIVE(DEFAULT, V, W)"), Err(Code::Unsupported), "T522");
-    assert_eq!(run(&mut p, "CALL GIVE(1, V, DEFAULT)"), Err(Code::Unsupported), "T523");
+    assert!(run(&mut p, "CALL GIVE(NULL, V, W)").is_ok(), "T522");
+    assert!(run(&mut p, "CALL GIVE(DEFAULT, V, W)").is_ok(), "T522");
+    assert!(run(&mut p, "CALL GIVE(1, V, DEFAULT)").is_ok(), "T523");
     assert_eq!(run(&mut p, "CALL GIVE(1, V)"), Err(Code::SyntaxRule), "SR9b");
     assert_eq!(run(&mut p, "CALL GIVE('x', V, W)"), Err(Code::SyntaxRule), "SR9h v");
     assert!(run(&mut p, "CALL GIVE(1, V, W)").is_ok());

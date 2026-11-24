@@ -223,16 +223,7 @@ pub(super) fn inserting(
 ///
 /// A lock is refused.
 fn locked_rows(StatementContext { st, tx }: StatementContext<'_>, bound: &BoundMerge, held: bool) -> Result<Plan> {
-    // [DESIGN] A sort holds what passes the work area in runs of a spill
-    // area (RULES.md D38), so the rows may outgrow memory.
-    // Each target row's pairs together: of T's family, by its table too.
-    let id = row_id_column(bound)?;
-    let mut keys = vec![SortKey::ascending(id)];
-    if !bound.members.is_empty() {
-        keys.push(SortKey::ascending(id.saturating_add(1)));
-    }
-    let sorted = LogicalPlan::Sort { keys, input: Box::new(bound.rows.clone()) };
-    let (optimized, _, physical) = plan(st, sorted);
+    let (optimized, _, physical) = plan(st, joined_rows(bound)?);
     if !held {
         st.update_lock(tx, &bound.table)?;
         for member in &bound.members {
@@ -243,6 +234,25 @@ fn locked_rows(StatementContext { st, tx }: StatementContext<'_>, bound: &BoundM
         st.read_lock(tx, &t)?;
     }
     Ok(super::explain::analyzing(tx, st, (physical, Some(&optimized))))
+}
+
+/// The logical plan of the joined rows of `bound`, sorted by their target
+/// rows' row ids, as the statement reads them, and as EXPLAIN shows them
+/// (RULES.md D980).
+///
+/// # Errors
+///
+/// As `row_id_column`.
+pub(super) fn joined_rows(bound: &BoundMerge) -> Result<LogicalPlan> {
+    // [DESIGN] A sort holds what passes the work area in runs of a spill
+    // area (RULES.md D38), so the rows may outgrow memory.
+    // Each target row's pairs together: of T's family, by its table too.
+    let id = row_id_column(bound)?;
+    let mut keys = vec![SortKey::ascending(id)];
+    if !bound.members.is_empty() {
+        keys.push(SortKey::ascending(id.saturating_add(1)));
+    }
+    Ok(LogicalPlan::Sort { keys, input: Box::new(bound.rows.clone()) })
 }
 
 /// The tables the subqueries of the clauses of `bound` read: of their

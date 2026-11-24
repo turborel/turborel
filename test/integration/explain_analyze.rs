@@ -164,7 +164,7 @@ fn a_query_that_raises_raises_the_same_exception() {
 /// table named ANALYZE is read, explained and analyzed; EXPLAIN ANALYZE
 /// followed by a parenthesis that begins no query is a table EXPLAIN
 /// whose correlation name is ANALYZE; and EXPLAIN of a data change
-/// statement is refused, changing nothing.
+/// statement shows it, changing nothing (D980).
 #[test]
 fn analyze_is_read_as_the_option_only_before_a_query() {
     let db = database();
@@ -175,7 +175,7 @@ fn analyze_is_read_as_the_option_only_before_a_query() {
     assert_eq!(lines.last().map(String::as_str), Some("-- ran: 2 rows"));
     let joined = "EXPLAIN ANALYZE (D) CROSS JOIN ANALYZE";
     assert_eq!(direct_lines(&s, joined), rows(&s, &format!("SELECT * FROM {joined}")));
-    assert!(direct_lines(&s, "EXPLAIN INSERT INTO T VALUES (1, 1)").is_err());
+    assert_eq!(direct_lines(&s, "EXPLAIN INSERT INTO T VALUES (1, 1)").unwrap().get(1).map(String::as_str), Some("Insert into ANN.T"));
     s.rollback().unwrap();
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM T").unwrap(), ["1000"]);
 }

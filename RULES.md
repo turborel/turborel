@@ -629,6 +629,12 @@ verification approach DO-178C expects (§8).
 | D976 | An import reads a binary string column's field as its octets' hexits, as an export writes them |
 | D977 | Each `?` of a prepared CALL is described with its parameter's mode and ordinal position and the procedure's specific name |
 | D978 | With `parameter-modes`, a Prepared of a CALL carries its procedure and each `?` with its parameter's mode, tag 20 |
+| D979 | A procedure's IN and INOUT parameters take their defaults by DEFAULT, by an argument left out, or by a name not named |
+| D980 | EXPLAIN without ANALYZE shows a data change's plan as EXPLAIN ANALYZE shows it, running nothing |
+| D981 | EXPLAIN of a data change needs the privileges preparing it needs |
+| D982 | EXPLAIN of a data change reads, locks and writes nothing, so no trigger fires |
+| D983 | EXPLAIN of a data change names the indexes it maintains, the actions that cascade and the triggers that fire |
+| D984 | EXPLAIN of a data change says whether a point path runs it when prepared or in a procedure |
 | D990 | COLUMN_STATISTICS shows what the planner's statistics hold of each column, its values as text, to those holding a privilege on the column |
 | D991 | A table's lock stamps when its statistics were last gathered, as a pass the engine counts is seen |
 | D992 | INDEX_STATISTICS shows the distinct keys an index counts, as the planner reads them |
@@ -13414,8 +13420,8 @@ loop's probes note alike, of the join.
 
 `EXPLAIN ANALYZE` takes a data change statement as well as a query,
 read so when INSERT, UPDATE or DELETE, or MERGE followed by INTO,
-follows ANALYZE. EXPLAIN alone still takes only a query, as it runs
-nothing. The statement runs for real, as it would run alone, in the
+follows ANALYZE. EXPLAIN alone took only a query then, as it runs
+nothing; D980 has it take a data change too. The statement runs for real, as it would run alone, in the
 session's transaction, so its changes stay until the transaction ends
 and a ROLLBACK undoes them. The session's `Stop`, which the statement
 reaches through its transaction, is told to want a counted plan
@@ -17596,9 +17602,8 @@ written in Rust, which has no specific name. DESCRIBE INPUT and
 DESCRIBE OUTPUT set PARAMETER_MODE to Table 33's code, 1 IN, 2 INOUT
 and 4 OUT, PARAMETER_ORDINAL_POSITION, and the three
 PARAMETER_SPECIFIC items, of each top-level item of a CALL, and SET
-DESCRIPTOR sets none of them [§20.5 SR3a]. No parameter has a default
-(Features T522, T523), so DEFAULT as an argument stays refused, SQLCODE
--900, and a CALL of fewer arguments than parameters finds no procedure.
+DESCRIPTOR sets none of them [§20.5 SR3a]. A parameter left to its
+default value holds no `?` (D979).
 
 #### D978. With `parameter-modes`, a Prepared of a CALL carries its procedure and each `?` with its parameter's mode, tag 20
 
@@ -17615,6 +17620,115 @@ it reads what it always read, and the protocol's version stays 1. The
 OUT and INOUT values still come back as the one row of the statement's
 columns, which `Statement::parameters` now matches by mode. The
 client's `parameters` gives the modes told, else the inputs, each IN.
+
+#### D979. A procedure's IN and INOUT parameters take their defaults by DEFAULT, by an argument left out, or by a name not named
+
+A `<parameter default>` of a procedure's IN or INOUT parameter (Features
+T522 and T523) is read, a value expression or NULL, with no host or
+dynamic parameter [ISO/IEC 9075-2:2023 §11.60 SR19], and an OUT
+parameter's is refused [SR16e ii]. The routine descriptor keeps its
+text as written [GR3c vi], logged and checkpointed with the rest, and
+PARAMETERS shows it as PARAMETER_DEFAULT, a last column, as the 2006
+draft's view has none. It is bound as the body is, under the owner of
+the procedure's schema, in a scope of the routine's path and horizon
+and of no parameter, its type one the parameter's takes by store
+assignment [SR16e i]. The tables, columns and routines it names join
+the body's, after the body's SQL-data access is checked, so a drop of
+one is refused without CASCADE [§11.23 SR7d, §11.31 SR7f, §11.62 SR4c
+ii]. A CALL's candidates are the procedures of the name with at least
+as many parameters as arguments, each parameter past those written, or
+named by none, of a default [§9.18 SR9b, SR9d], and of those of the
+schema first in the path the one of fewest parameters is invoked
+[SR9e to SR9g]. Such a parameter, and one given DEFAULT, takes its
+default, bound again from the kept text as at definition and evaluated
+in the row of the CALL's arguments, so the compiled and the direct
+paths take it as any argument; with no default it is null [GR3b ii]. An
+INOUT parameter given DEFAULT has no target, so its value out goes
+nowhere [SR9h iii 2]. NULL of an IN parameter is the null value, as it
+is of a procedure written in Rust, whose parameters have no default. A
+function's default stays refused, SQLCODE -900 (T525).
+
+### Plans
+
+#### D980. EXPLAIN without ANALYZE shows a data change's plan as EXPLAIN ANALYZE shows it, running nothing
+
+`EXPLAIN` alone now takes INSERT, UPDATE, DELETE and MERGE, searched
+or positioned, read so when INSERT, UPDATE or DELETE, or MERGE followed
+by INTO or WITH, follows EXPLAIN. No query begins with a table named
+EXPLAIN followed by those words, so nothing read before is read
+otherwise. The statement is parsed and bound as running it would bind
+it, and the plan of the rows it reads is made by the planner that runs
+it, then described as EXPLAIN ANALYZE describes it (D622,
+`db/explain/unrun.rs`). The text is that of EXPLAIN ANALYZE without
+what ran: a line naming the statement and its table, the plan below
+it, and lines that say what the change would do beside (D983, D984).
+A row of values that reads nothing has no plan, as it is evaluated
+(D419), so its INSERT shows the head line alone. A positioned change
+shows its cursor's row in place of a plan, its cursor declared, open
+or not, as preparing it needs it declared. A change an INSTEAD OF
+trigger takes in place shows the trigger. A program reaches the same
+text by `Session::explain`, its parameters given values as a module's
+procedure gives them. Only the physical stage is shown, as EXPLAIN
+ANALYZE shows only it.
+
+#### D981. EXPLAIN of a data change needs the privileges preparing it needs
+
+[ISO/IEC 9075-2:2023 §20.7 GR6] has preparing a statement check its
+Format, Syntax Rules and Access Rules, and nothing more. EXPLAIN of a
+change binds it as preparing binds it, through the same binder, so it
+is refused by the code preparing gives without a privilege its access
+rules need, and shown with them. Its General Rules are not applied, so
+it is shown in a READ ONLY transaction, where the change itself is
+refused, and a trigger's or a referential action's privileges, which
+are their owners', are not looked at.
+
+#### D982. EXPLAIN of a data change reads, locks and writes nothing, so no trigger fires
+
+EXPLAIN of a change takes none of the locks running it takes, of its
+table to be written or of the tables it reads, and runs none of its
+plan, its triggers, its actions or its checks. It opens a transaction
+as EXPLAIN of a query does, which reads no row. So a second session
+writes the rows the change would write while the first's transaction
+is open, waiting for none, the files of the database are byte for byte
+as they were, its rows, indexes and log alike, and no trigger fires.
+
+#### D983. EXPLAIN of a data change names the indexes it maintains, the actions that cascade and the triggers that fire
+
+After the plan, `-- maintains:` names each index of the table whose
+entries the change would write (`db/explain/unrun/effects.rs`): every
+one of an INSERT or a DELETE; of an UPDATE, each whose key reads a
+column it sets or a generated column computed from one, every global
+index over a partition, and every index where a BEFORE row trigger may
+set any column (D875). An index of no column set keeps its entries. A
+`-- cascades:` line names each referential action that writes the rows
+referencing the table [ISO/IEC 9075-2:2023 §15.18]: CASCADE, SET NULL
+or SET DEFAULT of a DELETE, and of an UPDATE of a referenced column.
+The tables they write are followed in turn, each table and event once,
+so the list ends. A `-- trigger:` line names each trigger, but INSTEAD
+OF ones, that a change of the table or of a table the actions write
+would activate [§4.46.2], its column list read as the state change's
+columns, once each, in the order the definitions list them. A NO
+ACTION or RESTRICT rule writes nothing and is not named.
+
+#### D984. EXPLAIN of a data change says whether a point path runs it when prepared or in a procedure
+
+A last line, `-- point path:`, says how a path past the executor's
+operators would run the change. A searched UPDATE or DELETE whose plan
+is one read of a whole unique key runs as that read when its plan is
+kept, by a prepared statement or a procedure's body (D752), unless
+EXECUTOR.POINT_OPERATIONS is OFF, and the line names the index. One
+whose table no trigger or referential action reaches, whose
+constraints its end may check of the row alone, writes that row
+straight when a procedure's body runs compiled (D841), and an INSERT
+of VALUES or of a query specification does too (D901), unless
+EXECUTOR.COMPILED_PROCEDURES is OFF. The judgement is that of the
+compiled program's own, from the statement's shape and its table
+(`routines/program/compiled/change.rs`). A row of values evaluated
+says so (D419). None of these is `none`. A statement run directly
+plans its rows each time, so the line tells what its prepared or
+procedure's form gains.
+
+### Statistics views
 
 #### D990. COLUMN_STATISTICS shows what the planner's statistics hold of each column, its values as text, to those holding a privilege on the column
 

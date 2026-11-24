@@ -26,9 +26,9 @@ mod executor;
 mod host;
 mod hosted;
 
-pub(in crate::db) use compiled::Compiled;
+pub(in crate::db) use compiled::{Compiled, compiled_procedures, runs_straight};
 pub(crate) use executor::{run_component, run_unhosted};
-pub(in crate::db) use hosted::{Hosted, hosted_rows};
+pub(in crate::db) use hosted::{Hosted, evaluates, hosted_rows};
 
 use host::SessionHost;
 
@@ -128,7 +128,7 @@ impl Session {
         }
         let ended = if direct {
             run_program(program, &mut inner, &mut SessionHost::direct(self, cx))?
-        } else if let Some(compiled) = routine.and_then(|_| compiled::compiled_procedures(cx.st, self).then(|| kept.compiled()).flatten()) {
+        } else if let Some(compiled) = routine.and_then(|_| compiled_procedures(cx.st, self).then(|| kept.compiled()).flatten()) {
             // [DESIGN] RULES.md D841: a procedure's body kept runs compiled.
             compiled::run_compiled((self, cx), (&kept, compiled), &mut inner)?
         } else {
@@ -230,7 +230,7 @@ impl Session {
     /// Whether the session runs `kept`, a procedure's body, compiled in
     /// `st` (RULES.md D841).
     pub(in crate::db) fn runs_compiled(&self, st: &State, kept: &KeptProgram) -> bool {
-        compiled::compiled_procedures(st, self) && kept.compiled().is_some()
+        compiled_procedures(st, self) && kept.compiled().is_some()
     }
 
     /// `program` run over `frame` in `cx`, the session its host.

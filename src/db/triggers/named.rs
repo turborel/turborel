@@ -40,6 +40,21 @@ pub(in crate::db) fn named(
     out
 }
 
+/// The tables and views the subqueries of the values `of` name, once
+/// each, those written without a schema in `schema`: a procedure's
+/// parameter defaults' [ISO/IEC 9075-2:2023 §11.31 SR7f].
+pub(in crate::db) fn named_by_values<'v>(of: impl Iterator<Item = &'v ValueExpression>, schema: &str) -> Vec<QualifiedName> {
+    let mut written: Vec<TableName> = Vec::new();
+    values(of, &mut written);
+    let mut out: Vec<QualifiedName> = Vec::new();
+    for qn in written.iter().map(|t| qualify(t, schema)) {
+        if !out.contains(&qn) {
+            out.push(qn);
+        }
+    }
+    out
+}
+
 /// Adds to `out` the table names written in `stmt`, a searched UPDATE or
 /// DELETE, and in its points in time FOR PORTION OF, if written [ISO/IEC
 /// 9075-2:2023 §14.9 SR7a, §14.14 SR7a].

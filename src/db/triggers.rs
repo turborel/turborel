@@ -17,9 +17,9 @@ mod rerouted;
 mod routed;
 mod run;
 
-pub(super) use changes::Event;
+pub(super) use changes::{Event, activates};
 pub(super) use fire::Triggered;
-pub(super) use named::named;
+pub(super) use named::{named, named_by_values};
 pub(super) use rerouted::view_rows;
 pub(super) use routed::{Instead, instead_for, updatable};
 pub(super) use run::Triggering;

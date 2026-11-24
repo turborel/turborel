@@ -154,7 +154,7 @@ impl State {
                 }
                 (t, None) => t,
             };
-            made.push(SqlParameter { name: p.name.clone(), data_type, mode: ParameterMode::In, generic: None });
+            made.push(SqlParameter { name: p.name.clone(), data_type, mode: ParameterMode::In, generic: None, default: None });
         }
         Ok(made)
     }
