@@ -162,7 +162,7 @@ fn first() -> [&'static [Mutation]; 29] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 49] {
+fn second() -> [&'static [Mutation]; 48] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
@@ -210,7 +210,6 @@ fn second() -> [&'static [Mutation]; 49] {
         &estimates::ESTIMATES,
         &analyze::ANALYZE,
         &analyze_more::ANALYZE_MORE,
-        &explain_unrun::EXPLAIN_UNRUN,
         &windows_batched::WINDOWS_BATCHED,
         &statistics::STATISTICS,
     ]
@@ -219,8 +218,9 @@ fn second() -> [&'static [Mutation]; 49] {
 /// The planner's newest areas, in order: join estimates, range joins, the
 /// cost model, orders, probed subqueries, predicate transfer, dead entries
 /// taken back by a scan and scans priced by sampled zones, key plans, a
-/// B-link tree probe's path, a commit's stamps in place, the fixed costs cut from a write, and a row's fetch by its id.
-fn planner() -> [&'static [Mutation]; 12] {
+/// B-link tree probe's path, a commit's stamps in place, the fixed costs cut from a write, a row's fetch by its id
+/// and EXPLAIN of a data change.
+fn planner() -> [&'static [Mutation]; 13] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
@@ -234,6 +234,7 @@ fn planner() -> [&'static [Mutation]; 12] {
         &commit_stamps::COMMIT_STAMPS,
         &write_costs::WRITE_COSTS,
         &fetch_path::FETCH_PATH,
+        &explain_unrun::EXPLAIN_UNRUN,
     ]
 }
 
