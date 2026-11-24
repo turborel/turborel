@@ -59,6 +59,8 @@ fn packed_and_inserted_indexes_give_identical_results() {
         session.commit().unwrap();
     }
     assert_eq!(answers(&session, "P"), answers(&session, "Q"));
+    // Counted once the deleted versions' entries are collected.
+    db.maintain().unwrap();
     assert_eq!(db.index_entries("P_XY").unwrap(), db.index_entries("Q_XY").unwrap());
 }
 
@@ -96,7 +98,11 @@ fn packed_builds_and_reclaimed_leaves_recover_after_a_crash() {
     session.run("DELETE FROM P WHERE X < 700 OR Y < 400").unwrap();
     session.commit().unwrap();
     let after = answers(&session, "P");
+    // The versions the deletes left go with their entries in the
+    // background, so the count waits for that collection to end.
+    built.maintain().unwrap();
     let left = built.index_entries("P_XY").unwrap();
+    assert_eq!(left, rows(&session, "SELECT ID FROM P").unwrap().len());
     drop((session, built));
     let reclaimed = recovered(&dir);
     let session = reclaimed.session("S");
@@ -136,5 +142,6 @@ fn a_shortened_tree_recovers_after_a_crash() {
     spread(&shortened, "P");
     spread(&shortened, "Q");
     assert_eq!(answers(&session, "P"), answers(&session, "Q"));
+    shortened.maintain().unwrap();
     assert_eq!(shortened.index_entries("P_XY").unwrap(), usize::try_from(ROWS).unwrap());
 }
