@@ -1869,7 +1869,9 @@ ISO/IEC 9075-11, its clause numbers cited with that edition.
 Features T321 (Basic SQL-invoked routines), its subfeatures 01 to 05,
 T341 (Overloading of SQL-invoked functions and procedures), B033
 (Untyped SQL-invoked function arguments), B128 (Routine language SQL),
-S203 (Array parameters) and S204 (Array as result type of functions). CREATE FUNCTION and CREATE PROCEDURE define a
+S203 (Array parameters), S204 (Array as result type of functions), T522
+(Default values for IN parameters of SQL-invoked procedures) and T523
+(Default values for INOUT parameters of SQL-invoked procedures). CREATE FUNCTION and CREATE PROCEDURE define a
 routine of an SQL routine body [§11.60], DROP ROUTINE, FUNCTION and
 PROCEDURE drop one [§11.62], a function is invoked in a value expression
 [§9.18, §10.4], a procedure by CALL [§16.1], and a function's body is a
@@ -4584,6 +4586,8 @@ parts: `cargo xtask features` writes their rows from it, and
 | T218 | Multiple triggers for the same event executed in the order created | [Triggers](#triggers) |
 | T321 | Basic SQL-invoked routines | [SQL-invoked routines](#sql-invoked-routines) |
 | T341 | Overloading of SQL-invoked functions and SQL-invoked procedures | [SQL-invoked routines](#sql-invoked-routines) |
+| T522 | Default values for IN parameters of SQL-invoked procedures | [SQL-invoked routines](#sql-invoked-routines) |
+| T523 | Default values for INOUT parameters of SQL-invoked procedures | [SQL-invoked routines](#sql-invoked-routines) |
 | B033 | Untyped SQL-invoked function arguments | [SQL-invoked routines](#sql-invoked-routines) |
 | B128 | Routine language SQL | [SQL-invoked routines](#sql-invoked-routines) |
 | S203 | Array parameters | [SQL-invoked routines](#sql-invoked-routines) |
