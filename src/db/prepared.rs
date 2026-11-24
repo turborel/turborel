@@ -93,7 +93,7 @@ impl Prepared {
     /// [ISO/IEC 9075-2:2023 §20.10 GR7] (RULES.md D977) Each of its
     /// `<dynamic parameter specification>`s, in the order written: its
     /// type, and, of a CALL, the mode and the ordinal position of the
-    /// parameter whose argument holds it [GR7e].
+    /// parameter whose argument holds it [§20.10 GR7e].
     pub fn parameters(&self) -> &[DynamicParameter] {
         &self.parameters
     }
