@@ -102,8 +102,9 @@ impl RowTable {
     /// enough past the last group, and none found too few a moment ago;
     /// frozen rows enough given entries; a group sorted by other columns
     /// than COLUMNSTORE.ORDER names now, keeping Bloom filters of others
-    /// than COLUMNSTORE.BLOOM names, or written for sketches of others than
-    /// COLUMNSTORE.SKETCH names; or rows frozen whose entries remain.
+    /// than COLUMNSTORE.BLOOM names, written for sketches of others than
+    /// COLUMNSTORE.SKETCH names, or of another layout than COLUMNSTORE.LAYOUT
+    /// says; or rows frozen whose entries remain.
     pub(in crate::engine::rows) fn freeze_wanted(&self) -> bool {
         let Ok(Some(columns)) = read(&self.frozen.columns).map(|c| *c) else { return false };
         let frozen = self.frozen.directory().map_or(0, |d| d.rows());

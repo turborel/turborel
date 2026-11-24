@@ -24,7 +24,9 @@
 //! meta page:
 //!
 //! ```text
-//! directory:  groups u32 | each: its summary (`group/header.rs`)
+//! directory:  groups u32, the high bit set if each one's stamp u64
+//!             follows (`stamped.rs`) | each: its summary
+//!             (`group/header.rs`)
 //! ```
 
 mod batches;
