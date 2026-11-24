@@ -82,9 +82,9 @@ fn grouped_batches(part: Parallel, (db, tx): (&Db, TxId), deferred: &Deferred) -
     // An analyzed plan's count of the grouping's rows, taken of the part's
     // (RULES.md D378).
     if let Plan::Counted(c) = input {
-        let Counted { count, input } = *c;
-        let part = Plan::Parallel(Box::new(Parallel { degree, input }));
-        return stream::batches_with(Plan::Counted(Box::new(Counted { count, input: part })), (db, tx), deferred);
+        let Counted { count, input: counted } = *c;
+        let run = Plan::Parallel(Box::new(Parallel { degree, input: counted }));
+        return stream::batches_with(Plan::Counted(Box::new(Counted { count, input: run })), (db, tx), deferred);
     }
     let (columns, _) = told::layout(&input, db).ok_or_else(|| broken("a grouping that gives no batches"))?;
     let (Some(read), Plan::Aggregate { input: rows, .. }) = (read_of(&input, db), &input) else {

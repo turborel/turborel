@@ -9,9 +9,11 @@
 //! unnested subquery's grouping, and the grouping, take the filter.
 
 use super::stream;
+use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::functions::ColumnarKind;
-use crate::logical::{AggCall, Expr, MAX_JUDGED_DEPTH, can_raise_typed, set_function_type, total_fits};
+use crate::logical::raises::{set_function_type, total_fits};
+use crate::logical::{AggCall, Expr, MAX_JUDGED_DEPTH, can_raise_typed};
 use crate::physical::Plan;
 use crate::value::DataType;
 
@@ -30,35 +32,50 @@ fn typed(plan: &Plan, column: usize, db: &State, depth: usize) -> Option<DataTyp
         return None;
     }
     let deeper = depth.saturating_add(1);
+    if let Some(input) = passing(plan) {
+        return typed(input, column, db, deeper);
+    }
+    if let Some(table) = scanned(plan) {
+        return db.catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone());
+    }
+    if let Plan::Project { exprs, input, .. } = plan {
+        let Expr::Column(c) = exprs.get(column)? else { return None };
+        return typed(input, *c, db, deeper);
+    }
+    if let Plan::HashJoin { left, right, .. } = plan {
+        let (_, width) = stream::layout(left, db)?;
+        return match column.checked_sub(width) {
+            Some(of_right) => typed(right, of_right, db, deeper),
+            None => typed(left, column, db, deeper),
+        };
+    }
+    let Plan::Aggregate { groups, aggs, seeds, input, .. } = plan else { return None };
+    if !seeds.is_empty() {
+        return None;
+    }
+    match column.checked_sub(groups.len()) {
+        Some(n) => set_function_type(aggs.get(n)?, &|c| typed(input, c, db, deeper)),
+        None => typed(input, *groups.get(column)?, db, deeper),
+    }
+}
+
+/// The table `plan` reads, if it is a scan whose rows are the table's.
+fn scanned(plan: &Plan) -> Option<&QualifiedName> {
+    if let Plan::SeqScan { table, located: false, .. } | Plan::IndexScan { table, located: false, .. } = plan { Some(table) } else { None }
+}
+
+/// The input of `plan`, if its operator passes each column of its input's
+/// rows on as it is, in its place, and adds no row.
+fn passing(plan: &Plan) -> Option<&Plan> {
     match plan {
-        Plan::SeqScan { table, located: false, .. } | Plan::IndexScan { table, located: false, .. } => {
-            db.catalog.table(table)?.columns.get(column).map(|c| c.data_type.clone())
-        }
-        Plan::Filter { input, .. } | Plan::Sort { input, .. } => typed(input, column, db, deeper),
-        Plan::Parallel(p) => typed(&p.input, column, db, deeper),
-        Plan::Counted(c) => typed(&c.input, column, db, deeper),
-        Plan::Project { exprs, input, .. } => {
-            let Expr::Column(c) = exprs.get(column)? else { return None };
-            typed(input, *c, db, deeper)
-        }
-        Plan::HashJoin { left, right, .. } => {
-            let (_, width) = stream::layout(left, db)?;
-            match column.checked_sub(width) {
-                Some(of_right) => typed(right, of_right, db, deeper),
-                None => typed(left, column, db, deeper),
-            }
-        }
-        Plan::Aggregate { groups, aggs, seeds, input, .. } => {
-            if !seeds.is_empty() {
-                return None;
-            }
-            match column.checked_sub(groups.len()) {
-                Some(n) => set_function_type(aggs.get(n)?, &|c| typed(input, c, db, deeper)),
-                None => typed(input, *groups.get(column)?, db, deeper),
-            }
-        }
+        Plan::Filter { input, .. } | Plan::Sort { input, .. } => Some(input),
+        Plan::Parallel(p) => Some(&p.input),
+        Plan::Counted(c) => Some(&c.input),
         Plan::SeqScan { .. }
         | Plan::IndexScan { .. }
+        | Plan::Project { .. }
+        | Plan::HashJoin { .. }
+        | Plan::Aggregate { .. }
         | Plan::Nearest(_)
         | Plan::Product { .. }
         | Plan::IndexJoin { .. }
@@ -99,48 +116,21 @@ fn filled(plan: &Plan, column: usize, db: &State, depth: usize) -> bool {
         return false;
     }
     let deeper = depth.saturating_add(1);
-    match plan {
-        Plan::SeqScan { table, located: false, .. } | Plan::IndexScan { table, located: false, .. } => {
-            db.catalog.table(table).and_then(|t| t.columns.get(column).map(|c| c.not_null)).unwrap_or(false)
-        }
-        Plan::Filter { input, .. } | Plan::Sort { input, .. } => filled(input, column, db, deeper),
-        Plan::Parallel(p) => filled(&p.input, column, db, deeper),
-        Plan::Counted(c) => filled(&c.input, column, db, deeper),
-        Plan::Project { exprs, input, .. } => {
-            let Some(Expr::Column(c)) = exprs.get(column) else { return false };
-            filled(input, *c, db, deeper)
-        }
-        Plan::HashJoin { left, right, .. } => match stream::layout(left, db).map(|(_, width)| column.checked_sub(width)) {
-            Some(Some(of_right)) => filled(right, of_right, db, deeper),
-            Some(None) => filled(left, column, db, deeper),
-            None => false,
-        },
-        Plan::SeqScan { .. }
-        | Plan::IndexScan { .. }
-        | Plan::Aggregate { .. }
-        | Plan::Nearest(_)
-        | Plan::Product { .. }
-        | Plan::IndexJoin { .. }
-        | Plan::OuterJoin { .. }
-        | Plan::MergeJoin(_)
-        | Plan::RangeJoin(_)
-        | Plan::SemiJoin(_)
-        | Plan::MarkJoin(_)
-        | Plan::Distinct { .. }
-        | Plan::SetOp { .. }
-        | Plan::System { .. }
-        | Plan::Values { .. }
-        | Plan::Append { .. }
-        | Plan::MergeAppend { .. }
-        | Plan::Limit { .. }
-        | Plan::Recursive { .. }
-        | Plan::WorkTable { .. }
-        | Plan::Transition { .. }
-        | Plan::Unnest(..)
-        | Plan::Window { .. }
-        | Plan::Recognize { .. }
-        | Plan::Polymorphic(..)
-        | Plan::Transfer(_) => false,
+    if let Some(input) = passing(plan) {
+        return filled(input, column, db, deeper);
+    }
+    if let Some(table) = scanned(plan) {
+        return db.catalog.table(table).and_then(|t| t.columns.get(column).map(|c| c.not_null)).unwrap_or(false);
+    }
+    if let Plan::Project { exprs, input, .. } = plan {
+        let Some(Expr::Column(c)) = exprs.get(column) else { return false };
+        return filled(input, *c, db, deeper);
+    }
+    let Plan::HashJoin { left, right, .. } = plan else { return false };
+    match stream::layout(left, db).map(|(_, width)| column.checked_sub(width)) {
+        Some(Some(of_right)) => filled(right, of_right, db, deeper),
+        Some(None) => filled(left, column, db, deeper),
+        None => false,
     }
 }
 

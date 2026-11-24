@@ -23,7 +23,7 @@
 
 mod totals;
 
-pub use totals::{ROW_DIGITS, set_function_type, total_fits};
+pub use totals::{set_function_type, total_fits};
 
 use super::{Cond, Expr, LogicalPlan, Slot, Subquery};
 use crate::catalog::Catalog;

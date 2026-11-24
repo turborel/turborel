@@ -6,10 +6,8 @@
 //! could.
 
 use crate::functions::{Registry, Standard};
-use crate::logical::{
-    AggCall, Cond, Expr, Judge, LogicalPlan, Search, Subquery, can_raise_judged, cond_can_raise_judged, map_plan_exprs, plan_column_type,
-    total_fits,
-};
+use crate::logical::raises::{Judge, can_raise_judged, cond_can_raise_judged, total_fits};
+use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Search, Subquery, map_plan_exprs, plan_column_type};
 use crate::optimizer::RuleContext;
 use crate::optimizer::folding::fold_expr;
 use crate::parser::MAX_NESTING_DEPTH;

@@ -35,8 +35,7 @@ pub(super) fn made(conjuncts: &[Cond], plan: &LogicalPlan, (offset, depth): (usi
             let rejected = |from: usize, to: usize| conjuncts.iter().any(|c| never_true(c, &|column| column >= from && column < to));
             let no_left_nulls = kind.keeps_right() && rejected(offset, middle);
             let no_right_nulls = kind.keeps_left() && rejected(middle, end);
-            let kind = super::left_of(*kind, no_left_nulls, no_right_nulls)?;
-            Some(super::joined(kind, cond.clone(), (left.clone(), right.clone())))
+            super::remade(*kind, (no_left_nulls, no_right_nulls), cond.clone(), (left.clone(), right.clone()))
         }
         LogicalPlan::Scan { .. }
         | LogicalPlan::Filter { .. }

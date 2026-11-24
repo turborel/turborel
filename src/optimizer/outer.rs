@@ -141,31 +141,25 @@ fn rejects_nulls(c: &Cond, width: usize) -> bool {
     matches!(eval_cond(c, &nulls, &NoSubqueries), Ok(Truth::False | Truth::Unknown))
 }
 
-/// The join an outer join of `kind` is once the rows it gives nulls for
-/// its left operand, or for its right, are known to be kept by no WHERE
-/// conjunct: an outer join of the kind left, or, for none, the inner
-/// join. None if neither is known, so it is as it was.
-fn left_of(kind: OuterJoin, no_left_nulls: bool, no_right_nulls: bool) -> Option<Option<OuterJoin>> {
+/// The join an outer join of `kind` on `on` is of its operands once the
+/// rows it gives nulls for its left operand, or for its right, as
+/// `rejected` says of each, are known to be kept by no WHERE conjunct: an
+/// outer join of the kind left, or the inner join, the filter over their
+/// product. None if neither is known, so it is as it was.
+fn remade(kind: OuterJoin, rejected: (bool, bool), on: Cond, (left, right): (Box<LogicalPlan>, Box<LogicalPlan>)) -> Option<LogicalPlan> {
+    let (no_left_nulls, no_right_nulls) = rejected;
     if !no_left_nulls && !no_right_nulls {
         return None;
     }
     let keeps_left = kind.keeps_left() && !no_right_nulls;
     let keeps_right = kind.keeps_right() && !no_left_nulls;
-    Some(match (keeps_left, keeps_right) {
-        (true, true) => Some(OuterJoin::Full),
-        (true, false) => Some(OuterJoin::Left),
-        (false, true) => Some(OuterJoin::Right),
-        (false, false) => None,
-    })
-}
-
-/// The join `kind` of the operands `left` and `right` on `on`: an outer
-/// join, or, for none, the inner join, the filter over their product.
-fn joined(kind: Option<OuterJoin>, on: Cond, (left, right): (Box<LogicalPlan>, Box<LogicalPlan>)) -> LogicalPlan {
-    match kind {
-        Some(kind) => LogicalPlan::OuterJoin { kind, cond: on, left, right },
-        None => LogicalPlan::Filter { cond: on, input: Box::new(LogicalPlan::Product { left, right }) },
-    }
+    let kept = match (keeps_left, keeps_right) {
+        (true, true) => OuterJoin::Full,
+        (true, false) => OuterJoin::Left,
+        (false, true) => OuterJoin::Right,
+        (false, false) => return Some(LogicalPlan::Filter { cond: on, input: Box::new(LogicalPlan::Product { left, right }) }),
+    };
+    Some(LogicalPlan::OuterJoin { kind: kept, cond: on, left, right })
 }
 
 impl Join<'_> {
@@ -176,7 +170,11 @@ impl Join<'_> {
     /// The join `kind` of these operands: an outer join on `on`, or, for
     /// none, the inner join, the filter over their product.
     fn of(&self, kind: Option<OuterJoin>, left: LogicalPlan, right: LogicalPlan) -> LogicalPlan {
-        joined(kind, self.on.clone(), (Box::new(left), Box::new(right)))
+        let (on, left, right) = (self.on.clone(), Box::new(left), Box::new(right));
+        match kind {
+            Some(kind) => LogicalPlan::OuterJoin { kind, cond: on, left, right },
+            None => LogicalPlan::Filter { cond: on, input: Box::new(LogicalPlan::Product { left, right }) },
+        }
     }
 
     /// The join `cond` filters, made the join it is if a conjunct over one
@@ -195,8 +193,8 @@ impl Join<'_> {
         // The operands given nulls: the right by LEFT and FULL, the left by RIGHT and FULL.
         let (left_nulls, right_nulls) = (self.kind.keeps_right(), self.kind.keeps_left());
         let (no_left_nulls, no_right_nulls) = (left_nulls && rejected(Side::Left), right_nulls && rejected(Side::Right));
-        let kind = left_of(self.kind, no_left_nulls, no_right_nulls)?;
-        Some(wrap(self.of(kind, self.left.clone(), self.right.clone()), conjuncts))
+        let operands = (Box::new(self.left.clone()), Box::new(self.right.clone()));
+        Some(wrap(remade(self.kind, (no_left_nulls, no_right_nulls), self.on.clone(), operands)?, conjuncts))
     }
 
     /// The join `cond` filters, its conjuncts over the preserved operand's

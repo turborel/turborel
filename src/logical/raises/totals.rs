@@ -13,12 +13,12 @@
 
 use super::{Types, exact_shape};
 use crate::functions::{AVG_EXTRA_SCALE, ColumnarKind};
-use crate::logical::AggCall;
+use crate::logical::{AggCall, Expr};
 use crate::value::{DataType, MAX_EXACT_PRECISION, Spelled};
 
 /// The decimal digits that count the rows a statement reads, fewer than
 /// 2^63, which is 9223372036854775808, a number of 19 digits.
-pub const ROW_DIGITS: u32 = 19;
+const ROW_DIGITS: u32 = 19;
 
 /// The precision and scale the argument of `a` is within, if exact and
 /// bounded.
@@ -59,10 +59,10 @@ pub(super) fn result_type(a: &AggCall, types: Types<'_>, depth: usize) -> Option
             let (p, s) = argument(a, types, depth)?;
             exact((p.saturating_add(AVG_EXTRA_SCALE), s.saturating_add(AVG_EXTRA_SCALE))).or_else(|| Some(a.result.clone()))
         }
-        ColumnarKind::Min | ColumnarKind::Max => match a.arg.as_ref()? {
-            crate::logical::Expr::Column(c) => types(*c),
-            other => exact(exact_shape(other, types, depth)?),
-        },
+        ColumnarKind::Min | ColumnarKind::Max => {
+            let arg = a.arg.as_ref()?;
+            if let Expr::Column(c) = arg { types(*c) } else { exact(exact_shape(arg, types, depth)?) }
+        }
     }
 }
 

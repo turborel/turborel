@@ -120,12 +120,12 @@ fn a_subquery_holding_a_sum_s_subquery_is_a_semi_join() {
     let want: Vec<String> = ["[1],[2.00]", "[1],[5.00]", "[2],[1.00]"].iter().map(|r| (*r).to_owned()).collect();
     assert_eq!(on, Ok(want.clone()));
     assert_eq!(off, Ok(want));
-    let plain = "SELECT K, V FROM R WHERE K IN (SELECT S.K FROM S WHERE S.W > (SELECT X.W FROM S AS X WHERE X.K = S.K AND X.W < 3.00))";
-    assert!(by_domain(&s, plain), "{}", physical(&s, plain));
-    let (on, off) = both(&db, &s, plain);
+    let single = "SELECT K, V FROM R WHERE K IN (SELECT S.K FROM S WHERE S.W > (SELECT X.W FROM S AS X WHERE X.K = S.K AND X.W < 3.00))";
+    assert!(by_domain(&s, single), "{}", physical(&s, single));
+    let (on, off) = both(&db, &s, single);
     assert_eq!(on, off);
     s.run("INSERT INTO S VALUES (1, 1.00, 0)").unwrap();
-    let (on, off) = both(&db, &s, plain);
+    let (on, off) = both(&db, &s, single);
     assert_eq!(on, Err(Code::Cardinality));
     assert_eq!(off, Err(Code::Cardinality));
 }
