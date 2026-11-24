@@ -667,6 +667,7 @@ verification approach DO-178C expects (§8).
 | D1043 | A slow statement's text is withheld only while an encryption is in use, not for a compression of the spill areas |
 | D1044 | An IVF directory whose write fails frees the pages it made |
 | D1045 | A range join is costed as a plan of no order |
+| D1046 | A correlated subquery stays probed past its runs only if its kept plan is one probe of a whole unique key |
 
 ### The project
 
@@ -18205,6 +18206,23 @@ does, and was chosen for an ORDER BY or a merge join at a cost without
 the sort it then needed.
 
 A range join is now offered as a plan of no order.
+
+#### D1046. A correlated subquery stays probed past its runs only if its kept plan is one probe of a whole unique key
+
+D790 keeps a subquery probed past EXECUTOR.DECORRELATE_AFTER_RUNS while
+its probes, each weighed as `PROBE_ROWS` rows, come to fewer than its
+build's rows, if its run is one probe of a whole unique key. The test
+was that its plan was kept (`subquery/probed.rs`). A plan is kept at
+once if it is such a probe, and also once it is learned over its runs
+(D675), which any plan may be when the setting is `MOST_LEARNING_RUNS`
+or more. A learned plan that reads many rows a run, a range of an index
+or a whole table, was weighed as one descent and stayed probed for
+many times the runs it should have.
+
+The runner now asks the kept plan whether it is one probe of a whole
+unique key (`physical::keepable`), found once and kept with the plan.
+A subquery whose kept plan is any other is decorrelated after the
+setting's runs, as D790 says.
 
 ## 2. Project layout
 

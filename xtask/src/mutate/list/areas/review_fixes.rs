@@ -9,7 +9,7 @@
 use super::super::{Mutation, Package};
 
 /// Each fix of the review, taken back, which its test must then fail.
-pub const REVIEW_FIXES: [Mutation; 6] = [
+pub const REVIEW_FIXES: [Mutation; 7] = [
     Mutation {
         name: "direct-join-by-a-key-not-unique",
         package: Package::Core,
@@ -69,5 +69,15 @@ pub const REVIEW_FIXES: [Mutation; 6] = [
         replacement: "                out.push((Cand { cost, order, tree: 0 }, tree(Method::Range, (cand.tree, build.tree))));",
         integration: &[],
         unit: &["physical::enumerate::tests::a_range_join_is_a_plan_of_no_order"],
+    },
+    Mutation {
+        name: "learned-plan-weighed-as-a-unique-probe",
+        package: Package::Core,
+        breaks: "a subquery whose learned plan reads many rows a run stays probed past its runs, each run weighed as one descent",
+        file: "src/exec/subquery/probed.rs",
+        original: "        if !kept.is_some_and(|kept| kept.probes(&self.db)) {",
+        replacement: "        if kept.is_none() {",
+        integration: &[],
+        unit: &["exec::subquery::probed::tests::a_plan_learned_that_is_no_unique_probe_is_decorrelated_after_its_runs"],
     },
 ];
