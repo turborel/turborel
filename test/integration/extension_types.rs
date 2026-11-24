@@ -360,7 +360,7 @@ fn a_function_declares_its_arguments_types() {
     assert_eq!(crate::common::code(&a, "SELECT IDENT_BYTE(K, 'X') FROM T"), Code::SyntaxRule, "nor a string a position");
     assert_eq!(rows(&a, "VALUES IDENT_BYTE('XYZ', 1)").err(), Some(Code::Data), "not an identifier");
     let p = a.prepare("VALUES IDENT_BYTE(?, ?)").unwrap();
-    let described: Vec<DataType> = p.parameters().iter().map(|t| t.clone().data_type()).collect();
+    let described: Vec<DataType> = p.inputs().iter().map(|t| t.clone().data_type()).collect();
     assert_eq!(described, [ident_type(), POSITION]);
     let mut opened = a.open_prepared(&p, &[Value::Char(hex(9).into()), Value::Exact(Decimal::new(16, 0))]).unwrap();
     assert_eq!(opened.fetch().unwrap().map(|r| r[0].to_string()), Some("9".to_owned()));

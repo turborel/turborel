@@ -11,6 +11,7 @@
 use std::collections::BTreeMap;
 
 use crate::ast::DescriptorItem;
+use crate::catalog::QualifiedName;
 use crate::parser::descriptor_type;
 use crate::system::INFORMATION_SCHEMA;
 use crate::value::datetime::Field;
@@ -193,6 +194,16 @@ impl Item {
         item
     }
 
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e iv to vi] (RULES.md D977) The fields
+    /// of a `?` of a CALL of the procedure of specific name `specific`, in
+    /// catalog `catalog`: the code of its parameter's mode [Table 33], the
+    /// parameter's ordinal position, and the procedure's specific name.
+    pub(super) fn describe_call(&mut self, (mode, ordinal): (u8, u32), specific: &QualifiedName, catalog: &str) {
+        self.set_number(DescriptorItem::ParameterMode, i64::from(mode));
+        self.set_number(DescriptorItem::ParameterOrdinalPosition, i64::from(ordinal));
+        self.names(PARAMETER_SPECIFIC, [catalog, specific.auth.as_str(), specific.ident.as_str()]);
+    }
+
     /// [ISO/IEC 9075-2:2023 §20.10 GR7d i, ii] The fields of a large object
     /// type of `kind` and `length`: LENGTH its maximum length, OCTET_LENGTH
     /// `octets`; a character one's character set and collation.
@@ -364,13 +375,22 @@ fn field_name(f: Field) -> &'static str {
 /// Whether `f` is a field of a character string [§17.1 Table 17; ISO/IEC
 /// 9075-2:2023 §20.1, Table 29].
 pub(super) fn is_text(f: DescriptorItem) -> bool {
-    matches!(f, DescriptorItem::Name) || CHARACTER_SET.contains(&f) || COLLATION.contains(&f) || USER_DEFINED_TYPE.contains(&f)
+    matches!(f, DescriptorItem::Name)
+        || CHARACTER_SET.contains(&f)
+        || COLLATION.contains(&f)
+        || USER_DEFINED_TYPE.contains(&f)
+        || PARAMETER_SPECIFIC.contains(&f)
 }
 
 /// [ISO/IEC 9075-2:2023 §20.1, Table 29] The fields of a user-defined
 /// type's name: its catalog, schema and identifier.
 const USER_DEFINED_TYPE: [DescriptorItem; 3] =
     [DescriptorItem::UserDefinedTypeCatalog, DescriptorItem::UserDefinedTypeSchema, DescriptorItem::UserDefinedTypeName];
+
+/// [ISO/IEC 9075-2:2023 §20.1, Table 29] The fields of the specific name of
+/// the procedure a CALL's `?` is an argument of.
+const PARAMETER_SPECIFIC: [DescriptorItem; 3] =
+    [DescriptorItem::ParameterSpecificCatalog, DescriptorItem::ParameterSpecificSchema, DescriptorItem::ParameterSpecificName];
 
 /// [ISO/IEC 9075-2:2023 §20.1, Table 29] The items of a reference type's
 /// scope's name.

@@ -12,6 +12,7 @@ use turborel::error::Result;
 use turborel::params::ParameterType;
 use turborel::storage::Row;
 
+use crate::called::{Called, prepared_tail, put_called};
 use crate::declared::{declared, put_declared};
 use crate::diagnostics::Notice;
 use crate::fields::{
@@ -61,8 +62,13 @@ pub enum Reply {
         statement: u32,
         /// Each dynamic parameter's type, in order.
         parameters: Vec<ParameterType>,
-        /// The columns of a query's rows; none of another statement.
+        /// The columns of a query's rows; of a CALL, those of the output
+        /// parameters' `?`s; none of another statement.
         columns: Vec<Column>,
+        /// With `parameter-modes`, of a CALL of an SQL-invoked procedure,
+        /// the procedure and each `?` with its parameter's mode (RULES.md
+        /// D978).
+        called: Option<Called>,
     },
     /// The columns of the rows that follow.
     Description(Vec<Column>),
@@ -103,13 +109,14 @@ impl Reply {
                 put_strs(b, capabilities);
                 b.put_str(server);
             }),
-            Reply::Prepared { statement, parameters, columns } => frame(out, PREPARED, |b| {
+            Reply::Prepared { statement, parameters, columns, called } => frame(out, PREPARED, |b| {
                 b.put_u32(*statement);
                 put_count(b, parameters.len());
                 for p in parameters {
                     put_parameter(b, p);
                 }
                 put_columns(b, columns);
+                put_called(b, called.as_ref());
             }),
             Reply::Description(columns) => frame(out, DESCRIPTION, |b| put_columns(b, columns)),
             Reply::Rows(rows) => frame(out, ROWS, |b| {
@@ -155,7 +162,12 @@ impl Reply {
                 let key = <[u8; KEY_BYTES]>::try_from(r.take(KEY_BYTES)?).map_err(|_| r.corrupt("a key is cut short"))?;
                 Reply::Ready { authorization, key: CancelKey(key), capabilities: strs(&mut r)?, server: r.str()? }
             }
-            PREPARED => Reply::Prepared { statement: r.u32()?, parameters: counted(&mut r, parameter)?, columns: columns(&mut r)? },
+            PREPARED => {
+                let (statement, parameters) = (r.u32()?, counted(&mut r, parameter)?);
+                let mut columns = counted(&mut r, column)?;
+                let called = prepared_tail(&mut r, &mut columns)?;
+                Reply::Prepared { statement, parameters, columns, called }
+            }
             DESCRIPTION => Reply::Description(columns(&mut r)?),
             ROWS => Reply::Rows(counted(&mut r, row)?),
             SUSPENDED => Reply::Suspended,

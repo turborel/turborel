@@ -46,7 +46,7 @@ fn arrays_and_rows_go_both_ways() {
     // An exact type goes as its precision and scale, not its spelling.
     assert_eq!(declared, ["NUMERIC(10,0)", "ROW(F NUMERIC(10,0), G CHARACTER(2)) ARRAY[3]", "ROW(H NUMERIC(10,0) ARRAY[2])"]);
     let prepared = c.prepare("INSERT INTO T VALUES (?, ?, ?)").unwrap();
-    let kinds: Vec<bool> = prepared.parameters().iter().map(|p| matches!(p.clone().data_type(), DataType::Array(_))).collect();
+    let kinds: Vec<bool> = prepared.inputs().iter().map(|p| matches!(p.clone().data_type(), DataType::Array(_))).collect();
     assert_eq!(kinds, [false, true, false]);
     let array = Value::Array(Arc::from(vec![Value::Row(Arc::from(vec![int(5), Value::Char("e".into())]))]));
     let row = Value::Row(Arc::from(vec![Value::Array(Arc::from(vec![int(6)]))]));
@@ -75,7 +75,7 @@ fn distinct_types_go_as_their_source() {
     let declared: Vec<String> = columns.iter().map(|c| c.data_type.to_string()).collect();
     assert_eq!(declared, ["NUMERIC(10,2)", "NUMERIC(10,2) ARRAY[2]"]);
     let prepared = c.prepare("INSERT INTO M (K, P) VALUES (?, ?)").unwrap();
-    assert_eq!(prepared.parameters()[1].clone().data_type().to_string(), "NUMERIC(10,2)");
+    assert_eq!(prepared.inputs()[1].clone().data_type().to_string(), "NUMERIC(10,2)");
     assert_eq!(done(&c.execute(&prepared, &[int(2), Value::Exact(Decimal::new(725, 2))]).unwrap()), 0);
     assert_eq!(rows(&c.query("SELECT K FROM M WHERE P = MONEY(7.25)").unwrap()), ["2"]);
     c.terminate().unwrap();

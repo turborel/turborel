@@ -61,9 +61,13 @@ pub const CONDITIONS: &str = "conditions";
 /// was declared with, as INTEGER, which its tag alone does not tell
 /// (RULES.md D396).
 pub const DECLARED_TYPES: &str = "declared-types";
+/// \[DESIGN\] A Prepared of a CALL carries its procedure's specific name
+/// and each of its `?`s with the mode and ordinal position of its
+/// parameter [ISO/IEC 9075-2:2023 §20.10 GR7e] (RULES.md D978).
+pub const PARAMETER_MODES: &str = "parameter-modes";
 
 /// Every capability of version 1, in the order of their bits.
-pub const ALL: [&str; 19] = [
+pub const ALL: [&str; 20] = [
     NOTICES,
     STATUS,
     DIAGNOSTICS,
@@ -83,6 +87,7 @@ pub const ALL: [&str; 19] = [
     FETCH_ENDS,
     CONDITIONS,
     DECLARED_TYPES,
+    PARAMETER_MODES,
 ];
 
 /// \[DESIGN\] A set of capabilities, one bit for each of `ALL`.

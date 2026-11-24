@@ -55,7 +55,7 @@ fn declared_types_follow_the_first_form() {
     for told in [false, true] {
         let columns = vec![column(integer.clone(), told), column(DataType::Boolean, told)];
         reply_round_trip(&Reply::Description(columns.clone()));
-        reply_round_trip(&Reply::Prepared { statement: 1, parameters: Vec::new(), columns });
+        reply_round_trip(&Reply::Prepared { statement: 1, parameters: Vec::new(), columns, called: None });
     }
     let plain = body(&Reply::Description(vec![column(integer.clone(), false)]));
     let told = body(&Reply::Description(vec![column(integer.clone(), true)]));

@@ -56,18 +56,25 @@ pub(crate) fn put_declared(b: &mut Vec<u8>, columns: &[Column]) {
     }
 }
 
-/// The tail of a Description or a Prepared, its declared types given to
-/// `columns`: one for each, or none.
+/// The tail of a Description, its declared types given to `columns`: one
+/// for each, or none.
 pub(crate) fn declared(r: &mut Reader<'_>, columns: &mut [Column]) -> Result<()> {
     let mut tail = Tail::new();
     while tail.next(r, &[DECLARED])?.is_some() {
-        let all = counted(r, |r| Ok(Declared { name: r.str()?, written: r.str()? }))?;
-        if all.len() != columns.len() {
-            return Err(r.corrupt("its declared types are not one for each column"));
-        }
-        for (c, d) in columns.iter_mut().zip(all) {
-            c.declared = Some(d);
-        }
+        read_declared(r, columns)?;
+    }
+    Ok(())
+}
+
+/// The field of a tail's `DECLARED` tag, its declared types given to
+/// `columns`, one for each.
+pub(crate) fn read_declared(r: &mut Reader<'_>, columns: &mut [Column]) -> Result<()> {
+    let all = counted(r, |r| Ok(Declared { name: r.str()?, written: r.str()? }))?;
+    if all.len() != columns.len() {
+        return Err(r.corrupt("its declared types are not one for each column"));
+    }
+    for (c, d) in columns.iter_mut().zip(all) {
+        c.declared = Some(d);
     }
     Ok(())
 }

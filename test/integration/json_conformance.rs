@@ -129,7 +129,7 @@ fn dynamic_parameters_in_every_form_20_6() {
     // name, and its value FORMAT JSON, CHARACTER VARYING; a value without
     // FORMAT JSON none, refused 37000 [GR5b].
     let named = s.prepare("SELECT JSON_OBJECTAGG(? VALUE ID) FROM T WHERE ID = 1").unwrap();
-    assert_eq!(named.parameters().first().map(|t| t.clone().data_type().is_character()), Some(true));
+    assert_eq!(named.inputs().first().map(|t| t.clone().data_type().is_character()), Some(true));
     assert_eq!(read("SELECT JSON_OBJECTAGG(? VALUE ID) FROM T WHERE ID = 1", &[text("n")]), r#"{"n":1}"#);
     assert_eq!(read("SELECT JSON_OBJECTAGG('k' VALUE ? FORMAT JSON) FROM T WHERE ID = 1", &[text("[1]")]), r#"{"k":[1]}"#);
     assert_eq!(read("SELECT JSON_ARRAYAGG(? FORMAT JSON) FROM T WHERE ID = 1", &[text("{}")]), "[{}]");

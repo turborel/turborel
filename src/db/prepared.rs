@@ -34,10 +34,10 @@ use super::dynamic::Name;
 use super::{Completion, Cursor, Session, State};
 use crate::ast::{InsertStatement, SchemaStatement, SearchCondition, SetClause, SetRole, SqlStatement, TableName, ValueSpecification};
 use crate::binder::{self, DescribedKey, OutColumn, SearchedTarget, WriteKind, bind_searched_write};
-use crate::catalog::{QualifiedName, WHOLE};
+use crate::catalog::{ParameterMode, QualifiedName, WHOLE};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, kw, lex};
-use crate::params::{ParameterType, Params};
+use crate::params::{DynamicParameter, ParameterType, Params};
 use crate::parser::begins_word_statement;
 use crate::settings::FUNCTION_CALLS;
 use crate::value::Value;
@@ -59,7 +59,9 @@ enum Kind {
 pub struct Prepared {
     sql: String,
     kind: Kind,
-    parameters: Vec<ParameterType>,
+    parameters: Vec<DynamicParameter>,
+    /// The types of those an execution gives values for, of `parameters`.
+    inputs: Vec<ParameterType>,
     columns: Vec<OutColumn>,
     /// [ISO/IEC 9075-2:2023 §4.27, §20.10 GR6d] Of a query, the key of its
     /// rows DESCRIBE OUTPUT describes.
@@ -88,12 +90,20 @@ impl Prepared {
         &self.sql
     }
 
-    /// [§17.9 GR4] Its `<dynamic parameter specification>`s' types, in the
-    /// order written, each possibly null \[GR4e ii\]: its input ones, of a
-    /// CALL not those of output parameters alone [ISO/IEC 9075-2:2023
-    /// §20.10 GR5].
-    pub fn parameters(&self) -> &[ParameterType] {
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7] (RULES.md D977) Each of its
+    /// `<dynamic parameter specification>`s, in the order written: its
+    /// type, and, of a CALL, the mode and the ordinal position of the
+    /// parameter whose argument holds it [GR7e].
+    pub fn parameters(&self) -> &[DynamicParameter] {
         &self.parameters
+    }
+
+    /// [§17.9 GR4] The types of the `<dynamic parameter specification>`s an
+    /// execution gives values for, in the order written, each possibly
+    /// null \[GR4e ii\]: those of `parameters` but, of a CALL, those of
+    /// output parameters alone [ISO/IEC 9075-2:2023 §20.10 GR5].
+    pub fn inputs(&self) -> &[ParameterType] {
+        &self.inputs
     }
 
     /// [§17.9 GR3] The columns of its result, of a `<dynamic select
@@ -331,12 +341,14 @@ impl Session {
                 (outputs.columns.clone(), params)
             }
         };
-        let parameters = input_types(&params, &outputs)?;
+        let parameters = dynamic_parameters(&params, &outputs)?;
+        let inputs = parameters.iter().filter(|p| p.mode != ParameterMode::Out).map(|p| p.data_type.clone()).collect();
         let collation = self.collation.borrow().clone();
         // Shared by the statements prepared alike (RULES.md D610).
-        let alike = format!("{kind:?}\u{0}{collation:?}\u{0}{parameters:?}\u{0}{sql}");
+        let alike = format!("{kind:?}\u{0}{collation:?}\u{0}{inputs:?}\u{0}{sql}");
         let plans = Arc::new(Plans::in_place(self.db.prepared().place(alike)));
-        Ok(Prepared { collation, sql: sql.to_owned(), kind, parameters, columns, key, plans, single_row, cursor, implicit, outputs })
+        let sql = sql.to_owned();
+        Ok(Prepared { sql, kind, parameters, inputs, columns, key, plans, single_row, cursor, implicit, collation, outputs })
     }
 
     /// INSERT `ins`, bound as `bind_only` binds it: its target, and its
@@ -471,10 +483,10 @@ impl Session {
 
     /// [§17.9 GR5a] That `given` values are one for each of `p`'s parameters.
     fn one_each(p: &Prepared, given: usize) -> Result<()> {
-        if given == p.parameters.len() {
+        if given == p.inputs.len() {
             return Ok(());
         }
-        let taken = p.parameters.len();
+        let taken = p.inputs.len();
         let msg = format!("[ISO/IEC 9075:1992 §17.9 GR5a] {given} values for {taken} <dynamic parameter specification>s");
         Err(dynamic(SqlState::USING_CLAUSE_MISMATCH, msg))
     }
@@ -562,10 +574,10 @@ impl Session {
     }
 }
 
-/// The types of the input dynamic parameters of `params`, those not
-/// `outputs`; each shall take one where it stands.
-fn input_types(params: &Params, outputs: &Outputs) -> Result<Vec<ParameterType>> {
-    params.dynamic_types().into_iter().collect::<Option<Vec<_>>>().map(|all| outputs.inputs(all)).ok_or_else(|| {
+/// The dynamic parameters of `params`, as `outputs` describes them; each
+/// shall take a type where it stands.
+fn dynamic_parameters(params: &Params, outputs: &Outputs) -> Result<Vec<DynamicParameter>> {
+    params.dynamic_types().into_iter().collect::<Option<Vec<_>>>().map(|all| outputs.described(all)).ok_or_else(|| {
         SqlError::new(Code::SyntaxRule, "[ISO/IEC 9075:1992 §17.6 GR4] a <dynamic parameter specification> takes no type where it stands")
             .with_state(SqlState::DYNAMIC_SYNTAX_ERROR)
     })

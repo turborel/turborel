@@ -29,7 +29,7 @@ fn xml_values_go_both_ways() {
     let Some(Value::Xml(sent)) = received.first().and_then(|r| r.get(1)) else { panic!("{received:?}") };
     assert!(sent.sequence().unwrap().is_document(), "the client parses what it is sent");
     let prepared = c.prepare("INSERT INTO T VALUES (?, ?)").unwrap();
-    assert_eq!(prepared.parameters()[1].clone().data_type(), DataType::Xml(XmlType::Document(Typing::Untyped)));
+    assert_eq!(prepared.inputs()[1].clone().data_type(), DataType::Xml(XmlType::Document(Typing::Untyped)));
     let value = Value::Xml(XmlValue::serialized("<b>sent</b>"));
     assert_eq!(done(&c.execute(&prepared, &[Value::Exact(turborel::value::Decimal::new(3, 0)), value]).unwrap()), 0);
     assert_eq!(rows(&c.query("SELECT XMLSERIALIZE(D AS VARCHAR(20)) FROM T WHERE K = 3").unwrap()), ["<b>sent</b>"]);

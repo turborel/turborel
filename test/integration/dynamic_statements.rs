@@ -249,7 +249,7 @@ fn a_parenthesized_parameter_is_counted_once_17_6() {
     for sql in ["SELECT ID FROM T WHERE (? + 1) = 2", "SELECT ID FROM T WHERE ((?)) = 1", "SELECT ID FROM T WHERE (?, 1) = (1, ?)"] {
         let p = s.prepare(sql).unwrap();
         let expected = if sql.contains("(1, ?)") { 2 } else { 1 };
-        assert_eq!(p.parameters().len(), expected, "{sql}");
+        assert_eq!(p.inputs().len(), expected, "{sql}");
     }
     let p = s.prepare("SELECT ID FROM T WHERE (? + 1) = 2").unwrap();
     let mut opened = s.open_prepared(&p, &[number(1)]).unwrap();

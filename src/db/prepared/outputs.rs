@@ -12,12 +12,19 @@
 //! parameters' values, in the order of the columns. A server sends them
 //! as a row, and EXECUTE puts them where its `<result using clause>` says
 //! \[§20.13 GR10\].
+//!
+//! Each `?` of a CALL is described with the mode and the ordinal position
+//! of the parameter whose argument holds it, and the procedure's specific
+//! name [§20.10 GR7e] (RULES.md D977): an IN parameter's argument may hold
+//! several, an output one's holds one alone.
 
 use super::super::{Session, State};
+use super::Prepared;
 use crate::ast::CallStatement;
 use crate::binder::OutColumn;
+use crate::catalog::{ParameterMode, QualifiedName};
 use crate::error::Result;
-use crate::params::{ParameterType, Params};
+use crate::params::{DynamicParameter, ParameterType, Params};
 use crate::value::Value;
 
 /// The output dynamic parameters of a statement prepared.
@@ -31,12 +38,25 @@ pub(super) struct Outputs {
     /// The places of those that are output parameters alone, ascending:
     /// an execution gives them no value.
     pub(super) only: Vec<usize>,
+    /// [§20.10 GR7e] Of each `?` of an argument of a CALL of an SQL-invoked
+    /// procedure, by its number, the mode and the ordinal position, from
+    /// 1, of that argument's parameter.
+    pub(super) questions: Vec<(usize, ParameterMode, u32)>,
+    /// [§20.10 GR7e vi] The specific name of the procedure such a CALL
+    /// invokes.
+    pub(super) specific: Option<QualifiedName>,
 }
 
 impl Outputs {
-    /// `types`, each `?`'s, those of the input parameters alone.
-    pub(super) fn inputs(&self, types: Vec<ParameterType>) -> Vec<ParameterType> {
-        types.into_iter().enumerate().filter(|(i, _)| !self.only.contains(i)).map(|(_, t)| t).collect()
+    /// Each `?`, of the types `types`, in order, as DESCRIBE describes it
+    /// (RULES.md D977).
+    pub(super) fn described(&self, types: Vec<ParameterType>) -> Vec<DynamicParameter> {
+        let of = |i: usize| self.questions.iter().find(|(number, ..)| *number == i);
+        let each = |(i, data_type): (usize, ParameterType)| match of(i) {
+            Some((_, mode, ordinal)) => DynamicParameter { data_type, mode: *mode, ordinal: Some(*ordinal) },
+            None => DynamicParameter::input(data_type),
+        };
+        types.into_iter().enumerate().map(each).collect()
     }
 
     /// `values`, one for each input parameter, with the null value in the
@@ -58,6 +78,19 @@ impl Outputs {
     }
 }
 
+impl Prepared {
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e vi] Of a CALL of an SQL-invoked
+    /// procedure, the procedure's specific name.
+    pub fn procedure(&self) -> Option<&QualifiedName> {
+        self.outputs.specific.as_ref()
+    }
+
+    /// The `?` its `at`-th column describes, of a CALL, from 0.
+    pub(crate) fn output_parameter(&self, at: usize) -> Option<&DynamicParameter> {
+        self.parameters.get(*self.outputs.places.get(at)?)
+    }
+}
+
 impl Session {
     /// `call` bound as `bind_only` binds it, so each `?` takes its type:
     /// its output dynamic parameters. Of a procedure written in Rust its
@@ -67,12 +100,17 @@ impl Session {
             return self.bound(st, params, |cx| super::super::routines::rust_arguments(cx, &*p, call)).map(|_| Outputs::default());
         }
         let bound = self.bound(st, params, |cx| State::bind_call(cx, call))?;
-        let mut outputs = Outputs::default();
+        let mut outputs = Outputs { specific: Some(bound.desc.specific.clone()), ..Outputs::default() };
+        for (number, k) in &bound.questions {
+            let Some(p) = bound.desc.parameters.get(*k) else { continue };
+            let ordinal = u32::try_from(k.saturating_add(1)).unwrap_or(u32::MAX);
+            outputs.questions.push((*number, p.mode, ordinal));
+        }
         for (k, place) in &bound.dynamic {
             let Some(p) = bound.desc.parameters.get(*k) else { continue };
             outputs.columns.push(super::super::routines::out_column(p));
             outputs.places.push(*place);
-            if p.mode == crate::catalog::ParameterMode::Out {
+            if p.mode == ParameterMode::Out {
                 outputs.only.push(*place);
             }
         }

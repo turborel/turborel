@@ -20,12 +20,19 @@ impl Parser {
     /// The `?`s before the token at hand: counted on from the position
     /// last counted to, or from the start if the parser backtracked before
     /// it.
-    fn questions_before(&mut self) -> usize {
+    pub(in crate::parser) fn questions_before(&mut self) -> usize {
         let (from, before) = if self.questions.0 <= self.pos { self.questions } else { (0, 0) };
         let between = self.toks.get(from..self.pos).unwrap_or_default();
         let n = before.saturating_add(between.iter().filter(|t| matches!(t.tok, Tok::Delimiter(delim::QUESTION))).count());
         self.questions = (self.pos, n);
         n
+    }
+
+    /// The numbers of the `?`s read since `before` of them were read, as
+    /// `value_specification` numbers them.
+    pub(in crate::parser) fn questions_since(&mut self, before: usize) -> Vec<usize> {
+        let now = self.questions_before();
+        (before..now).map(|place| self.numbers.get(place).copied().unwrap_or(place)).collect()
     }
 
     /// [X3.135-1986 §5.6] `<value specification>` ::= `<literal>` | USER
