@@ -63,7 +63,7 @@ pub const ZONES: [Mutation; 16] = [
         package: Package::Core,
         breaks: "zone maintenance: the zones never rest, so steady writes keep the maintenance thread busy",
         file: "src/engine/rows/zones/summed.rs",
-        original: "            self.rest();",
+        original: "            self.rest(clock.unwrap_or_else(|| self.elapsed()));",
         replacement: "",
         integration: &[],
         unit: &["engine::rows::zones::rested::zones_rest_after_a_pass_over_every_zone_due"],
