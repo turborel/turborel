@@ -442,6 +442,13 @@ string does, is quoted, so `\import` reads back what `\export` wrote.
 With `native` it writes the protocol's own frames, which keep each
 value's type, for a program to read back with the client library.
 
+A large object is written as its value. A CLOB or an NCLOB is written as
+its text, a BLOB, as every binary string, as its octets in hexits, two
+to each, which `\import` reads back. One longer than the server sends
+whole is read a chunk at a time as it is written, and in CSV is quoted.
+Text refuses a value that holds the delimiter or a line break, and says
+to export as CSV.
+
 ```
 turborel> \export (SELECT ID, NAME FROM STAFF WHERE ID < 3) two.csv header
 OK, 2 rows exported

@@ -622,6 +622,8 @@ verification approach DO-178C expects (§8).
 | D956 | An integer of an integer column is written as its key with no anchor made of it |
 | D960 | A character string of at most 32 octets is held in its value, a longer one in a buffer its clones share |
 | D961 | A binary string of at most 22 octets is held in its value, a longer one in a buffer its clones share |
+| D975 | An export writes each large object as its value, read by its locator a chunk at a time between a cursor's fetches |
+| D976 | An import reads a binary string column's field as its octets' hexits, as an export writes them |
 
 ### The project
 
@@ -17423,6 +17425,64 @@ instant, zone and precision, an interval its units and qualifier, a
 truth value itself. A large object, a value of the JSON type, an
 array, a multiset, a row, a structured value and an XML value were
 already shared by count.
+
+#### D975. An export writes each large object as its value, read by its locator a chunk at a time between a cursor's fetches
+
+An export wrote a large object by its text, which for one the server
+sent by its locator is a description of it, not its value. A large
+object longer than SERVER.LOB_INLINE_BYTES comes by its locator, which
+names it until the transaction it was sent in ends, and is read by Lob
+requests. No request can go out while a statement's replies are coming,
+so an export read all at once could not read them before holding every
+row.
+
+`Connection::export_with` writes rows by a `Layout`: `Delimited` for CSV
+and tab-separated text, `Native` for the protocol's frames, or the
+program's own. It prepares the query. A query whose columns may hold a
+large object, one of a large object type or of a composite type of
+one, a structured type or an extension's, opens its cursor and fetches
+256 rows at a time within the transaction. That is a reply's longest
+body over the longest value sent whole, so a batch held while its large
+objects are read is at most a reply's body for each such column. Each
+batch is written before the next is fetched. A large object a column
+holds is read a chunk at a time as it is written, its locator freed once
+read, so the server holds no more than a batch's. One within a row, an
+array, a multiset or a structured value is read whole, as its value's
+text needs it all. A query whose columns hold none is executed once and
+its Rows replies written as they come, as before. Under autocommit, a
+transaction the export began is committed once its last large object is
+read, or rolled back if the export failed. A failed write closes the
+cursor and leaves the connection of use.
+
+In delimited text a CLOB or NCLOB is written as its text, and a BLOB, as
+every binary string, as its octets in upper case hexits, two to each,
+as a `<binary string literal>` writes them between its quotes
+[ISO/IEC 9075-2:2023 §5.3]. One streamed is quoted in CSV whatever it
+holds, as what it holds is not known ahead, and each chunk is cut where
+a character ends. Text refuses a chunk that holds the delimiter or a
+line break. The command-line client's `\export` writes by `Delimited`
+too, its lines ended by LF.
+
+Native rows keep every value. A Rows frame holds at most a reply's
+longest body. A large object sent by a locator is written in it as a
+locator numbered within that frame from 1, depth first, and its octets
+follow the frame in Lob Data frames of at most a chunk each, as many as
+its length takes. `read_native` checks the numbers and holds each value
+whole. The protocol is unchanged.
+
+#### D976. An import reads a binary string column's field as its octets' hexits, as an export writes them
+
+A delimited file's field is a character string, which the server casts
+to its column's type, and a character string is not cast to a binary
+string [ISO/IEC 9075-2:2023 §6.13 SR7]. So no BINARY, VARBINARY or BLOB
+column could be imported, nor what an export wrote of one read back.
+An import now reads a field for a binary string column as the octets
+its hexits write, two to each, of either case, spaces passed over, as a
+`<binary string literal>` reads them [§5.3 SR4], before it is sent.
+Anything else, or an odd number of hexits, fails the row with SQLSTATE
+22018. A BLOB longer than a value sent whole then goes by a locator, a
+piece at a time, as a CLOB's field does, and the bulk copy takes a
+BINARY or VARBINARY column's value as a binary string.
 
 ## 2. Project layout
 
