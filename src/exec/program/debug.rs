@@ -11,9 +11,12 @@ use std::time::Duration;
 use super::Host;
 use super::run::{Run, Stop};
 use crate::catalog::Catalog;
+use crate::db::State;
 use crate::debugger::{CursorShown, Frame, Kind, Named, Origin, Tracked, line_of, may_debug};
 use crate::logical::Step;
+use crate::params::Params;
 use crate::settings::DEBUGGER_PAUSE_TIMEOUT_MS;
+use crate::value::Value;
 
 impl<H: Host> Run<'_, '_, H> {
     /// The statement `step` looked at by the debugger attached, if one is:
@@ -41,7 +44,7 @@ impl<H: Host> Run<'_, '_, H> {
         let written = self.program.origin.as_ref().and_then(|o| text_of(&*st.catalog, o)).map(|text| line_of(text, at));
         tracked.update(|f| *f = Frame { at: Some(at), line: written, parameters, variables, cursors, ..f.clone() });
         let Some(reason) = tracked.stops(at) else { return Ok(()) };
-        let most = Duration::from_millis(u64::try_from(st.settings.integer(DEBUGGER_PAUSE_TIMEOUT_MS)).unwrap_or_default());
+        let most = pause_most(&st);
         let (index, shared) = tracked.link();
         let host = &*self.host;
         shared.pause((index, reason), most, &|| host.interrupted()).map_err(Stop::Unhandled)
@@ -51,20 +54,9 @@ impl<H: Host> Run<'_, '_, H> {
     /// variables in scope and its cursors in scope, each with its value.
     fn shown(&self) -> (Vec<Named>, Vec<Named>, Vec<CursorShown>) {
         let values = self.frame.dynamic_values();
-        let value = |slot: usize| values.get(slot).cloned().unwrap_or(crate::value::Value::Null);
-        let parameters = if let Some(t) = self.frame.transitions() {
-            let width = t.columns.len();
-            let rows = [(t.old_row.as_deref(), 0), (t.new_row.as_deref(), width)];
-            rows.iter()
-                .filter_map(|(name, first)| name.map(|n| (n, *first)))
-                .flat_map(|(row, first)| {
-                    t.columns
-                        .iter()
-                        .enumerate()
-                        .map(move |(k, c)| (format!("{row}.{}", c.name), c.data_type.to_string(), first.saturating_add(k)))
-                })
-                .map(|(name, data_type, slot)| Named { name, data_type, value: value(slot) })
-                .collect()
+        let value = |slot: usize| values.get(slot).cloned().unwrap_or(Value::Null);
+        let parameters = if let Some(named) = transition_named(self.frame) {
+            named
         } else {
             let declared = self.program.scope.parameters.iter().enumerate();
             declared.map(|(k, (name, t, _))| Named { name: name.clone(), data_type: t.to_string(), value: value(k) }).collect()
@@ -86,9 +78,28 @@ impl<H: Host> Run<'_, '_, H> {
 
 /// The text of the routine or trigger `origin` names, as its definition
 /// holds it: what a frame's place is a character of.
-fn text_of<'c>(catalog: &'c dyn Catalog, origin: &Origin) -> Option<&'c str> {
+pub(crate) fn text_of<'c>(catalog: &'c dyn Catalog, origin: &Origin) -> Option<&'c str> {
     match origin.kind {
         Kind::Trigger => catalog.trigger(&origin.name).map(|t| t.text.as_str()),
         Kind::Procedure | Kind::Function => catalog.routine(&origin.name).map(|r| r.text.as_str()),
     }
+}
+
+/// The columns of the old and new transition variables of `frame`, each
+/// with its value, if it is a triggered action's.
+pub(crate) fn transition_named(frame: &Params) -> Option<Vec<Named>> {
+    let t = frame.transitions()?;
+    let values = frame.dynamic_values();
+    let rows = [(t.old_row.as_deref(), 0), (t.new_row.as_deref(), t.columns.len())];
+    let named = rows
+        .iter()
+        .filter_map(|(name, first)| name.map(|n| (n, *first)))
+        .flat_map(|(row, first)| t.columns.iter().enumerate().map(move |(k, c)| (format!("{row}.{}", c.name), c, first.saturating_add(k))))
+        .map(|(name, c, slot)| Named { name, data_type: c.data_type.to_string(), value: values.get(slot).cloned().unwrap_or(Value::Null) });
+    Some(named.collect())
+}
+
+/// How long a pause in `st` waits for its debugger: DEBUGGER.PAUSE_TIMEOUT_MS.
+pub(crate) fn pause_most(st: &State) -> Duration {
+    Duration::from_millis(u64::try_from(st.settings.integer(DEBUGGER_PAUSE_TIMEOUT_MS)).unwrap_or_default())
 }

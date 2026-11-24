@@ -67,6 +67,16 @@ impl Tracked {
         Some(Tracked { link, index, visible, name, places })
     }
 
+    /// \[EXTENSION\] A statement of a triggered action of `origin` run
+    /// alone, not as a program's step, pushed on the stack of `link` as a
+    /// frame of its own, seen into if `visible`; none as `enter` (RULES.md
+    /// D1014).
+    pub(crate) fn alone(link: Arc<Link>, origin: Origin, visible: bool) -> Option<Tracked> {
+        let name = Some(origin.name.clone());
+        let index = link.push(Frame { origin: Some(origin), visible, ..Frame::default() })?;
+        Some(Tracked { link, index, visible, name, places: HashMap::new() })
+    }
+
     /// Whether the debugger may see into it.
     pub(crate) fn visible(&self) -> bool {
         self.visible

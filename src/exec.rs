@@ -86,7 +86,8 @@ pub fn sort_rows(keys: &[SortKey], rows: RowIter, db: &State, tx: TxId) -> RowIt
     sort::sort(keys, rows, db, tx)
 }
 pub(crate) use program::{
-    Ended, Framed, Host, appropriate_among, assign_target, completed, completion, item_text, raised, rows, run_program, unhandled,
+    Ended, Framed, Host, appropriate_among, assign_target, completed, completion, item_text, pause_most, raised, rows, run_program,
+    transition_named, unhandled,
 };
 pub(crate) use subquery::slot_type;
 pub use subquery::{DEFAULT_DECORRELATE_AFTER, Drawn, KeptSubqueries, NoSubqueries, Runner, Subqueries, SubqueryRows};

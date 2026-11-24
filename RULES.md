@@ -643,6 +643,7 @@ verification approach DO-178C expects (§8).
 | D1011 | A pause ends by itself after DEBUGGER.PAUSE_TIMEOUT_MS, a database setting |
 | D1012 | The stack is one thread's: a function run on another thread is not debugged |
 | D1013 | A debugger's request its target's state refuses fails with SQLSTATE TBD01 |
+| D1014 | Each statement of a plain triggered action pauses as a frame of its trigger of its own |
 | D1030 | The routine debugger's messages are one request and one reply behind the capability `debugger`, and an Event sent unasked |
 | D1031 | A debugger attaches by a connection's ID to a session of its own user, or of any if its user sees every session, and is told of no other |
 | D1032 | An Event is sent only while the debugger's connection waits for a request, and a client takes it wherever it reads a reply |
@@ -17785,6 +17786,23 @@ misuses of the interface, not errors of an SQL statement. Each fails
 with SQLCODE -910 and SQLSTATE TBD01 of class TB, the implementation's
 own; a breakpoint in no routine, or past its last line, is -103, as a
 name of no object is, and in one its user may not debug, -104.
+
+#### D1014. Each statement of a plain triggered action pauses as a frame of its trigger of its own
+
+A triggered action of statements alone, BEGIN ATOMIC with no
+declaration, runs its statements one by one, each as a statement runs
+directly [ISO/IEC 9075-2:2023 §11.49], not as a program, so no step of a
+program begins them. Compiling it as one program instead would change
+how it runs with no debugger attached. So the parser keeps where each
+statement begins (`TriggerDefinition::action`, a `StatementList`), and
+as each begins with a debugger attached the trigger's run pushes a frame
+of the trigger for it alone (`Tracked::alone`), showing that place, its
+line and the transition variables, and pausing there as a program's
+statement would; the frame is popped as the statement ends, so a routine
+it invokes is a frame above it. A control statement among them is a
+program, whose own frame does that. With none attached each statement
+costs the one look at the flag (D1005).
+
 #### D1030. The routine debugger's messages are one request and one reply behind the capability `debugger`, and an Event sent unasked
 
 Studio drives a routine running in one session from another connection,

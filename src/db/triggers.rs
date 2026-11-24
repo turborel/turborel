@@ -7,6 +7,7 @@
 //! (`routed.rs`, `rerouted.rs`).
 
 mod changes;
+mod debugged;
 mod define;
 mod dependents;
 mod fire;

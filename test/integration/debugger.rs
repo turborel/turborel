@@ -365,6 +365,47 @@ fn a_triggered_action_pauses() {
     assert_eq!(thread.join().unwrap(), None);
 }
 
+/// Verifies: [EXTENSION] RULES.md D1014: each statement of a plain
+/// triggered action, of no declarations, pauses: stepped into or over from
+/// the first, at the second, each invocation's transition values shown.
+#[test]
+fn a_plain_triggered_actions_statements_pause() {
+    let db = defined();
+    let a = db.session("A");
+    a.run("CREATE TABLE S (K INTEGER)").unwrap();
+    a.run("CREATE TABLE U (K INTEGER)").unwrap();
+    a.run(
+        "CREATE TRIGGER TP AFTER INSERT ON S REFERENCING NEW ROW AS N FOR EACH ROW\n\
+         BEGIN ATOMIC\n\
+         \x20 INSERT INTO U VALUES (N.K);\n\
+         \x20 INSERT INTO U VALUES (N.K * 10);\n\
+         END",
+    )
+    .unwrap();
+    a.commit().unwrap();
+    let (t, go, thread) = target(&db, "A", "INSERT INTO S VALUES (1), (2)");
+    let debugger = a.attach(&t).unwrap();
+    debugger.break_at(&a, (Kind::Trigger, &named("TP")), 3, None).unwrap();
+    go.send(()).unwrap();
+    for (k, action) in [("1", Action::Into), ("2", Action::Over)] {
+        let p = paused(&debugger, &a);
+        assert_eq!((p.reason, top(&p).line.map(|l| l.0), value(top(&p), "N.K")), (Reason::Breakpoint(1), Some(3), k.to_owned()));
+        debugger.resume(action).unwrap();
+        let p = paused(&debugger, &a);
+        let o = top(&p).origin.as_ref().map(|o| (o.kind, o.name.ident.clone()));
+        assert_eq!((p.reason, p.frames.len(), o), (Reason::Step, 1, Some((Kind::Trigger, "TP".to_owned()))), "{action:?}");
+        assert_eq!(top(&p).line.map(|l| l.0), Some(4), "{action:?}");
+        debugger.resume(Action::Continue).unwrap();
+    }
+    assert_eq!(thread.join().unwrap(), None);
+    let mut c = a.open_cursor("SELECT K FROM U ORDER BY K").unwrap();
+    let mut keys = Vec::new();
+    while let Some(row) = c.fetch().unwrap() {
+        keys.push(row.iter().map(ToString::to_string).collect::<String>());
+    }
+    assert_eq!(keys, ["1", "2", "10", "20"]);
+}
+
 /// Verifies: [EXTENSION] RULES.md D1013: each request its target's state
 /// does not allow is refused, SQLSTATE TBD01, and a breakpoint in no
 /// routine or at no line, SQLCODE -103.

@@ -13,7 +13,7 @@
 use super::Parser;
 use super::diagnostics::STATEMENT;
 use crate::ast::{
-    ActionTime, DropBehavior, DropObject, ParameterSpecification, Referencing, SearchCondition, SqlStatement, TargetKind,
+    ActionTime, DropBehavior, DropObject, ParameterSpecification, Referencing, SearchCondition, SqlStatement, StatementList, TargetKind,
     TriggerDefinition, TriggerEvent, TriggerLevel,
 };
 use crate::error::{Code, Result, SqlError};
@@ -409,7 +409,7 @@ impl Parser {
     /// `<triggered action>` after FOR EACH: \[`<triggered when clause>`\]
     /// `<triggered SQL statement>`, of a trigger at `time`, with the
     /// latter's text.
-    fn triggered_action(&mut self, time: ActionTime) -> Result<(Option<Written<SearchCondition>>, Vec<SqlStatement>, String)> {
+    fn triggered_action(&mut self, time: ActionTime) -> Result<(Option<Written<SearchCondition>>, StatementList, String)> {
         let when = if self.is_kw(kw::WHEN) {
             if time == ActionTime::InsteadOf {
                 return Err(self.rule("[ISO/IEC 9075-2:2023 §11.49 SR15a] an INSTEAD OF trigger has no <triggered when clause>"));
@@ -434,12 +434,14 @@ impl Parser {
     /// one ATOMIC. One of only statements, BEGIN ATOMIC {`<SQL procedure
     /// statement>` `<semicolon>`}... END as ISO/IEC 9075-2:2023 §11.49
     /// has it, is its statements, run as one atomic statement as before.
-    fn triggered_statements(&mut self) -> Result<Vec<SqlStatement>> {
+    fn triggered_statements(&mut self) -> Result<StatementList> {
         let at = self.here();
         let compound = self.is_kw(kw::BEGIN);
         let statement = self.body_statement()?;
-        let SqlStatement::Control(control) = statement else { return Ok(vec![statement]) };
-        let crate::ast::ControlStatement::Compound(c) = *control else { return Ok(vec![SqlStatement::Control(control)]) };
+        let SqlStatement::Control(control) = statement else { return Ok(StatementList::of(vec![(at, statement)])) };
+        let crate::ast::ControlStatement::Compound(c) = *control else {
+            return Ok(StatementList::of(vec![(at, SqlStatement::Control(control))]));
+        };
         if compound && !c.atomic {
             return Err(SqlError::at(
                 Code::SyntaxRule,
@@ -452,9 +454,9 @@ impl Parser {
         let declares = c.options.is_some() || !c.declarations.is_empty();
         let plain = c.label.is_none() && !declares && c.cursors.is_empty() && c.handlers.is_empty();
         if plain && !c.statements.is_empty() {
-            return Ok(c.statements.into_statements());
+            return Ok(c.statements);
         }
-        Ok(vec![SqlStatement::Control(Box::new(crate::ast::ControlStatement::Compound(c)))])
+        Ok(StatementList::of(vec![(at, SqlStatement::Control(Box::new(crate::ast::ControlStatement::Compound(c))))]))
     }
 
     /// One `<SQL procedure statement>` of a `<triggered action>` of a

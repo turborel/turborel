@@ -1,7 +1,7 @@
 //! Abstract syntax of the `<trigger definition>` [ISO/IEC 9075-2:2023
 //! §11.49] (Features T200, T211 to T216).
 
-use super::{SearchCondition, SqlStatement, TableName};
+use super::{SearchCondition, StatementList, TableName};
 
 /// [ISO/IEC 9075-2:2023 §11.49] `<trigger definition>` ::= CREATE TRIGGER
 /// `<trigger name>` `<trigger action time>` `<trigger event>` ON `<table
@@ -29,8 +29,8 @@ pub struct TriggerDefinition {
     pub when_text: Option<String>,
     /// The `<SQL procedure statement>`s of the `<triggered SQL
     /// statement>`, in order: one, or those of a `<compound triggered SQL
-    /// statement>`.
-    pub action: Vec<SqlStatement>,
+    /// statement>`, each with where it begins (RULES.md D1014).
+    pub action: StatementList,
     /// The `<triggered SQL statement>` as written, whose length the
     /// Information Schema may not show whole \[GR4\].
     pub action_text: String,
