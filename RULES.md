@@ -663,6 +663,7 @@ verification approach DO-178C expects (§8).
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
 | D1070 | A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows |
 | D1071 | A hashed semi join of streams read row by row is made of its batches |
+| D1074 | A LIKE pattern of no `_` is matched by its pieces, each searched for as a substring |
 
 ### The project
 
@@ -18157,6 +18158,23 @@ reads it (`exec/join/semi.rs`), while EXECUTOR.BATCHES is on, and its
 rows made of them. Its operands are read by batch, and by morsels where
 D1070 says so. The rows are the row path's, in the left's order where
 one is asked.
+
+#### D1074. A LIKE pattern of no `_` is matched by its pieces, each searched for as a substring
+
+A pattern was matched a specifier at a time, and at each character
+where it failed after a `%` it was begun again one character on. Of a
+pattern as `'%special%requests%'` over long strings that is a comparison
+or more for every character of every string. A pattern of no `_` is now
+split once into its pieces, the strings between its `%`s
+(`value/like/pieces.rs`). A value matches if it begins with the first
+piece, ends with the last past the first, and holds the pieces between
+in order and apart in what lies between the two. Each is looked for by
+the library's substring search from where the piece before it ended,
+and the first place found is taken, which leaves the most to the pieces
+after it. A piece is whole characters, so it is searched for among the
+value's bytes. A pattern with `_` is matched as before. The rows are
+those the standard's rule gives [X3.135-1986 §5.14 GR5], as a test
+compares the two matchers over patterns and values.
 
 ## 2. Project layout
 
