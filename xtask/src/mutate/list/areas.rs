@@ -162,7 +162,7 @@ fn first() -> [&'static [Mutation]; 29] {
 }
 
 /// The second half of the areas, in order, unnesting's last.
-fn second() -> [&'static [Mutation]; 48] {
+fn second() -> [&'static [Mutation]; 49] {
     [
         &super::hypothetical::HYPOTHETICAL,
         &super::distribution::DISTRIBUTION,
