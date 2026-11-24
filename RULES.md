@@ -663,6 +663,7 @@ verification approach DO-178C expects (§8).
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
 | D1040 | An index join is read direct as nested point reads only by a unique index |
 | D1041 | A filter goes below a projection only if each of its expressions is deterministic |
+| D1042 | COPY DESCRIPTOR with TYPE copies a reference type's SCOPE components, each a character string |
 
 ### The project
 
@@ -18145,6 +18146,22 @@ deterministic and changes nothing (`unnesting::expr_pure`), as
 unnesting asks of what it evaluates again (D317). It asks it of all of
 them, read by the condition or not, as each is evaluated of fewer rows
 once the filter is below.
+
+#### D1042. COPY DESCRIPTOR with TYPE copies a reference type's SCOPE components, each a character string
+
+COPY DESCRIPTOR with TYPE sets the target item's type components to the
+source's, SCOPE_CATALOG, SCOPE_SCHEMA and SCOPE_NAME among them
+[ISO/IEC 9075-2:2023 §20.6 GR7h iii 2]. The list of components copied
+(`dynamic/ptf.rs`) was written when there were no reference types and
+left the three out, so an item copied from one describing REF(PERSON)
+SCOPE PEOPLE named its referenced type and no scope.
+
+The three are also character strings [§20.1 Table 29]. They were not
+among the fields `is_text` names, so GET DESCRIPTOR took only an exact
+numeric target for one and then failed to assign it its name, and one
+not set read as 0. They are now copied with the other type components,
+read into a character string, and read as an empty string where not
+set, as a type's other names are.
 
 ## 2. Project layout
 

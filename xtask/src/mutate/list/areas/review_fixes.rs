@@ -9,7 +9,7 @@
 use super::super::{Mutation, Package};
 
 /// Each fix of the review, taken back, which its test must then fail.
-pub const REVIEW_FIXES: [Mutation; 2] = [
+pub const REVIEW_FIXES: [Mutation; 3] = [
     Mutation {
         name: "direct-join-by-a-key-not-unique",
         package: Package::Core,
@@ -29,5 +29,15 @@ pub const REVIEW_FIXES: [Mutation; 2] = [
         replacement: "        if cond.can_raise() || exprs.iter().any(|e| e.can_raise() || (!expr_pure(e) && false)) {",
         integration: &["functions::a_filter_judges_the_value_a_call_not_deterministic_gave"],
         unit: &["optimizer::views::tests::a_filter_stays_above_a_projection_not_deterministic"],
+    },
+    Mutation {
+        name: "copy-type-scope-dropped",
+        package: Package::Core,
+        breaks: "COPY DESCRIPTOR with TYPE leaves a reference type's SCOPE components behind",
+        file: "src/db/dynamic/ptf.rs",
+        original: "    DescriptorItem::ScopeCatalog,\n    DescriptorItem::ScopeSchema,\n    DescriptorItem::ScopeName,\n];",
+        replacement: "    DescriptorItem::Type,\n    DescriptorItem::Type,\n    DescriptorItem::Type,\n];",
+        integration: &["ptf_statements::a_reference_types_scope_is_copied_with_its_type_20_6"],
+        unit: &[],
     },
 ];

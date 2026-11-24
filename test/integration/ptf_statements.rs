@@ -90,3 +90,36 @@ fn component_statements_refused_20_13() {
     assert_eq!(refused("NO_ITEM", "COPY PTF CR VALUE 9 (DATA) TO PTF RR VALUE 1;"), "07009");
     assert_eq!(refused("NO_TARGET", "COPY PTF CR VALUE 1 (DATA) TO PTF RR VALUE 0;"), "07009");
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §20.6 GR7h iii 2 A, §20.1 Table 29]
+/// (RULES.md D1042) COPY DESCRIPTOR with TYPE copies the SCOPE components
+/// of an item that describes a reference type with its other type
+/// components, and each is read as the character string it is. The
+/// scope's name of a column REF(PERSON) SCOPE PEOPLE, copied to an item
+/// of another area, is PEOPLE there, with its referenced type's name.
+#[test]
+fn a_reference_types_scope_is_copied_with_its_type_20_6() {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION A").unwrap();
+    let a = db.session("A");
+    for sql in [
+        "CREATE TYPE PERSON AS (NAME CHARACTER VARYING(20)) NOT FINAL REF IS SYSTEM GENERATED",
+        "CREATE TABLE PEOPLE OF PERSON (REF IS ID SYSTEM GENERATED)",
+        "CREATE TABLE T (K REF(PERSON) SCOPE PEOPLE, N INTEGER)",
+        "INSERT INTO PEOPLE (NAME) VALUES ('ANN')",
+        "INSERT INTO T SELECT ID, 1 FROM PEOPLE",
+    ] {
+        a.run(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
+    }
+    a.commit().unwrap();
+    let said = |name: &str, field: &str, value: &str| {
+        let body = format!(
+            "COPY PTF CR VALUE 1 (TYPE) TO PTF RR VALUE 1; GET DESCRIPTOR PTF RR VALUE 1 X = {field}; \
+             IF X = '{value}' THEN SIGNAL SQLSTATE '75001'; END IF; SIGNAL SQLSTATE '75002';"
+        );
+        fulfilled(&a, name, &body).unwrap_err()
+    };
+    assert_eq!(said("TYPE_NAME", "USER_DEFINED_TYPE_NAME", "PERSON"), "75001");
+    assert_eq!(said("SCOPED", "SCOPE_NAME", "PEOPLE"), "75001");
+    assert_eq!(said("SCOPED_IN", "SCOPE_SCHEMA", "A"), "75001");
+}
