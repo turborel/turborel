@@ -109,7 +109,7 @@ fn a_debugger_attaches_only_where_it_may() {
     assert!(bob_too.debug_stack().unwrap().is_none(), "the target runs");
     bob_too.debug_detach().unwrap();
     ann.debug_attach(bob_id).unwrap();
-    assert!(ann.debug_breakpoints().unwrap().is_empty());
+    assert_eq!(ann.debug_breakpoints().unwrap().len(), 0);
     ann.debug_detach().unwrap();
 }
 

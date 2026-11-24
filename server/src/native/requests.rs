@@ -162,7 +162,7 @@ pub(super) struct Held {
     carried: Timing,
     /// \[EXTENSION\] The debugger it is attached as, if it is (RULES.md
     /// D1030).
-    pub(super) debugging: Option<Debugging>,
+    pub(super) debugging: Option<Box<Debugging>>,
 }
 
 /// Why rows stopped before their end.

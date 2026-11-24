@@ -69,11 +69,11 @@ fn nothing_within(within: Option<Duration>) -> String {
 
 /// A breakpoint: its number, routine, line and condition.
 fn breakpoint(b: &DebugBreakpoint) -> String {
-    let mut line = format!("{} at {}.{} line {}", b.number, b.routine.auth, b.routine.ident, b.line);
-    if let Some(condition) = &b.condition {
-        line.push_str(&format!(" where {condition}"));
+    let line = format!("{} at {}.{} line {}", b.number, b.routine.auth, b.routine.ident, b.line);
+    match &b.condition {
+        Some(condition) => format!("{line} where {condition}"),
+        None => line,
     }
-    line
 }
 
 /// An event, as lines.
@@ -88,20 +88,16 @@ fn event(e: &Event, null: &str) -> String {
 
 /// A pause, as lines: why, then each frame, the innermost first.
 fn stack(p: &Paused, null: &str) -> String {
-    let mut text = match p.reason {
+    let mut lines = vec![match p.reason {
         Reason::Breakpoint(number) => format!("Paused at breakpoint {number}."),
         Reason::Step => "Paused.".to_owned(),
-    };
+    }];
     for (depth, f) in p.frames.iter().rev().enumerate() {
-        text.push_str(&format!("\n#{} {}", depth.saturating_add(1), frame_head(f)));
-        for n in f.parameters.iter().chain(&f.variables) {
-            text.push_str(&format!("\n    {}", named(n, null)));
-        }
-        for c in &f.cursors {
-            text.push_str(&format!("\n    CURSOR {} {}: {}", c.name, if c.open { "open" } else { "closed" }, c.query));
-        }
+        lines.push(format!("#{} {}", depth.saturating_add(1), frame_head(f)));
+        lines.extend(f.parameters.iter().chain(&f.variables).map(|n| format!("    {}", named(n, null))));
+        lines.extend(f.cursors.iter().map(|c| format!("    CURSOR {} {}: {}", c.name, if c.open { "open" } else { "closed" }, c.query)));
     }
-    text
+    lines.join("\n")
 }
 
 /// A frame's routine and place.
@@ -112,10 +108,8 @@ fn frame_head(f: &Frame) -> String {
         Kind::Function => "FUNCTION",
         Kind::Trigger => "TRIGGER",
     };
-    let mut head = format!("{kind} {}.{}", origin.shown.auth, origin.shown.ident);
-    if let Some((line, column)) = f.line {
-        head.push_str(&format!(" line {line}, column {column}"));
-    }
+    let place = f.line.map_or_else(String::new, |(line, column)| format!(" line {line}, column {column}"));
+    let mut head = format!("{kind} {}.{}{place}", origin.shown.auth, origin.shown.ident);
     if !f.visible {
         head.push_str(" (not debugged)");
     }

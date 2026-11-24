@@ -89,7 +89,7 @@ impl Held {
         }
         let debugger = self.session.attach(&DebugTarget::of(stop))?;
         let judge = self.serves.db.session(&self.session.current_authorization());
-        self.debugging = Some(Debugging::new(debugger, judge));
+        self.debugging = Some(Box::new(Debugging::new(debugger, judge)));
         Ok(())
     }
 }
