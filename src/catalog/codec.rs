@@ -7,7 +7,7 @@
 //! ```text
 //! name:       auth (str), ident (str)
 //! positions:  count u32, each u32
-//! type:       a tag u8 of its kind, then its parameters (catalog/codec/types.rs)
+//! type:       a tag u8 of its kind, then its parameters (value/types/tags.rs)
 //! default:    0 none | 1 value | 2 the user | 3 a datetime value function,
 //!             0 date, 1 time or 2 timestamp u8, precision u32
 //! column:     name (str), type, not null u8, default, domain (0, or 1, a
