@@ -82,7 +82,7 @@ fn an_in_parameter_takes_its_default_9_18() {
         a.run(call).unwrap();
     }
     a.run("CALL PUT(DEFAULT, 6)").unwrap();
-    assert_eq!(logged(&a), ["NULL,6,none", "1,20,none", "2,20,x", "3,NULL,none", "4,20,y", "5,20,none"]);
+    assert_eq!(logged(&a), ["1,20,none", "2,20,x", "3,NULL,none", "4,20,y", "5,20,none", "NULL,6,none"]);
     let rule = |r: &str| format!("ISO/IEC 9075-2:2023 §9.18 {r}");
     assert_eq!(refused(&a, "CALL PUT()"), (-103, rule("SR9b")), "K has no default");
     assert_eq!(refused(&a, "CALL PUT(1, 2, 'z', 4)"), (-103, rule("SR9b")), "more arguments than parameters");
@@ -108,8 +108,8 @@ fn an_inout_parameter_takes_its_default_9_18() {
     a.execute("CALL BUMP(W, V)", &mut p).unwrap();
     assert_eq!((p.value("W").to_string(), p.value("V").to_string()), ("2".to_owned(), "2".to_owned()));
     for call in ["CALL BUMP(W, DEFAULT)", "CALL BUMP(W)", "CALL BUMP(Y => W)"] {
-        p = p.declare("W", integer(), Value::Null);
-        a.execute(call, &mut p).unwrap();
+        p = Params::new().declare("V", integer(), int(2)).declare("W", integer(), Value::Null);
+        a.execute(call, &mut p).unwrap_or_else(|e| panic!("{call}: {e}"));
         assert_eq!(p.value("W").to_string(), "6", "{call}");
     }
     assert_eq!(p.value("V").to_string(), "2", "V is no target of these");
@@ -131,11 +131,11 @@ fn a_default_is_checked_as_the_procedure_is_defined_11_60() {
     assert_eq!(made("IN X INTEGER DEFAULT 'a', OUT N INTEGER"), (-103, rule("SR16e i, §9.2 SR2")));
     assert_eq!(made("INOUT N INTEGER DEFAULT DATE '2026-01-01'"), (-103, rule("SR16e i, §9.2 SR2")));
     assert_eq!(made("OUT N INTEGER DEFAULT 1").0, -103, "SR16e ii");
-    assert!(a.run("CREATE PROCEDURE P (IN X INTEGER, IN Z INTEGER DEFAULT X) CONTAINS SQL DELETE FROM L").is_err(), "no parameter X in scope");
-    assert!(a.run("CREATE PROCEDURE P (IN X INTEGER DEFAULT (SELECT MAX(K) FROM NOWHERE)) READS SQL DATA DELETE FROM L").is_err());
+    assert!(a.run("CREATE PROCEDURE P (IN X INTEGER, IN Z INTEGER DEFAULT X) MODIFIES SQL DATA DELETE FROM L").is_err(), "no parameter X in scope");
+    assert!(a.run("CREATE PROCEDURE P (IN X INTEGER DEFAULT (SELECT MAX(K) FROM NOWHERE)) MODIFIES SQL DATA DELETE FROM L").is_err());
     let function = refused(&a, "CREATE FUNCTION F (X INTEGER DEFAULT 1) RETURNS INTEGER CONTAINS SQL RETURN X");
     assert_eq!(function, (-900, rule("CR34")));
-    a.run("CREATE PROCEDURE P (IN X SMALLINT DEFAULT 1.0, IN D DATE DEFAULT CURRENT_DATE) CONTAINS SQL DELETE FROM L").unwrap();
+    a.run("CREATE PROCEDURE P (IN X SMALLINT DEFAULT 1.0, IN D DATE DEFAULT CURRENT_DATE) MODIFIES SQL DATA DELETE FROM L").unwrap();
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §9.18 GR3b ii 2, §11.31 SR7f, §11.23

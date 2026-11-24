@@ -338,7 +338,7 @@ impl Parser {
     /// Of a generic table parameter none is written [SR10g ii 1]; of a
     /// descriptor parameter it is a `<descriptor value constructor>`, which
     /// no other's is [SR10g iii]. As the routine's body, it contains no
-    /// host or dynamic parameter [SR19].
+    /// host or dynamic parameter [§11.60 SR19].
     fn parameter_default(&mut self, kind: RoutineKind, mode: Option<ParameterMode>, of: &ParameterType) -> Result<Option<ParameterDefault>> {
         let refused = default_refusal(kind, mode, self.here());
         if let Some(e) = refused.as_ref().filter(|e| e.code == Code::SyntaxRule) {

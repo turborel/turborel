@@ -159,6 +159,9 @@ fn an_empty_routine_reads_back_as_written() {
 fn unknown_tags_are_corrupt() {
     let mut one = desc(RoutineKind::Function, DataAccess::Reads, Some(numeric()));
     one.parameters.truncate(1);
+    if let Some(x) = one.parameters.first_mut() {
+        x.default = None;
+    }
     let written = bytes(&one);
     let mut prefix = Vec::new();
     put_name(&mut prefix, &one.name);
@@ -175,7 +178,8 @@ fn unknown_tags_are_corrupt() {
     let access_at = {
         let mut p = Vec::new();
         put_type(&mut p, &numeric());
-        mode_at + 1 + 1 + p.len() + 1
+        // The mode, the kind of parameter, the flag of no default.
+        mode_at + 1 + 1 + 1 + p.len() + 1
     };
     for (at, tag, what) in [(kind_at, FUNCTION, "a kind"), (mode_at, IN, "a mode"), (access_at, READS, "an access indication")] {
         let mut bad = written.clone();

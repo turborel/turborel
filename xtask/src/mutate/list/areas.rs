@@ -48,6 +48,7 @@ mod oltp;
 mod orders;
 mod own_copies;
 mod parallel;
+mod parameter_defaults;
 mod point_ops;
 mod probed_subqueries;
 mod range_joins;
@@ -277,7 +278,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
     json.into_iter().chain(xml).chain(plugins()).chain(last()).chain(closing())
 }
 
-/// A prepared CALL's parameter modes', an export's large objects', the
+/// A procedure's parameter defaults', a prepared CALL's parameter modes', an export's large objects', the
 /// transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
@@ -285,8 +286,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures' and rows in demand's last, as `last`
 /// holds no more.
-fn closing() -> [&'static [Mutation]; 23] {
+fn closing() -> [&'static [Mutation]; 24] {
     [
+        &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
         &exports::EXPORTS,
         &super::transport::TRANSPORT,

@@ -34,7 +34,7 @@ pub(in crate::binder) fn note(invoked: Option<&Invoked>, specific: &QualifiedNam
 /// authorization identifier of `cx`: of the procedures of the name, of a
 /// definition those it invoked as it was defined, those that take the
 /// arguments (`placed`), of them those of the schema first in the path
-/// [SR9e], and of them the one of fewest parameters [SR9f, SR9g]. Its
+/// [§9.18 SR9e], and of them the one of fewest parameters [§9.18 SR9f, SR9g]. Its
 /// specific name is noted where `cx` notes the routines it invokes.
 ///
 /// # Errors

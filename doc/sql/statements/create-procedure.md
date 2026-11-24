@@ -234,7 +234,7 @@ OK
             3 |            1
 (1 row)
 turborel: SQLCODE -103 (SQLSTATE 42000): the <parameter default> of parameter ID (INTEGER) is a CHARACTER(3), which cannot be stored in it [ISO/IEC 9075-2:2023 §11.60 SR16e i, §9.2 SR2]
-turborel: SQLCODE -103 (SQLSTATE 42000): an output SQL parameter has no <parameter default> [ISO/IEC 9075-2:2023 §11.60 SR16e ii] (at character 30)
+turborel: SQLCODE -103 (SQLSTATE 42000): an output SQL parameter has no <parameter default> [ISO/IEC 9075-2:2023 §11.60 SR16e ii] (at character 41)
 ```
 
 ## STANDARD
