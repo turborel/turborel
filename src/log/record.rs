@@ -15,17 +15,18 @@
 //! commit (4):  commit timestamp u64 | wall time i128
 //! abort (5):   (nothing)
 //! schema (6):  owner | the `<schema>` text | tables (count u32, each:
-//!              identifier, engine) | now | epochs
+//!              identifier, engine) | now | epochs | typed u8
 //! create index (7): name | table | columns (count u32, names) | method |
-//!              options
+//!              options | expressions (count u32, each: place u32, text)
 //! undone (8):  position u64 of the statement's first change
 //! checkpoint (9): (nothing)
 //! drop index (10): name
-//! drop (11):   object u8 (1 table, 2 view, 3 schema, 4 domain, 5
-//!              assertion, 6 collation, 7 sequence generator) | its name,
-//!              or the schema's | cascade u8
+//! drop (11):   object u8, its kind's tag (`record/definitions.rs`: 1
+//!              table, 2 view, 3 schema, to 22) | its name, or the
+//!              schema's, a cast's two types, or a transform's type and
+//!              group u8, 1 for one, then its name | cascade u8
 //! alter table (12): table | the `<alter table action>` text | default
-//!              schema | zone | epochs
+//!              schema | zone | epochs | typed u8
 //! setting (13): name | value, null for its default again
 //! alter index (14): name | options
 //! stale (15):  checkpoint's position u64 | index | row id u64 | key row
@@ -34,13 +35,15 @@
 //! defined (18): authorization identifier | role u8, 1 for one, then its
 //!              name | default schema | the
 //!              statement's text | placed u8, 1 for a table created, then
-//!              its engine and its storage's generation u32 | now | epochs
+//!              its engine and its storage's generation u32 | now | epochs |
+//!              typed u8
 //! reconfiguration (19): members
 //! sequence (20): sequence generator, as a table | epoch u64 | resume i128
 //! role creator (21): authorization identifier | allowed u8
 //! large object (22): table | generation u32 | object id u64 | body bytes
 //! stale objects (23): checkpoint's position u64 | table | ids (count
 //!              u32, each u64)
+//! spatial (24): a change, as `catalog/codec/spatial.rs` says
 //! restore point (25): name | wall time i128
 //! insert rows (26): as `record/batch.rs` says
 //! table:   authorization identifier | identifier
