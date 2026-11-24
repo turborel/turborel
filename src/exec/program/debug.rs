@@ -25,6 +25,8 @@ impl<H: Host> Run<'_, '_, H> {
     /// # Errors
     ///
     /// The cancellation of the statement while it is paused.
+    #[cold]
+    #[inline(never)]
     pub(super) fn debugged(&mut self, step: &Step) -> Result<(), Stop> {
         let Some((link, st)) = self.host.debugged() else { return Ok(()) };
         if matches!(step, Step::Block(_)) {
@@ -32,7 +34,7 @@ impl<H: Host> Run<'_, '_, H> {
         }
         if self.tracked.is_none() {
             let visible = link.debugger().is_ok_and(|d| may_debug(&*st.catalog, &d, self.program.origin.as_ref()));
-            self.tracked = Tracked::enter(link, self.program, visible);
+            self.tracked = Tracked::enter(link, self.program, visible).map(Box::new);
         }
         let Some(tracked) = &self.tracked else { return Ok(()) };
         let at = tracked.place(step);

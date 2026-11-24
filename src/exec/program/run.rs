@@ -76,7 +76,7 @@ pub(super) struct Run<'p, 'h, H: Host> {
     hidden_atomic: usize,
     /// \[EXTENSION\] Its frame of the stack of the debugger attached, once
     /// one is (`debug.rs`).
-    pub(super) tracked: Option<crate::debugger::Tracked>,
+    pub(super) tracked: Option<Box<crate::debugger::Tracked>>,
 }
 
 /// [ISO/IEC 9075-4:2006 draft Clause 14] Runs `program` over `frame` in
@@ -170,8 +170,10 @@ impl<'p, H: Host> Run<'p, '_, H> {
     /// The statement `step` run, the diagnostics area emptied as it begins
     /// and its condition placed there as it ends.
     fn statement(&mut self, step: &'p Step) -> Ran {
-        // [EXTENSION] RULES.md D1005: one look at a flag with no debugger.
-        self.debugged(step)?;
+        // [EXTENSION] RULES.md D1015: one relaxed load of a static with no debugger.
+        if crate::txn::debuggers_attached() {
+            self.debugged(step)?;
+        }
         self.host.begin(step);
         let ran = self.dispatch(step);
         let outcome = match &ran {

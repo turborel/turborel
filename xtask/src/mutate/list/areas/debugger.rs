@@ -10,7 +10,7 @@ use super::super::{Mutation, Package};
 const PRIVILEGES: &str = "src/db/routines/privileges.rs";
 
 /// Mechanisms whose removal must fail the debugger's requirements.
-pub const DEBUGGER: [Mutation; 15] = [
+pub const DEBUGGER: [Mutation; 16] = [
     Mutation {
         name: "debugger-debug-held-by-all",
         package: Package::Core,
@@ -36,8 +36,8 @@ pub const DEBUGGER: [Mutation; 15] = [
         package: Package::Core,
         breaks: "a session with a debugger attached is never debugged",
         file: "src/txn/stop/debugged.rs",
-        original: "if !self.on.load(Ordering::Relaxed) {",
-        replacement: "if self.on.load(Ordering::Relaxed) || !self.on.load(Ordering::Relaxed) {",
+        original: "attached() && self.on.load(Ordering::Relaxed)",
+        replacement: "attached() && false",
         integration: &["debugger::a_breakpoint_pauses_and_shows_the_frame"],
         unit: &[],
     },
@@ -159,6 +159,16 @@ pub const DEBUGGER: [Mutation; 15] = [
         original: "let stepped = self.stop.debugged().on() && !matches!(stmt, SqlStatement::Control(_));",
         replacement: "let stepped = self.stop.debugged().on() && false;",
         integration: &["debugger::a_plain_triggered_actions_statements_pause"],
+        unit: &[],
+    },
+    Mutation {
+        name: "debugger-count-unkept",
+        package: Package::Core,
+        breaks: "a debugger attached is not counted, so no statement looks further and none pauses",
+        file: "src/txn/stop/debugged.rs",
+        original: "        ATTACHED.fetch_add(1, Ordering::Release);\n",
+        replacement: "",
+        integration: &["debugger::a_breakpoint_pauses_and_shows_the_frame"],
         unit: &[],
     },
 ];
