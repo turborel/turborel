@@ -152,6 +152,10 @@ fn parallel_layout(input: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     if let Plan::Window { window, .. } = input {
         return windowed_layout(window, db);
     }
+    // A grouping that takes filters, its groups gathered (RULES.md D1063).
+    if let Some(grouping) = super::parted::grouping_in(input) {
+        return told::layout(grouping, db);
+    }
     crate::exec::parallel::pipelined(input).then(|| layout(input, db)).flatten()
 }
 
@@ -246,8 +250,11 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => false,
+        // A grouping that takes filters is read by batch by a join that
+        // tells it them, as it is run alone (RULES.md D1063).
         Plan::Parallel(p) => {
-            (matches!(p.input, Plan::Window { .. }) || crate::exec::parallel::pipelined(&p.input)) && reads(&p.input, db, joined)
+            let streams = matches!(p.input, Plan::Window { .. }) || crate::exec::parallel::pipelined(&p.input);
+            (streams || super::parted::grouping(plan, db)) && reads(&p.input, db, joined)
         }
     }
 }
@@ -371,30 +378,9 @@ fn made_of(plan: &Plan) -> Batched {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => none,
-        Plan::Parallel(..) => parallel_batches,
+        Plan::Parallel(..) => super::parted::batches,
         Plan::Sort { .. } => sorted_batches,
         Plan::Limit { .. } => topped_batches,
-    }
-}
-
-/// The batches of `plan`, a pipeline run in parallel, in order
-/// (`parallel/batches.rs`); of one that gives way, those of its plan
-/// alone.
-///
-/// # Errors
-///
-/// As `open`.
-fn parallel_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
-    let Plan::Parallel(p) = plan else { return Err(crate::exec::broken("a part run in parallel is not one")) };
-    // A window's whole partitions computed on the part's threads (D560).
-    if matches!(p.input, Plan::Window { .. }) {
-        return crate::exec::window::window_batches_on(p.input, (db, tx), p.degree);
-    }
-    // A part whose batches hold no layout of its own is read as its plan.
-    let Some(shape) = layout(&p.input, db) else { return batches_with(p.input, (db, tx), deferred) };
-    match crate::exec::parallel::streamed_batches(&p.input, (db, tx), p.degree, &shape)? {
-        crate::exec::parallel::Held::Kept(batches) => Ok(batches),
-        crate::exec::parallel::Held::GaveWay => batches_with(p.input, (db, tx), deferred),
     }
 }
 

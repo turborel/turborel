@@ -20,7 +20,7 @@ mod pattern;
 mod program;
 mod ptf;
 mod pushed;
-mod raises;
+pub(crate) mod raises;
 mod render;
 mod sets;
 mod single;

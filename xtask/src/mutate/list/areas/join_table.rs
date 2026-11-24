@@ -9,16 +9,19 @@
 //! its guard is; of D600, a filter told a build by the key that equates
 //! it, a key set judged exactly, spans passing over their gaps, a filter
 //! passed through an analyzed plan's count, the filters of one stream
-//! judged the one that kept the least first, a grouping of SUM told no
-//! filter, a grouping told one, its warning of a null it dropped, and an
-//! antijoin's right operand told none; of D601, a direct table's span at
-//! its bound, its counting sort keeping build order, and a bitmap
-//! filter's span at its bound.
+//! judged the one that kept the least first, a grouping of a SUM that
+//! can overflow told no filter, a grouping told one, its warning of a
+//! null it dropped, and an antijoin's right operand told none; of D601, a
+//! direct table's span at its bound, its counting sort keeping build
+//! order, and a bitmap filter's span at its bound; of D1062, a filter
+//! stopped at a projection the declared types prove cannot raise; of
+//! D1063, a grouping run in parallel that judges no filter, and one
+//! told a filter over a column that may hold a null.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the join table's requirements.
-pub const JOIN_TABLE: [Mutation; 22] = [
+pub const JOIN_TABLE: [Mutation; 25] = [
     Mutation {
         name: "join-table-build-order",
         package: Package::Core,
@@ -74,8 +77,8 @@ pub const JOIN_TABLE: [Mutation; 22] = [
         package: Package::Core,
         breaks: "a pipeline run in parallel gives its batches in its plan's order, so a scan in none is gathered in none (D389)",
         file: "src/exec/batch/joined.rs",
-        original: "        Plan::Parallel(p) => !crate::exec::parallel::pipelined(&p.input) || in_order(&p.input),",
-        replacement: "        Plan::Parallel(_) => true,",
+        original: ".map_or_else(|| !crate::exec::parallel::pipelined(&p.input) || in_order(&p.input), in_order)",
+        replacement: ".map_or_else(|| p.degree > 0, in_order)",
         integration: &[],
         unit: &["exec::batch::joined::tests::rows_asked_for_in_an_order"],
     },
@@ -114,8 +117,8 @@ pub const JOIN_TABLE: [Mutation; 22] = [
         package: Package::Core,
         breaks: "a runtime filter goes below no projection that can raise, so into no part hoisted under its guard (D15, D373)",
         file: "src/exec/batch/runtime.rs",
-        original: "        Plan::Project { exprs, .. } => moved(exprs, column).filter(|_| !exprs.iter().any(Expr::can_raise)).map(|c| (c, false)),",
-        replacement: "        Plan::Project { exprs, .. } => moved(exprs, column).map(|c| (c, false)),",
+        original: ".filter(|_| !typed::exprs_raise(exprs, input, db)).map(|c| (c, false)),",
+        replacement: ".filter(|_| !exprs.is_empty() || !typed::exprs_raise(exprs, input, db)).map(|c| (c, false)),",
         integration: &["join_tables::a_filter_enters_no_guarded_part"],
         unit: &[],
     },
@@ -172,10 +175,10 @@ pub const JOIN_TABLE: [Mutation; 22] = [
     Mutation {
         name: "join-filters-grouping-sum",
         package: Package::Core,
-        breaks: "a grouping of SUM, which can overflow, takes no filter (D600, D15)",
-        file: "src/exec/batch.rs",
-        original: "ColumnarKind::Count | ColumnarKind::Min | ColumnarKind::Max)));",
-        replacement: "ColumnarKind::Count | ColumnarKind::Min | ColumnarKind::Max | ColumnarKind::Sum)));",
+        breaks: "a grouping of a SUM that can overflow takes no filter (D600, D1062, D15)",
+        file: "src/exec/batch/typed.rs",
+        original: "Some(ColumnarKind::Sum | ColumnarKind::Avg) => total_fits(a, &|c| column_type(input, c, db)),",
+        replacement: "Some(ColumnarKind::Sum | ColumnarKind::Avg) => true,",
         integration: &["join_filters_told::a_filter_reaches_the_scan_below_a_grouping"],
         unit: &[],
     },
@@ -238,5 +241,35 @@ pub const JOIN_TABLE: [Mutation; 22] = [
         replacement: "    if width >= held.saturating_mul(DENSE_SPAN) {",
         integration: &[],
         unit: &["exec::table::runtime::tests::dense_keys_are_a_bitmap"],
+    },
+    Mutation {
+        name: "join-filter-projection-untyped",
+        package: Package::Core,
+        breaks: "a runtime filter goes below a projection of arithmetic the declared types prove cannot raise (D1062)",
+        file: "src/exec/batch/typed.rs",
+        original: "exprs.iter().any(|e| e.can_raise() && can_raise_typed(e, &|c| column_type(input, c, db)))",
+        replacement: "exprs.iter().any(|e| e.can_raise() || can_raise_typed(e, &|c| column_type(input, c, db)))",
+        integration: &["join_filters_told::a_filter_reaches_the_scan_below_a_grouping"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-grouping-filters-unjudged",
+        package: Package::Core,
+        breaks: "a grouping run in parallel judges the filters it is told of each morsel's batches (D1063)",
+        file: "src/exec/parallel/pipeline.rs",
+        original: "|| !stepped(&mut branches, 0, judged(told)) {",
+        replacement: "|| !stepped(&mut branches, 0, judged(told.into_iter().skip(usize::MAX).collect())) {",
+        integration: &["join_filters_told::a_filter_reaches_a_grouping_run_in_parallel"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-grouping-told-over-nulls",
+        package: Package::Core,
+        breaks: "a grouping run in parallel whose set function may eliminate a null is told no filter, so it warns of every row's (D1063)",
+        file: "src/exec/batch/parted.rs",
+        original: "let below = if read.taken.iter().any(warns) {",
+        replacement: "let below = if read.taken.iter().any(warns) && read.taken.is_empty() {",
+        integration: &["join_filters_told::a_filter_reaches_a_grouping_run_in_parallel"],
+        unit: &[],
     },
 ];

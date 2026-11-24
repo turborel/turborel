@@ -75,7 +75,7 @@ fn marked(node: &Node<'_>, found: &Found, ctx: &RuleContext<'_>) -> Option<Logic
     // are where the comparison always stands, but not in a CASE that may
     // leave it unevaluated.
     let xs_raise = found.conditional && xs.iter().any(Expr::can_raise);
-    let raises = xs_raise || sub.outer.iter().any(Expr::can_raise) || pure::plan_raises(&sub.plan, &ctx.db.functions);
+    let raises = xs_raise || sub.outer.iter().any(Expr::can_raise) || pure::plan_raises(&sub.plan, ctx);
     let pure = sub.outer.iter().chain(xs).all(super::expr_pure) && pure::plan_pure(&sub.plan);
     if !plain || raises || !pure {
         return None;
@@ -180,7 +180,7 @@ fn matched(sub: &Subquery, left: &mut Widened<'_>, ctx: &RuleContext<'_>) -> Opt
         let right = LogicalPlan::Project { exprs, input: Box::new(body) };
         return Some((cond, right, (0..n).map(|j| Expr::Column(w.saturating_add(bw).saturating_add(j))).collect()));
     }
-    let bound = simple::pulled(sub, &ctx.db.functions).filter(|b| b.defaults.is_none());
+    let bound = simple::pulled(sub, ctx).filter(|b| b.defaults.is_none());
     let bound = bound.or_else(|| domain::pushed(sub, left.rows))?;
     keyed(bound, left, n)
 }
