@@ -218,8 +218,8 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         // A scan in an order too, merged by batch
         // (`TableStorage::scan_ordered_batches`).
         Plan::SeqScan { table, located, .. } => !located && db.storage_of(table).is_ok_and(|s| s.reads_by_batch()),
-        // A whole sort's rows are held, so given by batch whatever its
-        // input's tables (RULES.md D380).
+        // A whole sort gives batches gathered of its input's, so it reads
+        // by batch where its input does (RULES.md D380).
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, most: None, .. } => reads(input, db, joined),
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }) && reads(input, db, joined),
         Plan::Counted(c) => reads(&c.input, db, joined),
