@@ -141,12 +141,18 @@ impl Seen<'_> {
     /// the owner created, as GRANT MONITOR TO a user grants it. A role of
     /// the name another user created gives nothing.
     pub fn may_monitor(&self) -> bool {
-        let Some(owner) = self.state.users.owner() else { return false };
-        let roles = self.state.catalog.roles();
-        let created =
-            roles.authorizations.iter().any(|a| a.role == MONITOR && a.grantor == SYSTEM_GRANTOR && a.grantee.as_deref() == Some(owner));
-        owner == self.auth || (created && roles.applicable(&[self.auth]).contains(MONITOR))
+        may_monitor(self.state, self.auth)
     }
+}
+
+/// \[DESIGN\] RULES.md D520: whether `auth` sees what every session runs
+/// in `state`, as `Seen::may_monitor` says.
+pub(crate) fn may_monitor(state: &State, auth: &str) -> bool {
+    let Some(owner) = state.users.owner() else { return false };
+    let roles = state.catalog.roles();
+    let created =
+        roles.authorizations.iter().any(|a| a.role == MONITOR && a.grantor == SYSTEM_GRANTOR && a.grantee.as_deref() == Some(owner));
+    owner == auth || (created && roles.applicable(&[auth]).contains(MONITOR))
 }
 
 /// \[DESIGN\] A system table: an extension point (RULES.md D37).
