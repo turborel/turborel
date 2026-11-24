@@ -1,4 +1,4 @@
-//! The mutations of the cost model (RULES.md R-TEST-9, D650 to D659): a
+//! The mutations of the cost model (RULES.md R-TEST-9, D650 to D653): a
 //! filter's conjuncts left in their written order, a filter that can
 //! raise an error ranked as one that cannot, rows past the grant not
 //! spilled, the degree of a part ignored, and a runtime filter's rows
