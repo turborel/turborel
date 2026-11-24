@@ -14,11 +14,12 @@ use super::using::Targets;
 use super::{Name, dynamic_error, value_of};
 use crate::ast::{DescriptorItem, DynamicName, ExecuteStatement, ExtendedName, UsingClause, ValueSpecification};
 use crate::binder::{DescribedKey, OutColumn};
+use crate::catalog::ParameterMode;
 use crate::db::area::commands::{self, Command};
 use crate::db::prepared::Preparer;
 use crate::db::{Completion, Prepared, Session, State, cursor_error};
 use crate::error::{Code, Result, SqlError, SqlState};
-use crate::params::Params;
+use crate::params::{DynamicParameter, Params};
 use crate::value::{DataType, Value};
 
 /// [ISO/IEC 9075:1992 §17.7 GR1, §17.8 GR1, §17.10 GR1, §17.13 GR1,
@@ -139,15 +140,26 @@ impl Session {
         let catalog = self.catalog_now()?;
         // [ISO/IEC 9075-2:2023 §20.10 GR5, GR6f] WITH NESTING, each item's
         // subordinate items after it.
+        // [§20.10 GR7e] Of a CALL, each `?`'s parameter.
+        let called = |top: &mut Item, p: Option<&DynamicParameter>| {
+            let (Some(p), Some(specific)) = (p, prepared.procedure()) else { return };
+            top.describe_call((p.mode.code(), p.ordinal.unwrap_or(0)), specific, &catalog);
+        };
         if input {
-            let item = |t: DataType| described(&t.clone(), Item::described(t, None, true, &catalog), nesting, &catalog);
-            let items = prepared.parameters().iter().flat_map(|p| item(p.clone().data_type())).collect();
+            let item = |p: &DynamicParameter| {
+                let t = p.data_type.clone().data_type();
+                let mut top = Item::described(t.clone(), None, true, &catalog);
+                called(&mut top, Some(p));
+                described(&t, top, nesting, &catalog)
+            };
+            let items = prepared.parameters().iter().filter(|p| p.mode != ParameterMode::Out).flat_map(item).collect();
             return self.describe_into(descriptor, params, (items, NO_KEY));
         }
         let (key_type, members) = key_of(prepared.key());
         let item = |(at, c): (usize, &OutColumn)| {
             let mut top = Item::described(c.data_type.clone(), c.name.as_deref(), !c.not_null, &catalog);
             top.set_number(DescriptorItem::KeyMember, i64::from(members.contains(&at)));
+            called(&mut top, prepared.output_parameter(at));
             described(&c.data_type, top, nesting, &catalog)
         };
         let items = prepared.columns().iter().enumerate().flat_map(item).collect();
@@ -193,7 +205,7 @@ impl Session {
     ) -> Result<Completion> {
         let key = self.statement_key(name, params, "§17.10 GR1")?;
         let prepared = self.prepared_as(&key, "§17.10 GR1")?;
-        let types: Vec<DataType> = prepared.parameters().iter().map(|t| t.clone().data_type()).collect();
+        let types: Vec<DataType> = prepared.inputs().iter().map(|t| t.clone().data_type()).collect();
         if !prepared.is_query() {
             return self.execute_outputs(&prepared, (result, parameters), &types, params);
         }
@@ -266,7 +278,7 @@ impl Session {
     fn execute_immediate(&self, source: &ValueSpecification, params: &Params) -> Result<Completion> {
         let text = self.statement_text(source, params, "§17.11 SR1")?;
         let prepared = self.prepared_quietly(&text).map_err(unplaced)?;
-        if prepared.is_query() || !prepared.parameters().is_empty() || prepared.has_outputs() {
+        if prepared.is_query() || !prepared.inputs().is_empty() || prepared.has_outputs() {
             let msg = "[ISO/IEC 9075:1992 §17.11 GR3a, GR3c] a statement executed immediately is no query, and has no <dynamic parameter specification>";
             return Err(SqlError::new(Code::SyntaxRule, msg));
         }

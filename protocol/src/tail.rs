@@ -26,6 +26,7 @@
 //!                 of them queued for a worker, of them waiting for locks
 //! 19 declared     count u32, then each column's declared type, its name
 //!                 and as SQL writes it, strings (`declared.rs`)
+//! 20 called       a CALL's procedure and its `?`s' modes (`called.rs`)
 //! ```
 
 use turborel::bytes::{Put, Reader};
@@ -56,6 +57,8 @@ pub(crate) const CONDITIONS: u8 = 17;
 pub(crate) const TIME: u8 = 18;
 /// The columns' declared types, of a Description or a Prepared.
 pub(crate) const DECLARED: u8 = 19;
+/// A CALL's procedure and its `?`s' modes, of a Prepared.
+pub(crate) const CALLED: u8 = 20;
 
 /// \[DESIGN\] The most attributes a message takes.
 pub const MAX_ATTRIBUTES: usize = 32;

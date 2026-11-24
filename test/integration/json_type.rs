@@ -267,7 +267,7 @@ fn json_values_group_and_order() {
 fn json_parameters() {
     let (_db, a) = docs();
     let p = a.prepare("INSERT INTO DOCS VALUES (?, ?)").unwrap();
-    assert_eq!(p.parameters().get(1).map(|t| t.clone().data_type()), Some(DataType::Json));
+    assert_eq!(p.inputs().get(1).map(|t| t.clone().data_type()), Some(DataType::Json));
     let made = Json::parse(r#"{"k":[true,null]}"#, turborel::json::Keys::Any).unwrap();
     a.execute_prepared(&p, &[Value::Exact(turborel::value::Decimal::new(9, 0)), Value::Json(made.clone())]).unwrap();
     a.execute_prepared(&p, &[Value::Exact(turborel::value::Decimal::new(10, 0)), Value::Char("[4]".into())]).unwrap();

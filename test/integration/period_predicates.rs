@@ -196,12 +196,12 @@ fn a_parameter_of_a_period_takes_its_type_8_20() {
     let db = database();
     let s = db.session("A");
     let p = s.prepare("SELECT ROOM FROM BOOKINGS WHERE BOOKED OVERLAPS PERIOD (?, DATE '2026-01-06') ORDER BY ROOM").unwrap();
-    assert_eq!(p.parameters().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(), [DataType::Date]);
+    assert_eq!(p.inputs().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(), [DataType::Date]);
     let mut cursor = s.open_prepared(&p, &[Value::Null]).unwrap();
     assert!(cursor.fetch().unwrap().is_none(), "Unknown of a null bound");
     let point = s.prepare("SELECT ROOM FROM BOOKINGS WHERE BOOKED CONTAINS ?").unwrap();
     assert_eq!(
-        point.parameters().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(),
+        point.inputs().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(),
         [DataType::Timestamp { precision: 6, zoned: true }]
     );
 }

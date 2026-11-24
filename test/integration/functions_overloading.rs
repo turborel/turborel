@@ -171,7 +171,7 @@ fn a_dynamic_parameter_takes_the_one_overloads_type() {
     let s = db.session("APP");
     function_calls(&s);
     let one = s.prepare("SELECT HALF(?) FROM T WHERE ID = 1").unwrap();
-    assert!(matches!(one.parameters(), [ParameterType::Of(DataType::Exact { precision: INTEGER_PRECISION, scale: 0, .. })]));
+    assert!(matches!(one.inputs(), [ParameterType::Of(DataType::Exact { precision: INTEGER_PRECISION, scale: 0, .. })]));
     let mut c = s.open_prepared(&one, &[Value::Exact(Decimal::new(3, 0))]).unwrap();
     assert_eq!(c.fetch().unwrap().map(|r| r[0].to_string()), Some("INT:3".to_owned()));
     drop(c);

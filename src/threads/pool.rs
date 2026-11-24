@@ -232,9 +232,11 @@ mod tests {
         while job.wanted() {
             job.step();
         }
-        assert_eq!(job.done.load(Ordering::Acquire), 1000);
         assert!(pool.running() <= 3);
+        // A worker may have taken the last morsel and not yet counted it,
+        // so the count is read once the drop has joined every worker.
         drop(pool);
+        assert_eq!(job.done.load(Ordering::Acquire), 1000);
     }
 
     /// Verifies: [DESIGN] RULES.md D290 a pool wanting fewer workers

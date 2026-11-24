@@ -44,6 +44,16 @@ they come as a row before the statement's completion, which the client
 library's `execute` gives as rows. The command-line client prepares a
 CALL that has a `?`, and shows its outputs as a row.
 
+Each `?` of a prepared CALL is described with the mode and the ordinal
+position of the parameter whose argument holds it, and with the
+procedure's specific name. DESCRIBE gives them as PARAMETER_MODE,
+PARAMETER_ORDINAL_POSITION and the PARAMETER_SPECIFIC fields, the
+embedded library's and the client library's `parameters` as each
+`DynamicParameter`'s `mode` and `ordinal`, and `procedure` the specific
+name. Several `?` marks of one IN argument, as `CALL P(? + ?)`, each have
+that parameter's mode and position. Of procedures of one name, the one
+of as many parameters as the CALL has arguments describes them.
+
 The body runs as the owner of the procedure's schema, of that schema,
 with a diagnostics area of its own, within the CALL statement: all it
 does shares the CALL's instant, and is undone if any part of it fails.
@@ -174,7 +184,8 @@ CALL LEFT_OF(2, ?);
 
 ISO/IEC 9075-2:2023 §16.1, §9.18, §10.4, Feature T321-04. A `?` of an
 OUT or INOUT parameter is an output dynamic parameter [§20.7 GR7a,
-SR5a], described [§20.10] and put where EXECUTE's `<result using
+SR5a], described [§20.10], each `?` with its parameter's mode and
+position [§20.10 GR7e], and put where EXECUTE's `<result using
 clause>` says [§20.13 GR6, GR10]. An argument
 `P[i]` is a `<target array element specification>` [§6.4], Feature
 S097. SQL-86 and SQL-92 have no CALL.

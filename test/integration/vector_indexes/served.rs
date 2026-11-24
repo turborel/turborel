@@ -90,7 +90,7 @@ fn a_parameter_takes_the_columns_vector_type() {
     let s = db.session("S");
     create(&s, "hnsw", ("EUCLIDEAN", ""));
     let p = s.prepare(&format!("SELECT ID FROM T ORDER BY L2_DISTANCE(V, ?) FETCH APPROX FIRST {K} ROWS ONLY")).unwrap();
-    let ParameterType::Of(t) = p.parameters().first().unwrap() else { panic!("a type") };
+    let ParameterType::Of(t) = p.inputs().first().unwrap() else { panic!("a type") };
     // The column's type, VECTOR(16, FLOAT32), written as its default
     // format leaves it.
     assert_eq!(t.to_string(), format!("VECTOR({DIMS})"));
@@ -103,8 +103,8 @@ fn a_parameter_takes_the_columns_vector_type() {
     drop(cursor);
     assert_eq!(got, rows(&s, &nearest_sql("L2_DISTANCE", 3, ("APPROX", ""))).unwrap());
     let general = s.prepare("SELECT VECTOR_DISTANCE(V, ?, ?) FROM T").unwrap();
-    assert_eq!(general.parameters().len(), 2);
-    assert!(matches!(general.parameters().get(1), Some(ParameterType::Of(t)) if t.is_character()));
+    assert_eq!(general.inputs().len(), 2);
+    assert!(matches!(general.inputs().get(1), Some(ParameterType::Of(t)) if t.is_character()));
 }
 
 /// Verifies: [EXTENSION] vector_standard §9.3: VECTOR_SEARCH of the

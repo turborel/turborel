@@ -50,14 +50,14 @@ fn a_prepared_call_sends_its_outputs_as_a_row() {
     let server = start(&db, &[]);
     let mut c = server.connect("X");
     let find = c.prepare("CALL FIND(?, ?)").unwrap();
-    assert_eq!(find.parameters().len(), 1);
+    assert_eq!(find.inputs().len(), 1);
     assert_eq!(find.columns().iter().map(|c| c.name.clone().unwrap_or_default()).collect::<Vec<_>>(), ["GOT"]);
     let Outcome::Rows { columns, rows: got } = c.execute(&find, &[int(2)]).unwrap() else { panic!("rows") };
     assert_eq!((columns.len(), keys(&got)), (1, vec!["20".to_owned()]));
     let Outcome::Rows { rows: none, .. } = c.execute(&find, &[int(9)]).unwrap() else { panic!("rows") };
     assert_eq!(keys(&none), ["NULL"]);
     let bump = c.prepare("CALL BUMP(?, ?)").unwrap();
-    assert_eq!(bump.parameters().len(), 1);
+    assert_eq!(bump.inputs().len(), 1);
     let Outcome::Rows { rows: bumped, .. } = c.execute(&bump, &[int(4)]).unwrap() else { panic!("rows") };
     assert_eq!(bumped[0].iter().map(ToString::to_string).collect::<Vec<_>>(), ["7", "X"]);
     let add = c.prepare("CALL ADD_ROW(?)").unwrap();
@@ -77,7 +77,7 @@ fn prepared_statements_read_a_batch_at_a_time() {
     let server = start(&db, &[]);
     let mut c = server.connect("X");
     let query = c.prepare("SELECT K FROM T WHERE K > ? ORDER BY K").unwrap();
-    assert_eq!(query.parameters().len(), 1);
+    assert_eq!(query.inputs().len(), 1);
     assert_eq!(query.columns()[0].name.as_deref(), Some("K"));
     let first = c.open_cursor(&query, &[int(0)], 2).unwrap();
     assert_eq!((keys(&first.rows), first.more), (vec!["1".to_owned(), "2".to_owned()], true));
@@ -390,7 +390,7 @@ fn rows_of_a_data_change_statement_are_sent() {
     let Outcome::Rows { rows: gone, .. } = c.query("SELECT K FROM OLD TABLE (DELETE FROM T WHERE K = 1)").unwrap() else { panic!("rows") };
     assert_eq!(keys(&gone), ["1"]);
     let update = c.prepare("SELECT K FROM FINAL TABLE (UPDATE T SET K = K + ? WHERE K = 2)").unwrap();
-    assert_eq!((update.parameters().len(), update.columns()[0].name.as_deref()), (1, Some("K")));
+    assert_eq!((update.inputs().len(), update.columns()[0].name.as_deref()), (1, Some("K")));
     let Outcome::Rows { rows: updated, .. } = c.execute(&update, &[int(10)]).unwrap() else { panic!("rows") };
     assert_eq!(keys(&updated), ["12"]);
     let Outcome::Rows { rows: left, .. } = c.query("SELECT K FROM T ORDER BY K").unwrap() else { panic!("rows") };

@@ -246,7 +246,8 @@ fn main() -> Result<(), turborel::error::SqlError> {
 ## Prepared statements
 
 `prepare` prepares a statement once, its dynamic parameters written `?`:
-`parameters` gives the type each takes, `columns` a query's columns.
+`parameters` gives each, its type and its mode, `inputs` the type of
+each that an execution gives a value for, `columns` a query's columns.
 `execute_prepared` runs it with values for them, in order;
 `open_prepared` runs a prepared query, and gives its cursor. A prepared
 statement stays valid across transactions. A query, an INSERT, and a
@@ -301,6 +302,40 @@ fn main() -> Result<(), turborel::error::SqlError> {
     let mut rows = ann.open_prepared(&by_id, &[Value::Exact(Decimal::new(2, 0))])?;
     assert_eq!(rows.fetch()?.map(|r| r[0].to_string()), Some("Grace".to_owned()));
     assert_eq!(insert.plans_made(), 1);
+    Ok(())
+}
+```
+
+Each `?` of a CALL has the mode and the ordinal position of the
+procedure's parameter whose argument holds it, IN, OUT or INOUT, and
+`procedure` gives the procedure's specific name. Several `?` marks of
+one IN argument each have that parameter's mode. An OUT one's is no
+input. `execute_prepared_out` runs the CALL with values for the inputs
+and gives back the values of the OUT and INOUT ones, in the order of the
+statement's `columns`. Of procedures of one name, the CALL invokes the
+one of as many parameters as it has arguments. No parameter has a
+default, so DEFAULT as an argument is refused, SQLCODE -900.
+
+```rust
+use turborel::catalog::ParameterMode;
+use turborel::db::Database;
+use turborel::value::{Decimal, Value};
+
+fn main() -> Result<(), turborel::error::SqlError> {
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE STAFF (ID INTEGER, NAME VARCHAR(30))")?;
+    let ann = db.session("ANN");
+    ann.run("INSERT INTO STAFF VALUES (1, 'Ada'), (2, 'Grace')")?;
+    ann.run(
+        "CREATE PROCEDURE NAME_OF (IN WANTED INTEGER, OUT GOT VARCHAR(30), INOUT SEEN INTEGER) READS SQL DATA \
+         SELECT NAME, SEEN + 1 INTO GOT, SEEN FROM STAFF WHERE ID = WANTED",
+    )?;
+    let call = ann.prepare("CALL NAME_OF(?, ?, ?)")?;
+    let modes: Vec<_> = call.parameters().iter().map(|p| (p.mode, p.ordinal)).collect();
+    assert_eq!(modes, [(ParameterMode::In, Some(1)), (ParameterMode::Out, Some(2)), (ParameterMode::InOut, Some(3))]);
+    assert_eq!(call.inputs().len(), 2);
+    let (_, out) = ann.execute_prepared_out(&call, &[Value::Exact(Decimal::new(2, 0)), Value::Exact(Decimal::new(0, 0))])?;
+    assert_eq!(out.iter().map(ToString::to_string).collect::<Vec<_>>(), ["Grace", "1"]);
     Ok(())
 }
 ```
