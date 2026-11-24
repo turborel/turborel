@@ -114,7 +114,7 @@ impl State {
             if let Some((Some(v), _)) = &p.default {
                 self.private_default(v, &data_type, (schema, owner)).or_at(p.at)?;
             }
-            private.push(SqlParameter { name: p.name.clone(), data_type, mode: ParameterMode::InOut, generic: None });
+            private.push(SqlParameter { name: p.name.clone(), data_type, mode: ParameterMode::InOut, generic: None, default: None });
         }
         if def.describe.is_none() && def.columns.is_none() && !def.only_pass_through {
             let msg = "a polymorphic table function of no <table function column list> nor ONLY PASS THROUGH has a PTF describe component procedure";

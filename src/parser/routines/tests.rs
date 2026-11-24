@@ -251,7 +251,7 @@ fn external_routine_is_not_supported_11_60() {
     unsupported("CREATE FUNCTION F (INT) RETURNS INT PARAMETER STYLE GENERAL LANGUAGE COBOL NO SQL EXTERNAL", rule);
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 CR1, CR5, CR24, CR25, CR32, CR33,
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 CR1, CR5, CR24, CR25,
 /// CR34, SR4b, SR9r] the features of routines turborel does not support
 /// are valid SQL refused with SQLCODE -900: a monomorphic table function
 /// among them, which needs Feature T326.
@@ -263,9 +263,6 @@ fn routine_features_are_not_supported_11_60() {
     unsupported("CREATE PROCEDURE P () CONTAINS SQL SQL SECURITY DEFINER DELETE FROM T", &rule("CR24"));
     unsupported("CREATE FUNCTION F () RETURNS INT CONTAINS SQL SQL SECURITY INVOKER RETURN 1", &rule("CR24"));
     unsupported("CREATE FUNCTION F () RETURNS TABLE (A INT) READS SQL DATA RETURN NULL", &rule("SR4b, CR25"));
-    unsupported("CREATE PROCEDURE P (X INT DEFAULT 1) CONTAINS SQL DELETE FROM T", &rule("CR32"));
-    unsupported("CREATE PROCEDURE P (IN X INT DEFAULT 1) CONTAINS SQL DELETE FROM T", &rule("CR32"));
-    unsupported("CREATE PROCEDURE P (INOUT X INT DEFAULT 1) CONTAINS SQL DELETE FROM T", &rule("CR33"));
     unsupported("CREATE FUNCTION F (X INT DEFAULT 1) RETURNS INT CONTAINS SQL RETURN X", &rule("CR34"));
     unsupported("CREATE FUNCTION F (X INT) RETURNS INT CONTAINS SQL STATIC DISPATCH RETURN X", &rule("SR9r"));
 }
@@ -301,6 +298,37 @@ fn format_errors_are_syntax_errors_11_60() {
     syntax_error("CREATE PROCEDURE P () CONTAINS SQL");
     syntax_error("CREATE PROCEDURE P () CONTAINS SQL DELETE FROM T DELETE FROM T");
     syntax_error("CREATE PROCEDURE P () READS SQL DELETE FROM T");
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §11.60 SR14] (Features T522 and T523)
+/// a `<parameter default>` of an IN or INOUT parameter of a procedure, a
+/// value expression or NULL, is read with its text as written; none of
+/// a parameter that has none. Of a parameter of no mode written it is an
+/// input one's [SR16d].
+#[test]
+fn a_procedure_parameter_has_a_default_11_60() {
+    let r = routine("CREATE PROCEDURE P (X INT DEFAULT 1 + 2, INOUT Y INT DEFAULT NULL, IN Z INT) CONTAINS SQL DELETE FROM T");
+    let defaults: Vec<Option<&str>> = r.parameters.iter().map(|p| p.default.as_ref().map(|d| d.text.as_str())).collect();
+    assert_eq!(defaults, vec![Some("1 + 2"), Some("NULL"), None]);
+    assert!(matches!(r.parameters[0].default.as_ref().map(|d| &d.value), Some(SqlArgument::Value(_))));
+    assert!(matches!(r.parameters[1].default.as_ref().map(|d| &d.value), Some(SqlArgument::Null(_))));
+    let kept = |text: &str| Parser::new(text).and_then(|mut p| p.kept_default());
+    assert!(matches!(kept("NULL"), Ok(SqlArgument::Null(0))));
+    assert!(matches!(kept("CURRENT_DATE"), Ok(SqlArgument::Value(_))));
+    assert_eq!(kept("1 2").unwrap_err().code, Code::Syntax);
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 SR19] a `<parameter
+/// default>` holds no `<dynamic parameter specification>` or `<embedded
+/// variable name>`, as the body holds none, even of a statement being
+/// prepared.
+#[test]
+fn default_holds_no_parameter_11_60() {
+    let rule = "ISO/IEC 9075-2:2023 §11.60 SR19";
+    refused_by("CREATE PROCEDURE P (X INT DEFAULT :H) CONTAINS SQL DELETE FROM T", rule);
+    let text = "CREATE PROCEDURE P (X INT DEFAULT ? + 1) CONTAINS SQL DELETE FROM T";
+    let e = parsed_by(Parser::for_prepare(text, false), text).unwrap_err();
+    assert_eq!(e.rule.as_deref(), Some(rule));
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §11.60 SR19] an `<SQL-invoked routine>`

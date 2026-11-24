@@ -22,8 +22,8 @@ pub(super) use designator::{CONSTRUCTOR, INSTANCE, METHOD};
 use super::Parser;
 use super::ptf::{ReturnsTable, has_table_parameter};
 use crate::ast::{
-    ParameterDeclaration, ParameterMode, ParameterSpecification, ParameterType, RoutineBody, RoutineDefinition, RoutineKind, SqlStatement,
-    TargetKind, TypeName,
+    ParameterDeclaration, ParameterDefault, ParameterMode, ParameterSpecification, ParameterType, RoutineBody, RoutineDefinition,
+    RoutineKind, SqlArgument, SqlStatement, TargetKind, TypeName,
 };
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::{Tok, delim, kw};
@@ -130,28 +130,17 @@ fn ends_declaration(tok: &Tok) -> bool {
 }
 
 /// The refusal at `at` of a `<parameter default>` of a parameter of
-/// `mode` of a `kind`.
-fn default_refusal(kind: RoutineKind, mode: Option<ParameterMode>, at: usize) -> SqlError {
+/// `mode` of a `kind`, if one is refused: of a function's, not supported;
+/// of an output parameter, a Syntax Rule's.
+fn default_refusal(kind: RoutineKind, mode: Option<ParameterMode>, at: usize) -> Option<SqlError> {
     if kind == RoutineKind::Function {
         let msg = "[ISO/IEC 9075-2:2023 §11.60 CR34] a <parameter default> of a function needs Feature T525, “Default values for \
                    parameters of SQL-invoked functions”, which turborel does not support";
-        return not_supported(at, msg);
+        return Some(not_supported(at, msg));
     }
-    match mode {
-        Some(ParameterMode::Out) => {
-            SqlError::at(Code::SyntaxRule, at, "[ISO/IEC 9075-2:2023 §11.60 SR16e ii] an output SQL parameter has no <parameter default>")
-        }
-        Some(ParameterMode::InOut) => not_supported(
-            at,
-            "[ISO/IEC 9075-2:2023 §11.60 CR33] a <parameter default> of an INOUT parameter needs Feature T523, “Default values for INOUT \
-             parameters of SQL-invoked procedures”, which turborel does not support",
-        ),
-        Some(ParameterMode::In) | None => not_supported(
-            at,
-            "[ISO/IEC 9075-2:2023 §11.60 CR32] a <parameter default> of an IN parameter needs Feature T522, “Default values for IN \
-             parameters of SQL-invoked procedures”, which turborel does not support",
-        ),
-    }
+    (mode == Some(ParameterMode::Out)).then(|| {
+        SqlError::at(Code::SyntaxRule, at, "[ISO/IEC 9075-2:2023 §11.60 SR16e ii] an output SQL parameter has no <parameter default>")
+    })
 }
 
 impl Parser {
@@ -281,10 +270,8 @@ impl Parser {
             self.refuse_later(not_supported(self.here(), msg));
             self.advance();
         }
-        if self.is_kw(kw::DEFAULT) {
-            self.parameter_default(kind, mode, &data_type)?;
-        }
-        Ok(ParameterDeclaration { mode, name, data_type, at })
+        let default = if self.is_kw(kw::DEFAULT) { self.parameter_default(kind, mode, &data_type)? } else { None };
+        Ok(ParameterDeclaration { mode, name, data_type, default, at })
     }
 
     /// `<parameter mode>` ::= IN | OUT | INOUT, taken if next.
@@ -345,16 +332,23 @@ impl Parser {
     }
 
     /// DEFAULT `<parameter default>`, of a parameter of `mode` of a `kind`:
-    /// read, then refused once the statement is, or at once if a Syntax
-    /// Rule forbids it.
+    /// a procedure's (Features T522 and T523); a function's read, then
+    /// refused once the statement is; an output parameter's refused at
+    /// once, as a Syntax Rule forbids it.
     ///
     /// Of a generic table parameter none is written [SR10g ii 1]; of a
     /// descriptor parameter it is a `<descriptor value constructor>`, which
-    /// no other's is [SR10g iii].
-    fn parameter_default(&mut self, kind: RoutineKind, mode: Option<ParameterMode>, of: &ParameterType) -> Result<()> {
+    /// no other's is [SR10g iii]. As the routine's body, it contains no
+    /// host or dynamic parameter [§11.60 SR19].
+    fn parameter_default(
+        &mut self,
+        kind: RoutineKind,
+        mode: Option<ParameterMode>,
+        of: &ParameterType,
+    ) -> Result<Option<ParameterDefault>> {
         let refused = default_refusal(kind, mode, self.here());
-        if refused.code == Code::SyntaxRule {
-            return Err(refused);
+        if let Some(e) = refused.as_ref().filter(|e| e.code == Code::SyntaxRule) {
+            return Err(e.clone());
         }
         if let ParameterType::Table(_) = of {
             return Err(self.rule("[ISO/IEC 9075-2:2023 §11.60 SR10g ii 1] a generic table parameter has no <parameter default>"));
@@ -367,16 +361,44 @@ impl Parser {
                  <descriptor value constructor>",
             ));
         }
-        // <parameter default> ::= <value expression> | <contextually typed
-        // value specification> | <descriptor value constructor>, of which
-        // NULL is not a value expression.
         if descriptor {
             self.descriptor_value_constructor()?;
-        } else if !self.accept_kw(kw::NULL) {
-            self.value_expression()?;
         }
-        self.refuse_later(refused);
-        Ok(())
+        let start = self.here();
+        let params = std::mem::take(&mut self.params);
+        let dynamic = self.dynamic.take();
+        let value = if descriptor { Ok(None) } else { self.default_value().map(Some) };
+        (self.params, self.dynamic) = (params, dynamic);
+        let value = value.map_err(|e| self.body_parameter_refusal(e))?;
+        if let Some(e) = refused {
+            self.refuse_later(e);
+            return Ok(None);
+        }
+        Ok(value.map(|value| ParameterDefault { value, text: self.text_from(start) }))
+    }
+
+    /// `<parameter default>` ::= `<value expression>` | `<contextually
+    /// typed value specification>`, of which turborel reads NULL, as the
+    /// others are value expressions or no value of a parameter [§6.5].
+    fn default_value(&mut self) -> Result<SqlArgument> {
+        let at = self.here();
+        if self.accept_kw(kw::NULL) {
+            return Ok(SqlArgument::Null(at));
+        }
+        self.value_expression().map(SqlArgument::Value)
+    }
+
+    /// [ISO/IEC 9075-2:2023 §11.60] The `<parameter default>` a routine
+    /// descriptor keeps, its text `parameter_default` read, as a CALL
+    /// that takes it evaluates it [§9.18 GR3b ii 2].
+    ///
+    /// # Errors
+    ///
+    /// The text is not one.
+    pub fn kept_default(&mut self) -> Result<SqlArgument> {
+        let value = self.default_value()?;
+        self.end()?;
+        Ok(value)
     }
 
     /// `<returns clause>` ::= RETURNS `<returns data type>`, of those

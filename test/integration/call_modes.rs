@@ -3,7 +3,7 @@
 //! ordinal position of the parameter whose argument holds it, and the
 //! specific name of the procedure the CALL invokes, through the API and
 //! DESCRIBE alike; of an overloaded procedure, the one of as many
-//! parameters as arguments; DEFAULT of an argument refused.
+//! parameters as arguments; DEFAULT of an argument, of no `?`.
 
 use turborel::catalog::ParameterMode;
 use turborel::db::{Database, Prepared, Session};
@@ -76,9 +76,9 @@ fn each_dynamic_parameter_of_a_call_has_its_mode_20_10() {
 /// vi] RULES.md D977: of procedures of one name, a CALL invokes the one of
 /// as many parameters as it has arguments, which describes its `?`s and
 /// is told by its specific name; DEFAULT of an IN or INOUT parameter's
-/// argument is of Features T522 and T523, not supported (SQLCODE -900),
-/// and a CALL of fewer arguments than parameters is refused (-103), as no
-/// parameter has a default.
+/// argument holds no `?` (Features T522 and T523), and a CALL of fewer
+/// arguments than parameters is refused (-103), as no parameter has a
+/// default.
 #[test]
 fn an_overloaded_procedure_and_a_default_argument_20_10() {
     let (_db, a) = defined();
@@ -90,9 +90,11 @@ fn an_overloaded_procedure_and_a_default_argument_20_10() {
     assert_eq!(modes(&three), [(ParameterMode::In, Some(1)), (out, Some(2)), (out, Some(3))]);
     let values = a.execute_prepared_out(&three, &[int(2)]).unwrap().1;
     assert_eq!(values.iter().map(ToString::to_string).collect::<Vec<_>>(), ["20", "40"]);
+    let defaulted = a.prepare("CALL FIND(DEFAULT, ?)").unwrap();
+    assert_eq!((modes(&defaulted), defaulted.procedure().map(|n| n.ident.as_str())), (vec![(out, Some(2))], Some("FIND_TWO")), "T522");
+    let both = a.prepare("CALL MIXED(?, 1, DEFAULT)").unwrap();
+    assert_eq!(modes(&both), [(out, Some(1))], "T523");
     let refused = |sql: &str| a.prepare(sql).map(drop).unwrap_err().sqlcode();
-    assert_eq!(refused("CALL FIND(DEFAULT, ?)"), -900_i32, "T522");
-    assert_eq!(refused("CALL MIXED(?, 1, DEFAULT)"), -900_i32, "T523");
     assert_eq!(refused("CALL FIND(?)"), -103_i32, "no parameter has a default");
 }
 

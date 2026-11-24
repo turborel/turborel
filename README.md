@@ -95,6 +95,8 @@ behind it, and each can be replaced or added to.
   query or a data change and shows each operator's rows beside its
   estimate, its batches, spills and index reads, and a program may give
   the planner true row counts to test its plans.
+- [EXPLAIN of a data change](doc/sql/statements/explain.md#explain-of-a-data-change)
+  shows its plan, indexes, cascades, triggers and point path, running nothing.
 - Correlated subqueries of every form unnested into joins, and SQL
   functions that return one value inlined, so each is computed once
   rather than once for each row.
@@ -251,6 +253,7 @@ behind it, and each can be replaced or added to.
   checked or copied a row at a time.
 - Import and export of CSV and tab-separated files through the client, large objects as their values.
 - Prepared CALLs that describe each `?` with its parameter's mode, through the API, DESCRIBE and the protocol.
+- Procedure parameters with default values, taken by DEFAULT, by arguments left out or by names not named.
 - A command-line client with line editing, completion, describe commands,
   variables, scripting and seven output formats ([guide](doc/client/05-turborel-commands.md)).
 - Library, embedded modes

@@ -15,10 +15,14 @@ fn numeric() -> DataType {
     DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric }
 }
 
-/// A routine of these parts, with a parameter of each mode, a horizon,
+/// A routine of these parts, with a parameter of each mode, the IN and
+/// INOUT ones of a default value (Features T522 and T523), a horizon,
 /// routines it invokes and EXECUTE grants to PUBLIC and to a user.
 fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> SqlRoutineDesc {
-    let parameter = |n: &str, mode| SqlParameter { name: n.into(), data_type: numeric(), mode, generic: None };
+    let parameter = |n: &str, mode| {
+        let default = (mode != ParameterMode::Out).then(|| format!("{n} default"));
+        SqlParameter { name: n.into(), data_type: numeric(), mode, generic: None, default }
+    };
     SqlRoutineDesc {
         method: None,
         distance: None,
@@ -59,16 +63,17 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
 /// THROUGH and a fulfill component procedure alone.
 fn polymorphic(only_pass_through: bool) -> SqlRoutineDesc {
     let varying = DataType::Varying { length: 128, units: crate::value::CharUnits::Characters };
-    let generic = |n: &str, g| SqlParameter { name: n.into(), data_type: varying.clone(), mode: ParameterMode::In, generic: Some(g) };
+    let generic =
+        |n: &str, g| SqlParameter { name: n.into(), data_type: varying.clone(), mode: ParameterMode::In, generic: Some(g), default: None };
     let table = |pass_through, semantics| GenericParameter::Table(GenericTable { pass_through, semantics });
     let parameters = vec![
         generic("R", table(true, TableSemantics::Row)),
         generic("K", table(false, TableSemantics::Set { prune: false })),
         generic("P", table(true, TableSemantics::Set { prune: true })),
         generic("D", GenericParameter::Descriptor),
-        SqlParameter { name: "N".into(), data_type: numeric(), mode: ParameterMode::In, generic: None },
+        SqlParameter { name: "N".into(), data_type: numeric(), mode: ParameterMode::In, generic: None, default: None },
     ];
-    let private = vec![SqlParameter { name: "C".into(), data_type: numeric(), mode: ParameterMode::InOut, generic: None }];
+    let private = vec![SqlParameter { name: "C".into(), data_type: numeric(), mode: ParameterMode::InOut, generic: None, default: None }];
     let ptf = if only_pass_through {
         PtfDesc { columns: None, only_pass_through, private: Vec::new(), describe: None, start: None, fulfill: name("FF"), finish: None }
     } else {
@@ -156,6 +161,9 @@ fn an_empty_routine_reads_back_as_written() {
 fn unknown_tags_are_corrupt() {
     let mut one = desc(RoutineKind::Function, DataAccess::Reads, Some(numeric()));
     one.parameters.truncate(1);
+    if let Some(x) = one.parameters.first_mut() {
+        x.default = None;
+    }
     let written = bytes(&one);
     let mut prefix = Vec::new();
     put_name(&mut prefix, &one.name);
@@ -172,7 +180,8 @@ fn unknown_tags_are_corrupt() {
     let access_at = {
         let mut p = Vec::new();
         put_type(&mut p, &numeric());
-        mode_at + 1 + 1 + p.len() + 1
+        // The mode, the kind of parameter, the flag of no default.
+        mode_at + 1 + 1 + 1 + p.len() + 1
     };
     for (at, tag, what) in [(kind_at, FUNCTION, "a kind"), (mode_at, IN, "a mode"), (access_at, READS, "an access indication")] {
         let mut bad = written.clone();

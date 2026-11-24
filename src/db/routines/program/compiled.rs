@@ -29,7 +29,7 @@ mod folded;
 mod run;
 mod valued;
 
-pub(in crate::db) use change::compiled_procedures;
+pub(in crate::db) use change::{compiled_procedures, runs_straight};
 
 use super::super::super::{Session, StatementContext};
 use super::super::kept::KeptProgram;

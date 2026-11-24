@@ -12,7 +12,6 @@ use std::sync::Arc;
 use super::super::compiled::plan;
 use super::super::ddl::Changed;
 use super::super::{Session, State, StatementContext, rule};
-use super::call::defaulted;
 use crate::ast::{CallStatement, SqlArgument};
 use crate::binder::{Context, bind_argument, bind_cursor};
 use crate::catalog::{QualifiedName, SpatialChange, owner_of};
@@ -201,8 +200,9 @@ fn lr_registrable(st: &State, (table, column): (&QualifiedName, &str), user: &st
 ///
 /// # Errors
 ///
-/// SQLCODE -103 if it takes no such count of arguments; -900 of NULL or
-/// DEFAULT (Feature T522); an argument's.
+/// SQLCODE -103 if it takes no such count of arguments; an argument's.
+/// NULL or DEFAULT is the null value, as no parameter of one has a
+/// default value [§9.18 GR3b ii 1] (Feature T522).
 pub(in crate::db) fn rust_arguments(cx: Context<'_>, p: &dyn Procedure, call: &CallStatement) -> Result<(Vec<Expr>, Vec<DataType>)> {
     if p.returns(call.arguments.len()).is_some() {
         return Err(rule(format!("[ISO/IEC 9075-2:2023 §10.4 SR2] {} is a function, which no CALL invokes", p.name())));
@@ -213,9 +213,10 @@ pub(in crate::db) fn rust_arguments(cx: Context<'_>, p: &dyn Procedure, call: &C
     let mut inputs = Vec::with_capacity(types.len());
     let mut bound = Vec::with_capacity(types.len());
     for (a, t) in call.arguments.iter().zip(&types) {
-        let v = match a {
-            SqlArgument::Value(v) => v,
-            SqlArgument::Default(at) | SqlArgument::Null(at) => return defaulted("T522", 6, *at),
+        let SqlArgument::Value(v) = a else {
+            inputs.push(Expr::Const(Value::Null));
+            bound.push(t.clone());
+            continue;
         };
         let (e, of) = bind_argument(cx, v, t)?;
         inputs.push(e);

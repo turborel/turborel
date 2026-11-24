@@ -196,6 +196,14 @@ fn plain_table(st: &State, table: &QualifiedName) -> bool {
     desc.typed.is_none() && !st.catalog.partitioning().is_partitioned(table) && untriggered(st, table)
 }
 
+/// \[EXTENSION\] Whether `stmt`, a procedure's statement changing the
+/// base table `table` named as `named`, is of a shape a compiled program
+/// may run straight on its table once its plans are kept, as `direct_of`
+/// judges it of them, which EXPLAIN says (RULES.md D980).
+pub(in crate::db) fn runs_straight(st: &State, stmt: &SqlStatement, (named, table): (&QualifiedName, &QualifiedName)) -> bool {
+    shape_of(stmt).is_some() && named == table && plain_table(st, table)
+}
+
 /// How `contained`, of shape `shape`, runs straight, from the plans the
 /// general path kept of it; none if they are not kept so.
 fn direct_of(exec: &Exec<'_>, contained: &Contained, shape: Shape) -> Result<Option<Direct>> {

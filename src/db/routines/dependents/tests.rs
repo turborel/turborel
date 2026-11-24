@@ -31,7 +31,7 @@ fn routine(
         name: name(&specific.auth, "F"),
         specific: specific.clone(),
         kind: RoutineKind::Function,
-        parameters: vec![SqlParameter { name: "X".into(), data_type: parameter, mode: ParameterMode::In, generic: None }],
+        parameters: vec![SqlParameter { name: "X".into(), data_type: parameter, mode: ParameterMode::In, generic: None, default: None }],
         returns: Some(returns),
         deterministic: false,
         access: DataAccess::Reads,

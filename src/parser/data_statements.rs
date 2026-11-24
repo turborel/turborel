@@ -42,18 +42,21 @@ pub(crate) fn begins_change(first: Option<&Tok>, second: Option<&Tok>) -> bool {
 
 /// \[EXTENSION\] Of `tokens`, those of a direct statement, where the
 /// statement of `EXPLAIN [ ANALYZE ] <cursor specification>`, or of
-/// `EXPLAIN ANALYZE <data change statement>`, begins among them, and
+/// `EXPLAIN [ ANALYZE ] <data change statement>`, begins among them, and
 /// whether ANALYZE is written, if they begin one: EXPLAIN, then a query's
-/// first token; or EXPLAIN, ANALYZE, then a data change's first tokens,
-/// or a query's first token, of a parenthesis one that begins a query
-/// too, as a table named EXPLAIN whose correlation name ANALYZE has a
-/// list of columns is followed by a column's name.
+/// first token or a data change's first tokens (RULES.md D980); or
+/// EXPLAIN, ANALYZE, then a data change's first tokens, or a query's
+/// first token, of a parenthesis one that begins a query too, as a table
+/// named EXPLAIN whose correlation name ANALYZE has a list of columns is
+/// followed by a column's name.
 pub(crate) fn explained<'t>(mut tokens: impl Iterator<Item = &'t Tok>) -> Option<(usize, bool)> {
     let (first, second, third, fourth) = (tokens.next(), tokens.next(), tokens.next(), tokens.next());
     if !matches!(first, Some(Tok::Identifier(w)) if w == EXPLAIN) {
         return None;
     }
-    if begins_query(second) {
+    // No query begins with a table named EXPLAIN followed by INSERT,
+    // UPDATE or DELETE, all reserved, nor by MERGE then INTO or WITH.
+    if begins_query(second) || begins_change(second, third) {
         return Some((1, false));
     }
     let analyze = matches!(second, Some(Tok::Identifier(w)) if w == ANALYZE);
@@ -336,18 +339,17 @@ mod tests {
         assert_eq!(of("EXPLAIN ANALYZE (SELECT A FROM T)"), Some((2, true)));
         assert_eq!(of("EXPLAIN SELECT A FROM ANALYZE"), Some((1, false)));
         assert_eq!(of("EXPLAIN (VALUES 1)"), Some((1, false)));
-        assert_eq!(of("EXPLAIN INSERT INTO T VALUES (1)"), None);
         assert_eq!(of("ANALYZE SELECT 1 FROM T"), None);
         assert_eq!(of("SELECT 1 FROM T"), None);
         assert_eq!(of("EXPLAIN"), None);
     }
 
     /// Verifies: [EXTENSION] RULES.md D622, R-TEST-8: EXPLAIN ANALYZE is
-    /// read before a data change's first tokens, EXPLAIN alone not. MC/DC
-    /// of `merge || begins_change's reserved word`: MERGE INTO against
-    /// MERGE T shows `merge`, INSERT against a name the reserved word; of
-    /// `analyze && (query || change)`, the change rows against EXPLAIN
-    /// INSERT show `analyze`.
+    /// read before a data change's first tokens. MC/DC of `merge ||
+    /// begins_change's reserved word`: MERGE INTO against MERGE T shows
+    /// `merge`, INSERT against a name the reserved word; of `analyze &&
+    /// (query || change)`, the change rows against EXPLAIN ANALYSE INSERT
+    /// show `analyze`.
     #[test]
     fn analyze_is_read_before_a_data_change() {
         for sql in ["EXPLAIN ANALYZE INSERT INTO T VALUES (1)", "EXPLAIN ANALYZE UPDATE T SET A = 1", "EXPLAIN ANALYZE DELETE FROM T"] {
@@ -356,6 +358,25 @@ mod tests {
         assert_eq!(of("EXPLAIN ANALYZE MERGE INTO T USING U ON T.A = U.A WHEN MATCHED THEN DELETE"), Some((2, true)));
         assert_eq!(of("EXPLAIN ANALYZE MERGE T"), None);
         assert_eq!(of("EXPLAIN ANALYZE T"), None);
-        assert_eq!(of("EXPLAIN DELETE FROM T"), None);
+        assert_eq!(of("EXPLAIN ANALYSE INSERT INTO T VALUES (1)"), None);
+    }
+
+    /// Verifies: [EXTENSION] RULES.md D980, R-TEST-8: EXPLAIN alone is read
+    /// before a data change's first tokens, as before a query's. MC/DC of
+    /// `begins_query(second) || begins_change(second, third)`: SELECT
+    /// against T shows the first, each data change against T the second.
+    #[test]
+    fn explain_is_read_before_a_data_change() {
+        assert_eq!(of("EXPLAIN SELECT A FROM T"), Some((1, false)));
+        for sql in [
+            "EXPLAIN INSERT INTO T VALUES (1)",
+            "EXPLAIN UPDATE T SET A = 1",
+            "EXPLAIN DELETE FROM T",
+            "EXPLAIN MERGE INTO T USING U ON T.A = U.A WHEN MATCHED THEN DELETE",
+        ] {
+            assert_eq!(of(sql), Some((1, false)), "{sql}");
+        }
+        assert_eq!(of("EXPLAIN T"), None);
+        assert_eq!(of("EXPLAIN MERGE T"), None);
     }
 }

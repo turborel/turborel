@@ -102,19 +102,7 @@ impl Subqueries for Hosted<'_> {
 /// such a row would give the same values with more work (RULES.md
 /// D419). None else.
 pub(in crate::db) fn hosted_rows(plan: &LogicalPlan, hosted: &Hosted<'_>) -> Option<Result<Vec<Row>>> {
-    let (rows, projected) = if let LogicalPlan::Values { rows, .. } = plan {
-        (rows, None)
-    } else if let LogicalPlan::Project { exprs, input } = plan
-        && let LogicalPlan::Values { rows, .. } = &**input
-    {
-        (rows, Some(exprs))
-    } else {
-        return None;
-    };
-    let reads_none = rows.iter().flatten().chain(projected.into_iter().flatten()).all(Expr::reads_nothing);
-    if !reads_none && !rows.iter().flatten().any(Expr::invokes_modifying) {
-        return None;
-    }
+    let (rows, projected) = evaluated(plan)?;
     for t in plan.tables() {
         if let Err(e) = hosted.cx.st.read_lock(hosted.cx.tx, &t) {
             return Some(Err(e));
@@ -159,4 +147,32 @@ impl Session {
             Ended::Completed(_) => Ok(None),
         }
     }
+}
+
+/// The rows of a VALUES and the projection over them, if any.
+type Evaluated<'p> = (&'p Vec<Vec<Expr>>, Option<&'p Vec<Expr>>);
+
+/// The rows of `plan` and the projection over them, if `hosted_rows`
+/// evaluates them in turn, not as a query: a row, or a projection of one,
+/// that invokes a function that possibly modifies SQL-data, or whose
+/// every value reads nothing.
+fn evaluated(plan: &LogicalPlan) -> Option<Evaluated<'_>> {
+    let (rows, projected) = if let LogicalPlan::Values { rows, .. } = plan {
+        (rows, None)
+    } else if let LogicalPlan::Project { exprs, input } = plan
+        && let LogicalPlan::Values { rows, .. } = &**input
+    {
+        (rows, Some(exprs))
+    } else {
+        return None;
+    };
+    let reads_none = rows.iter().flatten().chain(projected.into_iter().flatten()).all(Expr::reads_nothing);
+    (reads_none || rows.iter().flatten().any(Expr::invokes_modifying)).then_some((rows, projected))
+}
+
+/// \[EXTENSION\] Whether the rows of `plan`, an INSERT's query, are
+/// evaluated in turn as `hosted_rows` evaluates them, with no plan, which
+/// EXPLAIN says of the INSERT (RULES.md D980).
+pub(in crate::db) fn evaluates(plan: &LogicalPlan) -> bool {
+    evaluated(plan).is_some()
 }

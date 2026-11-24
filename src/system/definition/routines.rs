@@ -313,7 +313,9 @@ fn parameters_columns() -> Vec<ColumnDesc> {
         .id("PARAMETER_NAME", false)
         .ids("FROM_SQL_SPECIFIC", false)
         .ids("TO_SQL_SPECIFIC", false);
-    xml_columns(described(columns).id("DTD_IDENTIFIER", true), "XML_PASSING_MECHANISM").done()
+    // [ISO/IEC 9075-2:2023 §11.60 GR3c vi] Then the text of its <parameter
+    // default>, if it has one, as the 2006 draft's view has no column of it.
+    xml_columns(described(columns).id("DTD_IDENTIFIER", true), "XML_PASSING_MECHANISM").data("PARAMETER_DEFAULT", false).done()
 }
 
 /// [ISO/IEC 9075-11:2006 draft §6.31 Description 8, 9] A parameter's
@@ -334,7 +336,8 @@ fn parameters(seen: &Seen<'_>) -> Vec<Row> {
             let position = at.saturating_add(1);
             let head = [vec![number(position), text("IN"), yes(*result), yes(false), text(name)], vec![Value::Null; TRANSFORMED]].concat();
             let dtd = vec![text(&position.to_string())];
-            rows.push([ids(&catalog, &r.specific).to_vec(), head, data_type(&catalog, t, None), dtd, xml_values(Some(t))].concat());
+            let row = [ids(&catalog, &r.specific).to_vec(), head, data_type(&catalog, t, None), dtd, xml_values(Some(t))].concat();
+            rows.push([row, vec![Value::Null]].concat());
         }
     }
     for r in seen.state.catalog.routines() {
@@ -361,7 +364,8 @@ fn parameters(seen: &Seen<'_>) -> Vec<Row> {
                 }
             };
             let xml = xml_values(p.generic.is_none().then_some(&p.data_type));
-            rows.push([ids(&catalog, &r.specific).to_vec(), head, described, vec![dtd], xml].concat());
+            let default = p.default.as_deref().map_or(Value::Null, text);
+            rows.push([ids(&catalog, &r.specific).to_vec(), head, described, vec![dtd], xml, vec![default]].concat());
         }
     }
     rows
