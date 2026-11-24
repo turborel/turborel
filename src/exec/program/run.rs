@@ -63,7 +63,7 @@ pub(super) struct Scope<'p, M> {
 
 /// A program being run.
 pub(super) struct Run<'p, 'h, H: Host> {
-    program: &'p Program,
+    pub(super) program: &'p Program,
     pub(super) host: &'h mut H,
     pub(super) frame: &'h mut Params,
     /// The compound statements being executed, the innermost last.
@@ -74,6 +74,9 @@ pub(super) struct Run<'p, 'h, H: Host> {
     /// How many ATOMIC compound statements, out of scope of the handlers
     /// being executed, are being executed all the same.
     hidden_atomic: usize,
+    /// \[EXTENSION\] Its frame of the stack of the debugger attached, once
+    /// one is (`debug.rs`).
+    pub(super) tracked: Option<Box<crate::debugger::Tracked>>,
 }
 
 /// [ISO/IEC 9075-4:2006 draft Clause 14] Runs `program` over `frame` in
@@ -85,7 +88,7 @@ pub(super) struct Run<'p, 'h, H: Host> {
 /// SQLSTATE value, SQLSTATE 45000 [§17.3 GR6b iii].
 pub(crate) fn run_program<H: Host>(program: &Program, frame: &mut Params, host: &mut H) -> Result<Ended> {
     frame.set_execution(host.execution());
-    let mut run = Run { program, host, frame, scopes: Vec::new(), handling: Vec::new(), hidden_atomic: 0 };
+    let mut run = Run { program, host, frame, scopes: Vec::new(), handling: Vec::new(), hidden_atomic: 0, tracked: None };
     match run.list(std::slice::from_ref(&program.body)) {
         Ok((Flow::Return(v), _)) => Ok(Ended::Returned(v)),
         Ok((Flow::Next | Flow::Leave(_) | Flow::Iterate(_), completion)) => Ok(Ended::Completed(completion)),
@@ -167,6 +170,10 @@ impl<'p, H: Host> Run<'p, '_, H> {
     /// The statement `step` run, the diagnostics area emptied as it begins
     /// and its condition placed there as it ends.
     fn statement(&mut self, step: &'p Step) -> Ran {
+        // [EXTENSION] RULES.md D1015: one relaxed load of a static with no debugger.
+        if crate::txn::debuggers_attached() {
+            self.debugged(step)?;
+        }
         self.host.begin(step);
         let ran = self.dispatch(step);
         let outcome = match &ran {
@@ -324,7 +331,7 @@ impl<'p, H: Host> Run<'p, '_, H> {
     }
 
     /// The name of `cursor` in this execution of the program.
-    fn key(&self, cursor: &Cursor) -> String {
+    pub(super) fn key(&self, cursor: &Cursor) -> String {
         local_key(&cursor.key, self.frame.execution())
     }
 

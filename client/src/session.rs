@@ -149,7 +149,9 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Suspended
             | Reply::Complete(_)
             | Reply::Notice(_)
-            | Reply::Status { .. } => Err(self.lose("[DESIGN] the server sent no Pong")),
+            | Reply::Status { .. }
+            | Reply::Debug(_)
+            | Reply::Event(_) => Err(self.lose("[DESIGN] the server sent no Pong")),
         }
     }
 
@@ -198,7 +200,9 @@ impl<S: Read + Write> Connection<S> {
                 | Reply::Lob(_)
                 | Reply::Notice(_)
                 | Reply::Status { .. }
-                | Reply::Pong => return Err(self.lose("[DESIGN] the server sent no Ready")),
+                | Reply::Pong
+                | Reply::Debug(_)
+                | Reply::Event(_) => return Err(self.lose("[DESIGN] the server sent no Ready")),
             }
         }
     }
@@ -254,7 +258,9 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Suspended
             | Reply::Notice(_)
             | Reply::Status { .. }
-            | Reply::Pong => return Err(self.lose("[DESIGN] the server sent no result")),
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => return Err(self.lose("[DESIGN] the server sent no result")),
         };
         let mut rows = Vec::new();
         loop {
@@ -270,7 +276,9 @@ impl<S: Read + Write> Connection<S> {
                 | Reply::Suspended
                 | Reply::Notice(_)
                 | Reply::Status { .. }
-                | Reply::Pong => return Err(self.lose("[DESIGN] the server broke off its rows")),
+                | Reply::Pong
+                | Reply::Debug(_)
+                | Reply::Event(_) => return Err(self.lose("[DESIGN] the server broke off its rows")),
             }
         }
     }

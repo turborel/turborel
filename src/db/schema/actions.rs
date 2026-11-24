@@ -36,6 +36,9 @@ pub(in crate::db) fn granted_actions(list: &[Action], table: &TableDesc, methods
             Action::Execute => {
                 return rule(format!("[ISO/IEC 9075-2:2023 §12.3 SR4b] EXECUTE is granted on a routine, not on table {}", table.name));
             }
+            Action::Debug => {
+                return rule(format!("[EXTENSION] DEBUG is granted on a routine, not on table {}", table.name));
+            }
             Action::Under => {
                 return rule(format!("[ISO/IEC 9075-2:2023 §12.3 SR4c] UNDER on a table is of a typed table, which {} is not", table.name));
             }

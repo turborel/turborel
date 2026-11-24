@@ -246,4 +246,4 @@ roles is ISO/IEC 9075-2:2023 §12.7 (Feature T331), and GRANTED BY §12.8
 
 ## SEE ALSO
 
-[GRANT](grant.md), [DROP USER](drop-user.md), [DROP COLLATION](drop-collation.md)
+[GRANT](grant.md), [GRANT DEBUG](grant-debug.md), [DROP USER](drop-user.md), [DROP COLLATION](drop-collation.md)

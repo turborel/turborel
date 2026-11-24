@@ -169,7 +169,9 @@ pub fn read_native(input: &mut impl Read) -> Result<(Vec<Column>, Vec<Row>)> {
             | Reply::Suspended
             | Reply::Notice(_)
             | Reply::Status { .. }
-            | Reply::Pong => return Err(not_native("a frame other than Rows before the Complete")),
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => return Err(not_native("a frame other than Rows before the Complete")),
         }
     }
 }

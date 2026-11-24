@@ -123,7 +123,7 @@ pub use reading::{ReadMode, Reading};
 use stop::Stops;
 pub(crate) use stop::Window;
 pub use stop::{Activity, MAX_NOTES, Now, Served, Stop, Tallied, Tallies, Tally, Waiting};
-pub(crate) use stop::{checked, counted};
+pub(crate) use stop::{checked, counted, debuggers_attached};
 use undo::UndoLog;
 
 /// How a transaction begins: whether it waits for locks, how it reads, and

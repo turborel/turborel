@@ -77,7 +77,8 @@ impl Session {
     ///
     /// SQLCODE -900 past `MAX_NESTING` contexts; the body's.
     pub(super) fn call_direct(&self, cx: StatementContext<'_>, bound: &Arc<BoundCall>, params: &mut Params) -> Result<Option<()>> {
-        let Some(given) = bound.given.as_deref() else { return Ok(None) };
+        // [EXTENSION] Compiled code does not pause: debugged, it is interpreted (RULES.md D1006).
+        let Some(given) = bound.given.as_deref().filter(|_| !self.stop.debugged().on()) else { return Ok(None) };
         let Some((running, spare)) = self.kept_call(bound) else { return Ok(None) };
         let Some(mut frame) = framed(bound, given, (&running, spare), params.dynamic_values()) else { return Ok(None) };
         let desc = &bound.desc;

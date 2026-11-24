@@ -44,6 +44,13 @@ pub(crate) struct Program {
     /// The scope of the routine or triggered action it is the body of, of
     /// no variables: what its frame's first slots are.
     pub(crate) scope: Arc<RoutineScope>,
+    /// \[DESIGN\] Where each of its steps begins in the text it was read
+    /// from, in the order `Step::steps` walks them from its body, the body
+    /// first, which a debugger places a step by (RULES.md D1003).
+    pub(crate) places: Vec<usize>,
+    /// \[DESIGN\] The routine or trigger it is the body of, if it is one,
+    /// as a debugger names it (RULES.md D1004).
+    pub(crate) origin: Option<crate::debugger::Origin>,
 }
 
 /// A value, condition or query of a program, bound as a subquery of the
@@ -114,6 +121,8 @@ pub(crate) struct Block {
 /// [§14.4] An SQL variable declared.
 #[derive(Debug, Clone)]
 pub(crate) struct Declared {
+    /// \[DESIGN\] Its `<SQL variable name>`, which a debugger shows it by.
+    pub(crate) name: String,
     /// Its slot in the frame.
     pub(crate) slot: usize,
     /// Its declared type.

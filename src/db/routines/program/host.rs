@@ -281,6 +281,19 @@ impl Host for SessionHost<'_, '_> {
     fn pop_area(&mut self) {
         self.session.pop_area();
     }
+
+    fn debugged(&self) -> Option<(Arc<crate::debugger::Link>, Arc<State>)> {
+        let link = self.session.stop.debugged().link()?;
+        let st = match &self.context {
+            Context::Within(cx) => Arc::clone(cx.st),
+            Context::Own { st, .. } => Arc::clone(st),
+        };
+        Some((link, st))
+    }
+
+    fn cursor_open(&self, key: &str) -> bool {
+        self.session.inner.borrow().cursors.get(&super::super::super::dynamic::Name::plain(key)).is_some_and(|c| c.open.is_some())
+    }
 }
 
 /// Whether `stmt`, a statement of a program kept, keeps its plan as a

@@ -9,7 +9,8 @@
 //!             SQL DATA, 2 MODIFIES SQL DATA), null-call u8, text (str),
 //!             body (str), schema (str), reads (count u32, names),
 //!             horizon, invokes (count u32, names), sequences (count u32,
-//!             names), execute (as a domain's usage), created u64,
+//!             names), execute (as a domain's usage), debug (as a
+//!             domain's usage, RULES.md D1000), created u64,
 //!             stamps, module (0 none, or 1 and its name (str)), PTF (0 none, or
 //!             1 and a ptf), method, distance (0 none, or 1 and a distance)
 //! distance:   symmetric u8, non-negative u8, triangle u8, formats (count
@@ -117,6 +118,7 @@ pub(crate) fn put_routine(out: &mut Vec<u8>, routine: &SqlRoutineDesc) {
     put_horizon(out, &routine.horizon);
     put_all(out, routine.sequences.iter(), put_name);
     put_usage(out, &routine.execute);
+    put_usage(out, &routine.debug);
     out.put_u64(routine.created);
     put_stamps(out, &routine.stamps);
     put_flag(out, routine.module.is_some());
@@ -213,7 +215,8 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
     let null_call = flag(r)?;
     let (text, body, schema) = (r.str()?, r.str()?, r.str()?);
     let (reads, horizon, sequences) = (get_all(r, qualified)?, horizon(r)?, get_all(r, qualified)?);
-    let (execute, created, stamps) = (usage(r)?, r.u64()?, stamps(r)?);
+    let (execute, debug) = (usage(r)?, usage(r)?);
+    let (created, stamps) = (r.u64()?, stamps(r)?);
     let module = if flag(r)? { Some(r.str()?) } else { None };
     let ptf = if flag(r)? { Some(Box::new(ptf(r)?)) } else { None };
     let method = super::structured::method_of(r)?;
@@ -234,6 +237,7 @@ pub(crate) fn routine(r: &mut Reader<'_>) -> Result<SqlRoutineDesc> {
         horizon,
         sequences,
         execute,
+        debug,
         created,
         stamps,
         module,

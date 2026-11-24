@@ -10,12 +10,14 @@
 //! 'I' copy in:    table, columns (strings), ends u8
 //! 'J' copy data:  each row's values
 //! 'N' copy end:   abandon u8
+//! 'V' debug:      as `debug.rs` says
 //! ```
 
 use turborel::bytes::{Put, Reader};
 use turborel::error::Result;
 
 use super::{Described, Request};
+use crate::DebugRequest;
 use crate::fields::{counted, flag, put_count, put_flag, put_row, put_strs, row, strs};
 use crate::frame;
 
@@ -26,6 +28,7 @@ const CHANGE_USER: u8 = b'U';
 const COPY_IN: u8 = b'I';
 const COPY_DATA: u8 = b'J';
 const COPY_END: u8 = b'N';
+const DEBUG: u8 = b'V';
 /// Describe's `what` of a statement.
 const STATEMENT: u8 = 0;
 /// Describe's `what` of a cursor.
@@ -64,6 +67,7 @@ impl Request {
                 }
             }),
             Request::CopyEnd { abandon } => frame(out, COPY_END, |b| put_flag(b, *abandon)),
+            Request::Debug(debug) => frame(out, DEBUG, |b| debug.put(b)),
             Request::Hello { .. }
             | Request::Answer(_)
             | Request::Query { .. }
@@ -105,6 +109,7 @@ pub(super) fn decode(kind: u8, r: &mut Reader<'_>) -> Result<Option<Request>> {
         COPY_IN => Request::CopyIn { table: r.str()?, columns: strs(r)?, ends: flag(r)? },
         COPY_DATA => Request::CopyData(counted(r, row)?),
         COPY_END => Request::CopyEnd { abandon: flag(r)? },
+        DEBUG => Request::Debug(DebugRequest::read(r)?),
         _ => return Ok(None),
     }))
 }

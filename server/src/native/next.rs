@@ -8,9 +8,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use turborel::error::Result;
-use turborel_protocol::capability::{CHANGE_USER, COPY, CURSORS, DESCRIBE, MULTI_STATEMENT, PING, QUERY_ATTRIBUTES, RESET};
+use turborel_protocol::capability::{CHANGE_USER, COPY, CURSORS, DEBUGGER, DESCRIBE, MULTI_STATEMENT, PING, QUERY_ATTRIBUTES, RESET};
 use turborel_protocol::{Attributes, Capabilities, Reply, Request, broken};
 
+use super::debugging::{Heard, heard};
 use super::lent::{self, Lent};
 use super::requests::Work;
 use super::wire::Wire;
@@ -51,6 +52,7 @@ fn needs(request: &Request) -> [Option<&'static str>; 2] {
         Request::Reset => one(RESET),
         Request::ChangeUser { .. } => one(CHANGE_USER),
         Request::CopyIn { .. } | Request::CopyData(_) | Request::CopyEnd { .. } => one(COPY),
+        Request::Debug(_) => one(DEBUGGER),
         Request::Hello { .. }
         | Request::Answer(_)
         | Request::Prepare { .. }
@@ -86,6 +88,7 @@ pub(super) fn next_of(request: Request, granted: Capabilities) -> Result<Option<
         Request::CopyIn { table, columns, ends } => Work::CopyIn { table, columns, ends },
         Request::CopyData(rows) => Work::CopyData(rows),
         Request::CopyEnd { abandon } => Work::CopyEnd(abandon),
+        Request::Debug(request) => Work::Debug(request),
         Request::Ping => return Ok(None),
         Request::Terminate => return Ok(Some(Next::Terminate)),
         Request::Reset => return Ok(Some(Next::Reset)),
@@ -140,8 +143,7 @@ pub(super) async fn next_work(lent: &mut Lent, (services, present): (&Services, 
         // The wait of the worker that gave the client back counts as idle.
         let since = lent.idle_since.take().unwrap_or(began);
         let in_transaction = lent.held.session.transaction().is_some();
-        let receiving = super::next(&mut lent.wire, services, present);
-        let request = services.idle_since(since, in_transaction, receiving).await;
+        let Heard::Request(request) = heard(lent, (services, present), (since, in_transaction)).await? else { continue };
         lent.fast = began.elapsed() < lent::WAITED;
         let Some(next) = next_of(request?, lent.held.granted)? else {
             services.idle(lent.wire.send_now(&Reply::Pong)).await?;

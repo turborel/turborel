@@ -393,26 +393,34 @@ fn routine_privileges_columns() -> Vec<ColumnDesc> {
     columns.data("PRIVILEGE_TYPE", true).data("IS_GRANTABLE", true).done()
 }
 
+/// The PRIVILEGE_TYPE of EXECUTE [§12.3 SR4d].
+const EXECUTE: &str = "EXECUTE";
+/// \[EXTENSION\] The PRIVILEGE_TYPE of DEBUG (RULES.md D1000).
+const DEBUG: &str = "DEBUG";
+
 /// [§12.3 SR4d] Each privilege on each routine, EXECUTE: of a routine a
 /// type's definition makes its owner's and each granted; of an SQL-invoked
 /// routine each it holds, its owner's the one its definition granted
-/// [§11.60 GR1].
+/// [§11.60 GR1]; and \[EXTENSION\] of an SQL-invoked routine each DEBUG it
+/// holds (RULES.md D1000).
 fn routine_privileges(seen: &Seen<'_>) -> Vec<Row> {
     let catalog = catalog_name(seen);
     let mut rows = Vec::new();
-    let mut push = |object: &[Value], (grantor, grantee, grantable): (&str, &str, bool)| {
-        rows.push([vec![text(grantor), text(grantee)], object.to_vec(), vec![text("EXECUTE"), yes(grantable)]].concat());
+    let mut push = |object: &[Value], (grantor, grantee, grantable): (&str, &str, bool), kind: &str| {
+        rows.push([vec![text(grantor), text(grantee)], object.to_vec(), vec![text(kind), yes(grantable)]].concat());
     };
     for r in implicit(seen) {
         let object = [ids(&catalog, &r.specific).to_vec(), ids(&catalog, &r.name).to_vec()].concat();
         for h in holders(seen, r.schema, r.execute) {
-            push(&object, h);
+            push(&object, h, EXECUTE);
         }
     }
     for r in seen.state.catalog.routines() {
         let object = [ids(&catalog, &r.specific).to_vec(), ids(&catalog, &r.name).to_vec()].concat();
-        for u in &r.execute {
-            push(&object, (&u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC), u.grantable));
+        for (kind, grants) in [(EXECUTE, &r.execute), (DEBUG, &r.debug)] {
+            for u in grants {
+                push(&object, (&u.grantor, u.grantee.as_deref().unwrap_or(PUBLIC), u.grantable), kind);
+            }
         }
     }
     rows

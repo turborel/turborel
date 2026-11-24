@@ -72,12 +72,14 @@ impl<S: Read + Write> Connection<S> {
         }
     }
 
-    /// `reply`, unless it is a Notice or a Status, which is taken
-    /// (`told.rs`); a reply of a statement, its end noted.
+    /// `reply`, unless it is a Notice, a Status or a debugger's Event,
+    /// which is taken (`told.rs`, RULES.md D1032); a reply of a statement,
+    /// its end noted.
     fn took(&mut self, reply: Reply) -> Option<Reply> {
         match reply {
             Reply::Notice(notice) => self.told.notice(notice),
             Reply::Status { name, value } => drop(self.told.settings.insert(name, value)),
+            Reply::Event(event) => self.told.events.push_back(event),
             reply @ (Reply::Challenge(_)
             | Reply::Ready { .. }
             | Reply::Prepared { .. }
@@ -87,7 +89,8 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Complete(_)
             | Reply::Error(_)
             | Reply::Lob(_)
-            | Reply::Pong) => return Some(self.noted(reply)),
+            | Reply::Pong
+            | Reply::Debug(_)) => return Some(self.noted(reply)),
         }
         None
     }
@@ -109,7 +112,13 @@ impl<S: Read + Write> Connection<S> {
             // Ready ends a login or a ChangeUser, which renews the session
             // as Reset does, its transaction rolled back.
             Reply::Ready { .. } => (self.active, self.warning) = (false, None),
-            Reply::Challenge(_) | Reply::Prepared { .. } | Reply::Notice(_) | Reply::Status { .. } | Reply::Pong => {}
+            Reply::Challenge(_)
+            | Reply::Prepared { .. }
+            | Reply::Notice(_)
+            | Reply::Status { .. }
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => {}
         }
         reply
     }

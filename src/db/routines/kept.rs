@@ -27,6 +27,7 @@ use super::program::Compiled;
 use crate::ast::{RoutineDefinition, SqlStatement};
 use crate::binder::{definition_of, sql_statement};
 use crate::catalog::{QualifiedName, SqlRoutineDesc};
+use crate::debugger::{Kind, Origin};
 use crate::error::Result;
 use crate::logical::{Contained, Cursor, Program};
 use crate::sync::lock;
@@ -45,6 +46,8 @@ pub(in crate::db) struct KeptRoutine {
     module: Option<String>,
     definition: RoutineDefinition,
     program: Mutex<Option<(Key, KeptProgram)>>,
+    /// \[DESIGN\] The routine, as a debugger names it (RULES.md D1004).
+    pub(in crate::db) origin: Origin,
 }
 
 /// A program kept, and the plans its statements keep, by their place
@@ -166,7 +169,10 @@ impl Session {
             return Ok(kept);
         }
         let definition = definition_of(desc)?;
-        let kept = Arc::new(KeptRoutine { text: desc.text.clone(), module: desc.module.clone(), definition, program: Mutex::new(None) });
+        let kind = if desc.function() { Kind::Function } else { Kind::Procedure };
+        let origin = Origin { kind, name: desc.specific.clone(), shown: desc.name.clone() };
+        let (text, module) = (desc.text.clone(), desc.module.clone());
+        let kept = Arc::new(KeptRoutine { text, module, definition, program: Mutex::new(None), origin });
         self.inner.borrow_mut().routines.0.insert(desc.specific.clone(), Arc::clone(&kept));
         Ok(kept)
     }

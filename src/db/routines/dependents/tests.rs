@@ -45,6 +45,7 @@ fn routine(
         horizon: Horizon::default().invoking(invokes.to_vec()),
         sequences: Vec::new(),
         execute: Vec::new(),
+        debug: Vec::new(),
         created: 1,
         stamps: crate::catalog::Stamps::default(),
     }

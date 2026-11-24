@@ -198,6 +198,7 @@ statement's outcome, as the client library exposes it, follows.
 | `copy` | §13.8 GR4b iii | Rows copied in, each value assigned as INSERT assigns it, all or nothing (D195). |
 | `declared-types` | ISO/IEC 9075:1992 §6.1, §21.3.5 | A column described carries the type it was declared with, its DATA_TYPE name as its data type descriptor keeps it and the type as SQL writes it, so INTEGER is told apart from the exact numeric type it is (D396). |
 | `status`, `ping`, `reset`, `change-user`, `query-attributes`, `connection-attributes`, `multi-statement`, `compression`, `commit-position` | none | Extensions of the protocol, RULES.md D189 to D194 and D196. |
+| `debugger` | none | An extension of the protocol: one connection attaches to another's session by its ID and drives its routines, its pauses sent unasked as Events (RULES.md D1030 to D1034). |
 
 ### Dynamic SQL
 
@@ -4170,6 +4171,12 @@ CANCEL CONNECTION id   -- cancels what it runs
 The ID is from INFORMATION_SCHEMA.CONNECTIONS. The server reaches them through
 a `ServedConnections` it registers (`Database::set_served_connections`). CANCEL
 is no key word.
+
+### Debugging routines
+
+| Facility | Behaviour |
+|---|---|
+| DEBUG | A privilege of a routine beside EXECUTE (RULES.md D1000), granted and revoked by the rules of ISO/IEC 9075-2:2023 §12.2 and §12.7 that EXECUTE is, kept in the routine's descriptor and a checkpoint's snapshot, shown in ROUTINE_PRIVILEGES. The owner holds it by owning the routine (D1001). ALL PRIVILEGES stays EXECUTE alone (D1002). DEBUG is no key word. |
 
 ### Replication
 

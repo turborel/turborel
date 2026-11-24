@@ -123,6 +123,9 @@ pub enum Action {
     Usage,
     /// [ISO/IEC 9075-2:2023 §12.3] EXECUTE, of a routine.
     Execute,
+    /// \[EXTENSION\] DEBUG, of a routine: its executions debugged by
+    /// another session (RULES.md D1000).
+    Debug,
     /// [ISO/IEC 9075-2:2023 §12.3] UNDER, of a structured type.
     Under,
     /// [ISO/IEC 9075-2:2023 §12.3] TRIGGER (Feature T217), of a table.

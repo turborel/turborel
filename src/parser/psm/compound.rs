@@ -5,7 +5,7 @@
 use super::{ATOMIC, Block, BlockKind, DECLARED_FIRST, rule_at};
 use crate::ast::{
     CompoundStatement, ConditionDeclaration, ConditionValue, HandlerDeclaration, HandlerType, Label, LocalCursor, LocalDeclaration,
-    VariableDeclaration,
+    StatementList, VariableDeclaration,
 };
 use crate::error::Result;
 use crate::lexer::{Tok, delim, kw};
@@ -72,7 +72,7 @@ impl Parser {
         if self.is_kw(kw::DECLARE) {
             return Err(self.syntax(DECLARED_FIRST));
         }
-        let statements = if self.is_kw(kw::END) { Vec::new() } else { self.statement_list(&[kw::END])? };
+        let statements = if self.is_kw(kw::END) { StatementList::default() } else { self.statement_list(&[kw::END])? };
         self.expect_kw(kw::END)?;
         let ending = self.ending_label(label.as_ref())?;
         Ok(CompoundStatement { label, atomic, options, declarations, cursors, handlers, statements, ending, at })
@@ -197,11 +197,12 @@ impl Parser {
         if let Some(block) = self.blocks.last_mut() {
             block.hidden = true;
         }
+        let action_at = self.here();
         let action = self.body_statement();
         if let Some(block) = self.blocks.last_mut() {
             block.hidden = false;
         }
-        Ok(HandlerDeclaration { kind, conditions, action: Box::new(action?), at })
+        Ok(HandlerDeclaration { kind, conditions, action: Box::new(action?), action_at, at })
     }
 
     /// [§14.2] `<condition value>` ::= `<sqlstate value>` | `<condition

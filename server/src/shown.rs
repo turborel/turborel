@@ -251,6 +251,21 @@ impl Present {
     pub fn queued(&self) {
         self.queued.store(true, Ordering::Relaxed);
     }
+
+    /// \[EXTENSION\] Its ID, as CONNECTIONS shows it, which a debugger
+    /// attaches to it by (RULES.md D1031).
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// \[EXTENSION\] RULES.md D1031: the user and the session's `Stop` of
+    /// the connection `id`, once it has a session; none if it is not
+    /// served or still logging in.
+    pub(crate) fn session_of(&self, id: u64) -> Option<(Option<String>, Arc<Stop>)> {
+        let rows = self.shown.locked();
+        let entry = rows.get(&id)?;
+        Some((entry.user.clone(), Arc::clone(entry.stop.as_ref()?)))
+    }
 }
 
 /// A connection's row of CONNECTIONS, removed as it is dropped.

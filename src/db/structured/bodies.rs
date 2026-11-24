@@ -44,8 +44,7 @@ impl State {
             );
             return Err(rule(msg).or_at(m.at));
         }
-        let parameters = augmented(&subject, &spec);
-        let name = QualifiedName { auth: udt.auth.clone(), ident: spec.name.clone() };
+        let (parameters, name) = (augmented(&subject, &spec), QualifiedName { auth: udt.auth.clone(), ident: spec.name.clone() });
         if spec.kind == MethodKind::Instance
             && let Some(other) = alike(self, &name, &parameters.iter().map(|p| p.data_type.clone()).collect::<Vec<_>>())
         {
@@ -72,6 +71,7 @@ impl State {
             horizon: Horizon::default(),
             sequences: Vec::new(),
             execute: Vec::new(),
+            debug: Vec::new(),
             created: self.next_created(),
             // [§11.60 GR5] its own, not its specification's [GR4].
             stamps: Stamps::at(self.stamp),

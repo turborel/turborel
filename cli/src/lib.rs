@@ -47,6 +47,7 @@ pub use args::{
     Command, Credentials, DEFAULT_HOST, DEFAULT_PORT, Environment, Importing, Input, Options, PASSWORD_VARIABLE, Server, Settings, Tls,
     parse,
 };
+pub use command::DebugCommand;
 pub use dial::Dialer;
 pub use interrupt::{Handlers, Interrupts};
 pub use run::{Completion, FileSource, Io, Kept, Lines, MORE, Outcome, PROMPT, Screen, Secret, Statements, Terminal, outcome, run};

@@ -99,7 +99,7 @@ impl Parser {
 
     /// The `<SQL statement list>` of the iterated statement that `word`
     /// begins, and of REPEAT its UNTIL `<search condition>`.
-    fn iterated_body(&mut self, word: &str) -> Result<(Vec<crate::ast::SqlStatement>, Option<crate::ast::SearchCondition>)> {
+    fn iterated_body(&mut self, word: &str) -> Result<(crate::ast::StatementList, Option<crate::ast::SearchCondition>)> {
         if word != REPEAT {
             return Ok((self.statement_list(&[kw::END])?, None));
         }

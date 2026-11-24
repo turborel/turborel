@@ -162,6 +162,10 @@ pub struct SqlRoutineDesc {
     /// The EXECUTE privileges on it [§12.3, §11.60 GR1], as a domain's
     /// USAGE are kept.
     pub execute: Vec<UsageDesc>,
+    /// \[EXTENSION\] The DEBUG privileges granted on it, kept as its
+    /// EXECUTE privileges are; its owner holds DEBUG as the owner of a
+    /// domain holds USAGE, by no grant (RULES.md D1000, D1001).
+    pub debug: Vec<UsageDesc>,
     /// \[DESIGN\] Its order of creation: one more than the greatest of the
     /// routines there were as it was created, which no two share, as two
     /// routines of one statement share their timestamps (`stamps`).
@@ -227,6 +231,13 @@ impl SqlRoutineDesc {
     pub fn execute_of(&self, who: Who<'_>) -> (bool, bool) {
         let granted = self.execute.iter().filter(|u| who.holds(u.grantee.as_deref()));
         granted.fold((false, false), |(_, grantable), u| (true, grantable || u.grantable))
+    }
+
+    /// \[EXTENSION\] Whether `who` holds DEBUG on it, and whether
+    /// grantably: `owner`, its owner, grantably, else as granted
+    /// (RULES.md D1000, D1001).
+    pub fn debug_of(&self, who: Who<'_>, owner: &str) -> (bool, bool) {
+        super::domains::usage_held(&self.debug, who, owner)
     }
 
     /// Whether it is a polymorphic table function [§4.35.4].

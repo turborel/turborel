@@ -85,6 +85,7 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             Command::Tee(path) => self.tee(&path),
             Command::NoTee => self.no_tee(),
             Command::Delimiter(text) => splitter.set_delimiter(text).map_or_else(|e| self.tell(&e, Next::Go), |()| Next::Go),
+            Command::Debug(asked) => self.debug(&asked),
             Command::If(_) | Command::Elif(_) | Command::Else | Command::Endif => Next::Go,
         }
     }

@@ -58,6 +58,14 @@ impl Session {
     pub fn is_owner(&self) -> bool {
         self.own_snapshot().is_ok_and(|st| st.users.owner() == Some(self.auth().as_str()))
     }
+
+    /// \[DESIGN\] Whether its current authorization identifier sees what
+    /// every session runs (RULES.md D520): its database's owner, or a user
+    /// the role MONITOR the owner created is applicable to. A server lets
+    /// such a user attach a debugger to any connection's session (D1031).
+    pub fn may_monitor(&self) -> bool {
+        self.own_snapshot().is_ok_and(|st| crate::system::may_monitor(&st, self.auth().as_str()))
+    }
 }
 
 impl Database {

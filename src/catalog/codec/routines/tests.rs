@@ -51,6 +51,7 @@ fn desc(kind: RoutineKind, access: DataAccess, returns: Option<DataType>) -> Sql
             UsageDesc { grantor: "A".into(), grantee: None, grantable: false },
             UsageDesc { grantor: "A".into(), grantee: Some("B".into()), grantable: true },
         ],
+        debug: vec![UsageDesc { grantor: "A".into(), grantee: Some("C".into()), grantable: false }],
         created: 7,
         stamps: Stamps { created: Now { utc: 63_000_000, zone: 330 }, last_altered: Now { utc: 64_000_000, zone: -330 } },
         ptf: None,

@@ -91,7 +91,9 @@ pub(super) fn raised(session: &Session, last: &Reply) -> Vec<Notice> {
         | Reply::Lob(_)
         | Reply::Notice(_)
         | Reply::Status { .. }
-        | Reply::Pong => None,
+        | Reply::Pong
+        | Reply::Debug(_)
+        | Reply::Event(_) => None,
     };
     let signalled = |state: &str| notes.iter().any(|(s, _): &(SqlState, String)| s.as_str() == state);
     let own = completed.filter(|state| !signalled(state)).map(|state| notice(state, named(state), WARNING));

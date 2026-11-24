@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, Weak};
 use super::super::prepared::Plans;
 use super::super::savepoints::Level;
 use super::super::{Session, State, StatementContext};
-use crate::ast::{SchemaStatement, SearchCondition, SqlStatement, TriggerDefinition};
+use crate::ast::{SchemaStatement, SearchCondition, SqlStatement, StatementList, TriggerDefinition};
 use crate::binder::bind_when;
 use crate::catalog::{ActionTime, Catalog, ColumnDesc, QualifiedName, TriggerDesc, TriggerLevel, owner_of};
 use crate::error::{Code, Result, SqlError, SqlState, Subject};
@@ -50,7 +50,7 @@ struct Action {
     when: Option<SearchCondition>,
     /// The WHEN condition bound with its slots, once bound so.
     bound_when: Mutex<Option<Expr>>,
-    statements: Vec<SqlStatement>,
+    statements: StatementList,
     plans: Vec<Plans>,
     transitions: Arc<Transitions>,
 }
@@ -91,8 +91,11 @@ impl Session {
         if !self.when_holds(cx, &action, &params)? {
             return Ok(None);
         }
-        for (stmt, plans) in action.statements.iter().zip(&action.plans) {
+        for ((at, stmt), plans) in action.statements.placed().zip(&action.plans) {
             self.may_run(cx.st, stmt)?;
+            // [EXTENSION] RULES.md D1014: one look at a flag with no debugger.
+            let stepped = self.stop.debugged().on() && !matches!(stmt, SqlStatement::Control(_));
+            let _framed = if stepped { self.trigger_step(cx.st, t, at, &params)? } else { None };
             let keeping = self.keeping(cx.st, plans);
             self.run_statement(cx, stmt, &mut params, Some(&keeping))?;
         }

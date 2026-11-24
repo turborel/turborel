@@ -460,9 +460,10 @@ fn inserted(exec: &mut Exec<'_>, contained: &Contained, i: &Inserted) -> Result<
 }
 
 /// Whether `session` runs a procedure's body compiled
-/// (EXECUTOR.COMPILED_PROCEDURES, RULES.md D841).
+/// (EXECUTOR.COMPILED_PROCEDURES, RULES.md D841): never while a debugger
+/// is attached to it, as compiled code does not pause (RULES.md D1006).
 pub(in crate::db) fn compiled_procedures(st: &State, session: &Session) -> bool {
-    st.settings.is_on_for(crate::settings::executor::COMPILED_PROCEDURES, &session.own.borrow())
+    !session.stop.debugged().on() && st.settings.is_on_for(crate::settings::executor::COMPILED_PROCEDURES, &session.own.borrow())
 }
 
 #[cfg(test)]

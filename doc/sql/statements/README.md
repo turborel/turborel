@@ -106,6 +106,7 @@ One reference page for each statement, in alphabetical order.
 - [GET DESCRIPTOR](get-descriptor.md): read fields of an SQL descriptor area
 - [GET DIAGNOSTICS](get-diagnostics.md): read the diagnostics area
 - [GRANT](grant.md): grant privileges, or roles
+- [GRANT DEBUG](grant-debug.md): let a user debug a routine *(extension)*
 - [HOLD LOCATOR](hold-locator.md): keep large object locators past the end of their transaction
 - [IF](if.md): run statements if a condition is true
 - [INSERT](insert.md): insert rows

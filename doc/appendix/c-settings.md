@@ -44,6 +44,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | CHECKPOINT.AFTER_CHANGES | 4000000 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
 | CHECKPOINT.OVERDUE_FACTOR | 4 | INTEGER FROM 1 TO 1000000 | at once |  |
 | COLUMNSTORE.HEADER_CACHE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| DEBUGGER.PAUSE_TIMEOUT_MS | 300000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | DIAGNOSTICS.LEVEL | INFO | ONE OF ERROR, WARNING, INFO | at once |  |
 | DIAGNOSTICS.SLOW_STATEMENT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | EXECUTOR.BATCHES | ON | ONE OF ON, OFF | at once | *session* |
@@ -170,6 +171,7 @@ Each in a sentence:
 - **CHECKPOINT.AFTER_CHANGES**: The row changes logged after which the end of a transaction takes a checkpoint.
 - **CHECKPOINT.OVERDUE_FACTOR**: How many times CHECKPOINT.AFTER_CHANGES or CHECKPOINT.AFTER_BYTES the log, or the data file's side file, grows to with no checkpoint giving it up before the diagnostics are told that checkpoints are overdue.
 - **COLUMNSTORE.HEADER_CACHE_BYTES**: The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY.BUDGET_BYTES as they are held; 0 for none, each read as it is needed.
+- **DEBUGGER.PAUSE_TIMEOUT_MS**: The milliseconds a session paused by a debugger waits for the debugger to tell it to go on, after which it goes on by itself to its next breakpoint and the debugger is told it timed out, so no lock it holds is held for ever; 0 to go on at once.
 - **DIAGNOSTICS.LEVEL**: The least level of the events told to the diagnostics: ERROR, those alone; WARNING, warnings too; INFO, every event.
 - **DIAGNOSTICS.SLOW_STATEMENT_MS**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
 - **EXECUTOR.BATCHES**: Whether a query reads its tables a batch of rows at a time where it can: ON; or a row at a time throughout, OFF, as to compare the two.

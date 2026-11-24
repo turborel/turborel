@@ -22,6 +22,8 @@ mod conditions;
 mod cost_model;
 #[path = "count.rs"]
 mod count;
+mod debugger;
+mod debugger_api;
 mod declared_types;
 mod write_costs;
 // The decode kernels' mutations, beside the areas as `list.rs` holds no
@@ -287,9 +289,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
-/// kernels', compiled procedures' and rows in demand's last, as `last`
-/// holds no more.
-fn closing() -> [&'static [Mutation]; 24] {
+/// kernels', compiled procedures', rows in demand's and the routine
+/// debugger's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 25] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -315,14 +317,16 @@ fn closing() -> [&'static [Mutation]; 24] {
         &kernels::KERNELS,
         &compiled::COMPILED,
         &hot_rows::HOT_ROWS,
+        &debugger::DEBUGGER,
     ]
 }
 
 /// External plug-ins' areas, in order: the plug-ins', the packages', the
 /// package files', the kinds', the SDK's, host plug-ins', the
 /// replication and archive host kinds', plug-in settings' and buffer
-/// eviction's, and the planner's.
-fn plugins() -> [&'static [Mutation]; 9] {
+/// eviction's, and the planner's; then the routine debugger's protocol's,
+/// as `last` holds no more.
+fn plugins() -> [&'static [Mutation]; 10] {
     [
         &super::plugins::PLUGINS,
         &super::plugins::PACKAGES,
@@ -333,6 +337,7 @@ fn plugins() -> [&'static [Mutation]; 9] {
         &super::plugins::replication::REPLICATION_PLUGINS,
         &super::plugins::settings::SETTINGS_PLUGINS,
         &super::plugins::planner::PLANNER,
+        &debugger_api::DEBUGGER_API,
     ]
 }
 

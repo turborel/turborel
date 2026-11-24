@@ -16,3 +16,4 @@ For anyone who writes SQL against Turborel: the concepts, and how to use them, c
 - [Dates, Times and Intervals](08-datetimes.md)
 - [Temporary Tables](09-temporary-tables.md)
 - [Errors and Diagnostics](10-errors.md)
+- [Debugging Routines](11-debugging.md)

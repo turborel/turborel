@@ -41,6 +41,7 @@ mod completions;
 mod composite;
 mod connections;
 mod copying;
+mod debugging;
 mod declared;
 mod diagnostics;
 mod ending;

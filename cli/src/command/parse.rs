@@ -49,6 +49,7 @@ pub fn parse(name: &str, args: Vec<String>, rest: &str) -> Result<Command, Strin
         "password" => Ok(Command::Password(args.into_iter().next())),
         "tee" => one(name, args).map(|p| Command::Tee(PathBuf::from(p))),
         "delimiter" => Ok(Command::Delimiter(args.into_iter().next())),
+        "debug" => super::debug::debug(&args, rest).map(Command::Debug),
         other => Err(format!("\\{other} is no command: \\? lists them")),
     }
 }

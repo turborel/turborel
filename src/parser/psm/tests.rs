@@ -103,7 +103,7 @@ fn assignments_read_their_targets_and_sources_14_5() {
     let body = |s: &str| format!("BEGIN DECLARE X, Y INTEGER; {s}; END");
     let first = |text: &str| {
         let ControlStatement::Compound(c) = control(text) else { panic!("{text}") };
-        match c.statements.into_iter().next() {
+        match c.statements.into_statements().into_iter().next() {
             Some(SqlStatement::Control(a)) => {
                 let ControlStatement::Assignment(assignment) = *a else { panic!("{text}: no assignment") };
                 assignment

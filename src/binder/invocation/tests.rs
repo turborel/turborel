@@ -70,6 +70,7 @@ fn function(name: &str, params: &[(&str, &str)], value: &str) -> SqlRoutineDesc 
         horizon: Horizon::default(),
         sequences: Vec::new(),
         execute: Vec::new(),
+        debug: Vec::new(),
         created: 1,
         stamps: crate::catalog::Stamps::default(),
     }

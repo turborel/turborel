@@ -105,7 +105,9 @@ impl<S: Read + Write> Connection<S> {
                 | Reply::Suspended
                 | Reply::Notice(_)
                 | Reply::Status { .. }
-                | Reply::Pong => return Err(self.lose("[DESIGN] the server broke off its rows")),
+                | Reply::Pong
+                | Reply::Debug(_)
+                | Reply::Event(_) => return Err(self.lose("[DESIGN] the server broke off its rows")),
             }
         }
     }

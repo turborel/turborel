@@ -3,6 +3,7 @@
 //! the protocol's own encoders, each decoded again, and compared with the
 //! file checked in, so the file never says what the code does not.
 
+mod debugged;
 mod replies;
 mod requests;
 mod types;
@@ -71,6 +72,7 @@ pub(super) fn raw(side: Side, (name, needs): (&'static str, &'static [&'static s
 fn samples() -> Vec<Sample> {
     let mut all = requests::samples();
     all.extend(replies::samples());
+    all.extend(debugged::samples());
     all.extend(types::samples());
     all.extend(values::samples());
     all

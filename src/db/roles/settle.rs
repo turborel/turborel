@@ -73,7 +73,7 @@ fn every_grant(catalog: &dyn Catalog) -> Vec<String> {
         all.extend(t.usage.iter().chain(&t.to_distinct.execute).chain(&t.to_source.execute).map(|u| line("type", &t.name, u)));
     }
     for r in catalog.routines() {
-        all.extend(r.execute.iter().map(|u| line("routine", &r.specific, u)));
+        all.extend(r.execute.iter().chain(&r.debug).map(|u| line("routine", &r.specific, u)));
     }
     for m in &catalog.embeddings().models {
         all.extend(m.execute.iter().map(|u| line("embedding model", &m.name, u)));
@@ -134,6 +134,7 @@ impl State {
         }
         for mut r in self.catalog.routines().into_iter().cloned() {
             r.execute.retain(to);
+            r.debug.retain(to);
             catalog.put_routine(r);
         }
         let mut embeddings = self.catalog.embeddings().clone();
@@ -194,6 +195,7 @@ impl State {
         for mut r in cat.routines().into_iter().cloned() {
             let by = |held: &[UsageDesc], a: &str| held.iter().any(|u| u.grantable && Who::sole(roles, a).holds(u.grantee.as_deref()));
             retained(&mut r.execute, &by);
+            retained(&mut r.debug, &by);
             next.put_routine(r);
         }
         let mut embeddings = cat.embeddings().clone();

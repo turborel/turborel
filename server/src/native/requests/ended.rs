@@ -27,7 +27,9 @@ impl Held {
             | Reply::Ready { .. }
             | Reply::Notice(_)
             | Reply::Status { .. }
-            | Reply::Pong => {
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => {
                 return last;
             }
         };

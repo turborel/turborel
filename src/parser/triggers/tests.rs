@@ -366,7 +366,7 @@ fn truncate_in_action_is_not_implemented_14_10() {
 #[test]
 fn action_may_call_a_procedure_11_49() {
     let definition = trigger("CREATE TRIGGER TR AFTER INSERT ON T CALL P (1, DEFAULT)");
-    assert!(matches!(definition.action.as_slice(), [SqlStatement::Call(_)]));
+    assert!(matches!(&definition.action[..], [SqlStatement::Call(_)]));
     let text = "CREATE TRIGGER TR BEFORE INSERT ON T REFERENCING NEW N FOR EACH ROW BEGIN ATOMIC CALL P (N.A); CALL Q (); END";
     assert_eq!(trigger(text).action.len(), 2);
     syntax_error("CREATE TRIGGER TR AFTER INSERT ON T RETURN 1");

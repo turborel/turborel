@@ -22,14 +22,19 @@ use turborel::storage::Row;
 use turborel::value::Value;
 use turborel_protocol::Called;
 use turborel_protocol::capability::{DECLARED_TYPES, PARAMETER_MODES};
-use turborel_protocol::{Attributes, Capabilities, Column, Completed, Described, Failure, LobRequest, Reply, Timing, row_size};
+use turborel_protocol::{
+    Attributes, Capabilities, Column, Completed, DebugRequest, Described, Failure, LobRequest, Reply, Timing, row_size,
+};
 
 use super::copy::{self, Copy};
+use super::debugging::Debugging;
 use super::status::Status;
-use crate::settings::DEFAULT_LOB_INLINE_BYTES;
-use crate::shown::Requests;
+use crate::shown::{Present, Requests};
+pub(super) use outgoing::Outgoing;
 
+mod debugged;
 mod ended;
+mod outgoing;
 mod replied;
 mod timed;
 
@@ -66,6 +71,8 @@ pub(super) enum Work {
     CopyData(Vec<Row>),
     /// The copy's end, abandoned if `.0`.
     CopyEnd(bool),
+    /// \[EXTENSION\] A debugger's request (`requests/debugged.rs`).
+    Debug(DebugRequest),
 }
 
 impl Work {
@@ -81,7 +88,8 @@ impl Work {
             | Work::Deallocate(_)
             | Work::Lob(_)
             | Work::Describe(_)
-            | Work::CopyIn { .. } => false,
+            | Work::CopyIn { .. }
+            | Work::Debug(_) => false,
         }
     }
 }
@@ -125,11 +133,14 @@ pub(super) enum Counted {
 
 /// What a session's requests reach beyond it: the database it is of,
 /// which a statement waits on to have applied a commit (`native/position.rs`),
-/// and the attributes of the requests running (`shown/requests.rs`).
+/// the attributes of the requests running (`shown/requests.rs`), and its
+/// connection's row, by which a debugger finds the session it attaches to
+/// (RULES.md D1031); none of a session served by no connection.
 #[derive(Clone)]
 pub(super) struct Serves {
     pub(super) db: Database,
     pub(super) requests: Arc<Requests>,
+    pub(super) present: Option<Present>,
 }
 
 /// A connection's session and what it holds between requests: moved to the
@@ -150,6 +161,9 @@ pub(super) struct Held {
     clock: Option<timed::Clock>,
     /// The time of a cursor's earlier requests, or a copy's.
     carried: Timing,
+    /// \[EXTENSION\] The debugger it is attached as, if it is (RULES.md
+    /// D1030).
+    pub(super) debugging: Option<Box<Debugging>>,
 }
 
 /// Why rows stopped before their end.
@@ -196,55 +210,6 @@ fn described(of: &[OutColumn], granted: Capabilities) -> Vec<Column> {
     of.iter().map(Column::from).map(|c| if declared { c.with_declared() } else { c }).collect()
 }
 
-/// A request's replies: those gathered, and what a batch's worth is sent
-/// through, ahead of the rest.
-pub(super) struct Outgoing<'a> {
-    sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>,
-    /// The bytes a batch of rows is.
-    batch: usize,
-    /// SERVER.LOB_INLINE_BYTES: the longest large object sent whole.
-    inline: usize,
-    /// Whether a locator was sent (`native/lobs.rs`).
-    located: bool,
-    pub(super) gathered: Vec<Reply>,
-    /// How many times what was gathered was sent ahead.
-    sends: usize,
-}
-
-impl<'a> Outgoing<'a> {
-    /// None gathered yet, batches of `batch` bytes sent through `sink`.
-    /// Room is made for one reply, a request's last, which most requests
-    /// gather alone: a vector grown from none took room for four.
-    pub(super) fn new(sink: &'a mut dyn FnMut(Vec<Reply>) -> Result<()>, batch: usize) -> Outgoing<'a> {
-        Outgoing { sink, batch, inline: DEFAULT_LOB_INLINE_BYTES, located: false, gathered: Vec::with_capacity(1), sends: 0 }
-    }
-
-    /// As it is, large objects of at most `bytes` octets sent whole.
-    #[must_use]
-    pub(super) fn inlining(self, bytes: usize) -> Outgoing<'a> {
-        Outgoing { inline: bytes, ..self }
-    }
-
-    /// The replies gathered and not sent ahead: the request's last, for
-    /// the wire to send, or to queue before the next pipelined request's.
-    pub(super) fn finish(self) -> Vec<Reply> {
-        self.gathered
-    }
-
-    /// Sends what is gathered, ahead of the rest.
-    fn send(&mut self) -> std::result::Result<(), Cut> {
-        self.sends = self.sends.saturating_add(1);
-        (self.sink)(mem::take(&mut self.gathered)).map_err(Cut::Gone)
-    }
-
-    /// Gathers the rows of `rows`, if any.
-    fn rows(&mut self, rows: &mut Vec<Row>) {
-        if !rows.is_empty() {
-            self.gathered.push(Reply::Rows(mem::take(rows)));
-        }
-    }
-}
-
 impl Held {
     /// What `session` holds, as it begins, its client granted `granted`.
     pub(super) fn new(session: Session, serves: Serves, granted: Capabilities) -> Held {
@@ -252,7 +217,8 @@ impl Held {
         // their reply is sent (`Lent::answer`).
         session.collect_after_reply(true);
         let (statements, cursors, status) = (HashMap::new(), HashMap::new(), Status::default());
-        Held { session, statements, cursors, copy: None, granted, status, serves, arrived: None, clock: None, carried: Timing::default() }
+        let carried = Timing::default();
+        Held { session, statements, cursors, copy: None, granted, status, serves, arrived: None, clock: None, carried, debugging: None }
     }
 
     /// Abandons the copy under way, if one is, everything it did undone:
@@ -270,7 +236,7 @@ impl Held {
     pub(super) fn renew(&mut self, session: Session) -> Session {
         self.cursors.clear();
         self.statements.clear();
-        (self.copy, self.status, self.carried) = (None, Status::default(), Timing::default());
+        (self.copy, self.status, self.carried, self.debugging) = (None, Status::default(), Timing::default(), None);
         session.collect_after_reply(true);
         mem::replace(&mut self.session, session)
     }
@@ -354,7 +320,13 @@ impl Held {
             Work::Query { ends, .. } | Work::Execute { ends, .. } => *ends,
             Work::CopyEnd(_) => self.copy.as_ref().is_some_and(Copy::ends),
             Work::Fetch(at, _) | Work::Close(at) => self.cursors.get(at).is_some_and(|open| open.ends),
-            Work::Prepare(..) | Work::Deallocate(_) | Work::Lob(_) | Work::Describe(_) | Work::CopyIn { .. } | Work::CopyData(_) => false,
+            Work::Prepare(..)
+            | Work::Deallocate(_)
+            | Work::Lob(_)
+            | Work::Describe(_)
+            | Work::CopyIn { .. }
+            | Work::CopyData(_)
+            | Work::Debug(_) => false,
         }
     }
 
@@ -371,7 +343,8 @@ impl Held {
             | Work::Describe(_)
             | Work::CopyIn { .. }
             | Work::CopyData(_)
-            | Work::CopyEnd(_) => None,
+            | Work::CopyEnd(_)
+            | Work::Debug(_) => None,
         }
     }
 
@@ -398,6 +371,7 @@ impl Held {
             Work::Deallocate(n) => self.deallocate(n).map(|()| Some(Reply::Complete(Completion::Success.into()))).map_err(failed),
             Work::Lob(request) => self.lob(request).map(Some).map_err(failed),
             Work::Describe(what) => self.describe(what).map(Some).map_err(failed),
+            Work::Debug(request) => self.debug(request).map(Some).map_err(failed),
             Work::CopyIn { table, columns, ends } => {
                 self.copy = Some(Copy::begin(&self.session, (&table, &columns), ends));
                 Ok(None)

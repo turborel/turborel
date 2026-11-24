@@ -37,7 +37,8 @@ impl Counted {
             | Work::Lob(_)
             | Work::Describe(_)
             | Work::CopyIn { .. }
-            | Work::CopyData(_) => Counted::Uncounted,
+            | Work::CopyData(_)
+            | Work::Debug(_) => Counted::Uncounted,
         }
     }
 }

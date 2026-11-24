@@ -2,7 +2,7 @@
 //! holds this list to the directory's.
 
 /// Each page's file name and text.
-pub const PAGES: [(&str, &str); 139] = [
+pub const PAGES: [(&str, &str); 140] = [
     ("allocate-cursor.md", include_str!("../../../doc/sql/statements/allocate-cursor.md")),
     ("allocate-descriptor.md", include_str!("../../../doc/sql/statements/allocate-descriptor.md")),
     ("alter-database.md", include_str!("../../../doc/sql/statements/alter-database.md")),
@@ -104,6 +104,7 @@ pub const PAGES: [(&str, &str); 139] = [
     ("free-locator.md", include_str!("../../../doc/sql/statements/free-locator.md")),
     ("get-descriptor.md", include_str!("../../../doc/sql/statements/get-descriptor.md")),
     ("get-diagnostics.md", include_str!("../../../doc/sql/statements/get-diagnostics.md")),
+    ("grant-debug.md", include_str!("../../../doc/sql/statements/grant-debug.md")),
     ("grant.md", include_str!("../../../doc/sql/statements/grant.md")),
     ("hold-locator.md", include_str!("../../../doc/sql/statements/hold-locator.md")),
     ("if.md", include_str!("../../../doc/sql/statements/if.md")),

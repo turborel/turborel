@@ -125,7 +125,9 @@ fn told(reply: &Reply, diagnostics: bool) -> std::borrow::Cow<'_, Reply> {
             | Reply::Suspended
             | Reply::Lob(_)
             | Reply::Status { .. }
-            | Reply::Pong,
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_),
             _,
         ) => Cow::Borrowed(reply),
     }

@@ -484,7 +484,7 @@ mod tests {
             let (near, _far) = tokio::io::duplex(16);
             let wire = Wire::new(Box::new(near), 16, turborel::value::types::TypeRegistry::default());
             let db = turborel::db::Database::new();
-            let serves = super::super::requests::Serves { db: db.clone(), requests: Arc::default() };
+            let serves = super::super::requests::Serves { db: db.clone(), requests: Arc::default(), present: None };
             let lent = Lent::new(Held::new(db.session("X"), serves, turborel_protocol::Capabilities::NONE), wire);
             let taking = tokio::spawn({
                 let slot = Arc::clone(&slot);

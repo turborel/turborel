@@ -309,4 +309,13 @@ impl Host for Executor<'_> {
     fn pop_area(&mut self) {
         self.area.pop();
     }
+
+    fn debugged(&self) -> Option<(Arc<crate::debugger::Link>, Arc<State>)> {
+        let link = self.subqueries.debugged()?;
+        Some((link, Arc::clone(self.subqueries.state()?)))
+    }
+
+    fn cursor_open(&self, key: &str) -> bool {
+        self.cursors.get(key).is_some_and(Option::is_some)
+    }
 }

@@ -114,6 +114,7 @@
 mod called;
 pub mod capability;
 pub mod compress;
+mod debug;
 mod declared;
 pub mod der;
 mod diagnostics;
@@ -137,6 +138,7 @@ use turborel::value::DataType;
 
 pub use called::Called;
 pub use capability::Capabilities;
+pub use debug::{DebugBreakpoint, DebugReply, DebugRequest};
 pub use declared::Declared;
 pub use diagnostics::{Diagnostics, ERROR, FATAL, NOTICE, Notice, WARNING};
 pub use fields::row_size;

@@ -61,3 +61,15 @@ The connection
   \conninfo              the server, the user and how they are connected
   \c [SERVER | - [USER]] connect anew, ending the connection before
   \password [USER]       set a user's password, its verifier made here
+
+Debugging routines (another connection's session, by its ID)
+  \debug id              this connection's ID, to attach to
+  \debug attach ID       debug the session of connection ID; \debug detach ends it
+  \debug break {procedure | function | trigger} NAME LINE [CONDITION]
+                         pause at LINE of a routine, where CONDITION is true
+  \debug clear N         clear breakpoint N; \debug breakpoints lists them
+  \debug step [into | over | out], \debug continue
+                         let the paused session go on, to pause again
+  \debug interrupt       pause the session at its next statement
+  \debug stack           the paused session's frames and their variables
+  \debug wait [SECONDS]  wait for the session to pause, or end

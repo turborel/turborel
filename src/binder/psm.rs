@@ -52,6 +52,9 @@ pub(crate) struct Frame {
     /// which runs where no SQL-session may run its statements: so each
     /// CALL is bound with it (`psm/inline.rs`).
     pub(crate) inline: bool,
+    /// \[DESIGN\] The routine or trigger it is the body of, if it is one
+    /// (RULES.md D1004).
+    pub(crate) origin: Option<crate::debugger::Origin>,
 }
 
 /// A label in scope: its name, if written, and its number.
@@ -78,6 +81,27 @@ struct ProgramBinder<'a> {
     /// The conditions in scope, the innermost last, each with its SQLSTATE
     /// value, if it is defined for one [§14.3 SR3].
     conditions: Vec<(String, Option<SqlState>)>,
+    /// Where each statement bound begins, in the order bound (RULES.md
+    /// D1003).
+    places: Vec<usize>,
+}
+
+/// \[DESIGN\] Where the statement `s`, a program's whole body, begins: of
+/// a control statement where its first word is written, else 0, the
+/// beginning of its text (RULES.md D1003).
+fn placed(s: &SqlStatement) -> usize {
+    let SqlStatement::Control(c) = s else {
+        return if let SqlStatement::Signal(signal) = s { signal.at } else { 0 };
+    };
+    match &**c {
+        ControlStatement::Compound(c) => c.label.as_ref().map_or(c.at, |l| l.at),
+        ControlStatement::Assignment(a) => a.at,
+        ControlStatement::If(i) => i.at,
+        ControlStatement::Case(c) => c.at,
+        ControlStatement::Iterated(l) => l.label.as_ref().map_or(l.at, |label| label.at),
+        ControlStatement::For(f) => f.label.as_ref().map_or(f.at, |l| l.at),
+        ControlStatement::Iterate(l) | ControlStatement::Leave(l) => l.at,
+    }
 }
 
 /// [ISO/IEC 9075-4:2006 draft Clause 14] The control statement `statement`
@@ -100,9 +124,12 @@ pub(crate) fn bind_program(cx: Context<'_>, statement: &SqlStatement, frame: Fra
         cursor_columns: Vec::new(),
         named: Vec::new(),
         conditions: Vec::new(),
+        places: Vec::new(),
     };
+    b.places.push(placed(statement));
     let body = b.statement(statement)?;
-    Ok(Program { base: b.frame.base, variables: b.variables, cursors: b.cursors, body, scope: b.frame.scope })
+    let (places, origin) = (b.places, b.frame.origin);
+    Ok(Program { base: b.frame.base, variables: b.variables, cursors: b.cursors, body, scope: b.frame.scope, places, origin })
 }
 
 impl ProgramBinder<'_> {
@@ -233,7 +260,7 @@ impl ProgramBinder<'_> {
                 data_type: data_type.clone(),
                 slot,
             });
-            out.push(Declared { slot, data_type: data_type.clone(), initial: initial.clone() });
+            out.push(Declared { name: name.name.clone(), slot, data_type: data_type.clone(), initial: initial.clone() });
         }
         Ok(())
     }

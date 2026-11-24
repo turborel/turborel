@@ -103,7 +103,9 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Suspended
             | Reply::Notice(_)
             | Reply::Status { .. }
-            | Reply::Pong => Err(self.lose("[DESIGN] the server sent no completion")),
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => Err(self.lose("[DESIGN] the server sent no completion")),
         }
     }
 
@@ -137,7 +139,9 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Complete(_)
             | Reply::Notice(_)
             | Reply::Status { .. }
-            | Reply::Pong => Err(self.lose("[DESIGN] the server sent no Prepared")),
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => Err(self.lose("[DESIGN] the server sent no Prepared")),
         }
     }
 
@@ -280,7 +284,9 @@ impl<S: Read + Write> Connection<S> {
             | Reply::Complete(_)
             | Reply::Notice(_)
             | Reply::Status { .. }
-            | Reply::Pong => Err(self.lose("[DESIGN] the server sent no Description")),
+            | Reply::Pong
+            | Reply::Debug(_)
+            | Reply::Event(_) => Err(self.lose("[DESIGN] the server sent no Description")),
         }
     }
 
