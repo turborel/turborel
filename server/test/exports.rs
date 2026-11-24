@@ -65,7 +65,9 @@ fn given() -> Vec<Given> {
 fn insert(c: &mut Connection<TcpStream>, given: &[Given]) {
     let p = c.prepare("INSERT INTO T VALUES (?, ?, ?, ?)").unwrap();
     for (k, clob, blob, nclob) in given {
-        let text = |c: &mut Connection<TcpStream>, s: &Option<String>| s.as_ref().map_or(Value::Null, |s| written(c, LobKind::Character, s.as_bytes()));
+        let text = |c: &mut Connection<TcpStream>, s: &Option<String>| {
+            s.as_ref().map_or(Value::Null, |s| written(c, LobKind::Character, s.as_bytes()))
+        };
         let (cv, nv) = (text(c, clob), text(c, nclob));
         let bv = blob.as_ref().map_or(Value::Null, |b| written(c, LobKind::Binary, b));
         assert_eq!(done(&c.execute(&p, &[Value::Exact(Decimal::new(*k, 0)), cv, bv, nv]).unwrap()), 0);

@@ -7,8 +7,8 @@ use turborel_protocol::MAX_BODY;
 
 use super::delimited::hexits;
 use super::run::EXPORT_ROWS;
-use crate::lobs::LOB_INLINE_OCTETS;
 use super::*;
+use crate::lobs::LOB_INLINE_OCTETS;
 
 /// What a server holds by locator, read a chunk of `chunk` octets at a time.
 struct Held {

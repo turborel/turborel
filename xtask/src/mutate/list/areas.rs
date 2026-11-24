@@ -27,8 +27,8 @@ mod write_costs;
 mod decode;
 mod dirty_frames;
 mod distinct_aggregates;
-mod expr;
 mod exports;
+mod expr;
 mod fetch_path;
 // The estimator's, beside the areas as `list.rs` holds no more modules.
 mod alloc;

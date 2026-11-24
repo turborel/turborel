@@ -82,7 +82,11 @@ fn large_objects_are_exported_and_imported_by_the_program() {
     assert!(exported.status.success(), "{}", String::from_utf8_lossy(&exported.stderr));
     assert_eq!(String::from_utf8(exported.stdout).unwrap(), "OK, 4 rows exported\nOK, 3 rows exported\nOK, 4 rows exported\n");
     let written = read(&csv);
-    assert!(written.starts_with("K,C,B,N\n1,\"\",\"\",\"\"\n2,\"one, \"\"two\"\"\",CAFE,ñ\n3,\""), "{}", written.chars().take(80).collect::<String>());
+    assert!(
+        written.starts_with("K,C,B,N\n1,\"\",\"\",\"\"\n2,\"one, \"\"two\"\"\",CAFE,ñ\n3,\""),
+        "{}",
+        written.chars().take(80).collect::<String>()
+    );
     assert!(written.ends_with("\"\n4,,,\n") && !written.contains("LARGE OBJECT"));
     assert!(written.contains(&long.replace('"', "\"\"")), "the long CLOB whole");
     let hexits = read(&text);
