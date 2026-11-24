@@ -3,9 +3,12 @@
 //! X3.135-1986 has only SQLCODE; SQLSTATE is its successor's preferred
 //! status parameter.
 //!
-//! Statements are invoked directly (README, conformance), so a statement
-//! that breaks a Format, Syntax Rule or Access Rule raises the class of
-//! direct invocation, 2A [ISO/IEC 9075:1992 §20.1 GR5]. Conditions this
+//! A statement that breaks a Format, Syntax Rule or Access Rule raises
+//! syntax error or access rule violation, 42000, whether it is invoked
+//! directly [ISO/IEC 9075-2:2023 §22.1 GR6a] or prepared [§20.7 GR6c]:
+//! SQL:2023's classes [§24.1, Table 39] have neither SQL-92's class 2A of
+//! direct invocation nor its 37 of dynamic SQL, and the newer standard
+//! prevails (RULES.md D971). Conditions this
 //! implementation defines are in class TB, as a class beginning with T is
 //! implementation-defined [§22.1]: the subclass is the SQLCODE's digits.
 
@@ -133,8 +136,6 @@ impl SqlState {
     pub const INVALID_CURSOR_NAME: SqlState = SqlState(*b"34000");
     /// Ambiguous cursor name.
     pub const AMBIGUOUS_CURSOR_NAME: SqlState = SqlState(*b"3C000");
-    /// Syntax error or access rule violation in dynamic SQL statement.
-    pub const DYNAMIC_SYNTAX_ERROR: SqlState = SqlState(*b"37000");
     /// [ISO/IEC 9075-4:2006 draft §14.6 GR2b, §20.1] Case not found for
     /// case statement.
     pub const CASE_NOT_FOUND: SqlState = SqlState(*b"20000");
@@ -477,8 +478,10 @@ impl SqlState {
     pub const INVALID_CATALOG_NAME: SqlState = SqlState(*b"3D000");
     /// Invalid schema name.
     pub const INVALID_SCHEMA_NAME: SqlState = SqlState(*b"3F000");
-    /// Syntax error or access rule violation in direct SQL statement.
-    pub const SYNTAX_ERROR_IN_DIRECT_STATEMENT: SqlState = SqlState(*b"2A000");
+    /// [ISO/IEC 9075-2:2023 §24.1, Table 39] Syntax error or access rule
+    /// violation, of a statement prepared [§20.7 GR6c] and one run directly
+    /// [§22.1 GR6a] alike (RULES.md D971).
+    pub const SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION: SqlState = SqlState(*b"42000");
     /// Connection exception: transaction resolution unknown [ISO/IEC
     /// 9075:1992 §4.29]: whether the transaction committed cannot be
     /// verified. \[DESIGN\] Of a commit in doubt (RULES.md D25).
@@ -543,21 +546,17 @@ impl SqlState {
         self.as_str().get(..2).unwrap_or_default()
     }
 
-    /// Whether it is of a class of syntax error or access rule violation
-    /// [ISO/IEC 9075:1992 §18.1 GR3g]: 42, 2A (in a direct SQL statement)
-    /// or 37 (in a dynamic SQL statement) [§22.1].
+    /// Whether it is of the class of syntax error or access rule violation,
+    /// 42 [ISO/IEC 9075-2:2023 §23.1 GR4h, §24.1].
     pub fn is_syntax_or_access(self) -> bool {
-        /// [§22.1] The class of syntax error or access rule violation.
-        const SYNTAX_OR_ACCESS: &str = "42";
-        [SYNTAX_OR_ACCESS, SqlState::SYNTAX_ERROR_IN_DIRECT_STATEMENT.class(), SqlState::DYNAMIC_SYNTAX_ERROR.class()]
-            .contains(&self.class())
+        self.class() == SqlState::SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION.class()
     }
 
     /// The state an error of `code` has, unless raised with a closer one:
     /// the class of its condition, without a subclass.
     pub fn of(code: Code) -> SqlState {
         match code {
-            Code::Lexical | Code::Syntax | Code::SyntaxRule | Code::Privilege => SqlState::SYNTAX_ERROR_IN_DIRECT_STATEMENT,
+            Code::Lexical | Code::Syntax | Code::SyntaxRule | Code::Privilege => SqlState::SYNTAX_ERROR_OR_ACCESS_RULE_VIOLATION,
             Code::Constraint => SqlState::INTEGRITY_CONSTRAINT_VIOLATION,
             Code::Data => SqlState::DATA_EXCEPTION,
             Code::Cursor => SqlState::INVALID_CURSOR_STATE,

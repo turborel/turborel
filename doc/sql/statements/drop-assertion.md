@@ -35,9 +35,9 @@ The assertion's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | Anything is written after the name |
-| 2A000 | -103 | There is no such assertion |
-| 2A000 | -104 | Its user does not own the assertion's schema |
+| 42000 | -102 | Anything is written after the name |
+| 42000 | -103 | There is no such assertion |
+| 42000 | -104 | Its user does not own the assertion's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES
@@ -54,8 +54,8 @@ DROP ASSERTION SMALL_LEDGER CASCADE;
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no assertion ANN.NOPE [ISO/IEC 9075:1992 §11.35 SR2] (at character 15)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected end of statement, found CASCADE (at character 28)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no assertion ANN.NOPE [ISO/IEC 9075:1992 §11.35 SR2] (at character 15)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected end of statement, found CASCADE (at character 28)
 ```
 
 ## STANDARD

@@ -357,7 +357,7 @@ SELECT RUN_ID, ALGORITHM, ARGUMENTS, VERTICES, EDGES, ROWS_RETURNED, STATUS
 
 | SQLSTATE | SQLCODE | Cause |
 |---|---|---|
-| 2A000 | -103 | GRAPH_ALGO has no algorithm of the name, an argument names no parameter, two are of one, one without a name follows a named one, START is missing, the edges are a value that names no property graph, VERTICES is written with a graph, or a key is not of a type that compares with the source's |
+| 42000 | -103 | GRAPH_ALGO has no algorithm of the name, an argument names no parameter, two are of one, one without a name follows a named one, START is missing, the edges are a value that names no property graph, VERTICES is written with a graph, or a key is not of a type that compares with the source's |
 | 22000 | -301 | An argument is out of its range, as a DAMPING past 1 |
 | 22W34 | -301 | GRF-0034, of a COST that names no column, is null or not a number, is negative where the algorithm takes no negative cost, or makes a negative cycle SSSP's START reaches |
 | TB918 | -918 | The run needs more memory than the lesser of MEMORY.WORK_BYTES and 4 MiB |

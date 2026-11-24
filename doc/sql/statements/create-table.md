@@ -453,16 +453,16 @@ names. The privileges the query of AS needs to be run.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 3F000 | -103 | The schema does not exist, or a constraint's does not |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the schema, or a constraint's, or lacks REFERENCES or USAGE it needs |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the schema, or a constraint's, or lacks REFERENCES or USAGE it needs |
 | 25000 | -917 | The transaction is READ ONLY |
 | 0A000 | -900 | A CHARACTER SET clause of another character set |
-| 2A000 | -103 | A COLLATE clause of no collation, or of a column not of a character string |
+| 42000 | -103 | A COLLATE clause of no collation, or of a column not of a character string |
 | 02000 | 100 | Not an error: the query of AS ... WITH DATA had no row |
-| 2A000 | -103 | A CONNECTION constraint names no node table of the schema, GRF-0004 *(extension)* |
+| 42000 | -103 | A CONNECTION constraint names no node table of the schema, GRF-0004 *(extension)* |
 | 23000 | -201 | An edge's endpoint is no node, or of tables no CONNECTION constraint allows, GRF-0053 *(extension)* |
 | 23000 | -201 | A node deleted has edges no CONNECTION constraint deletes with it, GRF-0052 *(extension)* |
-| 2A000 | -103 | A partition bound overlaps another's, or is a second DEFAULT, a key part is not there or is collated, the strategy is not registered, or the table is typed or a node or edge table *(extension)* |
+| 42000 | -103 | A partition bound overlaps another's, or is a second DEFAULT, a key part is not there or is collated, the strategy is not registered, or the table is typed or a node or edge table *(extension)* |
 
 Any error running the query of AS ... WITH DATA, or inserting its rows,
 is the statement's.
@@ -555,8 +555,8 @@ CREATE TABLE TAGS (MODEL VARCHAR(100), V VARCHAR(100) GENERATED ALWAYS AS (EMBED
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): CHECK ANN.TAGS_CHECK1: a CHECK condition shall not contain a potential source of non-determinism: a call of function EMBED_VERSION, registered, which is not deterministic [ISO/IEC 9075-2:2023 §9.16 SR1am, §11.9 CR2] (at character 13)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the generation expression of column V of ANN.TAGS: a generation expression shall not contain a call of function EMBED_VERSION, registered, which is not deterministic [ISO/IEC 9075-2:2023 §11.4 SR10d, §9.16 SR1am] (at character 39)
+turborel: SQLCODE -103 (SQLSTATE 42000): CHECK ANN.TAGS_CHECK1: a CHECK condition shall not contain a potential source of non-determinism: a call of function EMBED_VERSION, registered, which is not deterministic [ISO/IEC 9075-2:2023 §9.16 SR1am, §11.9 CR2] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): the generation expression of column V of ANN.TAGS: a generation expression shall not contain a call of function EMBED_VERSION, registered, which is not deterministic [ISO/IEC 9075-2:2023 §11.4 SR10d, §9.16 SR1am] (at character 39)
 ```
 
 A table that copies another's columns, its identity column and its
@@ -712,9 +712,9 @@ OK
 --------------+-------------+----------------------------
             1 |       12.50 | 9999-12-31 23:59:59.999999
 (1 row)
-turborel: SQLCODE -103 (SQLSTATE 2A000): column VALID_TO is a system-time period column, so no <set clause> sets it [ISO/IEC 9075-2:2023 §14.15 SR3] (at character 18)
-turborel: SQLCODE -103 (SQLSTATE 2A000): column VALID_FROM is a system-time period column, so a value is given it only with OVERRIDING USER VALUE [ISO/IEC 9075-2:2023 §14.11 SR13d] (at character 36)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.PRICES is a system-versioned table, whose columns are not added, altered or dropped [ISO/IEC 9075-2:2023 §11.11 SR2] (at character 30)
+turborel: SQLCODE -103 (SQLSTATE 42000): column VALID_TO is a system-time period column, so no <set clause> sets it [ISO/IEC 9075-2:2023 §14.15 SR3] (at character 18)
+turborel: SQLCODE -103 (SQLSTATE 42000): column VALID_FROM is a system-time period column, so a value is given it only with OVERRIDING USER VALUE [ISO/IEC 9075-2:2023 §14.11 SR13d] (at character 36)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.PRICES is a system-versioned table, whose columns are not added, altered or dropped [ISO/IEC 9075-2:2023 §11.11 SR2] (at character 30)
  TABLE_NAME                                                   | TABLE_TYPE
 --------------------------------------------------------------+--------------------------------------------------------------
  PRICES                                                       | SYSTEM VERSIONED
@@ -738,17 +738,17 @@ CREATE TABLE T15 (A DATE NOT NULL, B TIMESTAMP NOT NULL, PERIOD FOR P (A, B));
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.T3 has more than one PRIMARY KEY [ISO/IEC 9075:1992 §11.7 SR5, SR6] (at character 13)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the columns referenced are not those of a unique constraint of ANN.EMPLOYEES [ISO/IEC 9075:1992 §11.8 SR2a] (at character 27)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the default is not a <literal> of INTEGER [ISO/IEC 9075:1992 §11.5 SR3a] (at character 17)
-turborel: SQLCODE -103 (SQLSTATE 2A000): rowstore takes no option COLUMNSTORE.GROUP_ROWS (at character 34)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.T8 has no column B, for the table option COLUMNSTORE.ORDER (at character 13)
-turborel: SQLCODE -103 (SQLSTATE 2A000): an identity column is of an exact numeric type of scale 0, not REAL [ISO/IEC 9075-2:2023 §11.4 SR16a] (at character 25)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the generation expression of column B of ANN.T11: it contains no <query expression> [ISO/IEC 9075-2:2023 §11.4 SR10f] (at character 29)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a <like clause> writes its <column default option> once [ISO/IEC 9075-2:2023 §11.3 SR9b iv 1] (at character 49)
-turborel: SQLCODE -103 (SQLSTATE 2A000): column 1 of the query has no name, so a <column name list> names it [ISO/IEC 9075-2:2023 §11.3 SR10b] (at character 17)
-turborel: SQLCODE -103 (SQLSTATE 2A000): PRIMARY KEY writes no <unique null treatment>, as its columns are not null [ISO/IEC 9075-2:2023 §11.7 SR5] (at character 41)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the columns of period P are of one type, DATE or a timestamp type, not DATE and TIMESTAMP(6) [ISO/IEC 9075-2:2023 §11.3 SR2e iii] (at character 71)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.T3 has more than one PRIMARY KEY [ISO/IEC 9075:1992 §11.7 SR5, SR6] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): the columns referenced are not those of a unique constraint of ANN.EMPLOYEES [ISO/IEC 9075:1992 §11.8 SR2a] (at character 27)
+turborel: SQLCODE -103 (SQLSTATE 42000): the default is not a <literal> of INTEGER [ISO/IEC 9075:1992 §11.5 SR3a] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 42000): rowstore takes no option COLUMNSTORE.GROUP_ROWS (at character 34)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.T8 has no column B, for the table option COLUMNSTORE.ORDER (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): an identity column is of an exact numeric type of scale 0, not REAL [ISO/IEC 9075-2:2023 §11.4 SR16a] (at character 25)
+turborel: SQLCODE -103 (SQLSTATE 42000): the generation expression of column B of ANN.T11: it contains no <query expression> [ISO/IEC 9075-2:2023 §11.4 SR10f] (at character 29)
+turborel: SQLCODE -103 (SQLSTATE 42000): a <like clause> writes its <column default option> once [ISO/IEC 9075-2:2023 §11.3 SR9b iv 1] (at character 49)
+turborel: SQLCODE -103 (SQLSTATE 42000): column 1 of the query has no name, so a <column name list> names it [ISO/IEC 9075-2:2023 §11.3 SR10b] (at character 17)
+turborel: SQLCODE -103 (SQLSTATE 42000): PRIMARY KEY writes no <unique null treatment>, as its columns are not null [ISO/IEC 9075-2:2023 §11.7 SR5] (at character 41)
+turborel: SQLCODE -103 (SQLSTATE 42000): the columns of period P are of one type, DATE or a timestamp type, not DATE and TIMESTAMP(6) [ISO/IEC 9075-2:2023 §11.3 SR2e iii] (at character 71)
 ```
 
 The node and edge tables of a small social graph. The edge `LIVES`

@@ -86,7 +86,7 @@ fn described_with_nesting_20_9() {
     assert_eq!(items(&s, 3), ["0|4|K|0|0|0|1", "0|19|R|0|2|0|1", "0|50|A|0|0|3|1"]);
     run(&s, "DESCRIBE OUTPUT Q USING SQL DESCRIPTOR 'D'", &mut p).unwrap();
     assert_eq!(counts(&s), ("3".to_owned(), "3".to_owned()), "WITHOUT NESTING is implicit");
-    assert_eq!(run(&s, "SET DESCRIPTOR 'D' TOP_LEVEL_COUNT = 1", &mut p), Err("2A000".to_owned()), "§20.5 SR2");
+    assert_eq!(run(&s, "SET DESCRIPTOR 'D' TOP_LEVEL_COUNT = 1", &mut p), Err("42000".to_owned()), "§20.5 SR2");
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §20.9 GR7c iii 2 A, §9.5 SR3g] a field's

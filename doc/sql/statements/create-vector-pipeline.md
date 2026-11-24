@@ -83,9 +83,9 @@ The schemas are its user's, and it holds EXECUTE on the model.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not of the form above |
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own a schema, or may not call the model |
+| 42000 | -102 | The statement is not of the form above |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own a schema, or may not call the model |
 | 22000 | -802 | CHUNK_TEXT refuses the chunking |
 | 25000 | -917 | The transaction is READ ONLY |
 

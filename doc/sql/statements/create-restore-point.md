@@ -45,7 +45,7 @@ The database's owner's alone.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -104 | Its user is not the database's owner |
 | TB910 | -910 | The database has no log, or a restore point has the name |
 | TB915 | -915 | The record cannot be written or synced |
 

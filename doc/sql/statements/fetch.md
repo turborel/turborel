@@ -88,7 +88,7 @@ None.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
+| 42000 | -103 | A rule above is broken |
 | 24000 | -501 | The cursor is not open |
 | 34000 | -921 | No cursor of the extended name is allocated |
 | 07002, 07006, 07008 | -921 | The descriptor area does not match the columns, as of [EXECUTE](execute.md) (rule 4) |
@@ -108,7 +108,7 @@ FETCH C INTO MY_ID, MY_NAME INDICATOR NAME_IND               1, Ada
 FETCH C INTO MY_ID, MY_NAME INDICATOR NAME_IND               2, Grace
 FETCH C INTO MY_ID, MY_NAME INDICATOR NAME_IND               3, NAME_IND = -1
 FETCH C INTO MY_ID, MY_NAME INDICATOR NAME_IND               no data (02000)
-FETCH PRIOR FROM C INTO MY_ID, MY_NAME INDICATOR NAME_IND    -103 (2A000): the cursor is not SCROLL: it fetches NEXT alone [ISO/IEC 9075:1992 §13.3 SR3]
+FETCH PRIOR FROM C INTO MY_ID, MY_NAME INDICATOR NAME_IND    -103 (42000): the cursor is not SCROLL: it fetches NEXT alone [ISO/IEC 9075:1992 §13.3 SR3]
 FETCH LAST FROM S INTO MY_ID, MY_NAME INDICATOR NAME_IND     3, NAME_IND = -1
 FETCH ABSOLUTE 1 FROM S INTO MY_ID, MY_NAME INDICATOR NAME_IND   1, Ada
 FETCH RELATIVE 1 FROM S INTO MY_ID, MY_NAME INDICATOR NAME_IND   2, Grace
@@ -132,7 +132,7 @@ FETCH LAST FROM S INTO MY_ID, MY_NAME                             -301 (22002): 
 Of the dynamic cursor D of [DECLARE CURSOR](declare-cursor.md), open:
 
 ```
-FETCH D USING MY_ID, MY_NAME    -103 (2A000): the <using clause> of a FETCH is of INTO [ISO/IEC 9075:1992 §17.15 SR2]
+FETCH D USING MY_ID, MY_NAME    -103 (42000): the <using clause> of a FETCH is of INTO [ISO/IEC 9075:1992 §17.15 SR2]
 ```
 
 ## STANDARD

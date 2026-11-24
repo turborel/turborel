@@ -117,7 +117,7 @@ fn an_atomic_block_runs_at_a_level_of_its_own_14_1() {
 }
 
 /// Verifies: [ISO/IEC 9075-4:2006 draft §14.13 SR9, §14.2] a FOR holds no
-/// ROLLBACK TO SAVEPOINT (2A000); a handler takes 3B001 raised in a
+/// ROLLBACK TO SAVEPOINT (42000); a handler takes 3B001 raised in a
 /// procedure's body, which goes on.
 #[test]
 fn a_for_refuses_rollback_to_and_a_handler_takes_3b001_14_13() {
@@ -125,7 +125,7 @@ fn a_for_refuses_rollback_to_and_a_handler_takes_3b001_14_13() {
          DECLARE CONTINUE HANDLER FOR SQLSTATE '3B001' SET C = 'taken'; RELEASE SAVEPOINT NONE; INSERT INTO T VALUES (1); END"]);
     let a = db.session("A");
     let refused = a.run("CREATE PROCEDURE LOOPED () MODIFIES SQL DATA FOR R AS SELECT K FROM T DO ROLLBACK TO SAVEPOINT S; END FOR");
-    assert_eq!(state(refused), "2A000");
+    assert_eq!(state(refused), "42000");
     let mut p = dynamic_host();
     run_with(&a, "CALL HANDLED(TXT)", &mut p).unwrap();
     assert_eq!(p.value("TXT").to_string().trim(), "taken");
@@ -135,7 +135,7 @@ fn a_for_refuses_rollback_to_and_a_handler_takes_3b001_14_13() {
 /// Verifies: [ISO/IEC 9075-2:2023 §15.21 GR6c, GR6e iii, GR6j] (IA046) a
 /// triggered action runs at a level of its own, and executes no
 /// savepoint's statement: a trigger whose action is one is refused as it
-/// is defined (2A000), and one calling a procedure that executes one
+/// is defined (42000), and one calling a procedure that executes one
 /// fails as it fires with 0W000, raised as a triggered action exception
 /// (09000), the triggering statement undone.
 #[test]
@@ -143,7 +143,7 @@ fn a_triggered_action_executes_no_savepoint_statement_15_21() {
     let db =
         with(&["CREATE PROCEDURE MARK () MODIFIES SQL DATA SAVEPOINT X", "CREATE TRIGGER G AFTER INSERT ON L FOR EACH ROW CALL MARK()"]);
     let a = db.session("A");
-    assert_eq!(state(a.run("CREATE TRIGGER H AFTER INSERT ON T FOR EACH ROW SAVEPOINT X")), "2A000");
+    assert_eq!(state(a.run("CREATE TRIGGER H AFTER INSERT ON T FOR EACH ROW SAVEPOINT X")), "42000");
     a.run("INSERT INTO T VALUES (1)").unwrap();
     let fired = a.run("INSERT INTO L VALUES (1)").unwrap_err();
     assert_eq!(fired.sqlstate().as_str(), "09000", "{fired:?}");

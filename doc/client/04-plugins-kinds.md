@@ -145,7 +145,7 @@ OK
  B
  b
 (4 rows)
-turborel: SQLCODE -103 (SQLSTATE 2A000): LIKE compares no strings by the plug-in collation FOLDED, whose keys are calls made a batch at a time
+turborel: SQLCODE -103 (SQLSTATE 42000): LIKE compares no strings by the plug-in collation FOLDED, whose keys are calls made a batch at a time
 ```
 
 ## System tables

@@ -52,8 +52,8 @@ Its schema's owner.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | There is none of its name, or, with RESTRICT, something depends on it |
-| 2A000 | -104 | Its user does not own its schema |
+| 42000 | -103 | There is none of its name, or, with RESTRICT, something depends on it |
+| 42000 | -104 | Its user does not own its schema |
 
 ## EXAMPLES
 
@@ -68,9 +68,9 @@ DROP XQUERY MODULE LOUD_LIB RESTRICT;
 ```
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): registered XQuery module ANN.LOUD_LIB depends on registered XQuery module ANN.NOTES_LIB, so it is dropped only with CASCADE (at character 19)
+turborel: SQLCODE -103 (SQLSTATE 42000): registered XQuery module ANN.LOUD_LIB depends on registered XQuery module ANN.NOTES_LIB, so it is dropped only with CASCADE (at character 19)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no registered XQuery module ANN.LOUD_LIB (at character 19)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no registered XQuery module ANN.LOUD_LIB (at character 19)
 ```
 
 LOUD_LIB went with NOTES_LIB, as it imports it.

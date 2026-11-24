@@ -15,6 +15,7 @@ mod extensions;
 mod graph;
 mod hybrid;
 mod information;
+mod literals;
 mod monitoring;
 mod partitioning;
 mod uuids;

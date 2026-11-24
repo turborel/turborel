@@ -73,8 +73,8 @@ DEBUG on the routine, with grant option to grant it.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | the routine is not of its routine type, is of a module, or the object is not a routine |
-| 2A000 | -104 | the grantor holds no DEBUG on the routine |
+| 42000 | -103 | the routine is not of its routine type, is of a module, or the object is not a routine |
+| 42000 | -104 | the grantor holds no DEBUG on the routine |
 | 01007 | 0 | the grantor holds DEBUG without grant option: nothing is granted, a warning |
 | 2B000 | -103 | REVOKE with RESTRICT takes a grant option another grant was made by |
 | 01006 | 0 | REVOKE of a grant the grantor did not make: a warning |
@@ -100,7 +100,7 @@ COMMIT;
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): DEBUG is granted on a routine, not on table ANN.STAFF (at character 21)
+turborel: SQLCODE -103 (SQLSTATE 42000): DEBUG is granted on a routine, not on table ANN.STAFF (at character 21)
 OK
 ```
 

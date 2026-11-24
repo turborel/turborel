@@ -123,7 +123,7 @@ or error with its SQLCODE, SQLSTATE and message, and where in the
 statement it is:
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 14)
+turborel: SQLCODE -103 (SQLSTATE 42000): table ANN.NOPE is not defined [X3.135-1986 §5.4 SR5] (at character 14)
 OK, with a warning: SQLSTATE 01007
 ```
 
@@ -221,7 +221,10 @@ written in the file as `"""Name"""` the column Name; a column not named
 takes its default. Without it, each record has a field for each column
 of the table, in order. Each value is cast to its column's type, as a
 dynamic parameter's is; a string too long for a character string
-column is refused (SQLSTATE 22001), not cut.
+column is refused (SQLSTATE 22001), not cut. A field for a binary string
+column, BINARY, VARBINARY or BLOB, is its octets in hexits, two to each,
+of either case, as `\export` writes them; one that is not is refused
+(SQLSTATE 22018, SQLCODE -301).
 
 The rows are inserted through one prepared INSERT, `--batch` rows to a
 transaction, each batch committed. An import begins with no transaction

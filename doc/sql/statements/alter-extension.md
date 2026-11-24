@@ -44,9 +44,9 @@ Only the database's owner, or any user of a database with none.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not of the form above |
-| 2A000 | -103 | Rule 1 or 2 is broken |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -102 | The statement is not of the form above |
+| 42000 | -103 | Rule 1 or 2 is broken |
+| 42000 | -104 | Its user is not the database's owner |
 | 38T09 | -301 | An extension requiring it does not accept the new version |
 | 25000 | -917 | The transaction is READ ONLY |
 
@@ -84,7 +84,7 @@ ALTER EXTENSION EXAMPLE UPDATE;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): extension EXAMPLE is at 1.1.0, the newest version installed
+turborel: SQLCODE -103 (SQLSTATE 42000): extension EXAMPLE is at 1.1.0, the newest version installed
 ```
 
 ## STANDARD

@@ -65,8 +65,8 @@ REFERENCES a CHECK needs.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | A rule above is broken |
-| 2A000 | -104 | Its user does not own the domain's schema, or the constraint's, or lacks a privilege the constraint needs |
+| 42000 | -103 | A rule above is broken |
+| 42000 | -104 | Its user does not own the domain's schema, or the constraint's, or lacks a privilege the constraint needs |
 | 23000 | -201 | A row breaks the constraint added |
 | 25000 | -917 | The transaction is READ ONLY |
 | TB911 | -911 | Another transaction holds a lock on a table of the domain |
@@ -117,9 +117,9 @@ ALTER DOMAIN MONEY ADD CHECK (CAST(VALUE AS MONEY) > 0);
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no domain ANN.NOPE [ISO/IEC 9075:1992 §11.22 SR1] (at character 13)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.NOPE is not a constraint of domain ANN.MONEY [ISO/IEC 9075:1992 §11.26 SR3] (at character 35)
-turborel: SQLCODE -103 (SQLSTATE 2A000): domain ANN.MONEY would be in usage by its own constraints [ISO/IEC 9075:1992 §11.21 SR4, §11.25 SR2] (at character 23)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no domain ANN.NOPE [ISO/IEC 9075:1992 §11.22 SR1] (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.NOPE is not a constraint of domain ANN.MONEY [ISO/IEC 9075:1992 §11.26 SR3] (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 42000): domain ANN.MONEY would be in usage by its own constraints [ISO/IEC 9075:1992 §11.21 SR4, §11.25 SR2] (at character 23)
 ```
 
 ## STANDARD

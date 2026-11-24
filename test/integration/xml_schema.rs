@@ -77,7 +77,7 @@ fn a_name_registered_is_refused_4_2_6() {
     let db = two();
     let a = db.session("A");
     register(&a, "S", ("s.xsd", &doc("urn:s", r#"<xs:complexType name="ct"/>"#)));
-    assert_eq!(refusal(&a, "S", &doc("urn:other", "")), (-103, "2A000".to_owned()));
+    assert_eq!(refusal(&a, "S", &doc("urn:other", "")), (-103, "42000".to_owned()));
     assert_eq!(refusal(&a, "NOWHERE.S", &doc("", "")), (-103, "3F000".to_owned()));
     assert_eq!(refusal(&a, "B.S", &doc("", "")).0, -104);
     register(&a, "T", ("t.xsd", &importing("urn:t", "urn:s")));
@@ -116,7 +116,7 @@ fn the_document_is_a_string_or_an_xml_document_4_2_6() {
         ("'<a/>'", (-301, "22000")),
         ("CAST(NULL AS VARCHAR(9))", (-301, "2200L")),
         ("XMLCONCAT(XMLPARSE(CONTENT '<a/>' PRESERVE WHITESPACE), XMLPARSE(CONTENT '<b/>' PRESERVE WHITESPACE))", (-301, "2200L")),
-        ("42", (-103, "2A000")),
+        ("42", (-103, "42000")),
     ] {
         let got = refused(a.run(&format!("CREATE XML SCHEMA BAD AS {document}")));
         assert_eq!((got.0, got.1.as_str()), expected, "{document}");
@@ -168,7 +168,7 @@ fn drop_restrict_is_refused_while_used_and_cascade_drops_users() {
     assert_eq!(refused(b.run("DROP XML SCHEMA A.ALONE CASCADE")).0, -104);
     b.rollback().unwrap();
     let (code, state) = refused(a.run("DROP XML SCHEMA BASE RESTRICT"));
-    assert_eq!((code, state.as_str()), (-103, "2A000"));
+    assert_eq!((code, state.as_str()), (-103, "42000"));
     a.rollback().unwrap();
     assert_eq!(refused(a.run("DROP XML SCHEMA MID RESTRICT")).0, -103);
     a.rollback().unwrap();

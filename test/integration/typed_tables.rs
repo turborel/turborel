@@ -58,7 +58,7 @@ fn refused(s: &Session, sql: &str, (code, state, cited): (Code, &str, &str)) {
 
 /// A Syntax Rule's refusal citing `cited`.
 fn syntax(cited: &str) -> (Code, &str, &str) {
-    (Code::SyntaxRule, "2A000", cited)
+    (Code::SyntaxRule, "42000", cited)
 }
 
 /// PEOPLE of PERSON, its AGE NOT NULL; STAFF of EMPLOYEE under it.
@@ -101,7 +101,7 @@ fn a_typed_tables_type_and_generation_are_checked_11_3() {
     refused(&a, "CREATE TABLE T OF NOTHING (REF IS ID)", syntax("§11.3 SR11a"));
     a.run("CREATE TYPE DIST AS INTEGER FINAL").unwrap();
     refused(&a, "CREATE TABLE T OF DIST (REF IS ID)", syntax("§11.3 SR11a"));
-    refused(&db.session("B"), "CREATE TABLE T OF A.PERSON (REF IS ID)", (Code::Privilege, "2A000", "§11.3 AR4"));
+    refused(&db.session("B"), "CREATE TABLE T OF A.PERSON (REF IS ID)", (Code::Privilege, "42000", "§11.3 AR4"));
     refused(&a, "CREATE TABLE T OF U (REF IS ID SYSTEM GENERATED)", syntax("§11.3 SR11c iii"));
     refused(&a, "CREATE TABLE T OF U (REF IS ID)", syntax("§11.3 SR11c iii"));
     refused(&a, "CREATE TABLE T OF PERSON (REF IS ID USER GENERATED)", syntax("§11.3 SR11c iv"));

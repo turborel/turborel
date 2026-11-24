@@ -115,8 +115,8 @@ columns. SELECT on each table the query reads.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | The table does not exist or is read-only; a column listed is not of it, or is listed twice; the query's columns are not as many as those inserted into, or a value is not assignable to its column; WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
-| 2A000 | -104 | Its user lacks a privilege it needs |
+| 42000 | -103 | The table does not exist or is read-only; a column listed is not of it, or is listed twice; the query's columns are not as many as those inserted into, or a value is not assignable to its column; WITH's XML options break a rule of [XML Values](../19-xml.md#xml-options-of-a-scope) |
+| 42000 | -104 | Its user lacks a privilege it needs |
 | 23000 | -201 | A row breaks a constraint: NOT NULL, UNIQUE, PRIMARY KEY, a foreign key or a CHECK |
 | 44000 | -201 | A row inserted through a view WITH CHECK OPTION is not a row of the view |
 | 22xxx | -301 | A data exception as a value is computed or assigned |
@@ -165,7 +165,7 @@ INSERT INTO PARTS VALUES (5, 'big', 'many');
 ```
 turborel: SQLCODE -201 (SQLSTATE 23000): PRIMARY KEY ANN.PARTS_PRIMARY1 (ID) of ANN.PARTS would be violated: a row of these values is there [X3.135-1986 §6.4 GR2]
 turborel: SQLCODE -201 (SQLSTATE 23000): column ID of ANN.PARTS is NOT NULL [X3.135-1986 §6.3 SR3, GR1]
-turborel: SQLCODE -103 (SQLSTATE 2A000): cannot assign a CHARACTER(4) value to column QTY (INTEGER) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075:1992 §9.2 SR2] (at character 36)
+turborel: SQLCODE -103 (SQLSTATE 42000): cannot assign a CHARACTER(4) value to column QTY (INTEGER) [ISO/IEC 9075:1992 §13.8 SR6; ISO/IEC 9075:1992 §9.2 SR2] (at character 36)
 ```
 
 Into an identity column and a generated column:
@@ -184,9 +184,9 @@ SELECT * FROM TICKETS ORDER BY TICKET;
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): identity column TICKET is GENERATED ALWAYS, so a value is given it only with OVERRIDING SYSTEM VALUE or OVERRIDING USER VALUE [ISO/IEC 9075-2:2023 §14.11 SR13b] (at character 28)
+turborel: SQLCODE -103 (SQLSTATE 42000): identity column TICKET is GENERATED ALWAYS, so a value is given it only with OVERRIDING SYSTEM VALUE or OVERRIDING USER VALUE [ISO/IEC 9075-2:2023 §14.11 SR13b] (at character 28)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): column ROW_NO is a generated column, so it is given only DEFAULT [ISO/IEC 9075-2:2023 §14.11 SR12] (at character 50)
+turborel: SQLCODE -103 (SQLSTATE 42000): column ROW_NO is a generated column, so it is given only DEFAULT [ISO/IEC 9075-2:2023 §14.11 SR12] (at character 50)
        TICKET | SEAT | ROW_NO
 --------------+------+--------
             1 | A12  | A

@@ -273,8 +273,8 @@ The table's schema is its user's.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -103 | A rule above is broken, as by an expression that can raise an error |
-| 2A000 | -104 | Its user does not own the table's schema |
+| 42000 | -103 | A rule above is broken, as by an expression that can raise an error |
+| 42000 | -104 | Its user does not own the table's schema |
 | 0A000 | -900 | `rtree` is asked to index an unsupported column count or type |
 | 0A000 | -900 | A value of the table is past what an XML index keys |
 | TB910 | -910 | An `rtree` coordinate is non-finite or a rectangle has reversed bounds |
@@ -504,7 +504,7 @@ OK
 OK
 OK
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): index CATALOGUE_IDS of method xml_path keys one column, of an XML type (RULES.md D106)
+turborel: SQLCODE -103 (SQLSTATE 42000): index CATALOGUE_IDS of method xml_path keys one column, of an XML type (RULES.md D106)
  INDEX_NAME                                                   | METHOD_NAME
 --------------------------------------------------------------+--------------------------------------------------------------
  CATALOGUE_PATHS                                              | xml_path
@@ -523,10 +523,10 @@ CREATE INDEX STAFF_X ON V (ID);
 
 ```
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.STAFF has no column NOPE (at character 31)
-turborel: SQLCODE -103 (SQLSTATE 2A000): there is no index method NOPE (at character 43)
-turborel: SQLCODE -103 (SQLSTATE 2A000): an index named STAFF_DEPT already exists (at character 13)
-turborel: SQLCODE -103 (SQLSTATE 2A000): ANN.V is not a base table (at character 24)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.STAFF has no column NOPE (at character 31)
+turborel: SQLCODE -103 (SQLSTATE 42000): there is no index method NOPE (at character 43)
+turborel: SQLCODE -103 (SQLSTATE 42000): an index named STAFF_DEPT already exists (at character 13)
+turborel: SQLCODE -103 (SQLSTATE 42000): ANN.V is not a base table (at character 24)
 ```
 
 Indexes of expressions: a parcel's code in any case, its gross weight,
@@ -599,9 +599,9 @@ CREATE INDEX PARCELS_X ON PARCELS ((UPPER(CODE))) USING RTREE;
 ```
 
 ```
-turborel: SQLCODE -103 (SQLSTATE 2A000): the key part (WEIGHT / PACKING) of index PARCELS_X: (WEIGHT / PACKING) can raise an error or is not deterministic, so it is no key part of an index (RULES.md D92) (at character 35)
-turborel: SQLCODE -103 (SQLSTATE 2A000): the key part (JSON_VALUE(LABEL, 'lax $.city' ERROR ON ERROR)) of index PARCELS_X: JSON_VALUE 'lax $.city' RETURNING CHARACTER VARYING(32767) NULL ON EMPTY ERROR ON ERROR(LABEL) can raise an error or is not deterministic, so it is no key part of an index (RULES.md D92) (at character 35)
-turborel: SQLCODE -103 (SQLSTATE 2A000): a rtree index has no key part that is an expression, only btree and hash do (RULES.md D92) (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 42000): the key part (WEIGHT / PACKING) of index PARCELS_X: (WEIGHT / PACKING) can raise an error or is not deterministic, so it is no key part of an index (RULES.md D92) (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 42000): the key part (JSON_VALUE(LABEL, 'lax $.city' ERROR ON ERROR)) of index PARCELS_X: JSON_VALUE 'lax $.city' RETURNING CHARACTER VARYING(32767) NULL ON EMPTY ERROR ON ERROR(LABEL) can raise an error or is not deterministic, so it is no key part of an index (RULES.md D92) (at character 35)
+turborel: SQLCODE -103 (SQLSTATE 42000): a rtree index has no key part that is an expression, only btree and hash do (RULES.md D92) (at character 35)
 ```
 
 An adjacency index of the transfers between accounts, each transfer's

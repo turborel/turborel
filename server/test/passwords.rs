@@ -130,7 +130,7 @@ fn the_owner_manages_users_over_the_wire() {
     assert_eq!(state(&as_user(&server, &pki, ("carol", "carol's")).err().unwrap()).0, "28000", "the old one");
     as_user(&server, &pki, ("carol", "new")).unwrap().terminate().unwrap();
     let mut bob = as_user(&server, &pki, ("bob", "bob's")).unwrap();
-    assert_eq!(state(&bob.query("DROP USER carol").unwrap_err()), ("2A000", -104));
+    assert_eq!(state(&bob.query("DROP USER carol").unwrap_err()), ("42000", -104));
     let users = "SELECT USER_NAME FROM INFORMATION_SCHEMA.USERS ORDER BY USER_NAME";
     assert_eq!(rows(&bob.query(users).unwrap()).iter().map(|r| r.trim().to_owned()).collect::<Vec<_>>(), ["BOB"]);
     assert_eq!(rows(&ann.query(users).unwrap()).len(), 3);

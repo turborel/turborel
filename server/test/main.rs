@@ -44,6 +44,7 @@ mod copying;
 mod declared;
 mod diagnostics;
 mod ending;
+mod exports;
 mod homes;
 mod host_plugins;
 mod imported;

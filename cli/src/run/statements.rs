@@ -12,7 +12,7 @@ use turborel::value::{DataType, Value};
 use turborel_client::agent::{Agent, Connector};
 use turborel_client::capability::PING;
 use turborel_client::connection::{Connection, Outcome, Sink, Streamed};
-use turborel_client::export::ExportFormat;
+use turborel_client::export::Layout;
 use turborel_client::import::{self, Cause, Delimited, Import, ImportError, Imported, Rejected};
 use turborel_client::{Canceller, Column, Failure, Notice, Timing};
 
@@ -90,13 +90,14 @@ pub trait Statements {
         Vec::new()
     }
 
-    /// Writes the rows of the query `sql` to `out` as the protocol's own
-    /// frames, as they come (RULES.md D195): how many.
+    /// Writes the rows of the query `sql` to `out` by `layout`, as they
+    /// come, each large object as its value (RULES.md D195, D975): how
+    /// many.
     ///
     /// # Errors
     ///
     /// The query's failure, or the write's.
-    fn export_native(&mut self, sql: &str, out: &mut dyn Write) -> Result<u64, Failure>;
+    fn export(&mut self, sql: &str, out: &mut dyn Write, layout: &mut dyn Layout) -> Result<u64, Failure>;
 
     /// Whether the session's transaction is active, as the server last
     /// said; false with no connection.
@@ -280,8 +281,8 @@ impl<S: Read + Write> Statements for Connection<S> {
         noticed(self)
     }
 
-    fn export_native(&mut self, sql: &str, out: &mut dyn Write) -> Result<u64, Failure> {
-        self.export(sql, out, ExportFormat::Native)
+    fn export(&mut self, sql: &str, out: &mut dyn Write, layout: &mut dyn Layout) -> Result<u64, Failure> {
+        self.export_with(sql, out, layout)
     }
 
     fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {
@@ -346,8 +347,8 @@ impl<C: Connector> Statements for Agent<C> {
         self.current().map(noticed).unwrap_or_default()
     }
 
-    fn export_native(&mut self, sql: &str, out: &mut dyn Write) -> Result<u64, Failure> {
-        self.current()?.export(sql, out, ExportFormat::Native)
+    fn export(&mut self, sql: &str, out: &mut dyn Write, layout: &mut dyn Layout) -> Result<u64, Failure> {
+        self.current()?.export_with(sql, out, layout)
     }
 
     fn query_into(&mut self, sql: &str, sink: &mut dyn Sink) -> Result<Streamed, Failure> {

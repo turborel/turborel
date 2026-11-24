@@ -167,7 +167,7 @@ fn an_import_is_refused_before_any_row() {
     }
     let (done, _) = csv(&mut c, "2\n", Dialect::csv(), &Import::into("NOPE"));
     let Cause::Sql(missing) = done.unwrap_err().cause else { panic!("no failure") };
-    assert_eq!(state(&missing), ("37000", -103), "{missing}");
+    assert_eq!(state(&missing), ("42000", -103), "{missing}");
     let (done, _) = csv(&mut c, "ID,WAGE\n2,3\n", Dialect::csv().with_header(), &Import::into("STAFF"));
     let Cause::Sql(unknown) = done.unwrap_err().cause else { panic!("no failure") };
     assert!(unknown.message.contains("WAGE"), "{unknown}");

@@ -92,12 +92,12 @@ fn refused(s: &Session, sql: &str, (code, state, cited): (Code, &str, &str)) {
 
 /// A Syntax Rule's refusal citing `cited`.
 fn syntax(cited: &str) -> (Code, &str, &str) {
-    (Code::SyntaxRule, "2A000", cited)
+    (Code::SyntaxRule, "42000", cited)
 }
 
 /// A refusal of a privilege, citing `cited`.
 fn privilege(cited: &str) -> (Code, &str, &str) {
-    (Code::Privilege, "2A000", cited)
+    (Code::Privilege, "42000", cited)
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §11.32 SR23, GR1e ii, GR2b] A

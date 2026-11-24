@@ -87,9 +87,9 @@ imports is found if that owner owns its schema too, or holds USAGE on it
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -103 | One of its name exists, or the document is of another type |
+| 42000 | -103 | One of its name exists, or the document is of another type |
 | 3F000 | -103 | Its schema does not exist |
-| 2A000 | -104 | Its user does not own the schema |
+| 42000 | -104 | Its user does not own the schema |
 | 2200L | -301 | The document is the null value, or an XML value that is no document |
 | 2200M | -301 | The document is no well-formed XML document |
 | 22000 | -301 | The document is no schema document, or not of a valid schema |
@@ -116,7 +116,7 @@ CREATE XML SCHEMA BROKEN AS '<order/>';
 OK
 OK
 turborel: SQLCODE -301 (SQLSTATE 22000): [Schema1 §3.15.3 src-resolve] the schema is not valid: {urn:prices}money names no type definition
-turborel: SQLCODE -103 (SQLSTATE 2A000): registered XML Schema ANN.ORDERS exists: one name identifies one [ISO/IEC 9075-14:2006 draft §4.2.6] (at character 18)
+turborel: SQLCODE -103 (SQLSTATE 42000): registered XML Schema ANN.ORDERS exists: one name identifies one [ISO/IEC 9075-14:2006 draft §4.2.6] (at character 18)
 turborel: SQLCODE -301 (SQLSTATE 22000): [Schema1 §3.15.2] the schema is not valid: a schema document's element is a <schema> of the XML Schema namespace
 ```
 

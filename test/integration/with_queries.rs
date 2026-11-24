@@ -117,7 +117,7 @@ fn a_with_list_names_its_queries_for_the_query_after_it_7_17() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 SR3c, SR3d, SR3i] a
 /// query named twice in one list, one of two columns of one name and no
 /// column list, and one whose column list names more or fewer columns than
-/// its query has are refused (SQLCODE -103, 2A000); a with name is not a
+/// its query has are refused (SQLCODE -103, 42000); a with name is not a
 /// table of a schema, so qualified it names none (-103), and a
 /// non-recursive list's element reads no element after it (-103), nor
 /// itself.
@@ -222,7 +222,7 @@ fn delta_iteration_gives_the_rows_whole_iteration_does_7_17() {
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 SR3h, SR3j i, vii,
 /// viii, ix 2, x] a WITH RECURSIVE list breaking its Syntax Rules is
-/// refused (SQLCODE -103, 2A000), each by the rule it breaks: an element
+/// refused (SQLCODE -103, 42000), each by the rule it breaks: an element
 /// of no column list, even one not recursive; one inside another WITH
 /// RECURSIVE list in an element; a stratum with no anchor, of one query,
 /// of no UNION, of INTERSECT and of two queries; a stratum with an anchor
@@ -268,7 +268,7 @@ fn a_recursive_list_needs_anchors_and_linear_recursion_7_17() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.17 SR3j ix 5 B to G] a
-/// recursive reference is refused (SQLCODE -103, 2A000) outside a `<from
+/// recursive reference is refused (SQLCODE -103, 42000) outside a `<from
 /// clause>` of the body or of a derived table there (B), in a subquery and
 /// two derived tables deep; in a `<query specification>` with a set
 /// function in its select list or HAVING (C), of its own or of a subquery

@@ -39,9 +39,9 @@ The pipeline's schema is its user's.
 
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
-| 2A000 | -102 | The statement is not of the form above |
-| 2A000 | -103 | There is no such pipeline |
-| 2A000 | -104 | Its user does not own the pipeline's schema |
+| 42000 | -102 | The statement is not of the form above |
+| 42000 | -103 | There is no such pipeline |
+| 42000 | -104 | Its user does not own the pipeline's schema |
 | 25000 | -917 | The transaction is READ ONLY |
 
 ## EXAMPLES

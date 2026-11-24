@@ -53,9 +53,9 @@ The database's owner's alone.
 | SQLSTATE | SQLCODE | When |
 |---|---|---|
 | 25000 | -917 | The session has a transaction open |
-| 2A000 | -102 | PASSWORD, or its literal, is not written |
-| 2A000 | -103 | A user, or a role, has the identifier |
-| 2A000 | -104 | Its user is not the database's owner |
+| 42000 | -102 | PASSWORD, or its literal, is not written |
+| 42000 | -103 | A user, or a role, has the identifier |
+| 42000 | -104 | Its user is not the database's owner |
 | TB910 | -910 | An embedded database has no credentials plug-in |
 
 ## EXAMPLES
@@ -81,9 +81,9 @@ OK
  CAROL                                                        | NO       | NO
 (3 rows)
 OK
-turborel: SQLCODE -103 (SQLSTATE 2A000): a user BOB exists already (at character 12)
-turborel: SQLCODE -102 (SQLSTATE 2A000): expected PASSWORD, found end of statement (at character 16)
-turborel: SQLCODE -103 (SQLSTATE 2A000): CLERK is a role's name, which no user takes (at character 12)
+turborel: SQLCODE -103 (SQLSTATE 42000): a user BOB exists already (at character 12)
+turborel: SQLCODE -102 (SQLSTATE 42000): expected PASSWORD, found end of statement (at character 16)
+turborel: SQLCODE -103 (SQLSTATE 42000): CLERK is a role's name, which no user takes (at character 12)
 ```
 
 Run by BOB:
@@ -93,7 +93,7 @@ CREATE USER DAVE PASSWORD 'x';
 ```
 
 ```
-turborel: SQLCODE -104 (SQLSTATE 2A000): only the database's owner runs a user statement, and BOB is not it
+turborel: SQLCODE -104 (SQLSTATE 42000): only the database's owner runs a user statement, and BOB is not it
 ```
 
 ## STANDARD
