@@ -35,7 +35,7 @@ impl Session {
         if p.kind != Kind::Statement {
             return Err(super::super::write::not_given());
         }
-        let types: Vec<DataType> = p.parameters.iter().map(|t| t.clone().data_type()).collect();
+        let types: Vec<DataType> = p.inputs.iter().map(|t| t.clone().data_type()).collect();
         let mut given = Vec::with_capacity(rows.len());
         for row in rows {
             Self::one_each(p, row.len())?;

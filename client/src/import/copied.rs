@@ -27,7 +27,7 @@ const OF_THE_COPY: &str = " of the copy";
 /// copy: granted, no bad row skipped, no large object column.
 pub(super) fn copies<S: Read + Write>(connection: &Connection<S>, insert: &Statement, how: &Import) -> bool {
     let lob = |p: &ParameterType| matches!(p.clone().data_type(), DataType::Lob { .. });
-    connection.granted().has(COPY) && !how.skip && !insert.parameters().iter().any(lob)
+    connection.granted().has(COPY) && !how.skip && !insert.inputs().iter().any(lob)
 }
 
 /// The row of a copy `failure` names, from 1, if it names one.

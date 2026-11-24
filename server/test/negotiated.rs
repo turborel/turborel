@@ -50,7 +50,7 @@ fn a_server_grants_what_is_asked_of_what_it_serves() {
     assert_eq!(rows(&none.query("SELECT K FROM T").unwrap()), Vec::<String>::new(), "the first form still serves");
     let odd = Offer { capabilities: vec!["no-such".into(), PING.into()], ..Offer::none() };
     assert_eq!(offering(&server, odd).granted(), Capabilities::of(&[PING]));
-    assert_eq!(ALL.len(), 20);
+    assert_eq!(ALL.len(), 21);
     drop(server);
     let off = start(&db, &[(COMPRESSION_MIN_BYTES, 0)]);
     assert_eq!(offering(&off, Offer::default().compressed()).granted(), Capabilities::all().without(COMPRESSION));

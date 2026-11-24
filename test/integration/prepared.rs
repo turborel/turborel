@@ -59,7 +59,7 @@ const INT: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelle
 fn a_prepared_query_is_described_and_opened_with_values() {
     let (_db, s) = session();
     let p = s.prepare("SELECT K, N, A FROM T WHERE K = ? OR A > ? ORDER BY K").unwrap();
-    let types: Vec<DataType> = p.parameters().iter().map(|t| t.clone().data_type()).collect();
+    let types: Vec<DataType> = p.inputs().iter().map(|t| t.clone().data_type()).collect();
     assert_eq!((types[0].clone(), types[0].to_string().as_str()), (INT, "INTEGER"), "the column's type, as written");
     assert_eq!(types[1].to_string(), DataType::Exact { precision: 5, scale: 2, spelled: Spelled::Decimal }.to_string());
     let named: Vec<Option<&str>> = p.columns().iter().map(|c| c.name.as_deref()).collect();
@@ -101,7 +101,7 @@ fn a_parameter_takes_its_type_from_where_it_stands() {
 
 /// The types the parameters of `sql` are described with.
 fn described(s: &Session, sql: &str) -> Vec<String> {
-    s.prepare(sql).unwrap().parameters().iter().map(|t| t.clone().data_type().to_string()).collect()
+    s.prepare(sql).unwrap().inputs().iter().map(|t| t.clone().data_type().to_string()).collect()
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5f, g, n; §6.14, §6.15,
@@ -158,7 +158,7 @@ fn a_function_gives_its_parameters_their_types() {
     assert_eq!(query(&s, "SELECT ? || 'B' FROM T WHERE K = 1", &[text("A")]), ["AB"]);
     assert_eq!(query(&s, "SELECT SUBSTRING(N FROM ? FOR ?) FROM T WHERE K = 3", &[int(2), int(3)]), ["ARO"]);
     let p = s.prepare("SELECT CHAR_LENGTH(?) FROM T").unwrap();
-    assert_eq!(p.parameters(), [ParameterType::Varying]);
+    assert_eq!(p.inputs(), [ParameterType::Varying]);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.6 GR5u, w; §17.10]
@@ -171,7 +171,7 @@ fn a_function_gives_its_parameters_their_types() {
 #[test]
 fn prepared_writes_take_their_columns_types() {
     let (db, s) = session();
-    let shown = |p: &turborel::db::Prepared| p.parameters().iter().map(|t| t.clone().data_type().to_string()).collect::<Vec<_>>();
+    let shown = |p: &turborel::db::Prepared| p.inputs().iter().map(|t| t.clone().data_type().to_string()).collect::<Vec<_>>();
     let insert = s.prepare("INSERT INTO T VALUES (?, ?, ?), (5, 'EVE', ?)").unwrap();
     assert_eq!(shown(&insert), ["INTEGER", "CHARACTER(5)", "DECIMAL(5,2)", "DECIMAL(5,2)"], "xix 1 A");
     let all_dynamic = s.prepare("INSERT INTO T VALUES (?, ?, ?)").unwrap();
@@ -186,11 +186,11 @@ fn prepared_writes_take_their_columns_types() {
     s.execute_prepared(&delete, &[text("EVE")]).unwrap();
     assert_eq!(query(&s, "SELECT COUNT(*) FROM T WHERE K >= ?", &[int(4)]), ["1"]);
     let defined = db.session("Y").prepare("CREATE SCHEMA AUTHORIZATION Y CREATE TABLE U (K INTEGER)").unwrap();
-    assert!(!defined.is_query() && defined.parameters().is_empty());
+    assert!(!defined.is_query() && defined.inputs().is_empty());
     db.session("Y").execute_prepared(&defined, &[]).unwrap();
     assert_eq!(all(db.session("Y").open_cursor("SELECT COUNT(*) FROM U").unwrap()), ["0"]);
     let schema = s.prepare("SET SCHEMA ?").unwrap();
-    assert_eq!(schema.parameters(), [ParameterType::Varying]);
+    assert_eq!(schema.inputs(), [ParameterType::Varying]);
     s.execute_prepared(&schema, &[text("X")]).unwrap();
 }
 
@@ -235,9 +235,9 @@ fn a_parameter_with_no_type_is_refused() {
     // [GR5b] BIT_LENGTH's `?` is CHARACTER VARYING; beside a binary
     // string, a `?` of || is BINARY VARYING of the longest length.
     let bits = s.prepare("SELECT BIT_LENGTH(?) FROM T").unwrap();
-    assert_eq!(bits.parameters(), [ParameterType::Varying]);
+    assert_eq!(bits.inputs(), [ParameterType::Varying]);
     let joined = s.prepare("SELECT X'AB' || ? FROM T").unwrap();
-    assert_eq!(joined.parameters(), [ParameterType::Of(DataType::VarBinary { length: turborel::value::MAX_BINARY_LENGTH })]);
+    assert_eq!(joined.inputs(), [ParameterType::Of(DataType::VarBinary { length: turborel::value::MAX_BINARY_LENGTH })]);
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §6.2 SR2, §17.6 GR4a, §17.9

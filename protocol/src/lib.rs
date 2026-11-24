@@ -111,6 +111,7 @@
 //! layout byte for byte, are in the protocol's reference
 //! (`doc/client/05-protocol.md`).
 
+mod called;
 pub mod capability;
 pub mod compress;
 mod debug;
@@ -135,6 +136,7 @@ use turborel::db::Completion;
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::value::DataType;
 
+pub use called::Called;
 pub use capability::Capabilities;
 pub use debug::{DebugBreakpoint, DebugReply, DebugRequest};
 pub use declared::Declared;

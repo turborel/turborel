@@ -17,7 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use super::Params;
-use crate::ast::TableName;
+use crate::ast::{ParameterMode, TableName};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::Lexed;
 use crate::parser::Parser;
@@ -40,6 +40,29 @@ impl ParameterType {
             ParameterType::Of(t) => t,
             ParameterType::Varying => DataType::Varying { length: MAX_CHARACTER_LENGTH, units: CharUnits::Characters },
         }
+    }
+}
+
+/// [ISO/IEC 9075-2:2023 §20.10 GR7] (RULES.md D977) A `<dynamic parameter
+/// specification>` of a prepared statement, as DESCRIBE describes it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DynamicParameter {
+    /// Its type, taken from where it stands [ISO/IEC 9075:1992 §17.6 GR5].
+    pub data_type: ParameterType,
+    /// Of a CALL, the mode of the parameter of the procedure whose argument
+    /// holds it [GR7e iv]: an execution gives a value for an IN or INOUT
+    /// one, and gives back the value of an OUT or INOUT one. IN of any
+    /// other statement's.
+    pub mode: ParameterMode,
+    /// Of a CALL of an SQL-invoked procedure, the ordinal position of that
+    /// parameter, from 1 [GR7e v]; none of another statement's.
+    pub ordinal: Option<u32>,
+}
+
+impl DynamicParameter {
+    /// An input one, of `data_type`, of no procedure's parameter.
+    pub fn input(data_type: ParameterType) -> DynamicParameter {
+        DynamicParameter { data_type, mode: ParameterMode::In, ordinal: None }
     }
 }
 

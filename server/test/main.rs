@@ -53,6 +53,7 @@ mod imports;
 mod json;
 mod lobs;
 mod logins;
+mod modes;
 mod negotiated;
 mod numbers;
 mod passwords;

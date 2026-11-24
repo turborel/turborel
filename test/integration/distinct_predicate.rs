@@ -166,7 +166,7 @@ fn distinct_predicates_with_parameters_and_checks_8_15() {
     let a = db.session("A");
     let p = a.prepare("SELECT K FROM T WHERE A IS NOT DISTINCT FROM ? ORDER BY K").unwrap();
     assert_eq!(
-        p.parameters().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(),
+        p.inputs().iter().map(|t| t.clone().data_type()).collect::<Vec<_>>(),
         [DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer }]
     );
     let given = |v: Value| {

@@ -90,6 +90,7 @@ mod buffer_claims;
 mod bulk_groups;
 mod bulk_insert;
 mod bulk_load;
+mod call_modes;
 mod call_outputs;
 mod cancel;
 mod candidate_keys;

@@ -250,6 +250,7 @@ behind it, and each can be replaced or added to.
 - A column's NOT NULL set or dropped and its data type widened, the rows
   checked or copied a row at a time.
 - Import and export of CSV and tab-separated files through the client, large objects as their values.
+- Prepared CALLs that describe each `?` with its parameter's mode, through the API, DESCRIBE and the protocol.
 - A command-line client with line editing, completion, describe commands,
   variables, scripting and seven output formats ([guide](doc/client/05-turborel-commands.md)).
 - Library, embedded modes

@@ -29,7 +29,7 @@ fn uuids_go_both_ways() {
     assert_eq!(columns[1].data_type, UuidType::data_type());
     assert_eq!(received.first().and_then(|r| r.get(1)).and_then(octets_of), parse(ONE));
     let prepared = c.prepare("INSERT INTO T VALUES (?, ?)").unwrap();
-    assert_eq!(prepared.parameters()[1].clone().data_type(), UuidType::data_type());
+    assert_eq!(prepared.inputs()[1].clone().data_type(), UuidType::data_type());
     let sent = uuid_value([0xab; 16]);
     assert_eq!(done(&c.execute(&prepared, &[Value::Exact(Decimal::new(3, 0)), sent]).unwrap()), 0);
     let back = c.query("SELECT CAST(U AS VARCHAR(36)) FROM T WHERE K = 3").unwrap();

@@ -245,7 +245,7 @@ fn a_bad_value_is_read_past_with_its_statements_replies() {
 /// transaction is active.
 #[test]
 fn a_cursor_or_a_describe_with_a_bad_value_reads_only_its_own() {
-    let prepared = encoded(&[Reply::Prepared { statement: 0, parameters: Vec::new(), columns: Vec::new() }]);
+    let prepared = encoded(&[Reply::Prepared { statement: 0, parameters: Vec::new(), columns: Vec::new(), called: None }]);
     let batch = [row_of(&[TRUTH, 3]), encoded(&[Reply::Suspended])].concat();
     let script = vec![prepared, batch, character_column(9), no_data()];
     let mut c = connected(&[turborel_protocol::capability::DESCRIBE], script);

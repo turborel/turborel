@@ -8,10 +8,11 @@
 
 use std::io::{Read, Write};
 
-use turborel::params::ParameterType;
+use turborel::catalog::QualifiedName;
+use turborel::params::{DynamicParameter, ParameterType};
 use turborel::storage::Row;
 use turborel::value::Value;
-use turborel_protocol::{Attributes, Column, Completed, Described, Reply, Request};
+use turborel_protocol::{Attributes, Called, Column, Completed, Described, Reply, Request};
 
 use crate::connection::{Connection, Outcome, Result};
 use crate::frames::Answer;
@@ -20,15 +21,36 @@ use crate::frames::Answer;
 #[derive(Debug, Clone)]
 pub struct Statement {
     pub(crate) number: u32,
-    parameters: Vec<ParameterType>,
+    inputs: Vec<ParameterType>,
     columns: Vec<Column>,
+    called: Option<Called>,
 }
 
 impl Statement {
-    /// [§17.9 GR4] Its dynamic parameters' types, in order, its input
-    /// ones, of a CALL not those of output parameters alone.
-    pub fn parameters(&self) -> &[ParameterType] {
-        &self.parameters
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7] (RULES.md D977, D978) Each of its
+    /// dynamic parameters, in order: its type, and, of a CALL, the mode
+    /// and ordinal position of the parameter whose argument holds it
+    /// [GR7e], as a server granting `parameter-modes` tells them. Told
+    /// none, each is an input one.
+    pub fn parameters(&self) -> Vec<DynamicParameter> {
+        match &self.called {
+            Some(called) => called.parameters.clone(),
+            None => self.inputs.iter().cloned().map(DynamicParameter::input).collect(),
+        }
+    }
+
+    /// [§17.9 GR4] The types of the dynamic parameters an execution gives
+    /// values for, in order: of a CALL not those of output parameters
+    /// alone.
+    pub fn inputs(&self) -> &[ParameterType] {
+        &self.inputs
+    }
+
+    /// [ISO/IEC 9075-2:2023 §20.10 GR7e vi] Of a CALL of an SQL-invoked
+    /// procedure, the procedure's specific name, as a server granting
+    /// `parameter-modes` tells it.
+    pub fn procedure(&self) -> Option<&QualifiedName> {
+        self.called.as_ref().map(|c| &c.procedure)
     }
 
     /// [§17.9 GR3] The columns of its rows, of a query; of a CALL, one for
@@ -104,7 +126,9 @@ impl<S: Read + Write> Connection<S> {
     /// The statement the server's Prepared describes.
     fn prepared(&mut self) -> Result<Statement> {
         match self.receive()? {
-            Reply::Prepared { statement, parameters, columns } => Ok(Statement { number: statement, parameters, columns }),
+            Reply::Prepared { statement, parameters, columns, called } => {
+                Ok(Statement { number: statement, inputs: parameters, columns, called })
+            }
             Reply::Error(failure) => Err(self.failed(failure)),
             Reply::Lob(_)
             | Reply::Challenge(_)

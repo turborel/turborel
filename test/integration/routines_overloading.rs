@@ -78,7 +78,7 @@ fn int(n: i128) -> Value {
 /// The types of the dynamic parameters of `sql` prepared in `s`.
 fn described(s: &Session, sql: &str) -> Vec<DataType> {
     let p = s.prepare(sql).unwrap_or_else(|e| panic!("{sql}: {e}"));
-    p.parameters().iter().map(|t| t.clone().data_type()).collect()
+    p.inputs().iter().map(|t| t.clone().data_type()).collect()
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §9.18 SR10d, SR10h, §9.6, §9.7]

@@ -247,6 +247,7 @@ fn body_of_no_return_statement_is_none() {
         name: TableName { auth: None, ident: "P".into(), at: 0 },
         arguments: Vec::new(),
         names: Vec::new(),
+        dynamic: Vec::new(),
     });
     let b = body_of(&st, &f, &defined(&f, call)).unwrap();
     assert!(b.body.is_none());

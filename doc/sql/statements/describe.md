@@ -57,6 +57,17 @@ them, comes first, and so on. Each column of the key has KEY_MEMBER 1,
 any other column 0, as do a column's parts and a dynamic parameter.
 DESCRIBE INPUT sets KEY_TYPE 0.
 
+Of a [CALL](call.md), DESCRIBE INPUT describes its input `?`s, those of
+its IN and INOUT parameters' arguments, and DESCRIBE OUTPUT its output
+ones, those of its OUT and INOUT parameters' arguments, in the order of
+the parameters. Each item names the parameter whose argument holds its
+`?`. PARAMETER_MODE is that parameter's mode, 1 of IN, 2 of INOUT and 4
+of OUT, and PARAMETER_ORDINAL_POSITION its position, from 1. The
+PARAMETER_SPECIFIC_CATALOG, PARAMETER_SPECIFIC_SCHEMA and
+PARAMETER_SPECIFIC_NAME fields name the procedure, by its specific name.
+Several `?` marks of one IN argument each have that parameter's fields.
+Of another statement, and of a part of an item, they are 0 and empty.
+
 A candidate key may not be unique. A query that selects rows alike
 still has one, all its columns. A query of at most one row has the empty
 set as its key, of no member.
@@ -127,6 +138,21 @@ s.execute("DESCRIBE INPUT PAY USING SQL DESCRIPTOR 'PAY_ROW'", &mut p)?;
 s.execute("GET DESCRIPTOR 'PAY_ROW' VALUE 1 N = TYPE", &mut p)?;                           // 4
 ```
 
+Of the procedure `MIXED (OUT TOTAL INTEGER, IN TIMES INTEGER, INOUT TAG
+VARCHAR(10))`, created first and so of the specific name MIXED_1
+([CREATE PROCEDURE](create-procedure.md)), TEXT holding `CALL MIXED(?, ?, ?)`:
+
+```rust
+s.execute("PREPARE MIX FROM TEXT", &mut p)?;
+s.execute("DESCRIBE INPUT MIX USING SQL DESCRIPTOR 'PAY_ROW'", &mut p)?;
+s.execute("GET DESCRIPTOR 'PAY_ROW' VALUE 2 N = PARAMETER_MODE, MY_ID = PARAMETER_ORDINAL_POSITION", &mut p)?;  // 2, 3
+s.execute("DESCRIBE OUTPUT MIX USING SQL DESCRIPTOR 'PAY_ROW'", &mut p)?;
+s.execute("GET DESCRIPTOR 'PAY_ROW' VALUE 1 N = PARAMETER_MODE, MY_NAME = PARAMETER_SPECIFIC_NAME", &mut p)?;  // 4, MIXED_1
+```
+
+The input items are TIMES, IN of position 2, and TAG, INOUT of 3. The
+output items are TOTAL, OUT of 1, and TAG.
+
 Refused, and an area SMALL, of 2 occurrences, too small:
 
 ```
@@ -141,7 +167,8 @@ DESCRIBE PAY USING SQL DESCRIPTOR 'SMALL'      warning 01005: SMALL has 2 occurr
 ISO/IEC 9075:1992 §17.8, of the `<using clause>` of §17.9 GR3 and GR4.
 The `<nesting option>` is ISO/IEC 9075-2:2023's [§20.9, §20.10 GR6f,
 GR7], and so are KEY_TYPE and KEY_MEMBER [§20.10 GR6d, GR7c, §4.27],
-Feature T301.
+Feature T301, and the PARAMETER fields of a CALL's items [§20.10 GR7e,
+Table 33].
 SQL-92 makes it no `<directly executable statement>` [§20.1]. SQL-86 has
 no dynamic SQL.
 

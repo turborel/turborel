@@ -29,7 +29,7 @@ type Using = (bool, UsingClause, usize);
 const PTF_SET: [DescriptorItem; 4] =
     [DescriptorItem::Name, DescriptorItem::CollationCatalog, DescriptorItem::CollationSchema, DescriptorItem::CollationName];
 
-const NOT_SET: [DescriptorItem; 11] = [
+const NOT_SET: [DescriptorItem; 16] = [
     DescriptorItem::ReturnedLength,
     DescriptorItem::ReturnedCardinality,
     DescriptorItem::ReturnedOctetLength,
@@ -41,6 +41,11 @@ const NOT_SET: [DescriptorItem; 11] = [
     DescriptorItem::Name,
     DescriptorItem::Unnamed,
     DescriptorItem::KeyMember,
+    DescriptorItem::ParameterMode,
+    DescriptorItem::ParameterOrdinalPosition,
+    DescriptorItem::ParameterSpecificCatalog,
+    DescriptorItem::ParameterSpecificSchema,
+    DescriptorItem::ParameterSpecificName,
 ];
 
 /// [ISO/IEC 9075-2:2023 §20.4] TOP_LEVEL_COUNT, a `<header item name>`.

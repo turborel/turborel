@@ -300,6 +300,7 @@ connection. A message with an empty tail is its first form exactly.
 | 17 | conditions | a list, each a failure as bytes | Complete |
 | 18 | time | total, queued, locks, each `u64` | Complete |
 | 19 | declared | a count `u32`, then of each column its type's name and its type as SQL writes it, strings | Prepared, Description |
+| 20 | called | a procedure's specific name, its schema and name, strings, then a count `u32` and of each `?` its mode `u8`, its parameter's ordinal position `u32` and its parameter type | Prepared |
 
 A message takes at most 32 attributes. A name is 1 to 64 bytes and a
 value at most 1024. More fails the connection.
@@ -386,6 +387,7 @@ mechanism of its own ([Plug-ins](04-plugins.md)).
 | `fetch-ends` | an Execute that ends the transaction ends it with its cursor, as the last row is fetched or the cursor closed |
 | `conditions` | a Complete carries its statement's conditions, tag 17, in place of Notices |
 | `declared-types` | a Prepared and a Description carry each column's declared type, tag 19 |
+| `parameter-modes` | a Prepared of a CALL carries its procedure and each `?` with its parameter's mode, tag 20 |
 | `debugger` | the request Debug, answered by Debugged or a Complete, and the Event the server sends unasked *(extension)* |
 
 The server ignores a name it does not know. A client never sends a
@@ -767,7 +769,7 @@ Prepared 'P'
   statement      u32
   parameters     a list of parameter
   columns        a list of column
-  tail           19 declared
+  tail           19 declared, 20 called
 ```
 
 A statement prepared, or described. The parameters are its inputs, in
@@ -777,6 +779,29 @@ the order of the procedure's parameters, named and typed as each; a
 statement of neither has none. A `?` of an OUT parameter is no input, so
 it has no parameter; one of an INOUT parameter is both, so it has one,
 and a column.
+
+#### Parameter modes
+
+With `parameter-modes` granted, a Prepared of a CALL of an SQL-invoked
+procedure ends with tag 20. It names the procedure's specific name and
+then every `?` of the statement in the order written, its OUT ones
+too. Each `?` has the mode of the procedure's parameter whose argument
+holds it, as 1 of IN, 2 of INOUT and 4 of OUT, that parameter's ordinal
+position from 1, and its type. Several `?` marks of one IN argument each
+have that parameter's mode and position. A Prepared of another
+statement, or of a procedure written in Rust, has no tag 20, and each
+of its parameters is IN. A mode of another code, or a position of 0,
+fails the connection.
+
+```text
+called
+  schema         string
+  name           string
+  parameters     a count u32, then of each ?
+    mode         u8, 1 IN, 2 INOUT, 4 OUT
+    ordinal      u32, from 1
+    type         a parameter
+```
 
 ### Description 'D'
 

@@ -141,7 +141,7 @@ fn points_are_cast_and_the_table_is_named_as_any() {
     assert_eq!(joined, ["10,11"]);
     // A ? of the start column's type, given the value read of it.
     let prepared = s.prepare("SELECT BALANCE FROM ACCOUNTS FOR SYSTEM_TIME AS OF ? WHERE ID = 1").unwrap();
-    assert_eq!(prepared.parameters().len(), 1);
+    assert_eq!(prepared.inputs().len(), 1);
     let mut read = s.open_cursor(&format!("SELECT S FROM ACCOUNTS FOR SYSTEM_TIME AS OF {first} WHERE ID = 1")).unwrap();
     let at = read.fetch().unwrap().and_then(|r| r.first().cloned()).unwrap();
     drop(read);
