@@ -668,6 +668,7 @@ verification approach DO-178C expects (§8).
 | D1044 | An IVF directory whose write fails frees the pages it made |
 | D1045 | A range join is costed as a plan of no order |
 | D1046 | A correlated subquery stays probed past its runs only if its kept plan is one probe of a whole unique key |
+| D1047 | A read, a write, an accept or a connect a signal interrupts is made again, and is no failure of a connection |
 
 ### The project
 
@@ -18223,6 +18224,36 @@ The runner now asks the kept plan whether it is one probe of a whole
 unique key (`physical::keepable`), found once and kept with the plan.
 A subquery whose kept plan is any other is decorrelated after the
 setting's runs, as D790 says.
+
+#### D1047. A read, a write, an accept or a connect a signal interrupts is made again, and is no failure of a connection
+
+A call that waits in the system under a timeout returns
+`ErrorKind::Interrupted` when a signal reaches its thread, or when its
+process is frozen and thawed, with nothing read, written or lost. The
+standard library's `read_exact`, `write_all` and `read_to_end` make the
+call again. A single `read`, `fill_buf`, `flush` or connect does not.
+The client's Terminate waits for the server's close by one `fill_buf`
+under its read timeout, and reported "cannot receive: Interrupted
+system call" (SQLSTATE 08006) for a server that had answered nothing
+wrong.
+
+Every such call is now made again while it is interrupted. In the
+client that is `timeouts::uninterrupted`, around Terminate's wait for
+the close, the debugger's wait for an event, the flush after a
+request's bytes and after a Cancel's, the TLS handshake's steps, and a
+connect by TCP or by a local socket, which makes its socket anew. In
+the server the thread that reads and writes a connection itself already
+made an interrupted read or write again (`native/wire.rs`), and now its
+flush too, which over TLS writes the session's last records. An accept
+that is interrupted is asked again at once, with no failure told and no
+backoff, for clients (`server.rs`) and for the members of a cluster
+(`replication/net.rs`).
+
+The reads and writes through the runtime are of sockets that do not
+block, which wait nowhere a signal could interrupt, and the replication
+crate reads and writes no socket itself. A wait made again begins its
+timeout again, so a call interrupted waits at most its timeout after
+the last signal.
 
 ## 2. Project layout
 

@@ -22,7 +22,7 @@ use crate::cancel::Canceller;
 use crate::frames::Answer;
 pub use crate::mechanism::{Certificate, Mechanism, Password, TlsChannel, Trust};
 use crate::target::Target;
-use crate::timeouts::{Bound, Limit, TERMINATE_WITHIN, Timeouts, io_failed, limit, tcp_to};
+use crate::timeouts::{Bound, Limit, TERMINATE_WITHIN, Timeouts, io_failed, limit, tcp_to, uninterrupted};
 use crate::told::{Offer, Told};
 
 /// What a client's errors are: what the server reports, as it reports it.
@@ -157,7 +157,7 @@ pub fn connect_local(
     user: &str,
     mechanism: &mut dyn Mechanism,
 ) -> Result<Connection<std::os::unix::net::UnixStream>> {
-    let stream = std::os::unix::net::UnixStream::connect(path).map_err(|e| io_failed("connect", &e))?;
+    let stream = uninterrupted(|| std::os::unix::net::UnixStream::connect(path)).map_err(|e| io_failed("connect", &e))?;
     let opened = Connection::open_within(stream, (user, mechanism), Timeouts::default())?;
     Ok(opened.reached_by(Target::Local(path.to_path_buf())))
 }
@@ -559,7 +559,7 @@ impl<S: Read + Write> Connection<S> {
         if let Some(bounded) = self.bounded {
             bounded(self.stream.get_ref(), Some(self.timeouts.read.unwrap_or(TERMINATE_WITHIN)))?;
         }
-        while !self.stream.fill_buf().map_err(|e| io_failed("receive", &e))?.is_empty() {
+        while !uninterrupted(|| self.stream.fill_buf().map(<[u8]>::is_empty)).map_err(|e| io_failed("receive", &e))? {
             match self.next_reply(Answer::One)? {
                 Reply::Error(failure) => return Err(failure),
                 // A notice or a status comes before the session's end is told.

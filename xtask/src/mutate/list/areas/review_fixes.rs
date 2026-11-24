@@ -4,12 +4,14 @@
 //! deterministic; COPY DESCRIPTOR with TYPE copies a scope; a slow
 //! statement keeps its text while its spills are only compressed; an IVF
 //! directory frees its pages when a write fails; a range join is a plan
-//! of no order; and a learned plan is not weighed as a unique probe.
+//! of no order; and a learned plan is not weighed as a unique probe. With
+//! them, a call of the client or the server a signal interrupts is made
+//! again (D1047).
 
 use super::super::{Mutation, Package};
 
 /// Each fix of the review, taken back, which its test must then fail.
-pub const REVIEW_FIXES: [Mutation; 7] = [
+pub const REVIEW_FIXES: [Mutation; 9] = [
     Mutation {
         name: "direct-join-by-a-key-not-unique",
         package: Package::Core,
@@ -79,5 +81,30 @@ pub const REVIEW_FIXES: [Mutation; 7] = [
         replacement: "        if kept.is_none() {",
         integration: &[],
         unit: &["exec::subquery::probed::tests::a_plan_learned_that_is_no_unique_probe_is_decorrelated_after_its_runs"],
+    },
+    Mutation {
+        name: "client-interrupted-call-fails",
+        package: Package::Client,
+        breaks: "a read or a flush of the client a signal interrupts fails its connection",
+        file: "client/src/timeouts.rs",
+        original: "                if e.kind() != io::ErrorKind::Interrupted {",
+        replacement: "                if e.kind() != io::ErrorKind::NotFound {",
+        integration: &[],
+        unit: &["frames::tests::a_read_or_a_flush_interrupted_is_asked_again"],
+    },
+    Mutation {
+        name: "server-interrupted-flush-fails",
+        package: Package::Server,
+        breaks: "a flush of a connection a thread writes itself, interrupted by a signal, fails the connection",
+        file: "server/src/native/wire.rs",
+        original: "        // write of them a signal interrupts is made again (RULES.md D1047).\n        loop {",
+        replacement: concat!(
+            "        // write of them a signal interrupts is made again (RULES.md D1047).\n",
+            "        if let Err(e) = direct.flush() {\n",
+            "            return if nothing_yet(&e) { Ok(false) } else { Err(cannot_send(&e)) };\n",
+            "        }\n        loop {",
+        ),
+        integration: &[],
+        unit: &["native::wire::interrupted::a_read_a_write_or_a_flush_interrupted_is_made_again"],
     },
 ];
