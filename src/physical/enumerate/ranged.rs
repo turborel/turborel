@@ -3,8 +3,8 @@
 //! a `<period predicate>` of two of them among them (RULES.md D581), so a
 //! join judging one may be a range join (`physical/range.rs`), costed with
 //! the other methods (`enumerate/methods.rs`); and the plan of one chosen,
-//! the operand of fewer rows sorted unless the left's order was chosen or
-//! the join is LEFT, whose left rows must search. A join whose conditions
+//! the operand of fewer rows sorted unless the join is LEFT, whose left
+//! rows must search. A join whose conditions
 //! can raise by their columns' declared types, or whose search finds no
 //! comparison in the end, is a nested loop instead.
 

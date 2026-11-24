@@ -127,8 +127,8 @@ impl Held {
 /// next columns, in order, all ascending, or all descending, when it is
 /// read backward. Some(backward) if so. Any null ordering is kept, as an
 /// index read in key order gives no null in them: its probe is true of no
-/// null, and a column it does not test is NOT NULL (`best_path`). Function
-/// lookups that may keep nulls are excluded by `best_path` (D34).
+/// null, and a column it does not test is NOT NULL (`candidate_path`). Function
+/// lookups that may keep nulls are excluded by `candidate_path` (D34).
 pub(super) fn index_order(columns: &[usize], fixed: usize, want: &[SortKey]) -> Option<bool> {
     let (held, free) = columns.split_at(fixed.min(columns.len()));
     let keys: Vec<&SortKey> = want.iter().filter(|k| !held.contains(&k.column)).collect();

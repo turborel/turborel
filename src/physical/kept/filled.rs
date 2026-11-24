@@ -172,12 +172,12 @@ impl Filling<'_> {
         plans.into_iter().map(|p| self.plan(p)).collect()
     }
 
-    /// The part run in parallel `p`, its plan filled.
     /// `plan` filled, boxed.
     fn boxed(&self, plan: Plan) -> Result<Box<Plan>> {
         Ok(Box::new(self.plan(plan)?))
     }
 
+    /// The part run in parallel `p`, its plan filled.
     fn parallel(&self, mut p: Box<crate::physical::Parallel>) -> Result<Plan> {
         p.input = self.plan(p.input)?;
         Ok(Plan::Parallel(p))

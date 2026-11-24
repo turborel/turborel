@@ -115,7 +115,8 @@ impl Space<'_> {
     }
 
     /// The cost of a probe of an index of `r`'s table by one of `keys`, if
-    /// the join is inner or LEFT and `r` is one relation one answers.
+    /// the join is inner, LEFT, a semi join or an antijoin and `r` is one
+    /// relation one answers.
     fn probe_cost(&self, kind: Kind, keys: &[(usize, usize)], r: Set) -> Option<f64> {
         if !matches!(kind, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) {
             return None;
