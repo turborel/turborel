@@ -42,7 +42,7 @@ use crate::sync::{Alone, lock_builtin};
 
 pub use activity::{Activity, Now, Tallied, Tallies, Tally, Waiting};
 pub(crate) use changed::Changed;
-pub(crate) use debugged::Debugged;
+pub(crate) use debugged::{Debugged, attached as debuggers_attached};
 pub use served::{MAX_NOTES, Served};
 
 /// The flag a session's statements look at.

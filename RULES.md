@@ -650,6 +650,7 @@ verification approach DO-178C expects (§8).
 | D1012 | The stack is one thread's: a function run on another thread is not debugged |
 | D1013 | A debugger's request its target's state refuses fails with SQLSTATE TBD01 |
 | D1014 | Each statement of a plain triggered action pauses as a frame of its trigger of its own |
+| D1015 | A statement first looks at how many debuggers the process has attached, a static |
 | D1030 | The routine debugger's messages are one request and one reply behind the capability `debugger`, and an Event sent unasked |
 | D1031 | A debugger attaches by a connection's ID to a session of its own user, or of any if its user sees every session, and is told of no other |
 | D1032 | An Event is sent only while the debugger's connection waits for a request, and a client takes it wherever it reads a reply |
@@ -17914,6 +17915,20 @@ statement would; the frame is popped as the statement ends, so a routine
 it invokes is a frame above it. A control statement among them is a
 program, whose own frame does that. With none attached each statement
 costs the one look at the flag (D1005).
+
+#### D1015. A statement first looks at how many debuggers the process has attached, a static
+
+The session's flag (D1005) is reached through its host: of a function a
+query evaluates, through the query's runner, whose `Stop` it finds by
+its transaction, under a lock, the first time it is asked. Asked as each
+statement of a function begins, that lookup would cost a function's
+invocation what it never paid before. So the process counts the
+debuggers attached (`stop/debugged.rs`, `ATTACHED`), raised as one
+attaches and lowered as it detaches or its target ends, and a statement,
+a CALL and a triggered action's statement look at that static first, one
+relaxed load: with none attached, no host is asked, no session's state
+is reached and nothing is made. Only while one is anywhere does a
+statement look at its own session's flag.
 
 #### D1030. The routine debugger's messages are one request and one reply behind the capability `debugger`, and an Event sent unasked
 
