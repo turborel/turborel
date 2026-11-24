@@ -316,8 +316,9 @@ fn closing() -> [&'static [Mutation]; 23] {
 /// External plug-ins' areas, in order: the plug-ins', the packages', the
 /// package files', the kinds', the SDK's, host plug-ins', the
 /// replication and archive host kinds', plug-in settings' and buffer
-/// eviction's, and the planner's.
-fn plugins() -> [&'static [Mutation]; 9] {
+/// eviction's, and the planner's; then the routine debugger's protocol's,
+/// as `last` holds no more.
+fn plugins() -> [&'static [Mutation]; 10] {
     [
         &super::plugins::PLUGINS,
         &super::plugins::PACKAGES,
@@ -328,6 +329,7 @@ fn plugins() -> [&'static [Mutation]; 9] {
         &super::plugins::replication::REPLICATION_PLUGINS,
         &super::plugins::settings::SETTINGS_PLUGINS,
         &super::plugins::planner::PLANNER,
+        &debugger_api::DEBUGGER_API,
     ]
 }
 
@@ -335,8 +337,8 @@ fn plugins() -> [&'static [Mutation]; 9] {
 /// adjacency index's, GRAPH_TABLE's and its joins', stored CHECKs' calls, simple features', partitioning's, UUID's,
 /// the memory budget's,
 /// the command-line client's, replication's, the server's, the native protocol's, the client library's,
-/// join enumeration's, the standard's gaps a benchmark found and the routine debugger's protocol's.
-fn last() -> [&'static [Mutation]; 49] {
+/// join enumeration's and the standard's gaps a benchmark found.
+fn last() -> [&'static [Mutation]; 48] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -386,6 +388,5 @@ fn last() -> [&'static [Mutation]; 49] {
         &super::client::CLIENT,
         &joins::JOINS,
         &super::std_gaps::STD_GAPS,
-        &debugger_api::DEBUGGER_API,
     ]
 }
