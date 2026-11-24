@@ -636,6 +636,13 @@ verification approach DO-178C expects (§8).
 | D1011 | A pause ends by itself after DEBUGGER.PAUSE_TIMEOUT_MS, a database setting |
 | D1012 | The stack is one thread's: a function run on another thread is not debugged |
 | D1013 | A debugger's request its target's state refuses fails with SQLSTATE TBD01 |
+| D1030 | The routine debugger's messages are one request and one reply behind the capability `debugger`, and an Event sent unasked |
+| D1031 | A debugger attaches by a connection's ID to a session of its own user, or of any if its user sees every session, and is told of no other |
+| D1032 | An Event is sent only while the debugger's connection waits for a request, and a client takes it wherever it reads a reply |
+| D1033 | The server waits on its debugger a slice at a time apart from the workers, the wait under way kept until its event is sent |
+| D1034 | A connection learns its own ID by a Debug request, so Ready keeps its first form |
+| D1035 | The client's debugger is methods of its connection, the events kept in it until read |
+| D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
 
 ### The project
 
@@ -17589,6 +17596,116 @@ misuses of the interface, not errors of an SQL statement. Each fails
 with SQLCODE -910 and SQLSTATE TBD01 of class TB, the implementation's
 own; a breakpoint in no routine, or past its last line, is -103, as a
 name of no object is, and in one its user may not debug, -104.
+#### D1030. The routine debugger's messages are one request and one reply behind the capability `debugger`, and an Event sent unasked
+
+Studio drives a routine running in one session from another connection,
+so the debugger needs messages of the native protocol, and the protocol
+stays at version 1 (D185). The capability `debugger` grants them, and a
+client that does not ask sees none of them.
+
+Each call the database's debugger offers (`turborel::debugger`) is a
+kind of one request, Debug, which carries its kind as its first octet,
+as Lob does (D79). What a call gives back is a kind of one reply,
+Debugged, or a Complete where it gives nothing. A third message, Event,
+is what the debugger hears of its target. Three frame kinds, not one a
+call, keep the protocol's list of kinds short, and a client that has
+the capability reads every one of them.
+
+The messages carry the database's own types (`Kind`, `Action`,
+`Paused`, `Frame`, `Event`), so what the client reads is what the
+database's debugger gave, with no copy of its own to keep in step. A
+breakpoint is the protocol's `DebugBreakpoint`, since the database's
+keeps the span of its line to itself. Values go as a Rows reply's do.
+
+#### D1031. A debugger attaches by a connection's ID to a session of its own user, or of any if its user sees every session, and is told of no other
+
+A debugger names its target by the connection's ID that
+INFORMATION_SCHEMA.CONNECTIONS shows, which CANCEL CONNECTION and END
+CONNECTION name it by too (D42). Attach finds that connection's session
+through the `Stop` the server keeps of it (`Present::session_of`), the
+handle another thread may hold of a session.
+
+A user attaches to the sessions of its own connections. The database's
+owner, and a user granted MONITOR, attach to any, as they see every
+connection in CONNECTIONS (D520, `Session::may_monitor`). An ID of
+another user's connection is refused as an ID of none (08003), so a
+user learns nothing of connections it cannot see. Attaching shows
+nothing by itself. What a debugger sees of the routines its target runs
+is what its user owns or holds DEBUG on (D1000, D1008).
+
+#### D1032. An Event is sent only while the debugger's connection waits for a request, and a client takes it wherever it reads a reply
+
+A request's replies come in a fixed order (D393), and an Event within
+them would break it. The server sends an Event only from the
+connection's task as it waits for the client's next request
+(`native/debugging.rs`). A request that comes first is read, and the
+event waits until the request is answered.
+
+The client may have sent a request as the Event went, so it reads one
+wherever it reads a reply. It keeps the Event, as it keeps a Notice
+(D187), and reads on. `Reply::ends_request` says an Event ends no
+request, so a reader that drains a request's replies (D393) reads past
+it. A debugger's requests are short, so an event waits at most for one
+of them.
+
+#### D1033. The server waits on its debugger a slice at a time apart from the workers, the wait under way kept until its event is sent
+
+The database's debugger is waited on by blocking (`Debugger::wait`). A
+worker held for the wait would take a worker from the statements of
+every connection while a debugger is attached, so the wait runs on a
+thread of the runtime's for blocking work, as the watch of a client
+gone does (D335).
+
+Each wait lasts at most a slice of 100 milliseconds, the time a
+connection whose request runs is looked at again. A request that comes
+first drops the read of it, but not the wait, which is kept and looked
+at again once the connection next waits, so an event a wait took is
+never lost. The debugger is dropped once a Detach or the connection's
+end lets go of it and the wait under way ends, so its target hears of
+the detach within a slice.
+
+A wait judges a breakpoint's condition in a session (D1009), and the
+connection's own session is lent to workers for its requests, so it
+cannot be lent to the wait as well. The server opens a second session
+of the debugger's user as it attaches, and the wait holds it while it
+runs. A condition reads the frame's values, which are the same in
+either session.
+
+#### D1034. A connection learns its own ID by a Debug request, so Ready keeps its first form
+
+A program that debugs its own other connection must know that
+connection's ID. CONNECTIONS shows the IDs, but two connections of one
+user look alike there. Ready could carry the ID in a tail, but Ready has
+no tail in the first form, and every client reads it. A Debug request,
+Identify, answers with the connection's ID instead, under the same
+capability.
+
+#### D1035. The client's debugger is methods of its connection, the events kept in it until read
+
+The client's `Connection` gains `debug_id`, `debug_attach`,
+`debug_detach`, `debug_break`, `debug_clear`, `debug_breakpoints`,
+`debug_resume`, `debug_interrupt`, `debug_stack` and `debug_wait`
+(`client/src/debug.rs`). Each is one request and its reply, as the
+other calls are. A connection is blocking, so the events the server
+sends wait in it (`Told::events`). `debug_wait` gives the first kept,
+or waits for the next frame for at most the time it is given. Waiting
+looks for the first octet of a frame with the stream's timeout set to
+that time, and reads nothing of it, so a timeout loses no frame and
+the connection goes on.
+
+#### D1036. The command-line client drives the debugger by `\debug` and a word, one call each
+
+The client's commands that act on its connection, as `\conninfo` and
+`\password`, are backslash commands (D210). The debugger is one command,
+`\debug`, and a word after it for each call. `\debug wait` waits for the
+next event, so a script reads the target's pauses in order. A
+breakpoint's condition is the rest of its line, taken as typed, so its
+quotes are SQL's, not the command's. A pause is written as its call
+stack, the innermost frame first, as a debugger shows it. The routine's
+name is read as SQL reads an identifier, folded to upper case unless
+quoted. A breakpoint is shown by the specific name of the routine it
+is in, as the engine keeps it, so an overloaded name's breakpoints
+are told apart.
 
 ## 2. Project layout
 

@@ -238,6 +238,9 @@ behind it, and each can be replaced or added to.
 - Stored procedures and functions in SQL/PSM, with variables, cursors,
   handlers, loops and SIGNAL, grouped into modules if wished, and
   polymorphic table functions that take whole tables as arguments.
+- [A routine debugger](doc/user/11-debugging.md): one connection attaches
+  to another's session and steps through its procedures, functions and
+  triggers by breakpoints, reading their stack and variables.
   A procedure's body is compiled as it is first called, its key reads
   and its changes run straight by the plans kept of them.
 - Triggers before, after and instead of a change, for each row or

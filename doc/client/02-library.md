@@ -401,6 +401,35 @@ that stopped the rest.
 statement open at once, each by a number of the program's, and
 `describe_cursor` gives an open cursor's columns.
 
+## Debugging routines
+
+*(extension)* With `debugger` granted, one connection drives the
+routines another connection's session runs
+([Debugging Routines](../user/11-debugging.md)). `debug_id` gives a
+connection's ID, and `debug_attach` attaches another connection to its
+session. `debug_break` sets a breakpoint at a line of a procedure's, a
+function's or a trigger's text, `debug_clear` clears one and
+`debug_breakpoints` lists them. `debug_wait` gives the next event of
+the target, a pause with its call stack, a timeout, a cancel or its
+end, waiting at most the time it is given. `debug_stack` gives the
+pause again, `debug_resume` lets the paused session go on, a step into,
+over or out, or to a breakpoint, and `debug_interrupt` pauses it at its
+next statement. `debug_detach` ends the debugging.
+
+```rust
+use turborel_client::debug::{Action, Event, Kind};
+let mut target = connect("127.0.0.1:7422", "ANN", &mut Trust)?;
+let mut debugger = connect("127.0.0.1:7422", "ANN", &mut Trust)?;
+debugger.debug_attach(target.debug_id()?)?;
+let routine = QualifiedName { auth: String::new(), ident: "RAISE_PAY".into() };
+debugger.debug_break((Kind::Procedure, &routine), 4, None)?;
+// The target's CALL RAISE_PAY(10) runs on another thread.
+if let Some(Event::Paused(paused)) = debugger.debug_wait(Some(Duration::from_secs(10)))? {
+    let top = paused.frames.last();
+    debugger.debug_resume(Action::Continue)?;
+}
+```
+
 ## Copying and exporting
 
 `copy_in` begins a copy of rows into a table, of the columns named, or

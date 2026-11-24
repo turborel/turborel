@@ -386,6 +386,7 @@ mechanism of its own ([Plug-ins](04-plugins.md)).
 | `fetch-ends` | an Execute that ends the transaction ends it with its cursor, as the last row is fetched or the cursor closed |
 | `conditions` | a Complete carries its statement's conditions, tag 17, in place of Notices |
 | `declared-types` | a Prepared and a Description carry each column's declared type, tag 19 |
+| `debugger` | the request Debug, answered by Debugged or a Complete, and the Event the server sends unasked *(extension)* |
 
 The server ignores a name it does not know. A client never sends a
 request, or a tail field, of a capability it was not granted. One that
@@ -676,6 +677,64 @@ table of the column store that holds no row yet to be frozen, and sets
 COLUMNSTORE.LOAD to GROUPS, takes the lock as well, and writes the rows it inserts straight into frozen
 groups, which other transactions see once it commits.
 
+### Debug 'V'
+
+```text
+Debug 'V'
+  what           u8, then by what
+  0 identify
+  1 attach       connection u64
+  2 detach
+  3 break        kind u8, schema string, name string, line u32,
+                 conditioned flag, the condition string if 1
+  4 clear        number u32
+  5 breakpoints
+  6 resume       action u8
+  7 interrupt
+  8 stack
+```
+
+With `debugger` *(extension)*. What a debugger's connection asks of the
+session it debugs, the session of another connection. The routine
+debugger is described in
+[Debugging Routines](../user/11-debugging.md).
+
+Identify is answered with Debugged of this connection's ID, the ID
+INFORMATION_SCHEMA.CONNECTIONS shows, which another connection attaches
+to it by. Attach makes this connection the debugger of the session of
+the connection of that ID. That must be a connection of the same user,
+unless the user is the database's owner or holds the role MONITOR, as
+CONNECTIONS shows the connections a user sees. Any other ID is refused
+with 08003, whether no such connection is served or the user may not
+see it. Detach ends the debugging. The debugger's breakpoints go, and
+its target, if paused, goes on. Attach, Detach, Clear, Resume and
+Interrupt are answered with a Complete.
+
+Break sets a breakpoint at a line, from 1, of the text of a routine or a
+trigger. Its kind is 0 a procedure, 1 a function, 2 a trigger. The name
+is the routine's specific name, or its name if one routine of that kind
+has it, or the trigger's name. An empty schema is the debugger's
+session's default schema. The condition, a `<search condition>` over the
+frame's parameters and variables, pauses only where it is true. It is
+answered with Debugged of the breakpoint set. Clear clears the
+breakpoint of that number. Breakpoints is answered with Debugged of
+every breakpoint set, in the order they were set.
+
+Resume tells the paused target how to go on: 0 into, to its next
+statement in whatever frame; 1 over, to the next of this frame or one it
+returns to; 2 out, to the next of the frame this one returns to; 3
+continue, to a breakpoint. Interrupt tells the running target to pause at
+its next statement. Stack is answered with Debugged of the target's
+pause, if it is paused.
+
+The debugger sees into, and pauses in, only the routines its user owns
+or holds DEBUG on ([GRANT DEBUG](../sql/statements/grant-debug.md)). A
+breakpoint in another is refused with 42000, SQLCODE -104. A request of
+an action the target's state does not allow, as Resume of a target not
+paused, a second Attach, or any but Identify and Attach of a connection
+attached to none, is refused with TBD01, SQLCODE -910. The session goes on
+after each.
+
 ## Replies
 
 ### Challenge 'C'
@@ -907,6 +966,66 @@ Pong 'G'
 
 With `ping`. The answer to Ping.
 
+### Debugged 'V'
+
+```text
+Debugged 'V'
+  what           u8, then by what
+  0 connection   ID u64
+  1 breakpoint   a breakpoint
+  2 breakpoints  count u32, then each a breakpoint
+  3 stack        paused flag, the pause if 1
+
+breakpoint       number u32, schema string, name string, line u32,
+                 conditioned flag, the condition string if 1
+```
+
+With `debugger` *(extension)*. What a Debug request gave back, but a
+completion. A breakpoint names its routine by its specific name.
+
+### Event 'W'
+
+```text
+Event 'W'
+  what           u8, then by what
+  0 paused       a pause
+  1 timed out
+  2 cancelled
+  3 ended
+
+pause            reason u8, 0 a breakpoint, its number u32; 1 a step;
+                 then frames, count u32, then each a frame,
+                 the outermost first
+frame            has origin flag, then if 1 kind u8, schema string,
+                 specific name string, schema string, name string;
+                 visible flag; has place flag, the character u64 if 1;
+                 has line flag, line u32 and column u32 if 1;
+                 parameters, count u32, then each a named;
+                 variables, count u32, then each a named;
+                 cursors, count u32, then each name string,
+                 open flag, query string
+named            name string, data type string as SQL writes it, value
+```
+
+With `debugger` *(extension)*. What the debugger hears of its target,
+sent unasked. It is sent only while the debugger's connection waits for
+its next request, never among the replies of one. A client reads it
+wherever it reads a reply, and an Event never ends a request's replies.
+
+Paused says the target paused at a breakpoint or at the end of a step,
+and gives its call stack. Each frame is a run of a routine's or a
+trigger's body, its routine named by its specific name and by its name.
+A frame of a statement run directly has no origin. A frame the debugger
+may not see into is not visible, and shows its origin alone. Its place
+is in characters from the beginning of the routine's text, and its line
+and column count from 1. A trigger's parameters are its transition
+variables.
+
+Timed out says the target, paused longer than
+DEBUGGER.PAUSE_TIMEOUT_MS, went on by itself. Cancelled says its
+statement was cancelled while it was paused. Ended says the target's
+session ended, and the debugger is detached.
+
 ## Conversations
 
 A statement's replies come in a fixed order. Rows come first, then any
@@ -970,6 +1089,25 @@ client  Reset
 server  Notice     01T01, "[DESIGN] Reset rolled back the transaction that was active"
 server  Status...  every setting
 server  Complete   0, 00000, active 0
+```
+
+A debugger, connection 2, debugging the session of connection 1. The
+target's connection runs its CALL as ever, and its Complete comes once
+the procedure ends.
+
+```text
+client 2 Debug     attach 1
+server 2 Complete  0, 00000, active 0
+client 2 Debug     break procedure "" "RAISE", line 4, no condition
+server 2 Debugged  breakpoint 1, ANN.RAISE, line 4
+client 1 Query     sql "CALL RAISE(10)", ends 1
+server 2 Event     paused at breakpoint 1, frames [ANN.RAISE line 4]
+client 2 Debug     resume over
+server 2 Complete  0, 00000, active 0
+server 2 Event     paused, a step, frames [ANN.RAISE line 5]
+client 2 Debug     resume continue
+server 2 Complete  0, 00000, active 0
+server 1 Complete  0, 00000, active 0, time
 ```
 
 ## Errors and notices

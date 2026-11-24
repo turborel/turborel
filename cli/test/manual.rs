@@ -140,6 +140,18 @@ impl Write for Screen {
     }
 }
 
+/// What the client shows as `agent` runs `sql`, with the options `given`,
+/// null shown as the manual shows it.
+fn shown_over(agent: &mut Agent<Dialer>, mut given: turborel_cli::Options, sql: &str) -> String {
+    given.inputs = vec![command(sql)];
+    NULL_SHOWN.clone_into(&mut given.null);
+    let screen = Screen::default();
+    let (mut out, mut err) = (screen.clone(), screen.clone());
+    let io = Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
+    turborel_cli::run(agent, &given, io);
+    String::from_utf8(screen.0.take()).unwrap()
+}
+
 /// The client, connected to `server` as `user`, its session kept from one
 /// example to the next; dropped, its connection before its server.
 struct Client {
@@ -162,15 +174,9 @@ impl Client {
     /// What the client shows as it runs `sql`, null shown as the manual
     /// shows it.
     fn shown(&mut self, sql: &str) -> String {
-        let mut given = options(&self.server, vec![command(sql)]);
+        let mut given = options(&self.server, vec![]);
         given.user.clone_from(&self.user);
-        NULL_SHOWN.clone_into(&mut given.null);
-        let screen = Screen::default();
-        let (mut out, mut err) = (screen.clone(), screen.clone());
-        let io =
-            Io { input: &mut "".as_bytes(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
-        turborel_cli::run(&mut self.agent, &given, io);
-        String::from_utf8(screen.0.take()).unwrap()
+        shown_over(&mut self.agent, given, sql)
     }
 
     /// Runs each example of SQL of `page`, in order: each shows the output

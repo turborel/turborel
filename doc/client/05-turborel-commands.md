@@ -494,6 +494,21 @@ turborel> \c - BOB
 Connected to turborel 0.0.0 (alpha) as BOB, by the connection TURBOREL_1.
 ```
 
+## Debugging routines
+
+*(extension)* `\debug` and a word drive the routines another
+connection's session runs, one call of the client's debugger each
+([Debugging Routines](../user/11-debugging.md)). `\debug id` names this
+connection's ID, and `\debug attach ID` attaches to the session of the
+connection ID. `\debug break KIND NAME LINE [CONDITION]` sets a
+breakpoint, KIND `procedure`, `function` or `trigger`, the condition the
+rest of the line as typed. `\debug clear N` and `\debug breakpoints`
+clear and list them. `\debug wait [SECONDS]` waits for the session to
+pause, without limit if no time is given, and shows its call stack.
+`\debug step [into | over | out]` and `\debug continue` let it go on,
+`\debug interrupt` pauses it, `\debug stack` shows it again, and
+`\debug detach` ends the debugging.
+
 ## Statement help
 
 `\h` lists the statements, and `\h NAME` writes one statement's
