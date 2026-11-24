@@ -1,8 +1,8 @@
 //! \[DESIGN\] Building a whole index from its entries: "run Vamana on a
 //! dataset P and store the resulting graph on an SSD" [DiskANN, NeurIPS
 //! 2019 §3.1]. Entries are numbered and written as nodes without edges as
-//! they come, a seeded reservoir sample kept for k-means and the codes'
-//! training, and their vectors kept in memory while they fit the build
+//! they come, a seeded reservoir sample kept for k-means, and their
+//! vectors kept in memory while they fit the build
 //! memory (reserved of the budget). Then two Vamana passes in memory
 //! (`vamana.rs`), or, past the memory, the merged build (`merged.rs`),
 //! give the edges; the codes are trained and written, the row map is
