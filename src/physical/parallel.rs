@@ -31,7 +31,7 @@ mod inputs;
 
 use std::sync::OnceLock;
 
-use super::Plan;
+use super::{Plan, SemiMethod};
 use crate::db::State;
 use crate::index::Probe;
 use crate::logical::{AggCall, Cond, Expr, SetOp};
@@ -156,11 +156,35 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
         {
             return outside(asked, input, deeper);
         }
+        if let Plan::SemiJoin(s) = plan
+            && s.method == SemiMethod::BuildLeft
+        {
+            walk(asked, &mut s.left, deeper);
+            return marking(asked, &mut s.right, deeper);
+        }
         return plan.each_input(&mut |input| walk(asked, input, deeper));
     }
     outside(asked, plan, deeper);
     let input = std::mem::replace(plan, Plan::Values { rows: Vec::new(), detail: String::new() });
     *plan = Plan::Parallel(Box::new(Parallel { degree, input }));
+}
+
+/// \[DESIGN\] (RULES.md D1070) Marks `right`, the right operand of a semi
+/// join that builds its left: a stream of rows enough is a part run in
+/// parallel, though a serial scan by batch would serve a reader of its
+/// rows better (`by_batch`), as its morsels' batches mark the left's held
+/// rows on the threads that read them and no row is made of them
+/// (`exec/batch/joined/semi/marked.rs`); any other is walked as any
+/// input.
+fn marking(asked: Asked<'_>, right: &mut Plan, depth: usize) {
+    let degrees = super::Degrees { most: asked.most, morsel: asked.morsel, least: asked.least };
+    let degree = stream(right).map_or(1, |rows| degrees.degree(rows));
+    if degree < 2 || depth >= MAX_DEPTH {
+        return walk(asked, right, depth);
+    }
+    outside(asked, right, depth.saturating_add(1));
+    let input = std::mem::replace(right, Plan::Values { rows: Vec::new(), detail: String::new() });
+    *right = Plan::Parallel(Box::new(Parallel { degree, input }));
 }
 
 /// Marks the parts of the inputs of `plan`, a part, but its pipelines:

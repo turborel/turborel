@@ -661,6 +661,8 @@ verification approach DO-178C expects (§8).
 | D1034 | A connection learns its own ID by a Debug request, so Ready keeps its first form |
 | D1035 | The client's debugger is methods of its connection, the events kept in it until read |
 | D1036 | The command-line client drives the debugger by `\debug` and a word, one call each |
+| D1070 | A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows |
+| D1071 | A hashed semi join of streams read row by row is made of its batches |
 
 ### The project
 
@@ -18105,6 +18107,56 @@ name is read as SQL reads an identifier, folded to upper case unless
 quoted. A breakpoint is shown by the specific name of the routine it
 is in, as the engine keeps it, so an overloaded name's breakpoints
 are told apart.
+
+#### D1070. A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows
+
+The planner builds the left operand of a semi join or an antijoin when
+it has fewer rows than the right (D540). Read by batch, the join built
+its right whatever the plan said. So EXISTS of an order's line items
+held every line item, on the statement's thread, and past the work area
+as rows in a table of the spill area. A join planned to build its left
+now does so by batch (`exec/batch/joined/semi/marked.rs`). The left is
+held as one batch in a join's table (D368), a mark beside each row. The
+right is read once, each of its rows marking the held rows it matches.
+The held rows are then given in their order, those marked, or of an
+antijoin those not. A held row of a null key is in no table, so no row
+marks it, as the join that builds its right finds no match for it.
+
+The right operand is told a runtime filter of each key (D369), of an
+antijoin too. A right row whose key no held row has marks none, so
+leaving it out changes no mark. It is told one only of a left of no more
+rows than a filter lists the keys of (D600). The scan then reads little
+but those keys' rows. Of a larger left the filter is a range and a few
+spans. Judging them costs each row read a comparison, and spares it only
+a look into the held rows' table, which costs as little. Measured on the
+EXISTS of line items, the filter of a larger left made the query slower.
+
+The right operand of such a join is a part run in parallel when it is a
+stream of rows enough (`physical/parallel.rs`), though a serial scan by
+batch serves a reader of rows better (D291). Its morsels' batches mark
+on the threads that read them (`exec/parallel/each.rs`), and no row is
+made of them. A mark is only ever set, and the held rows are read after
+every morsel ended, so the rows given do not depend on the threads. The
+first morsel that fails, in the order of their numbers, is the error
+raised (D15).
+
+A left operand asked for in an order is read, held and given in it. One
+past the work area gives way to the join that builds its right, the
+batches read of it given first (D38). A semi join's rows are asked for
+in an order only if its left operand's are, so a join over a semi join
+reads it by batch.
+
+#### D1071. A hashed semi join of streams read row by row is made of its batches
+
+An operator that reads its input a row at a time, as a sort of rows not
+held whole does, ran a semi join under it by the row path. Its operands
+were then read a row at a time, of the column store too, each value
+decoded alone, on one thread. A hashed semi join or antijoin of streams
+every table of which reads by batch is now made of its batches whoever
+reads it (`exec/join/semi.rs`), while EXECUTOR.BATCHES is on, and its
+rows made of them. Its operands are read by batch, and by morsels where
+D1070 says so. The rows are the row path's, in the left's order where
+one is asked.
 
 ## 2. Project layout
 

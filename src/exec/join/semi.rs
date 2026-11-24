@@ -20,7 +20,7 @@
 //! The left is read in order, so the rows are in its order.
 
 use super::super::work::Work;
-use super::super::{RowIter, Runner, broken, column, eval_cond, execute, failed};
+use super::super::{RowIter, Runner, batch, broken, column, eval_cond, execute, failed};
 use super::{Built, Full, Operand, Rescanned, Right, equal, key};
 use crate::error::Result;
 use crate::exec::Db;
@@ -37,6 +37,12 @@ use crate::value::{Bucket, key_equal};
 /// R-CF-6).
 #[inline(never)]
 pub(in crate::exec) fn semi(plan: Plan, db: &Db, tx: TxId) -> RowIter {
+    if let Some((columns, width)) = by_batch(&plan, db) {
+        return match batch::whole_batches(plan, db, tx) {
+            Ok(batches) => batch::rows_of(batches, columns, width),
+            Err(e) => failed(e),
+        };
+    }
     let Plan::SemiJoin(s) = plan else { return failed(broken("a semi join is not one")) };
     let SemiJoin { anti, method, left, right, keys, cond, .. } = *s;
     let judge = Judge { keys, cond, anti, runner: Runner::new(db, tx) };
@@ -59,6 +65,21 @@ pub(in crate::exec) fn semi(plan: Plan, db: &Db, tx: TxId) -> RowIter {
             }
         }
     }
+}
+
+/// \[DESIGN\] (RULES.md D1071) The columns the batches of the semi join
+/// `plan` hold, and its rows' width, if its rows are made of its batches
+/// though an operator reads it row by row, as a sort of rows not held
+/// whole does: a hashed join of streams (`batch::layout`) every table of
+/// which reads by batch, while the database reads by batch
+/// (EXECUTOR.BATCHES). Its operands are then read by batch, and by
+/// morsels where the plan says so (`batch/joined/semi.rs`), not a row at
+/// a time, and it gives its left's rows in the order the row path does.
+fn by_batch(plan: &Plan, db: &Db) -> Option<(Vec<usize>, usize)> {
+    if !crate::exec::batched(db) || !batch::reads_by_batch(plan, db) {
+        return None;
+    }
+    batch::layout(plan, db)
 }
 
 /// Whether a right row matches a left row: its keys, the rest of the

@@ -88,9 +88,20 @@ impl Pipeline {
     ///
     /// As building an operand fails.
     pub(super) fn of(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Pipeline>> {
+        Pipeline::told(plan, (db, tx), (limit, &[]))
+    }
+
+    /// As `Pipeline::of`, its rows judged by the runtime filters `told`
+    /// of their columns, each taken down the stream as far as it goes
+    /// (RULES.md D389, D1070).
+    ///
+    /// # Errors
+    ///
+    /// As building an operand fails.
+    pub(super) fn told(plan: &Plan, (db, tx): (&Db, TxId), (limit, told): (&Limit, &[Told])) -> Result<Held<Pipeline>> {
         let rows = db.settings.count(EXECUTOR_MORSEL_ROWS).max(1);
         let mut branches = Vec::new();
-        if !branched(plan, (db, tx, rows), (limit, &[]), &mut branches)? {
+        if !branched(plan, (db, tx, rows), (limit, told), &mut branches)? {
             return Ok(Held::GaveWay);
         }
         let batched = super::batched::by_batch(&branches, db);

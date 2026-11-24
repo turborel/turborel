@@ -2,15 +2,20 @@
 //! D541): the rows a built left keeps, the right rows a hashed join
 //! holds, the conflict rule that lets an inner join reassociate over one,
 //! NOT IN's exact truth with nulls, and the set functions and joins the
-//! reduction to semi joins takes.
+//! reduction to semi joins takes, and the marks of a left built by batch
+//! (D1070).
 
 use super::super::{Mutation, Package};
 
 /// The test that compares every form made a semi join with its subquery.
 const MATCHED: &str = "decorrelation::semi::semi_joins_match_the_subqueries";
 
+/// The test that compares each join that builds its left by batch with
+/// its subquery (RULES.md D1070).
+const BUILT_LEFT: &str = "marked_semi::a_built_left_gives_the_rows_of_its_subquery";
+
 /// Mechanisms whose removal must fail the semi join requirements.
-pub const SEMI_JOINS: [Mutation; 7] = [
+pub const SEMI_JOINS: [Mutation; 10] = [
     Mutation {
         name: "semi-built-left-keeps-matched",
         package: Package::Core,
@@ -82,6 +87,36 @@ pub const SEMI_JOINS: [Mutation; 7] = [
         original: "let semi = !needed.iter().any(|&c| c >= lw) && ",
         replacement: "let semi = !needed.iter().any(|&c| c > lw + 1_000) && ",
         integration: &["join_order_workload::every_query_agrees_reduced_to_semi_joins"],
+        unit: &[],
+    },
+    Mutation {
+        name: "semi-marked-anti-keeps-marked",
+        package: Package::Core,
+        breaks: "an antijoin that builds its left by batch gives the held rows a right row marked, as a semi join does",
+        file: "src/exec/batch/joined/semi/marked.rs",
+        original: "if self.held.marked(self.at) != self.anti {",
+        replacement: "if self.held.marked(self.at) {",
+        integration: &[BUILT_LEFT],
+        unit: &[],
+    },
+    Mutation {
+        name: "semi-marked-unknown-pair-marks",
+        package: Package::Core,
+        breaks: "a right row marks a held row of its key though the condition beyond the keys is unknown of the pair",
+        file: "src/exec/batch/joined/semi/marked.rs",
+        original: "Ok(eval_cond(cond, scratch, runner)? == Truth::True)",
+        replacement: "Ok(eval_cond(cond, scratch, runner)? != Truth::False)",
+        integration: &[BUILT_LEFT],
+        unit: &[],
+    },
+    Mutation {
+        name: "semi-marking-right-serial",
+        package: Package::Core,
+        breaks: "the right operand of a semi join that builds its left is no part run in parallel",
+        file: "src/physical/parallel.rs",
+        original: "if degree < 2 || depth >= MAX_DEPTH {",
+        replacement: "if degree < usize::MAX || depth >= MAX_DEPTH {",
+        integration: &[BUILT_LEFT],
         unit: &[],
     },
 ];
