@@ -56,6 +56,20 @@ impl Sent {
         }
     }
 
+    /// \[DESIGN\] (RULES.md D1110) The states of the groups at `order`,
+    /// in that order.
+    pub(super) fn gathered(&self, order: &[u32]) -> Sent {
+        if let Sent::Typed(typed) = self {
+            return Sent::Typed(typed.gathered(order));
+        }
+        let (mut bytes, mut ends) = (Vec::new(), Vec::with_capacity(order.len()));
+        for &i in order {
+            self.write(crate::storage::mask::index(i), &mut bytes);
+            ends.push(bytes.len());
+        }
+        Sent::Written { bytes, ends }
+    }
+
     /// Group `i`'s state, written to `out`: whether it has one.
     fn write(&self, i: usize, out: &mut Vec<u8>) -> bool {
         match self {
@@ -140,6 +154,40 @@ impl States {
             return never_written();
         }
         self.merge_written((g, agg), &state)
+    }
+
+    /// \[DESIGN\] (RULES.md D1110) Merges each group at `places` of
+    /// `other` into the group of `groups` beside it: two columns of one
+    /// kind in one loop, else group by group as `merge` does.
+    ///
+    /// # Errors
+    ///
+    /// As `merge`.
+    pub(super) fn merge_all(&mut self, agg: &AggCall, groups: &[u32], (other, places): (&Sent, &[u32])) -> Result<()> {
+        if let (States::Typed(typed), Sent::Typed(theirs)) = (&mut *self, other)
+            && typed.merge_all(groups, theirs, places)?
+        {
+            return Ok(());
+        }
+        for (&g, &i) in groups.iter().zip(places) {
+            self.merge((crate::storage::mask::index(g), agg), (other, crate::storage::mask::index(i)))?;
+        }
+        Ok(())
+    }
+
+    /// Adds `more` groups', fed nothing.
+    pub(super) fn grow_by(&mut self, more: usize) {
+        match self {
+            States::Typed(typed) => typed.grow_by(more),
+            States::Boxed(boxed) => (0..more).for_each(|_| boxed.grow()),
+        }
+    }
+
+    /// Room for `more` groups more, of a column.
+    pub(super) fn reserve(&mut self, more: usize) {
+        if let States::Typed(typed) = self {
+            typed.reserve(more);
+        }
     }
 
     /// Merges `state`, as `Accumulator::write_state` writes it, into group

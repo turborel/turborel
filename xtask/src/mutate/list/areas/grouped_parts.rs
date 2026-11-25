@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 3] = [
+pub const GROUPED_PARTS: [Mutation; 4] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -36,5 +36,15 @@ pub const GROUPED_PARTS: [Mutation; 3] = [
         replacement: "&& matches!(**input, Plan::Distinct { streamed: false, .. })\n    {",
         integration: &["grouped_parts::a_having_condition_is_judged_by_its_part"],
         unit: &[],
+    },
+    Mutation {
+        name: "having-part-keeps-dropped",
+        package: Package::Core,
+        breaks: "a part gives the groups its HAVING condition drops, judged before they take a row (RULES.md D1111)",
+        file: "src/exec/table.rs",
+        original: "if kept(&row)? {",
+        replacement: "if !kept(&row)? {",
+        integration: &["grouped_parts::a_having_condition_is_judged_by_its_part"],
+        unit: &["exec::table::made::tests::groups_kept_are_finished_alone"],
     },
 ];

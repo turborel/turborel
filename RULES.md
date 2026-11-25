@@ -687,6 +687,8 @@ verification approach DO-178C expects (§8).
 | D1075 | A hashed semi join's or antijoin's probe is a step of its left operand's pipeline |
 | D1076 | A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline |
 | D1077 | NOT IN of columns that hold no null is an antijoin hashed on their equality |
+| D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
+| D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
 
 ### The project
 
@@ -18692,6 +18694,47 @@ and the rule that makes the antijoin writes it so
 step of its left operand's pipeline (D1075). A column that may hold a
 null on either side keeps the condition as it was, so NOT IN keeps its
 exact meaning.
+
+#### D1110. A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room
+
+A grouping run in parallel groups each morsel in a table of its own and
+merges the morsels' groups by partition (D293, D356). Each group was
+merged alone. Its key was read as a cell and compared and appended by
+its kind, and each set function's state was merged by its kind, group
+after group. Each morsel's table and each partition's grew a vector a
+group at a time, and a morsel's groups were split among the partitions
+into a vector a partition. Of a grouping of many groups, as one by an
+order's key over its line items, the merge and the allocator took more
+time than grouping the rows did.
+
+A partition now merges a morsel's groups a column at a time
+(`exec/table/made.rs`). Each group is looked up by the hash it came
+with. A morsel's groups are of distinct keys, so those not found are
+all new, and they are appended lane by lane, integers in one loop, and
+then placed. Each set function's states are then merged in one loop,
+the kind of the two columns and their scale compared once
+(`exec/table/states/typed/merged.rs`). Columns of different kinds, and
+accumulators, merge group by group as before. A table placed by keyed
+hashes (D357) makes its new groups one by one, and one whose probe
+grows long as new groups are placed turns keyed with every group
+placed.
+
+A morsel's table is made with room for the groups the morsel last
+grouped made, so its vectors and slots are made once. A partition's
+table is given room for every group of the wave it merges. The places
+of a morsel's groups are kept partition after partition in one vector,
+counted and then placed, in place of a vector a partition. None of
+this changes a group, its number or the order the groups are given in.
+
+#### D1111. A HAVING condition judged by its grouping's part is judged of a group before the group takes a row
+
+A part that judges its grouping's HAVING condition (D1073) finished
+every group into a row of its own and then dropped the rows the
+condition was not true of. Of many groups few of which are kept, the
+rows made and freed cost more than judging them. Each group's row is
+now made in the room of one row, the condition is judged of it there,
+and only a group kept takes a row of its own (`exec/table.rs`). The
+groups kept, their rows and their order are as before.
 
 ## 2. Project layout
 
