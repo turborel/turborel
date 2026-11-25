@@ -61,7 +61,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | EXECUTOR.POINT_OPERATIONS | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.RUNTIME_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.WORKERS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
-| FILES.MAX_OPEN | 1024 | INTEGER FROM 0 TO 4294967295 | at once |  |
+| FILES.MAX_OPEN | 512 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | GQL.GRAPH | (empty) | TEXT OF AT MOST 257 CHARACTERS | at once | *session* |
 | GRAPH.DETERMINISTIC_PATHS | OFF | ONE OF ON, OFF | at once | *session* |
 | GRAPH.MAX_PATHS_PER_PARTITION | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |

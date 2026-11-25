@@ -687,6 +687,10 @@ verification approach DO-178C expects (§8).
 | D1075 | A hashed semi join's or antijoin's probe is a step of its left operand's pipeline |
 | D1076 | A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline |
 | D1077 | NOT IN of columns that hold no null is an antijoin hashed on their equality |
+| D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
+| D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
+| D1138 | The rows an execution of a load is given are held, never spilled |
+| D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
 
 ### The project
 
@@ -2448,7 +2452,7 @@ Each file has a class that decides what create, remove, sync, close and
 open do. The classes are durable (catalog, data file, log), durable at
 commit (shadow files), unsynced (undo log) and scratch (spill files).
 
-FILES.MAX_OPEN caps open descriptors, 1024 by default and 0 for none. Past
+FILES.MAX_OPEN caps open descriptors, 512 by default (D1136) and 0 for none. Past
 it the least recently used file is closed and reopened on next use. Files
 with unsynced writes are synced first, because a writeback error no sync
 saw is lost with the descriptor. If that sync fails, the failure is kept
@@ -12204,15 +12208,16 @@ so the capture is set up before the first page is owed; and the
 checkpoint walks the pages owed and
 captures each still owed under its read latch, then each copy
 (`disk/buffer/pool/capture.rs`). A capture is written into the sealed
-batch, held in memory, newer than its blocks and older than anything
+batch, appended to its side file (D1139), newer than its blocks and older than anything
 written since, so a read finds it only where nothing newer was written
 (`DiskFile::write_captured_at`). A capture changes nothing a write in
 flight writes over or a read waits for (D472), so it waits for none, and
-holds the file's lock only to put granules copied before it took it.
+holds the file's lock while it appends its block.
 The walk waits for evictions capturing
 before the batch is committed. This is the two versions of Ren et al.
 2016's CALC at the grain of a page, where the frame's latch gives the
-exclusion; memory is bounded by the pages written during one walk.
+exclusion. The copies writers and frees make are bounded by the pages
+written during one walk; the captures themselves are on disk.
 
 A page is owed only if capturing it needs no other page: its content
 fits in it, and it is known to have no overflow pages, as every page
@@ -18692,6 +18697,83 @@ and the rule that makes the antijoin writes it so
 step of its left operand's pipeline (D1075). A column that may hold a
 null on either side keeps the condition as it was, so NOT IN keeps its
 exact meaning.
+
+#### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
+
+A load of a wide table failed past a few million rows with "too many
+open files". Its log kept a segment for each 64 MiB written since the
+last checkpoint, each open through the file manager (D56), and the
+manager let 1024 be open, which is all a process gets by default. The
+manager stayed under its limit while the process ran out, and the spill
+file an execution then needed could not be opened.
+
+Two changes keep a database within what the system allows. The default
+of FILES.MAX_OPEN is 512, half the usual limit, leaving the other half
+for connections and the server's own files. And an open the system
+refuses for want of a descriptor (EMFILE or ENFILE on Unix,
+ERROR_TOO_MANY_OPEN_FILES on Windows) is SQLCODE -918 from
+`OsFileSystem`, which the manager answers as it answers its own limit.
+It closes a file of the database's not in use and tries again, or waits
+for one to be done (`files/spent.rs`). Only when the database holds no
+other descriptor is the error returned. A limit lower than FILES.MAX_OPEN
+then slows the work, through files closed and opened again, but no
+statement fails for it. The server does not raise its own limit. The
+engine has to live within whatever the operator gives it.
+
+#### D1137. CHECKPOINT.AFTER_BYTES counts the bytes written to the log too
+
+A checkpoint came due after CHECKPOINT.AFTER_CHANGES row changes, or
+CHECKPOINT.AFTER_BYTES written to the tables file's side file. A load
+into a large pool writes almost nothing to the side file, and wide rows
+make each change many bytes, so the log grew by tens of gigabytes, its
+segments all kept, before the changes came due. Recovery after a crash
+then replayed all of it.
+
+The log's bytes now count as well (`Transactions::bytes_since_checkpoint`,
+`txn/pending.rs`), and a checkpoint is due once either the side file or the
+log has grown by CHECKPOINT.AFTER_BYTES since the last. The bytes the
+log holds are noted as a checkpoint captures what it holds, as the row
+changes are, so a checkpoint that fails counts them still. The log a
+checkpoint lets go of, and the recovery after it, are then bounded by
+the setting whatever the shape of the rows.
+
+#### D1138. The rows an execution of a load is given are held, never spilled
+
+An execution of a prepared INSERT given many rows, as the client's
+import sends them, held them in a list that spills past 4 MiB (D298). A
+batch of 65,536 rows of a wide table is tens of megabytes, so each
+execution made a spill area, wrote the batch to it and read it straight
+back. A load made thousands of spill files that way, one descriptor
+each while it lasted.
+
+Those rows are already in memory, in the request that gave them, so the
+list that holds them as candidates is never more than as many again. It
+is held whole (`db/write/given.rs`). No spill area is made for it, and
+the batch size a client chooses bounds what it holds. Rows a statement
+reads itself, as an INSERT from a query, are held as before.
+
+#### D1139. A checkpoint's captures go to its sealed batch's side file, not memory
+
+A checkpoint marks each dirty page of the pool owed and captures it
+after writers go on (D590). Each capture was put into the sealed batch
+in memory, held until the batch was committed. During a load nearly
+every frame of the pool is dirty, so one checkpoint held a copy of most
+of the pool beside the pool, outside MEMORY.BUDGET_BYTES. With a pool of
+48 GiB that copy took tens of gigabytes, and the server was killed for
+memory.
+
+A capture is now appended as a block to the sealed batch's side file
+(`Side::append_captured`, `disk/shadow/side.rs`), where the granules of
+its other blocks already are. It is newer than every block before it,
+as a capture is, and the commit copies it into the file as it copies
+the others. A crash before the commit block finds a side file with no
+commit, which recovery throws away, as before. A capture the side file
+refuses, as one whose sync failed, is held in memory as before, so the
+failure is met by the commit, which a later checkpoint takes again,
+rather than stopping checkpoints until the database is reopened, as a
+capture lost does (D590). The checkpoint's memory
+is then the copies writers and frees make while it walks, and the walk
+writes each capture to disk as it goes.
 
 ## 2. Project layout
 
