@@ -138,7 +138,7 @@ pub(super) fn is_one(plan: &Plan) -> bool {
 ///
 /// As reading the stream, or a set function, fails.
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
-    grouped_told(plan, (db, tx), degree, Vec::new())
+    grouped_told(plan, (db, tx), degree, &[])
 }
 
 /// \[DESIGN\] (RULES.md D1063) As `grouped`, the grouping's input told
@@ -148,7 +148,7 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resu
 /// # Errors
 ///
 /// As `grouped`.
-pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: Vec<Told>) -> Result<Held<RowIter>> {
+pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: &[Told]) -> Result<Held<RowIter>> {
     let (plan, having) = if let Plan::Filter { cond, input, .. } = plan { (&**input, Some(cond.clone())) } else { (plan, None) };
     let seed = db.functions.seed().clone();
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {

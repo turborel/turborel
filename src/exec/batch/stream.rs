@@ -76,7 +76,9 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         // A top-N's first rows, few, made batches (D380).
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }).then(|| layout(input, db)).flatten(),
         // Rows made row by row, gathered (RULES.md D600).
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => told::gathered_layout(plan, db),
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } | Plan::Distinct { .. } => {
+            told::gathered_layout(plan, db)
+        }
         Plan::Append { .. } => {
             let mut held = None;
             for operand in appended(plan) {
@@ -95,7 +97,6 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         | Plan::RangeJoin(_)
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -179,7 +180,7 @@ fn windowed_layout(window: &Window<Plan>, db: &State) -> Option<(Vec<usize>, usi
 /// an index scan reads it row by row, as its order or its stop asks.
 pub(super) fn untold(plan: &Plan) -> bool {
     match plan {
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => false,
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } | Plan::Distinct { .. } => false,
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, .. } | Plan::Limit { input, .. } => untold(input),
         Plan::Counted(c) => untold(&c.input),
         // A held leaf's batches are its own (RULES.md D668).
@@ -195,7 +196,6 @@ pub(super) fn untold(plan: &Plan) -> bool {
         | Plan::Nearest(_)
         | Plan::RangeJoin(_)
         | Plan::MergeAppend { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -232,7 +232,9 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads(operand, db, joined)),
         Plan::Product { left, right, .. } | Plan::OuterJoin { left, right, .. } => reads(left, db, joined) && reads(right, db, joined),
         Plan::HashJoin { left, right, .. } => reads(left, db, true) && reads(right, db, true),
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => joined && told::reads(plan, db),
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } | Plan::Distinct { .. } => {
+            joined && told::reads(plan, db)
+        }
         Plan::SemiJoin(s) => reads(&s.left, db, true) && reads(&s.right, db, true),
         // Its right's rows are held as the row path holds them.
         Plan::MarkJoin(m) => reads(&m.left, db, joined),
@@ -241,7 +243,6 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         | Plan::RangeJoin(_)
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -365,11 +366,10 @@ fn made_of(plan: &Plan) -> Batched {
         Plan::IndexScan { .. } => told::index_batches,
         Plan::IndexJoin { .. } => told::index_join_batches,
         Plan::MergeJoin(_) => told::merge_batches,
-        Plan::Aggregate { .. } => told::grouped_batches,
+        Plan::Aggregate { .. } | Plan::Distinct { .. } => told::grouped_batches,
         Plan::Nearest(_)
         | Plan::RangeJoin(_)
         | Plan::MergeAppend { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }

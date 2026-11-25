@@ -33,11 +33,11 @@ pub(super) fn grouping_of(plan: &Plan) -> Option<&Plan> {
 }
 
 /// The grouping by hash `input`, what a part runs in parallel, is, if it
-/// is one: the part's operator, or the operator an analyzed plan counts
-/// there.
+/// is one, a DISTINCT by hash among them: the part's operator, or the
+/// operator an analyzed plan counts there.
 pub(super) fn grouping_in(input: &Plan) -> Option<&Plan> {
     let top = if let Plan::Counted(c) = input { &c.input } else { input };
-    matches!(top, Plan::Aggregate { streamed: false, .. }).then_some(top)
+    matches!(top, Plan::Aggregate { streamed: false, .. } | Plan::Distinct { streamed: false, .. }).then_some(top)
 }
 
 /// The batches of `plan`, a part run in parallel: a grouping's groups
@@ -91,6 +91,7 @@ fn grouped_batches(part: Parallel, (db, tx): (&Db, TxId), deferred: &Deferred) -
         let run = Plan::Parallel(Box::new(Parallel { degree, input: counted }));
         return stream::batches_with(Plan::Counted(Box::new(Counted { count, input: run })), (db, tx), deferred);
     }
+    let input = told::grouping_of(input, db);
     let (columns, _) = told::layout(&input, db).ok_or_else(|| broken("a grouping that gives no batches"))?;
     let (Some(read), Plan::Aggregate { input: rows, .. }) = (read_of(&input, db), &input) else {
         return Err(broken("a grouping that gives no batches"));
@@ -99,7 +100,8 @@ fn grouped_batches(part: Parallel, (db, tx): (&Db, TxId), deferred: &Deferred) -
     let nullable = |at: &usize| input_columns.get(*at).is_none_or(|&c| !typed::never_null(rows, c, db));
     let warns = |t: &Taken| if let Taken::Column(at) = t { nullable(at) } else { false };
     let below = if read.taken.iter().any(warns) { Vec::new() } else { runtime::taken(&input, deferred.filters(), db).0 };
-    match crate::exec::parallel::grouped_told(&input, (db, tx), degree, below)? {
+    let below: Vec<_> = below.into_iter().map(runtime::Told::given_above).collect();
+    match crate::exec::parallel::grouped_told(&input, (db, tx), degree, &below)? {
         Held::Kept(groups) => Ok(gathered(groups, &columns)),
         Held::GaveWay => told::grouped_batches(input, (db, tx), deferred),
     }

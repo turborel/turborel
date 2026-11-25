@@ -679,6 +679,8 @@ verification approach DO-178C expects (§8).
 | D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
 | D1065 | An uncorrelated NOT IN or ALL that is a conjunct is an antijoin |
+| D1066 | A DISTINCT by hash under a join is read by batch as the grouping by every column it is |
+| D1067 | An IN list of a computed expression is judged by its set from two constants on, the expression computed once |
 | D1070 | A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows |
 | D1071 | A hashed semi join of streams read row by row is made of its batches |
 | D1072 | A join reads a grouping by batch whatever its set functions, and a grouping run in parallel too |
@@ -18496,8 +18498,8 @@ alone, and tells it its filters (`exec/batch/parted.rs`). The part's
 pipeline is told the filters of the grouping's input columns
 (`Pipeline::told`). Their ranges go down to the scans, as the ranges of
 the pipeline's own joins do (D389), so a morsel outside them is skipped.
-A step at the pipeline's end judges the filters of each morsel's
-batches, their key sets and Bloom filters too. D389 left those out of a
+A step right after each scan they reach judges the filters of each
+morsel's batches, their key sets and Bloom filters too. D389 left those out of a
 morsel's scan because the probe of the filter's join follows in the same
 morsel and drops the rows anyway. Here no probe follows. The grouping
 follows, so each row the step drops is one the grouping does not hash.
@@ -18552,6 +18554,48 @@ say. The join is made only of a subquery that is pure and cannot raise,
 as before. One that is refused is offered to no other rule and stays
 nested, read once, since the general unnesting of an uncorrelated
 subquery would gain nothing over that.
+
+#### D1066. A DISTINCT by hash under a join is read by batch as the grouping by every column it is
+
+A stream gathered the rows of a grouping that takes filters, so a hash
+join read it by batch and told it its runtime filters (D600). A DISTINCT
+had no such reading. An operand that held one, run alone or in
+parallel, gave a join no batches, and an index join over a DISTINCT gave
+none either, as it needs its left operand's width. The join above then
+ran row by row with every operand of it, and told no filter to any of
+them. The semi join a planner makes of `x IN (SELECT ...)` by probing
+an index from the subquery's distinct rows is such an operand, so the
+join beside it lost the filters D1062 and D1063 give a grouping.
+
+A DISTINCT by hash is now read as the grouping of its rows by every
+column, no set function, which the executor already makes of it
+(`batch::distinct_grouping`). A join reads it by batch and tells its
+input the filters of any of its columns, run alone
+(`told::grouped_batches`) or in parallel (`parted.rs`). A row the
+filter drops would give a distinct row the join keeps no row of. Its
+rows come in no order the plan relies on, as a grouping's by hash, so a
+join's left operand takes them as they come. A DISTINCT whose input
+comes in order, compared row by row (D550), is read as before.
+#### D1067. An IN list of a computed expression is judged by its set from two constants on, the expression computed once
+
+An `<in predicate>` of constants is bound as an OR of equalities, and an
+OR of eight or more of one column is judged by a set (D31). Of fewer the
+OR stays, as comparing a column with each constant costs no more than
+finding its bucket. Of an expression that is no column the OR stayed
+whatever its length. An OR evaluates every operand (D15), so
+`SUBSTRING(C FROM 1 FOR 2) IN ('13', '31', '23', '29', '30', '18', '17')`
+computed the substring seven times for each row, each a string made and
+dropped.
+
+Such an OR is now judged by its set from two constants on
+(`logical/sets.rs`). The set computes the expression once and compares
+its value with each constant, or finds its bucket of eight or more. The
+count needs no measurement, as one computation is less than two of the
+same. The expression is of columns and constants by deterministic
+functions, arithmetic and casts alone, and the same in every equality,
+function for function and constant for constant. It then has one value
+for a row and raises one error, however often it is computed, so the
+condition's value and its error are those of the OR.
 
 #### D1070. A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows
 

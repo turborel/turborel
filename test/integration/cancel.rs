@@ -9,10 +9,10 @@ use turborel::db::{Database, Session};
 use turborel::error::{Code, Result};
 use turborel::index::{BTreeMethod, Entries, Index, IndexMethod, Key, KeyOrder, Probe};
 use turborel::storage::RowId;
-use turborel::txn::Stop;
+use turborel::txn::{LockWait, Stop};
 use turborel::value::{CompOp, DataType};
 
-use crate::common::{arm, gated, locked, rows};
+use crate::common::{arm, disarm, gated, locked, rows};
 
 /// Verifies: [X3.135-1986 §7.3 GR3b i]; [DESIGN] RULES.md D44: a statement
 /// cancelled from another thread as it reads fails (SQLCODE -920,
@@ -213,28 +213,52 @@ fn a_statement_past_its_timeout_is_cancelled() {
     waiter.run("INSERT INTO L VALUES (2)").unwrap();
 }
 
-/// Verifies: [DESIGN] RULES.md D44: a statement reading past its
+/// Verifies: [DESIGN] RULES.md D28, D44: a statement reading past its
 /// STATEMENT.TIMEOUT_MS is cancelled as it reads on (SQLCODE -920), and
-/// undone.
+/// undone. Its deadline may pass before its scan reaches the gate, as on
+/// a busy machine making its plan takes longer: it is then cancelled
+/// before it reads, and tried again of a timeout twice as long, until its
+/// scan is held at the gate past the timeout. One that waits for the
+/// table's lock past its deadline is cancelled so, its scan never reached.
+/// Regression test (R-TEST-7): the thread holding the scan waited to hear
+/// it reach the gate, and of a statement cancelled before it did, waited
+/// for ever.
 #[test]
 fn a_statement_reading_past_its_timeout_is_cancelled() {
+    assert!((0..10).map(|n| 20_u64 << n).any(|timeout| timed_out_reading(timeout, false)), "never held reading past its timeout");
+    assert!(!timed_out_reading(20, true), "cancelled as it waits for the lock");
+}
+
+/// Of a statement of `timeout` milliseconds (STATEMENT.TIMEOUT_MS), its
+/// scan held at the gate for twice as long, the table locked by another
+/// transaction as it runs if `locked`: that it is cancelled (SQLCODE
+/// -920) and undone, and whether its scan reached the gate.
+fn timed_out_reading(timeout: u64, locked: bool) -> bool {
     let (db, gate, heard, go) = gated();
     let s = db.session("X");
     for k in 4..300 {
         s.run(&format!("INSERT INTO G VALUES ({k})")).unwrap();
     }
     s.commit().unwrap();
-    s.run("SET STATEMENT.TIMEOUT_MS = 20").unwrap();
+    db.set_lock_wait(LockWait::Wait).unwrap();
+    let holder = db.session("X");
+    if locked {
+        holder.run("INSERT INTO G VALUES (0)").unwrap();
+    }
+    s.run(&format!("SET STATEMENT.TIMEOUT_MS = {timeout}")).unwrap();
     arm(&gate);
     let stalling = std::thread::spawn(move || {
         heard.recv().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(40));
+        std::thread::sleep(std::time::Duration::from_millis(timeout.saturating_mul(2)));
         go.send(()).unwrap();
     });
     let failed = s.run("UPDATE G SET K = K + 1000").unwrap_err();
+    let reached = disarm(&gate);
+    holder.rollback().unwrap();
     stalling.join().unwrap();
     assert_eq!(failed.code, Code::Cancelled);
     assert_eq!(rows(&s, "SELECT COUNT(*) FROM G WHERE K > 1000"), Ok(vec!["0".into()]), "undone");
+    reached
 }
 
 /// Verifies: [DESIGN] RULES.md D28: a statement that waits for a lock

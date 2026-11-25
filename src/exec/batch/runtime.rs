@@ -50,17 +50,26 @@ pub(in crate::exec) struct Told {
     /// Whether it crossed a join's equality of keys to this column, so it
     /// judges exact numbers alone (`RuntimeFilter::kept`).
     pub(in crate::exec) moved: bool,
+    /// \[DESIGN\] (RULES.md D1063) Whether a join above a part run in
+    /// parallel told it the part, so no probe of that join follows in the
+    /// part's morsels, and a morsel judges it whole right after its scan.
+    pub(in crate::exec) above: bool,
 }
 
 impl Told {
     /// The filter of the join's key, told of its left column `column`.
     pub(in crate::exec) fn of(filter: Arc<RuntimeFilter>, column: usize) -> Told {
-        Told { filter, column, moved: false }
+        Told { filter, column, moved: false, above: false }
+    }
+
+    /// It, told a part run in parallel by a join above the part.
+    pub(in crate::exec) fn given_above(self) -> Told {
+        Told { above: true, ..self }
     }
 
     /// It, told of `column` in its place, moved if `moved` too.
     fn to(&self, (column, moved): (usize, bool)) -> Told {
-        Told { filter: Arc::clone(&self.filter), column, moved: self.moved || moved }
+        Told { filter: Arc::clone(&self.filter), column, moved: self.moved || moved, above: self.above }
     }
 }
 
@@ -87,7 +96,7 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         Plan::MarkJoin(m) => stream::layout(&m.left, db).filter(|&(_, width)| column < width).map(|_| (column, false)),
         // A whole sort of a stream's every column keeps a row's place.
         Plan::Sort { most: None, .. } => stream::layout(plan, db).map(|_| (column, false)),
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => {
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } | Plan::Distinct { .. } => {
             told::layout(plan, db)?;
             row_by_row(plan, column, db)
         }
@@ -102,7 +111,6 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::System { .. }
         | Plan::Sort { .. }
         | Plan::Limit { .. }
-        | Plan::Distinct { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
@@ -132,7 +140,8 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
 /// D15).
 fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
     match plan {
-        Plan::IndexScan { .. } => Some((column, false)),
+        // A DISTINCT's every column is a grouping column (RULES.md D1066).
+        Plan::IndexScan { .. } | Plan::Distinct { .. } => Some((column, false)),
         Plan::IndexJoin { left, cond, .. } => (!raises(cond.as_ref()) && column < stream::layout(left, db)?.1).then_some((column, false)),
         Plan::MergeJoin(m) => {
             if raises(m.cond.as_ref()) {
@@ -156,7 +165,6 @@ fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::System { .. }
         | Plan::Sort { .. }
         | Plan::Limit { .. }
-        | Plan::Distinct { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
@@ -252,11 +260,12 @@ pub(super) fn reaches(plan: &Plan, column: usize, db: &State) -> bool {
         return true;
     }
     let Some((next, _)) = passed(plan, column, db) else { return false };
-    match below(plan) {
-        Some(input) => reaches(input, next, db),
-        // A grouping judges it of its input's batches at least.
-        None => matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Aggregate { .. } | Plan::Parallel(_)),
+    if let Some(input) = below(plan) {
+        return reaches(input, next, db);
     }
+    // A grouping judges it of its input's batches at least.
+    let scans = matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. });
+    scans || matches!(plan, Plan::Aggregate { .. } | Plan::Distinct { .. } | Plan::Parallel(_))
 }
 
 /// \[DESIGN\] (RULES.md D600) The column of the right operand of the
