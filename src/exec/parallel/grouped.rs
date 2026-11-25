@@ -128,7 +128,7 @@ pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: 
         return Err(broken("not a grouping run in parallel"));
     };
     let limit = Limit::of(db);
-    let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, told)? else { return Ok(Held::GaveWay) };
+    let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, &told)? else { return Ok(Held::GaveWay) };
     let mut grouping = grouping;
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     let grouping = Arc::new(grouping);

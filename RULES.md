@@ -678,6 +678,7 @@ verification approach DO-178C expects (§8).
 | D1062 | A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null |
 | D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
+| D1066 | A DISTINCT by hash under a join is read by batch as the grouping by every column it is |
 
 ### The project
 
@@ -18478,8 +18479,8 @@ alone, and tells it its filters (`exec/batch/parted.rs`). The part's
 pipeline is told the filters of the grouping's input columns
 (`Pipeline::told`). Their ranges go down to the scans, as the ranges of
 the pipeline's own joins do (D389), so a morsel outside them is skipped.
-A step at the pipeline's end judges the filters of each morsel's
-batches, their key sets and Bloom filters too. D389 left those out of a
+A step right after each scan they reach judges the filters of each
+morsel's batches, their key sets and Bloom filters too. D389 left those out of a
 morsel's scan because the probe of the filter's join follows in the same
 morsel and drops the rows anyway. Here no probe follows. The grouping
 follows, so each row the step drops is one the grouping does not hash.
@@ -18515,6 +18516,28 @@ judged of every row. A conjunct of no subquery, or of an uncorrelated
 one, stays below, where it is cheap and may be told to a scan. Beside an
 antijoin every conjunct stays below, as an antijoin often keeps most of
 its rows and the conjunct may keep few.
+
+#### D1066. A DISTINCT by hash under a join is read by batch as the grouping by every column it is
+
+A stream gathered the rows of a grouping that takes filters, so a hash
+join read it by batch and told it its runtime filters (D600). A DISTINCT
+had no such reading. An operand that held one, run alone or in
+parallel, gave a join no batches, and an index join over a DISTINCT gave
+none either, as it needs its left operand's width. The join above then
+ran row by row with every operand of it, and told no filter to any of
+them. The semi join a planner makes of `x IN (SELECT ...)` by probing
+an index from the subquery's distinct rows is such an operand, so the
+join beside it lost the filters D1062 and D1063 give a grouping.
+
+A DISTINCT by hash is now read as the grouping of its rows by every
+column, no set function, which the executor already makes of it
+(`batch::distinct_grouping`). A join reads it by batch and tells its
+input the filters of any of its columns, run alone
+(`told::grouped_batches`) or in parallel (`parted.rs`). A row the
+filter drops would give a distinct row the join keeps no row of. Its
+rows come in no order the plan relies on, as a grouping's by hash, so a
+join's left operand takes them as they come. A DISTINCT whose input
+comes in order, compared row by row (D550), is read as before.
 
 ## 2. Project layout
 

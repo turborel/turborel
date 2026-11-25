@@ -16,12 +16,13 @@
 //! order, and a bitmap filter's span at its bound; of D1062, a filter
 //! stopped at a projection the declared types prove cannot raise; of
 //! D1063, a grouping run in parallel that judges no filter, and one
-//! told a filter over a column that may hold a null.
+//! told a filter over a column that may hold a null; of D1066, a DISTINCT
+//! told no filter.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the join table's requirements.
-pub const JOIN_TABLE: [Mutation; 25] = [
+pub const JOIN_TABLE: [Mutation; 26] = [
     Mutation {
         name: "join-table-build-order",
         package: Package::Core,
@@ -257,8 +258,8 @@ pub const JOIN_TABLE: [Mutation; 25] = [
         package: Package::Core,
         breaks: "a grouping run in parallel judges the filters it is told of each morsel's batches (D1063)",
         file: "src/exec/parallel/pipeline.rs",
-        original: "|| !stepped(&mut branches, 0, judged(told)) {",
-        replacement: "|| !stepped(&mut branches, 0, judged(told.into_iter().skip(usize::MAX).collect())) {",
+        original: "    told.iter().filter(|t| t.above).cloned()",
+        replacement: "    told.iter().filter(|t| t.above && t.moved && !t.moved).cloned()",
         integration: &["join_filters_told::a_filter_reaches_a_grouping_run_in_parallel"],
         unit: &[],
     },
@@ -270,6 +271,16 @@ pub const JOIN_TABLE: [Mutation; 25] = [
         original: "let below = if read.taken.iter().any(warns) {",
         replacement: "let below = if read.taken.iter().any(warns) && read.taken.is_empty() {",
         integration: &["join_filters_told::a_filter_reaches_a_grouping_run_in_parallel"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-told-no-filter",
+        package: Package::Core,
+        breaks: "a DISTINCT by hash under a join is read as a grouping by every column and takes the join's filter (D1066)",
+        file: "src/exec/batch/told.rs",
+        original: "        return super::distinct_groupable(plan, db).map(|width| ((0..width).collect(), width));",
+        replacement: "        return super::distinct_groupable(plan, db).filter(|w| *w > usize::MAX).map(|width| ((0..width).collect(), width));",
+        integration: &["join_filters_told::a_filter_reaches_the_scan_below_a_grouping"],
         unit: &[],
     },
 ];

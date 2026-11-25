@@ -393,7 +393,8 @@ pub(super) fn ordered(plan: &Plan) -> bool {
 /// (`TableStorage::scan_ordered`), a join's in its left operand's. A plan
 /// that gives no batches is taken to be, so its order is kept, as are an
 /// index scan's and an index or merge join's, which a stream gathers
-/// (`told.rs`). A grouping by hash gives its groups in none.
+/// (`told.rs`). A grouping by hash gives its groups in none, and so
+/// does a DISTINCT by hash.
 fn in_order(plan: &Plan) -> bool {
     match plan {
         Plan::SeqScan { order, .. } => !order.is_empty(),
@@ -402,7 +403,8 @@ fn in_order(plan: &Plan) -> bool {
         Plan::Transfer(t) => t.input().is_some_and(in_order),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
-        Plan::Aggregate { streamed, .. } => *streamed,
+        // A DISTINCT by hash is a grouping by every column (RULES.md D1066).
+        Plan::Aggregate { streamed, .. } | Plan::Distinct { streamed, .. } => *streamed,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
@@ -416,7 +418,6 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
         | Plan::Limit { .. }
-        | Plan::Distinct { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
