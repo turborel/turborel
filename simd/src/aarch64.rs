@@ -103,6 +103,11 @@ pub(crate) fn min_max_i64(isa: Isa, values: &[i64], given: Given<'_>) -> Option<
     }
 }
 
+/// `Kernels::bloom_probe`: the portable body.
+pub(crate) fn bloom_probe(_isa: Isa, words: &[u64], hashes: &[u64], out: &mut Vec<u32>) {
+    portable::bloom::bloom_probe(words, hashes, out);
+}
+
 /// `Kernels::gather_i64`: the portable body, NEON having no gather.
 pub(crate) fn gather_i64(_isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
     portable::gather::gather_i64(values, sel, out);

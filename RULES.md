@@ -695,6 +695,7 @@ verification approach DO-178C expects (§8).
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
 | D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
 | D1086 | An equality of an expression of each operand's columns is a hash join on the keys computed once a row |
+| D1087 | A probe of a join table past a thread's share of the cache is screened by its key's Bloom filter, and a semi join of many held keys filters its right |
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
@@ -707,6 +708,7 @@ verification approach DO-178C expects (§8).
 | D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
 | D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
 | D1114 | An index nested-loop join over a part run in parallel probes its index on the part's threads |
+| D1115 | A semi join that builds its left holds a left run in parallel by the threads that read it |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -724,6 +726,7 @@ verification approach DO-178C expects (§8).
 | D1140 | A value out of line of an entry a freeze takes out is freed only once no read may still fetch it |
 | D1141 | A log record as long as the buffer reaches its segment after the bytes the buffer holds |
 | D1142 | Loads into a column store table at once each write their own groups, no lock taken alone |
+| D1143 | A clean close keeps the groups of every load committed, settled or not |
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 | D1152 | A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates |
@@ -18957,6 +18960,43 @@ row that no pair holds raises nothing the nested loop would not. An
 outer join keeps such a condition whole too, as its keys would be
 computed of every row of an operand even when the other has none.
 
+#### D1087. A probe of a join table past a thread's share of the cache is screened by its key's Bloom filter, and a semi join of many held keys filters its right
+
+A probe of a hash join's table reads one word of its directory at a
+random place for every probing row. A table past the last level of
+cache makes that read a trip to memory, and most of a probe's time
+waits on it, even for the rows no built row matches. Laying out the
+table another way (located a batch at a time, a slot of one row
+holding its row and key) left that read where it was and gained
+nothing, measured on TPC-H.
+
+A parallel build of one key sums its keys in a Bloom filter as it is
+built (D1080). A probe of such a table (`batch/joined/shared/probing.rs`)
+now first asks that filter of its batch's hashes, on the kernels, and
+reads the directory only at the places it passes. The filter takes a
+byte a key and stays in a core's cache, so a probing row of no match
+costs a read from cache instead of one from memory. A table that fits
+in a thread's share of the last level, 4 MiB (36 MiB shared by 8
+threads on the reference machine, rounded down), is not screened, as
+its directory read is a cache read already. The filter judges itself
+as a runtime filter does (D369): after its first batches, if it kept
+most rows, it stops being asked. The pairs a probe gives are those it
+gives unscreened, as the filter keeps every row whose key the table
+may hold, and a LEFT join's row it drops is paired with nulls as one
+that matched no built row.
+
+The kernels screen hashes by the filter's blocks with one vector of
+blocks at a time on x86 (`simd/src/x86/bloom.rs`), with AVX2 or
+AVX-512 as the machine has, and the portable code elsewhere; a hash
+passes the same filter on every kernel.
+
+A semi join that builds its left (D1070) gave its right's scan no
+runtime filter when it held more keys than a filter lists, on the
+reasoning that the scan's comparison costs as much as the probe it
+spares. Past the cache that probe is a read from memory, so it now
+tells the scan its filter of a range and a Bloom filter whatever the
+number of its keys.
+
 ### Column store reads
 
 #### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
@@ -19292,6 +19332,34 @@ by a function's predicate, which a statement's prepared budget bounds,
 stay on the statement's thread, as does a join over a left operand that
 holds no part. The degree is the greatest of the parts the left operand
 holds.
+
+#### D1115. A semi join that builds its left holds a left run in parallel by the threads that read it
+
+A semi join or an antijoin that builds its left (D1070) read its left
+operand's batches on the statement's thread, though that operand was a
+part run in parallel. Each batch's kept rows were gathered into a
+batch of their own, then all of them joined into one, hashed and put
+in the join's table there, while the workers that read the part waited.
+Of a wide left of many rows, as the lines and suppliers of an order
+waiting on its suppliers are, that thread ran a stretch of the join
+alone between the left's reading and the right's.
+
+Such a left is now held by the threads that read it
+(`exec/parallel/held.rs`). Each morsel's kept rows are gathered into
+one batch by the thread that read them, and the statement's thread
+takes the morsels' batches in the order of their numbers, so the rows
+are held in the order the part alone gives them. They are put in their
+table by those threads too, as a hash join's built operand is (D1080).
+Each morsel's rows are charged to the join's work grant as its thread
+gathers them (D1150). Once a morsel outgrows the grant, or the rows
+taken are on course to, the batches taken so far are given on, then the
+rest in order, to the join that builds its right, a morsel past the
+grant read again by the statement's thread a batch at a time, so every
+left row is read once and in order. The
+first morsel that fails, in the order of their numbers, is the error
+raised, after the rows before it are taken (D15). A pipeline whose
+morsels are not read by batch, or whose batches hold other columns
+than the plan's, and a left asked for in an order are read as before.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
@@ -19702,6 +19770,26 @@ takes the lock alone, since others' readers would miss its entries
 recovered as before. A row another transaction writes through the tree
 meanwhile lies between groups and is read as any row of the tree. The
 freeze takes rows past the last group only, so it stays in the tree.
+#### D1143. A clean close keeps the groups of every load committed, settled or not
+
+A group a load writes (D533) is stamped with its transaction, and keeps
+that stamp after the commit until the maintenance thread finds the
+commit before every snapshot. A directory stored meanwhile names the
+transaction as open, and opened again the table holds such a group
+apart for recovery to keep or drop. A database closed cleanly is
+reopened with no recovery, so nothing kept those groups, and a load's
+rows since its groups last settled were lost. A load whose groups had
+settled lost only its last batch, the group written after the last
+commit the maintenance thread saw.
+
+Reopened after a clean close to serve, each table now keeps every group
+held apart as committed (`db/recovery.rs`, `settle_closed_loads`). A
+clean close is taken with no transaction open, and a load rolled back
+takes its groups out of the directory, so each group stored is of a load
+that committed. A crash still leaves recovery to judge each group by
+the transactions it redoes, as before. A replica opened to follow keeps
+its groups apart, its loads being the primary's.
+
 #### D1150. A morsel's rows are made as they are read and charged to the part's grant as they are gathered
 
 A morsel's rows were taken through its pipeline's steps and gathered
@@ -19718,10 +19806,14 @@ What a thread gathers of a morsel is charged to the grant a batch's
 worth at a time, and stays charged until the reader has taken it, so
 the morsels running ahead are held within the grant too
 (`exec/parallel/charged.rs`). A morsel that outgrows the grant is given
-up and its charge given back. A stream then reads that morsel itself, a
-row or a batch at a time, holding none, while the threads go on with
-those after it; a sort writes it to its runs as it reads it; a window's
-or a set operation's partitions put its rows in their lists, which
+up and its charge given back. A stream's reader then reads the rest of
+that morsel's read as its thread left it, after the rows the thread
+gathered, a row or a batch at a time, holding none, while the threads go
+on with those after it. It never reads the morsel again, since a split's
+part is read once: an index scan's entries are taken by the morsel that
+reads them. A sort writes the rows its thread gathered and then the
+rest of that read to its runs, or the morsel's run if it outgrew the
+grant only once sorted; a window's or a set operation's partitions put its rows in their lists, which
 spill; a join's build gives way to the serial join, which partitions.
 A grouping's morsel is fed its rows as they are made and holds its
 groups alone. Every answer, and its order, is the one the plan gives

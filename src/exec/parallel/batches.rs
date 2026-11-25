@@ -13,13 +13,13 @@
 
 use std::sync::Arc;
 
-use super::charged::{Ahead, Alone, Flow, whole_batches};
+use super::charged::{Ahead, Flow, whole_batches};
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit};
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{Batches, Kept, gathered, rows_of};
+use crate::exec::batch::{Batches, gathered, rows_of};
 use crate::physical::Plan;
 use crate::settings::EXECUTOR_MORSEL_ROWS;
 use crate::txn::TxId;
@@ -41,11 +41,10 @@ pub(in crate::exec) fn streamed_batches(
     let Held::Kept(pipeline) = Pipeline::of(plan, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
     let Some(shape) = pipeline.batched.as_ref().map(|b| (b.layout.clone(), b.width)) else { return Ok(Held::GaveWay) };
     let (pipeline, db_for, within) = (Arc::new(pipeline), db.clone(), (limit.clone(), ahead.clone()));
-    let (count, read, db_alone) = (pipeline.count(), Arc::clone(&pipeline), db.clone());
+    let count = pipeline.count();
     let work = Box::new(move |m: usize| whole_batches(pipeline.morsel_kept(m, (&db_for, tx))?, (&within.0, &within.1)));
-    let alone: Alone<Kept> = Box::new(move |m| read.morsel_kept(m, (&db_alone, tx)));
     let morsels = Morsels::start(db, tx, (count, degree), work);
-    let batches: Batches = Box::new(Flow::of_batches(morsels, alone, (&limit, &ahead), db.tx.stop_of(tx)));
+    let batches: Batches = Box::new(Flow::of_batches(morsels, (&limit, &ahead), db.tx.stop_of(tx)));
     if shape == *layout {
         return Ok(Held::Kept(batches));
     }

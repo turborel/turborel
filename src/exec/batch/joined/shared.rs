@@ -62,6 +62,13 @@ pub(in crate::exec) struct SharedTable {
 /// batch and its built row, or `NO_ROW` of a LEFT join's row none matches.
 type Pairs = (Vec<u32>, Vec<u32>);
 
+/// \[DESIGN\] (RULES.md D1087) The bytes of a table past which a probe
+/// looks first in its key's Bloom filter: 4 MiB, about the third-level
+/// cache a thread has of a processor of several cores, 36 MiB for 8
+/// threads of the build machine, so a larger table is read from memory
+/// at random while a filter of 8 bits a key stays in the second level.
+const SCREENED_BYTES: usize = 4 << 20;
+
 /// Row `r` as a pick: `NO_ROW` of one past what a pick numbers.
 fn pick(r: usize) -> u32 {
     u32::try_from(r).unwrap_or(NO_ROW)
@@ -176,6 +183,14 @@ impl SharedTable {
         }
     }
 
+    /// \[DESIGN\] (RULES.md D1115) Its rows, their columns and keys as it
+    /// was framed, and their table, for a semi join that marks the rows
+    /// it holds (`semi/marked.rs`).
+    pub(in crate::exec) fn into_held(self) -> (Frame, JoinTable) {
+        let SharedTable { right, columns, width, places, nulls, table, seed, keyed, .. } = self;
+        (Frame { right, columns, width, places, nulls, seed, keyed }, table)
+    }
+
     /// \[DESIGN\] (RULES.md D1083) It, its pairs' integers gathered on
     /// `kernels`, the statement's.
     #[must_use]
@@ -209,6 +224,18 @@ impl SharedTable {
         Ok(shared)
     }
 
+    /// \[DESIGN\] (RULES.md D1087) Of the probes whose keys' hashes are
+    /// `hashes`, the places of those the Bloom filter of its one key may
+    /// hold, if its table is past `SCREENED_BYTES` and the filter, made with
+    /// it, still pays; none to look at every probe in the table.
+    pub(super) fn screened(&self, hashes: &[u64]) -> Option<Vec<u32>> {
+        if self.places.len() != 1 || self.table.is_direct() || self.table.bytes() <= SCREENED_BYTES {
+            return None;
+        }
+        let filter = self.made.as_ref()?.first()?.as_ref()?;
+        filter.screened(hashes, &*self.kernels)
+    }
+
     /// The runtime filters of its keys `keys` (RULES.md D369, D389), each
     /// told of the left column of its key.
     ///
@@ -229,6 +256,13 @@ impl SharedTable {
             }
         }
         Ok(told)
+    }
+
+    /// Whether its probes are screened by its key's Bloom filter (RULES.md
+    /// D1087).
+    #[cfg(test)]
+    pub(in crate::exec) fn screens(&self) -> bool {
+        self.screened(&[0]).is_some()
     }
 
     /// The rows it holds.

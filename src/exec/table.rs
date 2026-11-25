@@ -32,7 +32,7 @@ pub(in crate::exec) use join::{BUILD_PARTS, BuiltPart, Parted, Parting, Span};
 pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, keys_equal, numbers_hashed, values_hash};
 pub(in crate::exec) use keys::{Key, Keys};
 pub(in crate::exec) use made::Made;
-pub(in crate::exec) use runtime::{KEYSET_MAX, RuntimeFilter};
+pub(in crate::exec) use runtime::RuntimeFilter;
 
 use crate::error::Result;
 use crate::exec::Runner;
