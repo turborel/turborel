@@ -1,9 +1,10 @@
 //! Unit tests of column chunks (`columns.rs`).
 
-use super::encoded::{ALP, CONSTANT, DICTIONARY, FIXED, FRAME, FSST, RUNS, VARYING};
+use super::encoded::{ALP, CONSTANT, DICTIONARY, FIXED, FRAME, FSST, RUNS, STEPPED, VARYING};
 use super::*;
 use crate::value::{Decimal, Spelled};
 
+mod stepped;
 mod truncated;
 
 fn int(n: i128) -> Value {
@@ -68,7 +69,7 @@ fn values_fit_their_chunks() {
 fn malformed_chunks_are_refused() {
     let code = |bytes: &[u8]| Chunk::parse(bytes).err().map(|e| e.code);
     assert_eq!(code(b""), Some(Code::Corrupt));
-    assert_eq!(code(&[9, 1, 0, 0, 0, 0]), Some(Code::Corrupt), "another kind");
+    assert_eq!(code(&[99, 1, 0, 0, 0, 0]), Some(Code::Corrupt), "another kind");
     assert_eq!(code(&[FIXED, 1, 0]), Some(Code::Corrupt), "no count");
     assert_eq!(code(&[FIXED, 9, 0, 0, 0]), Some(Code::Corrupt), "no nulls");
     assert_eq!(code(&[FIXED, 1, 0, 0, 0, 0, 8, 0, 0, 0, 1]), Some(Code::Corrupt), "a value too short");
@@ -108,9 +109,9 @@ fn chunks_are_compressed() {
     };
     let same: Vec<Value> = (0..100_i128).map(|n| if n % 9 == 0_i128 { Value::Null } else { int(42) }).collect();
     assert!(check(&INTEGER, same, CONSTANT) < 40);
-    let near: Vec<Value> = (0..100).map(|n| int(1_000_000 + n * 2)).chain([Value::Null]).collect();
+    let near: Vec<Value> = (0..100).map(|n| int(1_000_000 + n)).chain([Value::Null]).collect();
     assert!(check(&INTEGER, near, FRAME) < 140, "a byte each");
-    let wider: Vec<Value> = (0..100).map(|n| int(-5000 + n * 100)).collect();
+    let wider: Vec<Value> = (0..100).map(|n| int(-5000 + n * n)).collect();
     check(&INTEGER, wider, FRAME);
     let few: Vec<Value> = (0..300).map(|n| Value::Char(["red", "green", "blue"][n % 3].into())).collect();
     assert!(check(&TEXT, few, DICTIONARY) < 160, "two bits each");
@@ -119,7 +120,7 @@ fn chunks_are_compressed() {
     assert!(check(&TEXT, hundreds, DICTIONARY) < 3375 + 300 * 9, "nine bits each");
     let apart: Vec<Value> = (0..50_u32).map(|n| Value::Char(format!("value {n}").into())).collect();
     check(&TEXT, apart, VARYING);
-    let spread: Vec<Value> = (0..50).map(|n| int(n * 10_000_000_000)).collect();
+    let spread: Vec<Value> = (0..50).map(|n| int(n * 10_000_000_000 + n % 3)).collect();
     assert!(check(&INTEGER, spread, FRAME) < 50 * 5 + 40, "39 bits each");
     let ends: Vec<Value> =
         (0..50_i128).map(|n| int(if n % 2 == 0 { -9_000_000_000_000_000_000 - n } else { 9_000_000_000_000_000_000 + n })).collect();

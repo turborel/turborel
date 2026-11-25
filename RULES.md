@@ -695,6 +695,7 @@ verification approach DO-178C expects (§8).
 | D1095 | A scan that keeps few rows of a run decodes the next run into the vectors it judged the last by, and holds the rows kept in vectors with room for a batch |
 | D1096 | A request to read ahead pages the pool holds takes no lock scans share |
 | D1097 | A fetch of a frozen row is priced by the number of columns it reads |
+| D1098 | A chunk of integers a fixed step apart is written as their counts of steps from the least |
 
 ### The project
 
@@ -18910,6 +18911,39 @@ table whose rows are
 in its tree reads them whole, and its fetch costs the same whatever is
 read. So does that of an engine that does not keep its columns apart,
 the default.
+
+#### D1098. A chunk of integers a fixed step apart is written as their counts of steps from the least
+
+A frame of reference (D31) writes each value of 8 bytes less the
+chunk's least, in the bits the chunk's span needs. A datetime is kept
+as its instant's microseconds (D354), so a column of dates spanning
+seven years took 48 bits a value, where the days it spans number about
+2,500 and need 12. Unpacking 48-bit values was a tenth of a scan
+filtered by a date, and the column took four times the pages.
+
+A chunk may now be written as steps (`columns/encoded/stepped.rs`). As
+the sizer is given a chunk's values it keeps the greatest number that
+divides each one's difference from the first, by Euclid's algorithm,
+which costs one division a value once the number has settled. Where
+that number is 2 or more, the chunk can be written as its least, the
+step, and each value's count of steps from the least, bit-packed. The
+sizer takes it where it is the smallest encoding, as it takes any
+other (D31), so a chunk of values with no common step, or of too few
+to repay the step's 8 bytes, is written as before. Nothing in it
+names a type. A DATE packs as days, a timestamp of whole seconds
+loses 20 bits, and a column of prices in whole hundreds loses 6.
+
+A value's difference from the least is below 2^64, and is the step
+times its count, so the product and the sum wrap to the value
+written whatever its sign. A chunk holding the least and the greatest
+integer of 64 bits is read back as written.
+
+The encoding is a new kind beside the others, which are unchanged, so
+every group written before is read as it is, and no data is
+converted. A group written with it is not read by a build from before
+this decision, which refuses its chunks as of another format (SQLCODE
+-916). Groups written before keep their frames until they are written
+again. Formats stay 1.
 
 ## 2. Project layout
 
