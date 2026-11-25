@@ -28,6 +28,11 @@ pub(in crate::exec) struct Probing<T> {
     /// The places in `batch` of the rows it pairs.
     given: Vec<usize>,
     hashes: KeyHashes,
+    /// Of a table past the caches, the places in `given` of the rows whose
+    /// keys its Bloom filter may hold, in order, and how many of them lie
+    /// before the row it pairs now (RULES.md D1087); none if it looks up
+    /// every row.
+    screened: Option<(Vec<u32>, usize)>,
     /// The places of the left's key vectors, and of the vectors its
     /// batches hold, or all.
     left: Vec<usize>,
@@ -60,8 +65,9 @@ impl SharedTable {
         let given: Vec<usize> = (0..kept_count(rows, batch.rows)).map(|n| nth(rows, n)).collect();
         let mut hashes = KeyHashes::default();
         let failed = hashes.of_batch((&batch, Some(&given)), (&left, &table.nulls), table.hashing()).err();
+        let screened = failed.is_none().then(|| table.screened(&hashes.hashes)).flatten().map(|held| (held, 0));
         let pairs = (Vec::with_capacity(BATCH_ROWS), Vec::with_capacity(BATCH_ROWS));
-        Probing { table, batch, given, hashes, left, left_shown, outer, at: 0, seen: 0, any: false, pairs, failed, ended: false }
+        Probing { table, batch, given, hashes, screened, left, left_shown, outer, at: 0, seen: 0, any: false, pairs, failed, ended: false }
     }
 }
 
@@ -104,6 +110,9 @@ impl<T: Deref<Target = SharedTable>> Probing<T> {
             return Ok(true);
         }
         let (Some(&h), Some(false)) = (self.hashes.hashes.get(self.at), self.hashes.misses.get(self.at).copied()) else { return Ok(true) };
+        if !may_match(&mut self.screened, self.at) {
+            return Ok(true);
+        }
         let mut candidates = table.table.candidates(h);
         // The built rows looked at before it stopped are passed by.
         if let Some(before) = self.seen.checked_sub(1)
@@ -123,6 +132,17 @@ impl<T: Deref<Target = SharedTable>> Probing<T> {
         }
         Ok(true)
     }
+}
+
+/// Whether the row at place `at` of a probe may match a built row: of a
+/// probe `screened`, whether its key's Bloom filter may hold it, so a row
+/// it cannot reads nothing of the table (RULES.md D1087).
+fn may_match(screened: &mut Option<(Vec<u32>, usize)>, at: usize) -> bool {
+    let Some((held, before)) = screened.as_mut() else { return true };
+    while held.get(*before).is_some_and(|&n| usize::try_from(n).is_ok_and(|n| n < at)) {
+        *before = before.saturating_add(1);
+    }
+    held.get(*before).is_some_and(|&n| usize::try_from(n).is_ok_and(|n| n == at))
 }
 
 /// Adds the pair of left row `r` and built row `p` to `pairs`, the row

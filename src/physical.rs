@@ -48,7 +48,7 @@ pub(crate) use nearest::distance_call;
 pub use nearest::{ApproximateRead, NearestRead};
 mod order;
 mod ordered;
-mod parallel;
+pub(crate) mod parallel;
 pub use parallel::Parallel;
 mod plannings;
 pub(crate) use parallel::{calm_cond, first_level, parallel, parallel_run, rows_of as parallel_rows, system_threads, workers_of};

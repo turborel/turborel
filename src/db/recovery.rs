@@ -215,6 +215,19 @@ impl Database {
         Ok(())
     }
 
+    /// \[DESIGN\] RULES.md D1143: reopened after a clean close, to serve, keeps each table's groups of loads stored
+    /// as made by a transaction open as committed. A clean close is taken with no transaction open, and a load
+    /// rolled back takes its groups out of the directory, so each group stored is of a load that committed.
+    pub(super) fn settle_closed_loads(&self, mode: super::files::Mode) -> Result<()> {
+        if mode != super::files::Mode::Serve {
+            return Ok(());
+        }
+        for storage in self.snapshot()?.storage.values() {
+            storage.loading().map_or(Ok(()), |l| l.recovered_loads(&|_| false))?;
+        }
+        Ok(())
+    }
+
     /// What opens a log's records: the database's encodings, of sealed
     /// ones (`log/sealed.rs`), and its types.
     pub(super) fn openers(&self) -> Result<(Arc<Encodings>, TypeRegistry)> {

@@ -246,3 +246,29 @@ fn not_in_of_columns_that_hold_no_null_is_hashed() {
         }
     }
 }
+
+/// The rows each scan of `table` gave as EXPLAIN ANALYZE ran `sql`.
+fn scanned(a: &Session, sql: &str, table: &str) -> u64 {
+    let analyzed = a.analyzed(sql, &Params::new()).unwrap();
+    analyzed.operators.iter().filter(|o| o.label.starts_with(&format!("SeqScan A.{table}"))).map(|o| o.rows).sum()
+}
+
+/// Verifies: [DESIGN] (RULES.md D1087) a semi join that builds a left of
+/// more rows than a filter lists the keys of tells the scan of its right
+/// a runtime filter of their keys all the same, which keeps the lines of
+/// no order's key from the join: with the filters off the scan gives
+/// every line, and its rows are the same either way.
+#[test]
+fn a_built_left_of_many_keys_filters_its_right() {
+    let (_db, a) = tables();
+    set(&a, &["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"]);
+    exec(&a, "SET PLANNER.PREDICATE_TRANSFER = 'OFF'").unwrap();
+    let sql = "SELECT COUNT(*), SUM(D) FROM O WHERE EXISTS (SELECT * FROM L WHERE L.K = O.K)";
+    let shown = physical(&a, sql);
+    assert!(shown.contains("HashRightSemiJoin"), "{shown}");
+    let (on, held) = (scanned(&a, sql, "L"), rows(&a, sql));
+    exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
+    assert_eq!(scanned(&a, sql, "L"), 9000);
+    assert!(on < 8000, "L gave {on} of\n{shown}");
+    assert_eq!(rows(&a, sql), held);
+}

@@ -55,6 +55,11 @@ pub(crate) fn min_max_i64(_isa: Isa, values: &[i64], given: Given<'_>) -> Option
     portable::sum::min_max_i64(values, given)
 }
 
+/// `Kernels::bloom_probe`.
+pub(crate) fn bloom_probe(_isa: Isa, words: &[u64], hashes: &[u64], out: &mut Vec<u32>) {
+    portable::bloom::bloom_probe(words, hashes, out);
+}
+
 /// `Kernels::gather_i64`.
 pub(crate) fn gather_i64(_isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
     portable::gather::gather_i64(values, sel, out);
