@@ -329,6 +329,26 @@ fn index_ranges_split_into_morsels() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1150, D297, D380 a sort of an index range
+/// scan cut into morsels of 16 rows, its runs past a work area of 64 KiB,
+/// gives the rows the sort gives alone, in its order, a morsel past the
+/// grant written as its thread read it; before, such a morsel was read
+/// again, and an index scan's part is read once.
+#[test]
+fn a_sort_of_index_ranges_past_its_work_area() {
+    let (_db, a) = tables();
+    let sql = "SELECT K, S, N FROM R WHERE K BETWEEN 1000 AND 4000 ORDER BY S, K";
+    exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
+    let alone = rows(&a, sql);
+    parallel(&a);
+    exec(&a, "SET EXECUTOR.MORSEL_ROWS = 16").unwrap();
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
+    let plan = a.physical_plan(sql, &Params::new()).unwrap();
+    assert!(plan.contains("Parallel  (degree=4)") && plan.contains("IndexScan") && plan.contains("Sort"), "{plan}");
+    assert!(alone.as_ref().is_ok_and(|r| r.len() > 1000), "{sql}");
+    assert_eq!(alone, rows(&a, sql));
+}
+
 /// Verifies: [DESIGN] RULES.md D296, D44 a statement running past its
 /// STATEMENT.TIMEOUT_MS while its part runs in parallel is cancelled
 /// (SQLCODE -920) as a morsel is taken up; the session's next statement

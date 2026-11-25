@@ -34,6 +34,7 @@ mod build;
 mod charged;
 mod each;
 mod grouped;
+mod held;
 mod indexed;
 mod looped;
 mod partitioned;
@@ -47,9 +48,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(super) use self::batches::streamed_batches;
-use self::charged::{Ahead, Alone, Flow, whole_rows};
+use self::charged::{Ahead, Flow, whole_rows};
 pub(super) use self::each::each_morsel;
 pub(super) use self::grouped::grouped_told;
+pub(super) use self::held::{Left, held_left};
 pub(super) use self::looped::{loop_degree, looped};
 use self::pipeline::Pipeline;
 pub(super) use self::probe::pipelined;
@@ -85,6 +87,11 @@ impl Limit {
     /// A work grant of `db`'s budget, of up to MEMORY.WORK_BYTES.
     fn of(db: &State) -> Limit {
         let grant = db.work.grant(work_bytes(db.settings.get(MEMORY_WORK_BYTES)));
+        Limit { most: grant.bytes(), held: Arc::new(AtomicUsize::new(0)), grant }
+    }
+
+    /// The grant `grant`, an operator's work area's, charged anew.
+    fn of_grant(grant: Arc<Grant>) -> Limit {
         Limit { most: grant.bytes(), held: Arc::new(AtomicUsize::new(0)), grant }
     }
 
@@ -171,12 +178,11 @@ fn streamed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<Ro
     let (limit, ahead) = (Limit::of(db), Ahead::of(degree, db.settings.count(EXECUTOR_MORSEL_ROWS)));
     let Held::Kept(pipeline) = Pipeline::of(plan, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, db_for, within) = (Arc::new(pipeline), db.clone(), (limit.clone(), ahead.clone()));
-    let (count, read, db_alone) = (pipeline.count(), Arc::clone(&pipeline), db.clone());
+    let count = pipeline.count();
     let work =
         Box::new(move |m: usize| whole_rows(pipeline.morsel_rows(m, (&db_for, tx), Runner::new(&db_for, tx))?, (&within.0, &within.1)));
-    let alone: Alone<Row> = Box::new(move |m| read.morsel_rows(m, (&db_alone, tx), Runner::new(&db_alone, tx)));
     let morsels = Morsels::start(db, tx, (count, degree), work);
-    Ok(Held::Kept(Box::new(Flow::of_rows(morsels, alone, (&limit, &ahead), db.tx.stop_of(tx)))))
+    Ok(Held::Kept(Box::new(Flow::of_rows(morsels, (&limit, &ahead), db.tx.stop_of(tx)))))
 }
 
 /// Rows given a morsel's at a time, in order, the statement's

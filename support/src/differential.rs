@@ -141,7 +141,24 @@ pub fn differential(kernels: &dyn Kernels, seeds: Range<u64>) {
         decoding(kernels, rng, seed);
         distances(kernels, rng, seed);
         crc(kernels, rng, seed);
+        blooms(kernels, rng, (seed, len));
     }
+}
+
+/// Checks the Bloom filter probe of `kernels` (RULES.md D1087): of a
+/// filter of any count of blocks, at times with words past its last, of
+/// a density that holds few hashes or most, and of hashes of every length
+/// and alignment, the places the portable probe gives.
+fn blooms(kernels: &dyn Kernels, rng: &mut Rng, (seed, len): (u64, usize)) {
+    use turborel::kernels::portable::bloom::{BLOCK_WORDS, bloom_probe};
+    let blocks = [0, 1, 3, 64, 1_000][rng.below(5) as usize];
+    let dense = rng.below(4);
+    let words: Vec<u64> =
+        (0..blocks * BLOCK_WORDS + rng.below(3) as usize).map(|_| (0..dense).fold(rng.next(), |w, _| w | rng.next())).collect();
+    let (hashes, skip) = unaligned(rng, len, Rng::next);
+    let hashes = &hashes[skip..];
+    let want = appended(7, |out| bloom_probe(&words, hashes, out));
+    assert_eq!(appended(7, |out| kernels.bloom_probe(&words, hashes, out)), want, "bloom_probe of {blocks} blocks, seed {seed}");
 }
 
 /// `out` after `run` appended to a vector holding one word, as each

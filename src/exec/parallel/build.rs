@@ -276,4 +276,48 @@ mod tests {
         assert_eq!(built(65, 1), 1, "one thread");
         assert_eq!(built(64, 2), 1, "a morsel's rows");
     }
+
+    /// The cells of the pairs the probe of `table` by `probe`, on its
+    /// first column, gives, each row's as text; of a LEFT join if `outer`.
+    fn cells(table: &SharedTable, probe: Batch, outer: bool) -> Vec<String> {
+        let mut out = Vec::new();
+        for kept in SharedTable::probing(table, (probe, None), (vec![0], None), outer) {
+            let (batch, sel) = kept.unwrap();
+            for r in crate::storage::sel::places_of(sel, batch.rows) {
+                out.push((0..batch.columns.len()).map(|c| format!("{:?}", batch.cell(c, r).to_value())).collect::<Vec<_>>().join(","));
+            }
+        }
+        out
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1087: a table past `SCREENED_BYTES`
+    /// built by many threads screens its probes by its key's Bloom filter
+    /// before its slots, and pairs every probing row as the table of one
+    /// thread, which screens none, pairs it, in order: a key of integers
+    /// of the built rows' scale, paired in its units, and one of another
+    /// scale, compared as values; of an inner join and of a LEFT join,
+    /// whose rows the filter drops are paired with nulls; half the probing
+    /// keys held.
+    #[test]
+    fn probes_screened_by_the_bloom_filter_pair_as_every_probe() {
+        let db = database();
+        let state = Db::from(db.snapshot().unwrap());
+        let crew = Crew { db: &state, tx: crate::txn::NO_TRANSACTION, degree: 4 };
+        let seed = state.functions.seed().clone();
+        let keys = [JoinKey { left: 0, right: 0, nulls: false }];
+        let layout = || ((0..3).collect::<Vec<usize>>(), 3);
+        let built = || parts(100, 2_000, |n| n * 1_000);
+        let alone = SharedTable::of(built(), layout(), &keys, (seed, false)).unwrap();
+        let together = shared(built(), layout(), &keys, crew).unwrap();
+        assert!(together.screens() && !together.is_direct());
+        for (scale, outer) in [(0_u32, false), (2, false), (0, true)] {
+            let probe = || {
+                let units: Vec<i64> = (0..3_000_i64).map(|n| (n * 1_000 + n % 2) * 10_i64.pow(scale)).collect();
+                Batch { columns: vec![Column::Ints(Ints::new(units, scale, None))], rows: 3_000 }
+            };
+            let want = cells(&alone, probe(), outer);
+            assert!(if outer { want.len() == 3_000 } else { want.len() > 1_000 && want.len() < 1_500 }, "scale {scale}");
+            assert_eq!(cells(&together, probe(), outer), want, "scale {scale}, outer {outer}");
+        }
+    }
 }
