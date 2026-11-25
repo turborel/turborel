@@ -16,7 +16,7 @@ const RAISING: &str = "rewrites::hoisting::hoisted_parts_raise_as_the_product_wo
 const KEPT: &str = "rewrites::elimination::joins_that_could_change_rows_are_kept";
 
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 22] = [
+pub const REWRITES: [Mutation; 24] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -235,6 +235,26 @@ pub const REWRITES: [Mutation; 22] = [
         original: "|| groups.iter().any(|&g| g >= width)",
         replacement: "",
         integration: &["rewrites::pregrouped::a_grouping_the_rewrite_could_change_is_left"],
+        unit: &[],
+    },
+    Mutation {
+        name: "keyed-grouping-of-strings",
+        package: Package::Core,
+        breaks: "a grouping over a LEFT join equating strings is a projection, though a left row may match two groups of the right that the join holds equal (RULES.md D1117)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "let equated = shape.pairs.iter().all(|&(l, r)| exact(left, l) && exact(right, r));",
+        replacement: "let equated = shape.pairs.iter().all(|&(l, r)| exact(left, l) || !exact(right, r));",
+        integration: &["rewrites::pregrouped::a_grouping_by_no_key_of_the_left_stays"],
+        unit: &[],
+    },
+    Mutation {
+        name: "keyed-grouping-unwarned",
+        package: Package::Core,
+        breaks: "a left row no group matched gives its null with no warning that a null was eliminated (RULES.md D1117)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "let null = Expr::Warned(Box::new(Expr::Column(part)), SqlState::NULL_VALUE_ELIMINATED);",
+        replacement: "let null = Expr::Column(part);",
+        integration: &["rewrites::pregrouped::a_grouping_by_a_key_of_the_left_is_a_projection"],
         unit: &[],
     },
 ];

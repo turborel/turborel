@@ -710,6 +710,7 @@ verification approach DO-178C expects (§8).
 | D1114 | An index nested-loop join over a part run in parallel probes its index on the part's threads |
 | D1115 | A semi join that builds its left holds a left run in parallel by the threads that read it |
 | D1116 | An analyzed grouping over another that crosses its partitions passes the counts of the projections between them |
+| D1117 | A grouping over a LEFT outer join by a key of its left table, its right grouped first, is a projection of the joined rows |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19376,6 +19377,52 @@ alone runs. A partition's thread takes each group of the first through
 the projections, so each projection's count is given a row for each
 group of the first, as the first grouping's own count is, and is shown
 with no time of its own, as a step of a pipeline is.
+
+#### D1117. A grouping over a LEFT outer join by a key of its left table, its right grouped first, is a projection of the joined rows
+
+D1112 groups the right operand of a LEFT join first, by its columns of
+the join's equalities, and merges what those groups computed in the
+grouping above, by the left operand's columns. TPC-H Q13 groups its
+customers by their key: each group above held one joined row, and the
+grouping hashed and merged 1.5 million rows into 1.5 million groups to
+give them back as they were.
+
+The grouping above is now a projection of the joined rows
+(`optimizer/pregrouped.rs`) when each of its groups holds exactly one
+of them. That holds when all of the following hold:
+
+1. The left operand is a table's rows, filtered or not.
+2. The grouping columns hold every column of a unique key of that
+   table, by a constraint not deferrable and of no period. Each key
+   column is NOT NULL by a constraint not deferrable and has no
+   collation of its own, and the grouping is by no collation. No two
+   left rows are then alike in the grouping columns, as grouping
+   compares them [ISO/IEC 9075-2:2023 §11.7 GR2, §8.9].
+3. Each column the join equates, of either operand, is an exact number.
+   Two exact numbers equal by the join's comparison are one value, so
+   the groups of the right operand's keys, which differ in that value,
+   differ by the join's comparison too. A left row matches at most one
+   of them, and the LEFT join gives it once: joined with that group, or
+   with nulls if it matches none [§7.10 GR1].
+
+A group of one row computes each set function over that one row. MAX
+and MIN of one value are that value. The grouping above computed MAX
+and MIN of the group's MAX and MIN, and the sum of its counts for
+COUNT, so each is the value the group below computed. A left row no
+group matched has null in each, as the grouping above found it. COUNT
+gives that row 0, as D1112 has it, and MAX and MIN give null. The
+grouping above raised the warning that a null value was eliminated
+(01003) of that null [§10.9 GR4b]. The projection raises it of the same
+row, by an expression that warns as it gives the null, so the
+statement's warning is the one it was.
+
+COUNT of a column that may hold a null is left as it was, by D1112's
+own condition: a right row whose column is null counts nothing below,
+and its warning would differ. The projection changes nothing below.
+Every other shape keeps the grouping above: grouping columns that hold
+no key, a key that may hold a null, a deferrable key, a key or a
+grouping of a collation, a left operand that is a join, and a join
+equating strings, whose equal strings may differ as values.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
