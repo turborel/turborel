@@ -4,7 +4,6 @@
 //! the pairs' corrections giving one answer for every order of a set.
 
 use super::Estimates;
-use super::composite::Member;
 use super::joins::Classes;
 use crate::db::{Database, Session};
 
