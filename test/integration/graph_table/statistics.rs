@@ -102,9 +102,9 @@ fn opened(dir: &Path) -> Database {
 }
 
 /// Verifies: [EXTENSION] RULES.md D151, D25: a graph's statistics are a
-/// database's again once it reopens and its maintenance gathers its
-/// tables' statistics, due as they are first asked for; and follow its
-/// changes once committed.
+/// database's again once it reopens and its maintenance has run, its
+/// tables' statistics gathered as they are first asked for (RULES.md
+/// D1092); and follow its changes once committed.
 #[test]
 fn graph_statistics_are_recovered_after_reopening() {
     let scratch = Scratch::new("graph-statistics-reopened");
@@ -117,7 +117,6 @@ fn graph_statistics_are_recovered_after_reopening() {
     drop((s, db));
     let db = opened(&dir);
     let s = db.session("A");
-    assert!(statistics(&s).iter().all(|r| r.split(',').skip(6).all(|v| v == "NULL")), "none before maintenance");
     db.maintain().unwrap();
     assert_eq!(statistics(&s), GATHERED, "gathered again");
     s.run("INSERT INTO E VALUES (10, 8, 7, 5), (11, 3, 7, 5)").unwrap();

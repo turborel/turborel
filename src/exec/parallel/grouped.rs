@@ -41,7 +41,7 @@ use crate::error::{Result, SqlState};
 use crate::exec::Db;
 use crate::exec::batch::{Read, Told, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
-use crate::exec::table::Seed;
+use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Cond, Truth};
@@ -114,6 +114,15 @@ impl Grouping {
         failed.map_or(Ok(groups), Err)
     }
 
+    /// \[DESIGN\] (RULES.md D1111) The groups of `table`, finished, that
+    /// its HAVING condition is true of, or all of none, as `kept` keeps
+    /// them: the condition judged of each group's row before the group
+    /// takes a row of its own.
+    fn kept_of(&self, table: &GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+        let Some(cond) = &self.having else { return table.finished() };
+        table.finished_if(|row| Ok(eval_cond(cond, row, runner)? == Truth::True))
+    }
+
     /// The grouping values of `row`.
     fn values(&self, row: &Row) -> Result<Row> {
         if self.distinct {
@@ -138,7 +147,7 @@ pub(super) fn is_one(plan: &Plan) -> bool {
 ///
 /// As reading the stream, or a set function, fails.
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
-    grouped_told(plan, (db, tx), degree, Vec::new())
+    grouped_told(plan, (db, tx), degree, &[])
 }
 
 /// \[DESIGN\] (RULES.md D1063) As `grouped`, the grouping's input told
@@ -148,7 +157,7 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resu
 /// # Errors
 ///
 /// As `grouped`.
-pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: Vec<Told>) -> Result<Held<RowIter>> {
+pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: &[Told]) -> Result<Held<RowIter>> {
     let (plan, having) = if let Plan::Filter { cond, input, .. } = plan { (&**input, Some(cond.clone())) } else { (plan, None) };
     let seed = db.functions.seed().clone();
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {

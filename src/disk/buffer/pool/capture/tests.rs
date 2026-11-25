@@ -171,3 +171,26 @@ fn a_capture_given_up_leaves_pages_dirty() {
     shadows.commit().unwrap();
     assert_eq!(got(&pool, file, 2), version(2, 2));
 }
+
+/// The bytes of the data file's side files on `disk`.
+fn side_bytes(disk: &Arc<dyn FileSystem>) -> u64 {
+    let sides = disk.read_dir(Path::new("/d")).unwrap().into_iter().filter(|p| p != Path::new(PATH));
+    sides.map(|p| disk.open(&p, crate::disk::io::OpenMode::ReadOnly).unwrap().size().unwrap()).sum()
+}
+
+/// Verifies: [DESIGN] RULES.md D1139: the pages the walk captures are
+/// written to the sealed batch's side file as it walks, a page's worth of
+/// bytes or more each, not held in memory until the commit; and the batch
+/// committed and a crash after hold them as they were.
+#[test]
+fn captures_go_to_the_side_file() {
+    let (disk, shadows, pool, file) = dirty(64);
+    let capture = begin(&shadows, &pool, file);
+    let owed = u64::try_from(capture.pages.len()).unwrap();
+    let before = side_bytes(&disk);
+    pool.capture_rest(capture).unwrap();
+    assert!(side_bytes(&disk) >= before + owed * u64::from(PAGE), "{owed} pages captured to disk");
+    shadows.commit_sealed().unwrap();
+    drop((pool, shadows));
+    crashed_holds_the_capture(&disk);
+}

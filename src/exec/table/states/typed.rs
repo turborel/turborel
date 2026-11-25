@@ -18,6 +18,8 @@ use crate::storage::{Batch, Column, Ints, Mask};
 use crate::value::codec::value;
 use crate::value::{DataType, Decimal, Value};
 
+mod merged;
+
 use super::super::Pending;
 use super::{Boxed, columns_of};
 

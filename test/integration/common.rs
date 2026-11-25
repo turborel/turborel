@@ -307,6 +307,17 @@ pub fn arm(gate: &Gate) {
     gate.armed.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// Disarms `gate`, if no scan reached it since it was armed, waking what
+/// waits to hear one did, as a statement that ended before its scan read
+/// its second row leaves it: whether a scan reached it.
+pub fn disarm(gate: &Gate) -> bool {
+    let unreached = gate.armed.swap(false, std::sync::atomic::Ordering::SeqCst);
+    if unreached {
+        gate.reached.lock().unwrap().send(()).unwrap();
+    }
+    !unreached
+}
+
 /// A database whose table X.L, of the locking engine, its session `holder`
 /// holds locked, by a row it inserted and has not committed; statements
 /// wait for locks.

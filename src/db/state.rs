@@ -428,7 +428,9 @@ impl State {
     /// If nothing, and asking made its gathering due, or this read made
     /// statistics changed enough wanted, the table is noted for the
     /// database's maintenance (`db/maintenance.rs`), which gathers them:
-    /// planning never waits for a pass over a table (RULES.md D35, D473).
+    /// planning never waits for a pass over a table (RULES.md D35, D473),
+    /// but an engine may make a bounded first pass of a table opened as
+    /// it is asked (RULES.md D1092).
     /// A table no write commits to after the read is gathered so too.
     pub fn statistics(&self, table: &QualifiedName) -> Option<Arc<dyn Statistics>> {
         let storage = self.storage.get(table)?;

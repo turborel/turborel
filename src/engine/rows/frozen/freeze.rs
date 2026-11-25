@@ -80,6 +80,10 @@ pub(super) fn ordered(order: &Places, mut rows: Vec<(RowId, Row)>) -> (Vec<RowId
 /// A group just written, as an entry of the directory, with its pages.
 pub(super) type Made = Option<(Arc<Entry>, Vec<PageId>)>;
 
+/// A group just put in the directory, if one was, and the directory
+/// before it.
+pub(super) type Put = (Option<Arc<Entry>>, Arc<Directory>);
+
 /// A freeze under way, noted from a row id on until it is dropped.
 pub(super) struct Freezing<'f>(&'f AtomicU64);
 
@@ -167,7 +171,7 @@ impl RowTable {
     /// The entries of the tree after row `after`, up to `most` of them,
     /// whose newest version is a row stamped committed at or before
     /// `cutoff`.
-    fn eligible(&self, after: Option<RowId>, cutoff: Timestamp, most: usize) -> Result<Vec<(RowId, Vec<u8>)>> {
+    pub(super) fn eligible(&self, after: Option<RowId>, cutoff: Timestamp, most: usize) -> Result<Vec<(RowId, Vec<u8>)>> {
         let from = after.map(key);
         let lower = from.as_ref().map_or(Bound::Unbounded, |k| Bound::Excluded(&k[..]));
         let mut found = Vec::new();
@@ -189,27 +193,50 @@ impl RowTable {
     /// Writes `entries`' rows as a group, sorted, and with Bloom filters,
     /// as `columns` says, and publishes it.
     fn freeze(&self, entries: Vec<(RowId, Vec<u8>)>, columns: &Columns) -> Result<()> {
+        let group = self.written(&entries, columns)?;
+        self.publish((None, Some(group)), entries)
+    }
+
+    /// `entries`' rows written as a group, sorted, and with Bloom filters,
+    /// as `columns` says.
+    pub(super) fn written(&self, entries: &[(RowId, Vec<u8>)], columns: &Columns) -> Result<Group> {
         let mut rows: Vec<(RowId, Row)> = Vec::with_capacity(entries.len());
-        for (id, bytes) in &entries {
+        for (id, bytes) in entries {
             rows.push((*id, self.decode(*id, Version::parse(bytes)?.record, None)?));
         }
         let (ids, rows) = ordered(&columns.order, rows);
         let (order, bloom, sketch) = (columns.order.places(), columns.bloom.places(), columns.sketch.places());
-        let group = Group::write(&self.group_pages()?, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))?;
-        self.publish((None, Some(group)), entries)
+        Group::write(&self.group_pages()?, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))
     }
 
     /// Puts `group`, if any, in the directory in the place of `old`, if
     /// any, the directory stored, and the tree's `entries` of its rows to
     /// be taken out; `old`'s pages freed once no reader holds it.
     pub(super) fn publish(&self, (old, group): (Option<&Arc<Entry>>, Option<Group>), entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
-        let made = group.map(|g| (g.pages(), g)).map(|(pages, g)| self.entry_of(g).map(|e| (e, pages))).transpose()?;
+        let made = group.map(|g| self.made(g)).transpose()?;
         self.publish_entry((old, made), entries)
     }
 
+    /// `group`, just written, as an entry of the directory, with its pages.
+    pub(super) fn made(&self, group: Group) -> Result<(Arc<Entry>, Vec<PageId>)> {
+        let pages = group.pages();
+        Ok((self.entry_of(group)?, pages))
+    }
+
     /// As `publish`, of the entry `made` of a group just written, if any,
-    /// with its pages.
+    /// with its pages. It is put in the directory, then its shadow bits
+    /// are marked.
     pub(super) fn publish_entry(&self, (old, made): (Option<&Arc<Entry>>, Made), entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
+        let put = self.put((old, made))?;
+        self.marked(put, entries)
+    }
+
+    /// Puts `made`, if any, in the directory in the place of `old`, if
+    /// any, the directory stored. A reader may take the group from now on,
+    /// before its shadow bits are marked. They are not settled yet, so it
+    /// reads the tree over the group's range whole, and misses no entry
+    /// the mark has yet to find (`shadow_bits.rs`, RULES.md D1100).
+    pub(super) fn put(&self, (old, made): (Option<&Arc<Entry>>, Made)) -> Result<Put> {
         let old_pages = old.map(|o| self.group_of(o).map(|g| g.pages())).transpose()?;
         let (made, made_pages) = made.unzip();
         let before = {
@@ -233,6 +260,13 @@ impl RowTable {
             self.frozen.end_groups(end);
             before
         };
+        Ok((made, before))
+    }
+
+    /// Marks the shadow bits of the group `put` in the directory, if one
+    /// was, and settles them; the tree's `entries` of its rows are then
+    /// taken out once no reader holds the directory before it.
+    pub(super) fn marked(&self, (made, before): Put, entries: Vec<(RowId, Vec<u8>)>) -> Result<()> {
         // After it is in the directory: a writer that did not find it wrote
         // its entry before this reads the tree (`shadow_bits.rs`).
         if let Some(m) = &made {

@@ -679,6 +679,8 @@ verification approach DO-178C expects (§8).
 | D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
 | D1065 | An uncorrelated NOT IN or ALL that is a conjunct is an antijoin |
+| D1066 | A DISTINCT by hash under a join is read by batch as the grouping by every column it is |
+| D1067 | An IN list of a computed expression is judged by its set from two constants on, the expression computed once |
 | D1070 | A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows |
 | D1071 | A hashed semi join of streams read row by row is made of its batches |
 | D1072 | A join reads a grouping by batch whatever its set functions, and a grouping run in parallel too |
@@ -692,6 +694,18 @@ verification approach DO-178C expects (§8).
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
 | D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
+| D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
+| D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
+| D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
+| D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
+| D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
+| D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
+| D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
+| D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
+| D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
+| D1138 | The rows an execution of a load is given are held, never spilled |
+| D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
+| D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 
 ### The project
 
@@ -2453,7 +2467,7 @@ Each file has a class that decides what create, remove, sync, close and
 open do. The classes are durable (catalog, data file, log), durable at
 commit (shadow files), unsynced (undo log) and scratch (spill files).
 
-FILES.MAX_OPEN caps open descriptors, 1024 by default and 0 for none. Past
+FILES.MAX_OPEN caps open descriptors, 512 by default (D1136) and 0 for none. Past
 it the least recently used file is closed and reopened on next use. Files
 with unsynced writes are synced first, because a writeback error no sync
 saw is lost with the descriptor. If that sync fails, the failure is kept
@@ -12209,15 +12223,16 @@ so the capture is set up before the first page is owed; and the
 checkpoint walks the pages owed and
 captures each still owed under its read latch, then each copy
 (`disk/buffer/pool/capture.rs`). A capture is written into the sealed
-batch, held in memory, newer than its blocks and older than anything
+batch, appended to its side file (D1139), newer than its blocks and older than anything
 written since, so a read finds it only where nothing newer was written
 (`DiskFile::write_captured_at`). A capture changes nothing a write in
 flight writes over or a read waits for (D472), so it waits for none, and
-holds the file's lock only to put granules copied before it took it.
+holds the file's lock while it appends its block.
 The walk waits for evictions capturing
 before the batch is committed. This is the two versions of Ren et al.
 2016's CALC at the grain of a page, where the frame's latch gives the
-exclusion; memory is bounded by the pages written during one walk.
+exclusion. The copies writers and frees make are bounded by the pages
+written during one walk; the captures themselves are on disk.
 
 A page is owed only if capturing it needs no other page: its content
 fits in it, and it is known to have no overflow pages, as every page
@@ -18492,8 +18507,8 @@ alone, and tells it its filters (`exec/batch/parted.rs`). The part's
 pipeline is told the filters of the grouping's input columns
 (`Pipeline::told`). Their ranges go down to the scans, as the ranges of
 the pipeline's own joins do (D389), so a morsel outside them is skipped.
-A step at the pipeline's end judges the filters of each morsel's
-batches, their key sets and Bloom filters too. D389 left those out of a
+A step right after each scan they reach judges the filters of each
+morsel's batches, their key sets and Bloom filters too. D389 left those out of a
 morsel's scan because the probe of the filter's join follows in the same
 morsel and drops the rows anyway. Here no probe follows. The grouping
 follows, so each row the step drops is one the grouping does not hash.
@@ -18548,6 +18563,48 @@ say. The join is made only of a subquery that is pure and cannot raise,
 as before. One that is refused is offered to no other rule and stays
 nested, read once, since the general unnesting of an uncorrelated
 subquery would gain nothing over that.
+
+#### D1066. A DISTINCT by hash under a join is read by batch as the grouping by every column it is
+
+A stream gathered the rows of a grouping that takes filters, so a hash
+join read it by batch and told it its runtime filters (D600). A DISTINCT
+had no such reading. An operand that held one, run alone or in
+parallel, gave a join no batches, and an index join over a DISTINCT gave
+none either, as it needs its left operand's width. The join above then
+ran row by row with every operand of it, and told no filter to any of
+them. The semi join a planner makes of `x IN (SELECT ...)` by probing
+an index from the subquery's distinct rows is such an operand, so the
+join beside it lost the filters D1062 and D1063 give a grouping.
+
+A DISTINCT by hash is now read as the grouping of its rows by every
+column, no set function, which the executor already makes of it
+(`batch::distinct_grouping`). A join reads it by batch and tells its
+input the filters of any of its columns, run alone
+(`told::grouped_batches`) or in parallel (`parted.rs`). A row the
+filter drops would give a distinct row the join keeps no row of. Its
+rows come in no order the plan relies on, as a grouping's by hash, so a
+join's left operand takes them as they come. A DISTINCT whose input
+comes in order, compared row by row (D550), is read as before.
+#### D1067. An IN list of a computed expression is judged by its set from two constants on, the expression computed once
+
+An `<in predicate>` of constants is bound as an OR of equalities, and an
+OR of eight or more of one column is judged by a set (D31). Of fewer the
+OR stays, as comparing a column with each constant costs no more than
+finding its bucket. Of an expression that is no column the OR stayed
+whatever its length. An OR evaluates every operand (D15), so
+`SUBSTRING(C FROM 1 FOR 2) IN ('13', '31', '23', '29', '30', '18', '17')`
+computed the substring seven times for each row, each a string made and
+dropped.
+
+Such an OR is now judged by its set from two constants on
+(`logical/sets.rs`). The set computes the expression once and compares
+its value with each constant, or finds its bucket of eight or more. The
+count needs no measurement, as one computation is less than two of the
+same. The expression is of columns and constants by deterministic
+functions, arithmetic and casts alone, and the same in every equality,
+function for function and constant for constant. It then has one value
+for a row and raises one error, however often it is computed, so the
+condition's value and its error are those of the OR.
 
 #### D1070. A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows
 
@@ -18845,6 +18902,286 @@ is not judged. The rows kept, and their order, are what judging each
 row gives. A comparison of integers known as runs is still judged once
 a run, not by the kernel over every row: measured on TPC-H, the kernel
 was the slower of the two.
+
+### Column store reads
+
+#### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
+
+The headers of frozen row groups were held in one map behind one mutex,
+ordered by when each was last read (D31). Every read of a header held
+took the mutex and moved the header in an ordered tree, so the scans of
+a parallel query, a group each, met on it once a group. Its bound was
+16 MiB whatever the database's memory. A header of a table of sixteen
+columns takes about 180 KiB, so the cache held some ninety of the 915
+groups of a table of sixty million rows. A scan of the table then read
+and parsed every header again on every query, and a join that fetched
+rows by id from groups all over the table parsed a header for most of
+its fetches.
+
+A header held is now kept in a slot of its group's entry of the
+directory. A read of it takes the slot's own lock shared and looks
+nothing up, so readers of different groups share no word. The cache
+keeps the bytes and a queue of the headers in the order they were put.
+When it must give one up it takes the first of the queue, but passes
+over once each header read since it was last passed over, so the
+headers read lately stay. The order is no longer exactly by last read,
+which cost the shared ordered tree.
+
+COLUMNSTORE.HEADER_CACHE_BYTES is -1 by default, which bounds the cache
+at a 64th of MEMORY.BUDGET_BYTES. That is the share the old 16 MiB was
+of the default budget of 1 GiB, so a database of the default settings
+holds what it held, and one given more memory holds the headers of as
+much more data. A value of 0 or more is the bound in bytes as before.
+What the cache holds is still reserved of the budget (D38).
+
+#### D1091. A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured
+
+A read of a frozen row by its id found the chunk of each column by
+looking at the column's chunks one after another, made a row of the
+table's width for a read of a few listed columns, and listed every
+column's place for each read. It now finds the chunk by halving, as a
+column's chunks are in the order of their rows, and a read of listed
+columns appends their values alone (`TableStorage::get_listed`, D862).
+
+The planner priced a frozen fetch a tenth more than a fetch of the
+tree's, a figure never measured. `bench/fetch.rs` now reads the same
+table from the tree and from two groups of the column store with every
+header held. FROZEN_FETCH is set from its case of four columns read by
+scattered ids against the tree's case of scattered ids, as a join or an
+index scan fetches a few columns, each a page of its own
+(`engine/rows/frozen.rs`). A fetch of one column costs less than that,
+and one of every column more.
+
+#### D1092. A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample
+
+A table opened has no statistics, and they were left to the maintenance
+thread once a plan had asked for them (D35, D473). The first plans
+after a start were therefore made without them, on the fixed
+selectivities. A grouping of a table of sixty million rows was planned
+as a sort and a streamed grouping on one thread, and ran for minutes
+where the plan made with statistics runs for a second, and joins
+planned so were worse.
+
+The plan that first asks for the statistics of a table opened now
+gathers them itself, and plans asking meanwhile wait for that pass, so
+it is made once and no plan is made without them. The pass is bounded
+whatever the table holds, as a table of more than twice the sample's
+rows is sampled (D31). If it fails, the statistics are due for the
+maintenance thread as before. A table made in this run, and every later
+pass, are as they were, so D473 still keeps a table no plan reads from
+being gathered.
+
+For the bound to hold of the column store a sampled pass had to cost
+its sample. It read the header of every group and listed and hashed
+every row id of every group to find those sampled. It now takes the
+runs of row ids chosen, passes over a group none of them lies in with
+its header unread, and of a group whose rows are every id of its range
+in order reckons a run's places from its ids
+(`engine/rows/frozen/sampled.rs`).
+
+#### D1100. A group's shadow bits are trusted only once the entries the tree held as it was published are marked
+
+A group is put in the directory first, and the entries the tree holds in
+its range of row ids are marked in its shadow bits after, so that a
+writer either finds the group or is found by the mark (D510). Between
+the two a reader could take the group with no bit set, and a scan by
+batch then read nothing of the tree over the group's range, and left
+that range out of the tree's rows it reads last
+(`engine/rows/frozen/batches.rs`). It missed every row of the range the
+group does not hold. A freeze leaves such rows out when their commit is
+not yet stamped on their entries as it reads them (D440), which a commit
+does a leaf at a time, so a freeze racing a commit made a group whose
+range held some of the commit's rows in the tree alone. The scan also
+read the frozen value of a row updated, and the row of one deleted, just
+before the group was published. A count read this way was of no state
+ever committed.
+
+A group's bits are now settled only when its mark has read the tree
+(`engine/rows/frozen/shadow_bits.rs`). Until then every bit is taken as
+set, so a scan reads the tree over the group's range whole, as it did
+before there were bits, and a group is not said to have no bit. A reader
+reads that the bits are settled before it reads any of them, so the bits
+it trusts hold every mark made by then. A table opened settles its
+groups' bits once it has marked them. Publishing is two steps, the group
+put in the directory and its bits marked (`engine/rows/frozen/freeze.rs`),
+so a test reads between them.
+
+Rejected was marking the bits before the group is in the directory,
+which misses the writer that writes between the mark and the directory.
+Rejected too was holding the directory's lock while the tree is read,
+which would stop every reader and writer of the table for as long as the
+mark takes. A scan in row id order, a morsel's by row and a scan in the
+groups' order merge the tree's entries with the groups' rows by row id
+and never read the bits, so they were not at fault.
+
+#### D1110. A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room
+
+A grouping run in parallel groups each morsel in a table of its own and
+merges the morsels' groups by partition (D293, D356). Each group was
+merged alone. Its key was read as a cell and compared and appended by
+its kind, and each set function's state was merged by its kind, group
+after group. Each morsel's table and each partition's grew a vector a
+group at a time, and a morsel's groups were split among the partitions
+into a vector a partition. Of a grouping of many groups, as one by an
+order's key over its line items, the merge and the allocator took more
+time than grouping the rows did.
+
+A partition now merges a morsel's groups a column at a time
+(`exec/table/made.rs`). Each group is looked up by the hash it came
+with. A morsel's groups are of distinct keys, so those not found are
+all new, and they are appended lane by lane, integers in one loop, and
+then placed. Each set function's states are then merged in one loop,
+the kind of the two columns and their scale compared once
+(`exec/table/states/typed/merged.rs`). Columns of different kinds, and
+accumulators, merge group by group as before. A table placed by keyed
+hashes (D357) makes its new groups one by one, and one whose probe
+grows long as new groups are placed turns keyed with every group
+placed.
+
+A morsel's table is made with room for the groups the morsel last
+grouped made, so its vectors and slots are made once. A partition's
+table is given room for every group of the wave it merges. The places
+of a morsel's groups are kept partition after partition in one vector,
+counted and then placed, in place of a vector a partition. None of
+this changes a group, its number or the order the groups are given in.
+
+#### D1111. A HAVING condition judged by its grouping's part is judged of a group before the group takes a row
+
+A part that judges its grouping's HAVING condition (D1073) finished
+every group into a row of its own and then dropped the rows the
+condition was not true of. Of many groups few of which are kept, the
+rows made and freed cost more than judging them. Each group's row is
+now made in the room of one row, the condition is judged of it there,
+and only a group kept takes a row of its own (`exec/table.rs`). The
+groups kept, their rows and their order are as before.
+
+#### D1112. A grouping over a LEFT outer join groups the join's right operand first by its keys
+
+A grouping by the left operand's columns over a LEFT outer join, as the
+count of each customer's orders, read every pair the join made, and the
+join held every row of its right operand. The rule
+`group_before_outer_join` (`optimizer/pregrouped.rs`) now groups the
+right operand first, by its columns of the join's equalities, and
+computes each set function of each of those groups. The join then
+holds a row a key, a left row matches one group at most, and the
+grouping above merges what the groups below computed: MAX and MIN
+their greatest and least, COUNT their sum. A projection above gives a
+count of 0 where the sum is null, of a left row no group matched, in
+COUNT's type.
+
+The rule takes a join whose condition is equalities of a column of
+each operand alone, and set functions that are COUNT, MAX or MIN of a
+column of the right operand declared to hold no null, neither DISTINCT
+nor filtered. The right operand is a table's rows, as they are or
+filtered by a condition that cannot raise. So the grouping below warns
+of no null, and the grouping above warns of the null of a left row no
+group matched, as the function did of that row before. Nothing that
+could raise is evaluated of a row it was not before (D15). MAX and MIN
+are taken of exact numbers alone. COUNT(*), which counts a left row
+nothing matched, SUM and AVG, whose sums of parts could pass a bound
+their whole does not, and every other shape are left as they were.
+
+Grouping the right operand first costs a row grouped for each of its
+rows. It spares the join every row beyond one a key, and the grouping
+above every row beyond one a left row. So the rule rewrites only where
+the right operand's estimated rows less its estimated keys outnumber
+the left operand's rows. Without statistics a column's distinct values
+are taken as its table's rows (D370), so the rule then leaves the plan.
+
+#### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
+
+A load of a wide table failed past a few million rows with "too many
+open files". Its log kept a segment for each 64 MiB written since the
+last checkpoint, each open through the file manager (D56), and the
+manager let 1024 be open, which is all a process gets by default. The
+manager stayed under its limit while the process ran out, and the spill
+file an execution then needed could not be opened.
+
+Two changes keep a database within what the system allows. The default
+of FILES.MAX_OPEN is 512, half the usual limit, leaving the other half
+for connections and the server's own files. And an open the system
+refuses for want of a descriptor (EMFILE or ENFILE on Unix,
+ERROR_TOO_MANY_OPEN_FILES on Windows) is SQLCODE -918 from
+`OsFileSystem`, which the manager answers as it answers its own limit.
+It closes a file of the database's not in use and tries again, or waits
+for one to be done (`files/spent.rs`). Only when the database holds no
+other descriptor is the error returned. A limit lower than FILES.MAX_OPEN
+then slows the work, through files closed and opened again, but no
+statement fails for it. The server does not raise its own limit. The
+engine has to live within whatever the operator gives it.
+
+#### D1137. CHECKPOINT.AFTER_BYTES counts the bytes written to the log too
+
+A checkpoint came due after CHECKPOINT.AFTER_CHANGES row changes, or
+CHECKPOINT.AFTER_BYTES written to the tables file's side file. A load
+into a large pool writes almost nothing to the side file, and wide rows
+make each change many bytes, so the log grew by tens of gigabytes, its
+segments all kept, before the changes came due. Recovery after a crash
+then replayed all of it.
+
+The log's bytes now count as well (`Transactions::bytes_since_checkpoint`,
+`txn/pending.rs`), and a checkpoint is due once either the side file or the
+log has grown by CHECKPOINT.AFTER_BYTES since the last. The bytes the
+log holds are noted as a checkpoint captures what it holds, as the row
+changes are, so a checkpoint that fails counts them still. The log a
+checkpoint lets go of, and the recovery after it, are then bounded by
+the setting whatever the shape of the rows.
+
+#### D1138. The rows an execution of a load is given are held, never spilled
+
+An execution of a prepared INSERT given many rows, as the client's
+import sends them, held them in a list that spills past 4 MiB (D298). A
+batch of 65,536 rows of a wide table is tens of megabytes, so each
+execution made a spill area, wrote the batch to it and read it straight
+back. A load made thousands of spill files that way, one descriptor
+each while it lasted.
+
+Those rows are already in memory, in the request that gave them, so the
+list that holds them as candidates is never more than as many again. It
+is held whole (`db/write/given.rs`). No spill area is made for it, and
+the batch size a client chooses bounds what it holds. Rows a statement
+reads itself, as an INSERT from a query, are held as before.
+
+#### D1139. A checkpoint's captures go to its sealed batch's side file, not memory
+
+A checkpoint marks each dirty page of the pool owed and captures it
+after writers go on (D590). Each capture was put into the sealed batch
+in memory, held until the batch was committed. During a load nearly
+every frame of the pool is dirty, so one checkpoint held a copy of most
+of the pool beside the pool, outside MEMORY.BUDGET_BYTES. With a pool of
+48 GiB that copy took tens of gigabytes, and the server was killed for
+memory.
+
+A capture is now appended as a block to the sealed batch's side file
+(`Side::append_captured`, `disk/shadow/side.rs`), where the granules of
+its other blocks already are. It is newer than every block before it,
+as a capture is, and the commit copies it into the file as it copies
+the others. A crash before the commit block finds a side file with no
+commit, which recovery throws away, as before. A capture the side file
+refuses, as one whose sync failed, is held in memory as before, so the
+failure is met by the commit, which a later checkpoint takes again,
+rather than stopping checkpoints until the database is reopened, as a
+capture lost does (D590). The checkpoint's memory
+is then the copies writers and frees make while it walks, and the walk
+writes each capture to disk as it goes.
+
+#### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
+
+A value given for a `?` is cast to the parameter's type [ISO/IEC
+9075:1992 §17.9 GR5f]. A plan made with the values casts each as it is
+made, so a value that does not cast raised at OPEN. A plan kept reads
+its values where they are and casts one as it reads it (D610). That is
+at OPEN for a plan that can raise, which is read whole then (D931), and
+at the first FETCH for another. So the moment a cursor raised followed
+whether its plan was kept yet, and a plan learned before its table had
+statistics is learned again once they are known (D839), which the
+maintenance thread decides as it runs. The same cursor raised at OPEN
+in one run and at FETCH in another.
+
+Each value is now cast as the cursor opens (`db/prepared.rs`), and the
+first that does not cast raises CAST's error there, before any plan is
+looked for. A value already of its type is not cast again. The plans
+still cast each value as they read it, which then raises nothing.
 
 ## 2. Project layout
 

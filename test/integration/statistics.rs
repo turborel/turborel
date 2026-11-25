@@ -186,9 +186,9 @@ fn rules_read_statistics() {
 
 /// Verifies: [DESIGN] RULES.md D31, D35, the row store: a new table has no
 /// statistics until gathered; `analyze` gathers them; a table opened again
-/// has none until first asked for, which makes them due, and maintenance
-/// then gathers them from its newest committed rows. Regression test
-/// (R-TEST-7): the first ask made the pass itself, in whatever plan asked.
+/// has none until first asked for, and the first ask gathers them from
+/// its newest committed rows, a bounded pass (RULES.md D1092), leaving
+/// nothing due.
 #[test]
 fn tables_opened_have_statistics() {
     let scratch = Scratch::new("statistics-open");
@@ -210,8 +210,9 @@ fn tables_opened_have_statistics() {
     drop(t);
     let again = RowTable::open(&files, meta, &types, TableOptions::default()).unwrap();
     while again.maintain(u64::MAX, true).unwrap() {}
-    assert!(again.statistics().is_none(), "not gathered until asked for, and asking makes no pass");
-    assert!(again.maintenance_due(), "but makes them due");
+    assert_eq!(again.statistics_passes(), 0, "not gathered until asked for");
+    assert!(again.statistics().is_some(), "gathered by the first asking");
+    assert_eq!(again.statistics_passes(), 1);
     while again.maintain(u64::MAX, true).unwrap() {}
     assert!(!again.maintenance_due());
     let stats = again.statistics().unwrap();
@@ -220,15 +221,17 @@ fn tables_opened_have_statistics() {
     assert!(stats.width(&[0]).is_some_and(|w| w > 0.0));
 }
 
-/// Verifies: [DESIGN] RULES.md D35, D55: a table of a database opened again
-/// has no statistics until first asked for, and planning then makes no pass
-/// over it: queries planned at once on two threads plan without them, and
-/// the table is noted for maintenance, asked for as their transactions
-/// end; the maintenance job gathers them, once, and plans after have them.
-/// Regression test (R-TEST-7): the first plan of each planner made a pass
-/// over the whole table itself, which no cancel could stop.
+/// Verifies: [DESIGN] RULES.md D35, D1092: a table of a database opened
+/// again has no statistics until first asked for, and the plan that first
+/// asks gathers them itself, a pass bounded whatever the table holds:
+/// queries planned at once on two threads both plan with them, the one
+/// waiting for the other's pass, so no plan after a start is made without
+/// them, and plans after have them with no maintenance run.
+/// Regression test (R-TEST-7): the first plans after a start were made
+/// without statistics, on fixed selectivities, until the maintenance job
+/// had run.
 #[test]
-fn a_table_opened_has_its_statistics_gathered_by_maintenance() {
+fn a_table_opened_gathers_its_statistics_as_a_plan_first_asks() {
     let scratch = Scratch::new("statistics-reopened");
     let dir = scratch.path("db");
     let db = Database::new();
@@ -252,8 +255,8 @@ fn a_table_opened_has_its_statistics_gathered_by_maintenance() {
         }
     });
     let planned = seen.lock().unwrap().clone();
-    assert!(!planned.is_empty() && planned.iter().all(|noted| *noted == (None, None)), "{planned:?}");
-    db.run_due().unwrap();
+    assert!(!planned.is_empty() && planned.iter().all(|noted| noted.0 == Some(200.0)), "{planned:?}");
+    assert!(planned.iter().all(|noted| noted.1.is_some_and(|d| (d - 10.0).abs() < 0.5)), "{planned:?}");
     seen.lock().unwrap().clear();
     db.session("APP").physical_plan("SELECT ID FROM T", &Params::new()).unwrap();
     assert_eq!(seen.lock().unwrap().first().map(|noted| noted.0), Some(Some(200.0)));
