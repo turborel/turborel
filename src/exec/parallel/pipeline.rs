@@ -213,7 +213,8 @@ fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Li
     {
         let (scanned, unscanned) = taken(input, &below, db);
         after.extend(judged(above(&scanned).chain(unscanned).chain(here).collect()));
-        let split = scan_branch(db, (table, columns), (tx, rows), (Some(cond), &scanned), out);
+        let cond = settled(cond, (db, tx))?;
+        let split = scan_branch(db, (table, columns), (tx, rows), (Some(&cond), &scanned), out);
         return Ok(split && counted_scan(input, out) && stepped(out, first, after));
     }
     let mut filters = below;
@@ -231,7 +232,7 @@ fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Li
 /// they are wanted; none if the operand gave way.
 fn step_of<'a>(plan: &'a Plan, (db, tx): (&Db, TxId), limit: &Limit, told: &mut Vec<Told>) -> Result<Option<(Step, &'a Plan)>> {
     let made: (Step, &Plan) = if let Plan::Filter { cond, input, .. } = plan {
-        (Step::Filter(cond.clone()), input)
+        (Step::Filter(settled(cond, (db, tx))?), input)
     } else if let Plan::Project { exprs, input, .. } = plan {
         (Step::Project(exprs.clone()), input)
     } else if let Plan::Counted(c) = plan {
@@ -260,6 +261,29 @@ fn step_of<'a>(plan: &'a Plan, (db, tx): (&Db, TxId), limit: &Limit, told: &mut 
         return Err(broken("a part run in parallel is not a pipeline"));
     };
     Ok(Some(made))
+}
+
+/// \[DESIGN\] (RULES.md D1132) `cond`, a filter of the pipeline, with
+/// each scalar subquery that reads nothing of its rows, that every row it
+/// judges runs, and that raises no error and no warning
+/// (`optimizer::unnesting::quiet`) made the constant it gives, run once
+/// here on the statement's thread before any morsel starts, as the
+/// planner took the filter for a step of the part on that account
+/// (`physical/parallel.rs`). Another subquery is left as it is.
+///
+/// # Errors
+///
+/// None a quiet subquery raises; what running one fails of otherwise.
+pub(super) fn settled(cond: &Cond, (db, tx): (&Db, TxId)) -> Result<Cond> {
+    let (runner, none) = (Runner::new(db, tx), Row::new());
+    crate::exec::bound_by(cond, &mut |e| {
+        if let Expr::Subquery(s, _) = &e
+            && crate::optimizer::unnesting::quiet(s, db)
+        {
+            return eval(&e, &none, &runner).map(Expr::Const);
+        }
+        Ok(e)
+    })
 }
 
 /// Of a branch just added to `out` of the filtered scan `input`, a
@@ -525,5 +549,27 @@ mod tests {
         assert!(matches!(steps_of().as_slice(), [Step::Filter(_), Step::Runtime(told), Step::Probe(_)] if told.len() == 1));
         db.set_setting("EXECUTOR.RUNTIME_FILTERS", &crate::value::Value::Char("OFF".into())).unwrap();
         assert!(matches!(steps_of().as_slice(), [Step::Filter(_), Step::Probe(_)]));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1132: a filter's quiet scalar subquery
+    /// is made its constant as the pipeline is made, before any morsel,
+    /// and one that warns is left for each row to run.
+    #[test]
+    fn a_quiet_subquery_is_bound_before_the_morsels() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL, B DECIMAL(10,2) NOT NULL, N DECIMAL(10,2))").unwrap();
+        let a = db.session("A");
+        a.run("INSERT INTO T VALUES (1, 1.50, NULL), (2, 2.50, 3.00)").unwrap();
+        a.commit().unwrap();
+        let settled_of = |sql: &str| {
+            let (st, optimized) = a.optimized(sql).unwrap();
+            let crate::logical::LogicalPlan::Project { input, .. } = optimized else { panic!("a projection") };
+            let crate::logical::LogicalPlan::Filter { cond, .. } = *input else { panic!("a filter") };
+            format!("{:?}", settled(&cond, (&Db::of(&st), crate::txn::NO_TRANSACTION)).unwrap())
+        };
+        let bound = settled_of("SELECT K FROM T WHERE B > (SELECT AVG(B) FROM T) OR K < 0");
+        assert!(!bound.contains("Subquery") && bound.contains("Const(Exact"), "AVG(B) made its constant: {bound}");
+        let left = settled_of("SELECT K FROM T WHERE B > (SELECT AVG(N) FROM T) OR K < 0");
+        assert!(left.contains("Subquery"), "a subquery that warns is left: {left}");
     }
 }

@@ -55,6 +55,7 @@ mod unnest;
 mod window;
 mod work;
 
+pub(crate) use batch::bound_by;
 pub(crate) use batch::storage_counted;
 pub(crate) use lent::Lent;
 pub(crate) use point::{AsIs, PointRead, point_operations};
