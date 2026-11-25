@@ -19,6 +19,7 @@
 //! (`Accumulator::merge`), so each set function takes its values in the
 //! order it would without them.
 
+mod coded;
 mod morsel;
 mod spilled;
 mod streamed;
@@ -37,6 +38,7 @@ use crate::logical::AggCall;
 use crate::storage::sel::nth;
 use crate::storage::{Batch, Column, Row, Sel};
 use crate::txn::TxId;
+use coded::{Memo, hash_of};
 use spilled::{Overflow, Piece, Queued};
 
 /// The rows or pieces groups partly made take each, on average, for a
@@ -178,6 +180,8 @@ struct Groups {
     pieced: bool,
     /// The row an expression a set function takes is evaluated of.
     scratch: Row,
+    /// The groups held the codes of rows went to (`coded.rs`).
+    memo: Memo,
 }
 
 impl Groups {
@@ -198,6 +202,7 @@ impl Groups {
             spilled: false,
             pieced: false,
             scratch: Vec::new(),
+            memo: Memo::default(),
         }
     }
 
@@ -208,7 +213,12 @@ impl Groups {
     /// pieces in `work` once those are full.
     fn feed(&mut self, (batch, rows): (&Batch, Option<&[u32]>), numbers: Numbers<'_>, how: Grouping<'_>, work: &mut Work) -> Result<()> {
         let lanes = lanes(&how.read.taken, batch, rows);
-        hash_rows(batch, (&how.read.groups, rows), (how.seed, how.runner.kernels()), &mut self.hashes);
+        // Of keys all codes of dictionaries, a row whose codes went to a
+        // group held goes to it, and only the others are hashed (`coded.rs`).
+        let coded = self.memo.ready(batch, &how.read.groups);
+        if !coded {
+            hash_rows(batch, (&how.read.groups, rows), (how.seed, how.runner.kernels()), &mut self.hashes);
+        }
         // Of a grouping by one column of runs, a row of the run of the row
         // before it goes to that row's group, no key compared.
         let mut ends = run_ends(batch, &how.read.groups, rows).into_iter().flatten();
@@ -221,13 +231,19 @@ impl Groups {
                 self.take(target, (n, r));
                 continue;
             }
-            let hashed = (self.hashes.get(n).copied().unwrap_or(0), Key::Row(batch, &how.read.groups, r));
+            let (place, hash) = self.coded_row(batch, (n, r), coded, how);
+            let Some(hash) = hash else { continue };
+            let hashed = (hash, Key::Row(batch, &how.read.groups, r));
             let mut placed = self.place(hashed, (numbers.of(n), Some(r)), work)?;
             while let Placed::Full | Placed::Split = placed {
                 // The rows given so far fed, so the pieces written hold them.
                 self.fed(batch, &lanes, how)?;
                 self.make_room(placed, work)?;
+                self.memo.forget();
                 placed = self.place(hashed, (numbers.of(n), Some(r)), work)?;
+            }
+            if let Placed::Into(Target::Held(g)) = placed {
+                self.memo.note(place, g);
             }
             last = if let Placed::Into(target) = placed { Some(target) } else { None };
             if let Some(target) = last {
@@ -236,6 +252,21 @@ impl Groups {
         }
         self.overflow.write(batch, (&mut self.pending, &mut self.queued), work)?;
         self.fed(batch, &lanes, how)
+    }
+
+    /// Of the `n`th row given, at `r` of `batch`: if `coded`, its place in
+    /// the memo, and it taken into the group held its codes went to, no
+    /// hash given; else its hash, of the batch's or made now.
+    fn coded_row(&mut self, batch: &Batch, (n, r): (usize, usize), coded: bool, how: Grouping<'_>) -> (Option<usize>, Option<u64>) {
+        if !coded {
+            return (None, Some(self.hashes.get(n).copied().unwrap_or(0)));
+        }
+        let (place, known) = self.memo.found(batch, &how.read.groups, r);
+        if let Some(g) = known {
+            self.held.take(g, (n, r));
+            return (place, None);
+        }
+        (place, Some(hash_of(batch, (&how.read.groups, r), (how.seed, how.runner.kernels()), &mut self.hashes)))
     }
 
     /// Takes the `n`th row given, at `r` of its batch, into group `target`.

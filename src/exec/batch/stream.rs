@@ -106,6 +106,9 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => None,
+        // A subplan computed once gives its rows gathered, as its plan
+        // lays them out (RULES.md D1129).
+        Plan::Shared(s) => layout(&s.input, db),
         // A pipeline run in parallel, by batch (`parallel/batches.rs`).
         Plan::Parallel(p) => parallel_layout(&p.input, db),
     }
@@ -205,7 +208,8 @@ pub(super) fn untold(plan: &Plan) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => true,
+        | Plan::Transition { .. }
+        | Plan::Shared(_) => true,
     }
 }
 
@@ -251,7 +255,8 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => false,
+        | Plan::Transition { .. }
+        | Plan::Shared(_) => false,
         // A grouping that takes filters is read by batch by a join that
         // tells it them, as it is run alone (RULES.md D1063).
         Plan::Parallel(p) => {
@@ -379,6 +384,7 @@ fn made_of(plan: &Plan) -> Batched {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => none,
+        Plan::Shared(_) => told::shared_batches,
         Plan::Parallel(..) => super::parted::batches,
         Plan::Sort { .. } => sorted_batches,
         Plan::Limit { .. } => topped_batches,
@@ -468,8 +474,10 @@ fn scan_batches(scan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Resul
 fn filter_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Filter { cond, input, .. } = plan else { return Err(crate::exec::broken("a filter is not one")) };
     let below = deferred.filtered(&cond).with_told(deferred.filters().to_vec());
-    let (inner, columns) = told(*input, &cond, (db, tx), &below)?;
-    Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
+    // A grouping its input and its subqueries compute alike, read once (RULES.md D1129).
+    let (input, runner) = crate::exec::shared::readied(&cond, *input, db, tx);
+    let (inner, columns) = told(input, &cond, (db, tx), &below)?;
+    Ok(filtered(inner, (Judging::of(&cond, &columns), runner)))
 }
 
 /// The batches of `inner`, the input of a filter of `cond`, its scans'

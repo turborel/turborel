@@ -73,6 +73,7 @@ impl PhysicalPlanner<'_> {
             | Plan::Recursive { .. }
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }
+            | Plan::Shared(_)
             | Plan::Unnest(_)
             | Plan::Window { .. }
             | Plan::Recognize { .. }

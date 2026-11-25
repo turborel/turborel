@@ -377,6 +377,7 @@ mod set_probes;
 mod set_statements;
 mod set_tables;
 mod settings;
+mod shared_groupings;
 mod short_name_views;
 mod simple_features;
 mod sketches;

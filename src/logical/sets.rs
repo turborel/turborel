@@ -34,8 +34,10 @@ pub struct InSet {
     nulls: bool,
     /// Of a set, the places in `values` of each bucket's constants.
     buckets: Option<HashMap<Bucket, Vec<usize>>>,
-    /// Of a set of character strings alone, each without its trailing
-    /// spaces, as two strings are equal if they are equal so.
+    /// Of constants that are character strings alone, nulls aside, each
+    /// without its trailing spaces, as two strings are equal if they are
+    /// equal so: of a list of any length, as a vector of strings is
+    /// judged by them, no value made of each (RULES.md D1126).
     texts: Option<HashSet<String>>,
 }
 
@@ -73,8 +75,7 @@ impl InSet {
             | Value::Extension(_)
             | Value::Xml(_) => None,
         };
-        let texts =
-            long.then(|| values.iter().map(strings).collect::<Option<Vec<_>>>()).flatten().map(|t| t.into_iter().flatten().collect());
+        let texts = values.iter().map(strings).collect::<Option<Vec<_>>>().map(|t| t.into_iter().flatten().collect());
         InSet { values, nulls, buckets, texts }
     }
 
@@ -120,17 +121,23 @@ impl InSet {
         Ok(self.decided(false))
     }
 
-    /// Whether it is a set of character strings alone, nulls aside.
+    /// Whether its constants are character strings alone, nulls aside.
     pub fn of_strings(&self) -> bool {
         self.texts.is_some()
     }
 
     /// [X3.135-1986 §5.13 GR2, §5.11 GR5] The string `s` IN the constants,
-    /// if they are a set of strings: looked for without its trailing
-    /// spaces.
+    /// if they are strings alone: looked for without its trailing spaces.
     pub fn text_truth(&self, s: &str) -> Option<Truth> {
         let texts = self.texts.as_ref()?;
-        Some(self.decided(texts.contains(s.trim_end_matches(' '))))
+        let unpadded = s.trim_end_matches(' ');
+        // A short list is compared constant by constant, as hashing the
+        // string costs more than comparing it with a few (`IN_SET_LEAST`).
+        if self.buckets.is_none() {
+            let equals = |v: &Value| if let Value::Char(c) = v { c.trim_end_matches(' ') == unpadded } else { false };
+            return Some(self.decided(self.values.iter().any(equals)));
+        }
+        Some(self.decided(texts.contains(unpadded)))
     }
 
     /// The truth of IN of a value not null, `found` among the constants or

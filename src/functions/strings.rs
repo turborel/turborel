@@ -20,6 +20,7 @@
 mod counts;
 mod overlay;
 pub(super) mod shapes;
+mod slices;
 
 use std::sync::Arc;
 
@@ -478,6 +479,11 @@ impl ScalarFunction for Substring {
         let chars: Vec<char> = c.chars().collect();
         let Some((from, to)) = span(args, length_of(chars.len()))? else { return Ok(Value::Null) };
         Ok(Value::Char(chars.get(index(from)..index(to)).unwrap_or_default().iter().collect()))
+    }
+    /// \[DESIGN\] (RULES.md D1126) Of a vector of character strings, a
+    /// constant start and length, each string's slice (`strings/slices.rs`).
+    fn eval_batch(&self, args: &[Arg<'_>], _rows: usize) -> Option<Result<Column>> {
+        slices::of_vector(self.units, args)
     }
 }
 

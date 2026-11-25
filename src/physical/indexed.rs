@@ -417,6 +417,7 @@ pub(super) fn access_cost(plan: &Plan) -> Option<f64> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => None,

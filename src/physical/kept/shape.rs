@@ -78,7 +78,8 @@ pub(crate) fn same_shape(one: &Plan, other: &Plan) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transfer(_)
-        | Plan::Counted(_) => false,
+        | Plan::Counted(_)
+        | Plan::Shared(_) => false,
         Plan::Values { .. } => same_values(one, other),
         Plan::Unnest(u) => same_unnest(u, other),
         Plan::Transition { rows } => same_transition(rows, other),

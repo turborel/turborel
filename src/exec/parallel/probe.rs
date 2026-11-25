@@ -194,6 +194,7 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..) => false,
     }
 }
