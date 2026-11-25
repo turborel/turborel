@@ -729,6 +729,7 @@ verification approach DO-178C expects (§8).
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 | D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
 | D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
+| D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -19838,6 +19839,21 @@ join's the simple probe does not take, stop so too
 (`exec/batch/joined/outer.rs`). The pairs come in the order they did,
 those before an error first, then the error, as before. A probe of a
 table its morsels share stops so already (D1151).
+
+#### D1155. Whether a part run in parallel will pass its grant is told by the morsels its reader has taken
+
+A join's build, a sort, a grouping and a held join operand each look,
+as a morsel is taken, at whether the morsels left would pass the work
+grant if each held as much as those so far, so a part that will give way
+does so after its first morsels. What the part holds was divided by the
+morsels taken, which was right while only the reader charged them. Since
+D1150 a build's and a sort's threads charge a morsel as they gather it,
+so the part holds the morsels gathered ahead of the reader too, up to two
+a thread, and a first morsel taken while sixteen more were gathered was
+counted as seventeen. A part that fit its grant then gave way or not by
+how fast each thread was, and the plan ran again alone. Each caller now
+gives the bytes of the morsels taken (`Limit::on_course`), and what the
+part held before its morsels is read before a thread starts on one.
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
