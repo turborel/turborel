@@ -94,6 +94,6 @@ fn a_selective_scan_decodes_each_run_into_the_vectors_of_the_last() {
         keys.extend((0..batch.rows).map(|r| batch.cell(0, r).to_value().to_string()));
     }
     keys.sort();
-    assert_eq!(keys, (2040..2060).map(|n| n.to_string()).collect::<Vec<_>>());
+    assert_eq!(keys, (2040_i32..2060_i32).map(|n| n.to_string()).collect::<Vec<_>>());
     assert_eq!(scan.reused(), 1, "the second group's column in the first's vector");
 }
