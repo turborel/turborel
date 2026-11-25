@@ -27,6 +27,7 @@ mod inlining;
 mod limits;
 mod outer;
 pub(crate) mod plugged;
+mod pregrouped;
 pub(crate) mod prepared;
 mod raising;
 mod reduced;
@@ -69,6 +70,7 @@ pub use folding::ConstantFolding;
 pub use hoisting::{HOIST_RAISING_EXPRESSIONS, HoistRaisingExpressions};
 pub use limits::{PUSH_LIMIT_THROUGH_UNION, PushLimitThroughUnion};
 pub use outer::{PUSH_FILTER_INTO_OUTER_JOIN, PushFilterIntoOuterJoin};
+pub use pregrouped::{GROUP_BEFORE_OUTER_JOIN, GroupBeforeOuterJoin};
 pub(crate) use raising::is_guarded;
 pub use raising::{PUSH_RAISING_FILTER_INTO_PRODUCT, PushRaisingFilterIntoProduct};
 pub use reduced::{SEMI_REDUCTION, SemiReduction};
@@ -194,6 +196,8 @@ impl Optimizer {
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
         o.add(Box::new(ExtremesByOrder));
+        // After the filters of a join's operand alone are moved into it.
+        o.add(Box::new(GroupBeforeOuterJoin));
         o
     }
 

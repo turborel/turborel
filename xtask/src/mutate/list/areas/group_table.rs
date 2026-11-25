@@ -25,7 +25,7 @@ const SET_COUNTS: &str = "set_tables::set_operations_keep_what_their_counts_say"
 const STATES: &str = "exec::table::states::tests::columns_of_states_are_their_accumulators";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 14] = [
+pub const GROUP_TABLE: [Mutation; 17] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -165,5 +165,35 @@ pub const GROUP_TABLE: [Mutation; 14] = [
         replacement: "is_some_and(|given| {\n            *given = true;\n            true\n        })",
         integration: &[SET_COUNTS],
         unit: &[],
+    },
+    Mutation {
+        name: "merged-groups-made-when-found",
+        package: Package::Core,
+        breaks: "a group a partition holds is made again of a morsel that holds it too (RULES.md D1110)",
+        file: "src/exec/table/made.rs",
+        original: "            if found.is_none() {\n                fresh.push(i);",
+        replacement: "            if found.is_some() {\n                fresh.push(i);",
+        integration: &[],
+        unit: &["exec::table::made::tests::partitions_merged_by_columns_hold_what_the_morsels_hold"],
+    },
+    Mutation {
+        name: "merged-counts-not-added",
+        package: Package::Core,
+        breaks: "a count merged by column takes the morsel's count in place of adding it (RULES.md D1110)",
+        file: "src/exec/table/states/typed/merged.rs",
+        original: "*count = count.saturating_add(n);",
+        replacement: "*count = n;",
+        integration: &[],
+        unit: &["exec::table::made::tests::partitions_merged_by_columns_hold_what_the_morsels_hold"],
+    },
+    Mutation {
+        name: "made-places-not-advanced",
+        package: Package::Core,
+        breaks: "each group of a partition is placed over the one before it (RULES.md D1110)",
+        file: "src/exec/table/made.rs",
+        original: "            *at = at.saturating_add(1);\n",
+        replacement: "",
+        integration: &[],
+        unit: &["exec::table::made::tests::partitions_merged_by_columns_hold_what_the_morsels_hold"],
     },
 ];

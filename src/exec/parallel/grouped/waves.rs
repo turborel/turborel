@@ -17,6 +17,7 @@
 //! to make; the morsels after it of many groups take that table to the
 //! partitions first, so each partition still merges its morsels in order.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::super::pipeline::Pipeline;
@@ -76,11 +77,15 @@ struct Waves<'a> {
 pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Runs> {
     let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
     let count = pipeline.count();
+    // The groups the morsel last grouped made, the room the next is given.
+    let room = AtomicUsize::new(0);
     let work = Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
         let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
-        let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed))?;
+        let expected = room.load(Ordering::Relaxed);
+        let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed), expected)?;
+        room.store(table.len(), Ordering::Relaxed);
         if table.len().saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= table.taken {
             return table.frozen().map(Handed::Whole);
         }
@@ -177,7 +182,7 @@ impl Waves<'_> {
     fn finished(mut self) -> Result<Runs> {
         if !self.waved && self.wave.is_empty() {
             let Some(table) = self.direct.take() else { return Ok(Held::Kept(Vec::new())) };
-            let mut groups = self.grouping.kept(table.finished()?, &Runner::new(self.run.0, self.run.1))?;
+            let mut groups = self.grouping.kept_of(&table, &Runner::new(self.run.0, self.run.1))?;
             groups.sort_unstable_by_key(|g| g.0);
             return Ok(Held::Kept(vec![groups]));
         }
@@ -201,6 +206,10 @@ fn thawed_and_merged(grouping: &Grouping, (frozen, p): (&Frozen, usize), wave: &
         Some(made) => GroupTable::thawed(made, &grouping.spec.aggs, &grouping.seed)?,
         None => GroupTable::new(read.groups.len(), &grouping.spec.aggs, &grouping.seed, usize::MAX),
     };
+    // Each of the wave's groups may be new, so room for all is made once.
+    if let Some(first) = wave.first() {
+        table.reserve(first, wave.iter().map(|made| made.groups_of(p)).sum());
+    }
     for made in wave {
         if made.groups_of(p) > 0 {
             table.absorb(made, p)?;
@@ -242,8 +251,8 @@ fn finished_wave(
 ) -> Result<Vec<Vec<(u64, Row)>>> {
     let (grouping, kept, wave, db_for) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), db.clone());
     let finish = Box::new(move |p: usize| {
-        let finished = thawed_and_merged(&grouping, (&kept, p), &wave)?.finished()?;
-        let mut groups = grouping.kept(finished, &Runner::new(&db_for, tx))?;
+        let table = thawed_and_merged(&grouping, (&kept, p), &wave)?;
+        let mut groups = grouping.kept_of(&table, &Runner::new(&db_for, tx))?;
         groups.sort_unstable_by_key(|g| g.0);
         Ok(groups)
     });
