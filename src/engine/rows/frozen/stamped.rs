@@ -255,7 +255,8 @@ impl RowTable {
         if order.is_empty() {
             return Group::write(&pages, self.format.types(), (&ids, rows), (&order, &bloom, &sketch));
         }
-        let (ids, rows) = ordered(&columns.order, ids.into_iter().zip(rows.iter().cloned()).collect());
+        // [DESIGN] RULES.md D1145: the rows sorted where they are, by reference, none copied.
+        let (ids, rows) = ordered(&columns.order, ids.into_iter().zip(rows.iter()).collect());
         Group::write(&pages, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))
     }
 }

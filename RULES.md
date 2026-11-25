@@ -726,6 +726,7 @@ verification approach DO-178C expects (§8).
 | D1142 | Loads into a column store table at once each write their own groups, no lock taken alone |
 | D1143 | A clean close keeps the groups of every load committed, settled or not |
 | D1144 | A chunk of a column is sized once, in the plan found as its values were fitted |
+| D1145 | A load sorts its group's rows by reference, none copied |
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 | D1152 | A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates |
@@ -19775,6 +19776,16 @@ made. The sizer weighs each encoding as it finds it, keeping the first
 of the fewest bytes as before, with no list made, and keeps its
 dictionary's entries by XXH3. The fields are made of the values as they
 are, not of copies. Each chunk is the same, byte for byte.
+
+#### D1145. A load sorts its group's rows by reference, none copied
+
+A load written straight to groups (D533) sorts each group's rows by
+COLUMNSTORE.ORDER before it writes them. It sorted copies of them, every
+value of every row copied, since the rows given are still logged and
+indexed after. Writing a group reads each row's values only, so the
+group is now written of the rows where they are, sorted by reference
+(`frozen/stamped.rs`); the freeze, which owns the rows it freezes,
+sorts them as before. The group written is the same.
 
 #### D1150. A morsel's rows are made as they are read and charged to the part's grant as they are gathered
 

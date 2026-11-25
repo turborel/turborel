@@ -10,6 +10,7 @@ use crate::disk::buffer::{BufferPool, FileId};
 use crate::engine::columns::group::{Group, read};
 use crate::engine::{MEMORY_POOL_BYTES, memory_file};
 use crate::memory::MemoryBudget;
+use crate::storage::Row;
 use crate::value::{CharUnits, Decimal, Spelled, compare_strings};
 
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };

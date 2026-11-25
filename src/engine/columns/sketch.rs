@@ -29,7 +29,6 @@ use super::imprints::parts_of;
 use super::padding;
 use crate::disk::pager::PageId;
 use crate::error::Result;
-use crate::storage::Row;
 use crate::value::{DataType, Value};
 
 /// \[DESIGN\] The code of a null, past every value's.
@@ -246,9 +245,9 @@ pub fn sketched(t: &DataType) -> bool {
 /// # Errors
 ///
 /// As `Pages::put`.
-pub(super) fn put_all<S: Seal>(
+pub(super) fn put_all<S: Seal, R: AsRef<[Value]>>(
     pages: &Pages<'_, S>,
-    (types, rows, places): (&[DataType], &[Row], &[usize]),
+    (types, rows, places): (&[DataType], &[R], &[usize]),
     columns: &mut [Vec<Zone>],
     written: &mut Vec<PageId>,
 ) -> Result<Vec<Edges>> {
@@ -259,7 +258,7 @@ pub(super) fn put_all<S: Seal>(
         if !sketched(t) || pages.capacity < part || !coded(pages, zones)? {
             continue;
         }
-        let values: Vec<&Value> = rows.iter().map(|r| r.get(c).unwrap_or(&Value::Null)).collect();
+        let values: Vec<&Value> = rows.iter().map(|r| r.as_ref().get(c).unwrap_or(&Value::Null)).collect();
         let edges = Edges::of(&values);
         if edges.is_empty() {
             continue;

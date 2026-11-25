@@ -8,7 +8,6 @@ use super::super::{Fields, bloom};
 use super::{PART_ROWS, Pages, Part, Run, Seal, Zone, count32};
 use crate::disk::pager::PageId;
 use crate::error::Result;
-use crate::storage::Row;
 use crate::value::{DataType, Value, compare};
 
 /// The least and greatest of `values` that are not null, and the nulls.
@@ -34,13 +33,13 @@ pub(super) fn bounds_of(values: &[Value]) -> (Option<(Value, Value)>, u32) {
 
 /// Writes the column `column` of `rows`, of type `t`, in chunks, and a
 /// Bloom filter of each part if `bloom`.
-pub(super) fn write_column<S: Seal>(
+pub(super) fn write_column<S: Seal, R: AsRef<[Value]>>(
     pages: &Pages<'_, S>,
     t: &DataType,
-    (rows, column, bloom): (&[Row], usize, bool),
+    (rows, column, bloom): (&[R], usize, bool),
     written: &mut Vec<PageId>,
 ) -> Result<Vec<Zone>> {
-    let values: Vec<Value> = rows.iter().map(|r| r.get(column).cloned().unwrap_or(Value::Null)).collect();
+    let values: Vec<Value> = rows.iter().map(|r| r.as_ref().get(column).cloned().unwrap_or(Value::Null)).collect();
     let fields = Fields::of(t, values.iter())?;
     let mut zones = Vec::new();
     for (from, count, chunk) in fields.chunks(t, (pages.capacity, pages.compress))? {

@@ -12,20 +12,19 @@ use super::{Pages, Run, Seal, Zone, count32, put_filters, zone_of};
 use crate::disk::pager::PageId;
 use crate::engine::columns::Fields;
 use crate::error::Result;
-use crate::storage::Row;
 use crate::value::{DataType, Value};
 
 /// Writes `rows`, a column of each of `types`, in the hybrid layout, a
 /// Bloom filter of each part of the columns at `bloom`: each column's
 /// zones, in order.
-pub(super) fn write_pax<S: Seal>(
+pub(super) fn write_pax<S: Seal, R: AsRef<[Value]>>(
     pages: &Pages<'_, S>,
     types: &[DataType],
-    (rows, bloom): (&[Row], &[usize]),
+    (rows, bloom): (&[R], &[usize]),
     written: &mut Vec<PageId>,
 ) -> Result<Vec<Vec<Zone>>> {
     let values: Vec<Vec<Value>> =
-        (0..types.len()).map(|c| rows.iter().map(|r| r.get(c).cloned().unwrap_or(Value::Null)).collect()).collect();
+        (0..types.len()).map(|c| rows.iter().map(|r| r.as_ref().get(c).cloned().unwrap_or(Value::Null)).collect()).collect();
     let fields = values.iter().zip(types).map(|(v, t)| Fields::of(t, v.iter())).collect::<Result<Vec<_>>>()?;
     let columns: Vec<(&Fields, &DataType)> = fields.iter().zip(types).collect();
     let mut zones: Vec<Vec<Zone>> = vec![Vec::new(); types.len()];

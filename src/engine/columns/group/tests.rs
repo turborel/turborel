@@ -10,6 +10,7 @@ use crate::engine::columns::scan::{candidates, read_candidates, rows};
 use crate::engine::{MEMORY_POOL_BYTES, memory_file};
 use crate::index::Probe;
 use crate::memory::MemoryBudget;
+use crate::storage::Row;
 use crate::storage::{Condition, Conjunct, Conjunction, Threshold};
 use crate::value::{CompOp, Decimal, Spelled};
 
@@ -237,7 +238,8 @@ fn what_groups_refuse() {
         imprints: true,
         kernels: &crate::kernels::Portable,
     };
-    assert_eq!(Group::write(&pages, &TYPES, (&[], &[]), (&[], &[], &[])).err().map(|e| e.code), Some(Code::Api));
+    let none: &[Row] = &[];
+    assert_eq!(Group::write(&pages, &TYPES, (&[], none), (&[], &[], &[])).err().map(|e| e.code), Some(Code::Api));
     let wrong = vec![vec![Value::Char("x".into()), Value::Null, int(1)]];
     assert!(Group::write(&pages, &TYPES, (&[1], &wrong), (&[], &[], &[])).is_err(), "not of its types");
     let group = written(&pages, (1, 1), 10);

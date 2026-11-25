@@ -59,7 +59,7 @@ use super::{Chunk, imprints, sketch};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
-use crate::storage::{Row, RowId};
+use crate::storage::RowId;
 use crate::value::{DataType, Value};
 
 /// The format of a group's header.
@@ -317,10 +317,10 @@ impl Group {
     /// many; an error of the pages; nothing written is kept. Its rows are
     /// in the order of the columns at `order`, those at `bloom` have
     /// Bloom filters, and those at `named` sketches, if they take them.
-    pub fn write<S: Seal>(
+    pub fn write<S: Seal, R: AsRef<[Value]>>(
         pages: &Pages<'_, S>,
         types: &[DataType],
-        (ids, rows): (&[RowId], &[Row]),
+        (ids, rows): (&[RowId], &[R]),
         (order, bloom, named): (&[usize], &[usize], &[usize]),
     ) -> Result<Group> {
         let mut written = Vec::new();
@@ -331,10 +331,10 @@ impl Group {
         made
     }
 
-    fn write_all<S: Seal>(
+    fn write_all<S: Seal, R: AsRef<[Value]>>(
         pages: &Pages<'_, S>,
         types: &[DataType],
-        (ids, rows): (&[RowId], &[Row]),
+        (ids, rows): (&[RowId], &[R]),
         (order, bloom, named): (&[usize], &[usize], &[usize]),
         written: &mut Vec<PageId>,
     ) -> Result<Group> {

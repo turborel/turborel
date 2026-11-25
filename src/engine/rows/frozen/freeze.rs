@@ -31,7 +31,7 @@ use crate::error::Result;
 use crate::storage::{Row, RowId};
 use crate::sync::{lock_builtin, read, write};
 use crate::txn::Timestamp;
-use crate::value::sort_cmp;
+use crate::value::{Value, sort_cmp};
 
 /// \[DESIGN\] How long a freeze that found too few rows waits before it is
 /// tried again: a second.
@@ -66,10 +66,11 @@ fn delayed(commits: &mut VecDeque<(Timestamp, Instant)>, delay: u32) -> Timestam
 
 /// `rows`, each with its id, sorted by the columns of `order`, ascending,
 /// as ORDER BY sorts them, their ids breaking ties: their ids and rows.
-pub(super) fn ordered(order: &Places, mut rows: Vec<(RowId, Row)>) -> (Vec<RowId>, Vec<Row>) {
+pub(super) fn ordered<R: AsRef<[Value]>>(order: &Places, mut rows: Vec<(RowId, R)>) -> (Vec<RowId>, Vec<R>) {
     let order = order.places();
     if !order.is_empty() {
         rows.sort_by(|(a_id, a), (b_id, b)| {
+            let (a, b) = (a.as_ref(), b.as_ref());
             let by = |&c: &usize| a.get(c).zip(b.get(c)).map_or(cmp::Ordering::Equal, |(x, y)| sort_cmp(x, y));
             order.iter().map(by).find(|o| o.is_ne()).unwrap_or_else(|| a_id.cmp(b_id))
         });
