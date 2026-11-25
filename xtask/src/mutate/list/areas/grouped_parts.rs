@@ -1,12 +1,13 @@
 //! The mutations of a grouping run in parallel under its HAVING
 //! condition and of a grouping a join reads (RULES.md R-TEST-9, D1072,
-//! D1073): the groups a part keeps, the conditions a part takes, and the
-//! filters a grouping that takes none is told.
+//! D1073, D1113): the groups a part keeps, the conditions a part takes,
+//! the filters a grouping that takes none is told, and a grouping over
+//! another that a part makes whole.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 4] = [
+pub const GROUPED_PARTS: [Mutation; 8] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -46,5 +47,45 @@ pub const GROUPED_PARTS: [Mutation; 4] = [
         replacement: "if !kept(&row)? {",
         integration: &["grouped_parts::a_having_condition_is_judged_by_its_part"],
         unit: &["exec::table::made::tests::groups_kept_are_finished_alone"],
+    },
+    Mutation {
+        name: "regrouped-split-by-whole-key",
+        package: Package::Core,
+        breaks: "a pair's first groups by batch are split by their whole keys, a second group in several partitions (RULES.md D1113)",
+        file: "src/exec/table/made.rs",
+        original: "let by: Vec<u64> = if lanes.is_empty() {",
+        replacement: "let by: Vec<u64> = if lanes.len() < usize::MAX {",
+        integration: &["regrouped_parts::distinct_set_functions_are_regrouped_by_their_part"],
+        unit: &["exec::table::made::tests::groups_split_by_a_lane_put_each_of_its_values_in_one_partition"],
+    },
+    Mutation {
+        name: "regrouped-rows-split-by-whole-key",
+        package: Package::Core,
+        breaks: "a pair's first groups by rows are split by their whole keys, a second group in several partitions (RULES.md D1113)",
+        file: "src/exec/parallel/grouped.rs",
+        original: "        if lanes.is_empty() {\n            return Ok(part_of(key, &self.seed));",
+        replacement: "        if lanes.len() < usize::MAX {\n            return Ok(part_of(key, &self.seed));",
+        integration: &["regrouped_parts::distinct_set_functions_are_regrouped_by_their_part"],
+        unit: &[],
+    },
+    Mutation {
+        name: "regrouped-past-first-keys",
+        package: Package::Core,
+        breaks: "a grouping by a set function's column of the grouping under it is taken for a pair (RULES.md D1113)",
+        file: "src/physical/parallel.rs",
+        original: "groups.iter().all(|&g| g < keys.len())",
+        replacement: "groups.iter().all(|&g| g <= keys.len())",
+        integration: &[],
+        unit: &["physical::parallel::tests::a_grouping_over_one_holding_its_columns_is_a_pair"],
+    },
+    Mutation {
+        name: "regrouped-unnumbered",
+        package: Package::Core,
+        breaks: "a pair's second groups are not numbered by their first, so they come in no order of the plan run alone (RULES.md D1113)",
+        file: "src/exec/parallel/grouped/regrouped.rs",
+        original: "made.push((first, values, fresh(&self.spec.aggs)));",
+        replacement: "made.push((u64::MAX - first, values, fresh(&self.spec.aggs)));",
+        integration: &["regrouped_parts::distinct_set_functions_are_regrouped_by_their_part"],
+        unit: &[],
     },
 ];

@@ -73,7 +73,7 @@ fn partitions_merged_by_columns_hold_what_the_morsels_hold() {
         whole.absorb_whole(&morsel(&early, (0, 2, 0)).frozen().unwrap()).unwrap();
         whole.absorb_whole(&morsel(&late, (10_000, 3, 4000)).frozen().unwrap()).unwrap();
         assert_eq!(whole.len(), 5000);
-        let (first, second) = (morsel(&early, (0, 2, 3000)).made(8).unwrap(), morsel(&late, (10_000, 3, 0)).made(8).unwrap());
+        let (first, second) = (morsel(&early, (0, 2, 3000)).made(8, &[]).unwrap(), morsel(&late, (10_000, 3, 0)).made(8, &[]).unwrap());
         assert_eq!((0..8).map(|p| first.groups_of(p)).sum::<usize>(), 3000);
         let mut parted = Vec::new();
         for p in 0..8 {
@@ -88,6 +88,35 @@ fn partitions_merged_by_columns_hold_what_the_morsels_hold() {
         let shared = parted.iter().find(|row| row.starts_with("2500 ")).unwrap();
         assert!(shared.contains("Decimal { units: 5, scale: 0 }"), "2 rows and 3: {shared}");
         assert!(shared.contains("units: 12500,"), "2500 five times: {shared}");
+    }
+}
+
+/// Verifies: [DESIGN] (RULES.md D1113) groups split by the hashes of
+/// their first lane alone put every group of a value of it in one
+/// partition, in each morsel alike, of integers and of texts, and the
+/// partitions, merged, still hold every key once with its states merged.
+#[test]
+fn groups_split_by_a_lane_put_each_of_its_values_in_one_partition() {
+    for text in [false, true] {
+        let first = |n: i128| if text { Value::Char(format!("k{} ", n % 50).into()) } else { exact(n % 50) };
+        let key = |n: i128| vec![first(n), exact(n)];
+        let (early, late): (Vec<_>, Vec<_>) = ((0..1000).map(key).collect(), (500..1500).rev().map(key).collect());
+        let made = [morsel(&early, (0, 1, 0)).made(8, &[0]).unwrap(), morsel(&late, (10_000, 1, 0)).made(8, &[0]).unwrap()];
+        let mut owner: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut groups = 0;
+        for p in 0..8 {
+            let mut table = GroupTable::new(2, &calls(), &Seed::fixed(0x5EED), usize::MAX);
+            for m in &made {
+                table.absorb(m, p).unwrap();
+            }
+            for (_, row) in table.finished().unwrap() {
+                let held = owner.entry(format!("{:?}", row.first())).or_insert(p);
+                assert_eq!(*held, p, "a value of the lane in two partitions, text keys: {text}");
+            }
+            groups += table.len();
+        }
+        assert_eq!(groups, 1500, "text keys: {text}");
+        assert!(owner.values().collect::<std::collections::HashSet<_>>().len() > 1, "the values spread");
     }
 }
 

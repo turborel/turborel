@@ -17,6 +17,7 @@ use crate::storage::{Batch, Cell, Row};
 use crate::value::datetime::Moment;
 use crate::value::{Datetime, Value};
 
+use super::Seed;
 use super::hash::canonical;
 
 /// A key given to a table: of a row of a batch, the columns at these
@@ -473,6 +474,16 @@ impl Keys {
     /// Appends group `g`'s grouping values to `row`.
     pub(super) fn values_into(&self, g: usize, row: &mut Row) {
         row.extend(self.lanes.iter().map(|lane| lane.value(g)));
+    }
+
+    /// \[DESIGN\] (RULES.md D1113) The hash of group `g`'s key of the
+    /// lanes `lanes` alone, by `seed`, as `hash_values` hashes those values
+    /// of any vector: so the groups of every morsel that agree on them
+    /// agree on it.
+    pub(super) fn hash_of(&self, g: usize, lanes: &[usize], seed: &Seed) -> u64 {
+        let mut hashes = lanes.iter().map(|&at| seed.cell(self.lanes.get(at).map_or(Cell::Null, |lane| lane.cell(g))));
+        let first = hashes.next().unwrap_or_else(|| seed.null());
+        hashes.fold(first, |so_far, next| seed.joined(so_far, next))
     }
 
     /// Keeps the first `len` groups.
