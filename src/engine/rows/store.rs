@@ -188,7 +188,8 @@ impl Configurable for RowStore {
     /// them the system's cache holds (STORAGE.SYSTEM_CACHE_BYTES).
     fn configure(&self, settings: &crate::settings::Settings) {
         if let Some(key) = settings.key(&cache::setting_name(self.name)) {
-            self.headers.set_most(settings.count(key));
+            let budget = crate::settings::budget_bytes(settings.get(crate::settings::MEMORY_BUDGET_BYTES));
+            self.headers.set_most(cache::bound(settings.integer(key), budget));
         }
         self.set_read_ahead(settings.count(crate::settings::READ_AHEAD_PAGES));
         if let Some(cache) = &self.system_cache {

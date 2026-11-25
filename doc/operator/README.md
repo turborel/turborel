@@ -2,7 +2,7 @@
 
 For whoever installs, runs and looks after a turborel server and its databases.
 
-[The documentation set](../README.md)
+[Turborel Documentation](../README.md)
 
 ## Contents
 

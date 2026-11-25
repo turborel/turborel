@@ -101,6 +101,15 @@ impl KeyHashes {
     }
 }
 
+/// \[DESIGN\] (RULES.md D1080) The hashes of the keys whose `numbers` were
+/// given as to a direct table (`Hashing::direct`), as a hashed table
+/// hashes them by `seed`: a number's bits hashed, a null's the hash of a
+/// null, so a build that asked its keys' numbers first, to see whether
+/// they are dense, hashes none of its vectors again.
+pub(in crate::exec) fn numbers_hashed(numbers: &[u64], seed: &Seed) -> Vec<u64> {
+    numbers.iter().map(|&bits| if bits == super::direct::NULL_NUMBER { seed.null() } else { seed.word(bits) }).collect()
+}
+
 /// The place in a vector of the `n`th row given, `rows` or all.
 fn nth(rows: Option<&[usize]>, n: usize) -> usize {
     rows.map_or(n, |r| r.get(n).copied().unwrap_or(usize::MAX))

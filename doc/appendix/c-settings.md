@@ -43,7 +43,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | CHECKPOINT.AFTER_BYTES | 1073741824 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
 | CHECKPOINT.AFTER_CHANGES | 4000000 | INTEGER FROM 1 TO 9223372036854775807 | at once |  |
 | CHECKPOINT.OVERDUE_FACTOR | 4 | INTEGER FROM 1 TO 1000000 | at once |  |
-| COLUMNSTORE.HEADER_CACHE_BYTES | 16777216 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
+| COLUMNSTORE.HEADER_CACHE_BYTES | -1 | INTEGER FROM -1 TO 9223372036854775807 | at once |  |
 | DEBUGGER.PAUSE_TIMEOUT_MS | 300000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | DIAGNOSTICS.LEVEL | INFO | ONE OF ERROR, WARNING, INFO | at once |  |
 | DIAGNOSTICS.SLOW_STATEMENT_MS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
@@ -61,7 +61,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | EXECUTOR.POINT_OPERATIONS | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.RUNTIME_FILTERS | ON | ONE OF ON, OFF | at once | *session* |
 | EXECUTOR.WORKERS | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
-| FILES.MAX_OPEN | 1024 | INTEGER FROM 0 TO 4294967295 | at once |  |
+| FILES.MAX_OPEN | 512 | INTEGER FROM 0 TO 4294967295 | at once |  |
 | GQL.GRAPH | (empty) | TEXT OF AT MOST 257 CHARACTERS | at once | *session* |
 | GRAPH.DETERMINISTIC_PATHS | OFF | ONE OF ON, OFF | at once | *session* |
 | GRAPH.MAX_PATHS_PER_PARTITION | 0 | INTEGER FROM 0 TO 9223372036854775807 | at once | *session* |
@@ -83,6 +83,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.ELIMINATE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.EXTREMES_BY_ORDER | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.FACTOR_DISJUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.GROUP_BEFORE_OUTER_JOIN | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.HOIST_RAISING_EXPRESSIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.INLINE_FUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.MARK_JOINS | ON | ONE OF ON, OFF | at once | *session* |
@@ -170,7 +171,7 @@ Each in a sentence:
 - **CHECKPOINT.AFTER_BYTES**: The bytes of the data file's side file, each page once however often it was written, after which the end of a transaction takes a checkpoint.
 - **CHECKPOINT.AFTER_CHANGES**: The row changes logged after which the end of a transaction takes a checkpoint.
 - **CHECKPOINT.OVERDUE_FACTOR**: How many times CHECKPOINT.AFTER_CHANGES or CHECKPOINT.AFTER_BYTES the log, or the data file's side file, grows to with no checkpoint giving it up before the diagnostics are told that checkpoints are overdue.
-- **COLUMNSTORE.HEADER_CACHE_BYTES**: The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY.BUDGET_BYTES as they are held; 0 for none, each read as it is needed.
+- **COLUMNSTORE.HEADER_CACHE_BYTES**: The bytes of the headers of frozen row groups the column store holds in memory at most, of its tables together, reserved of MEMORY.BUDGET_BYTES as they are held; 0 for none, each read as it is needed; -1 for a 64th of MEMORY.BUDGET_BYTES.
 - **DEBUGGER.PAUSE_TIMEOUT_MS**: The milliseconds a session paused by a debugger waits for the debugger to tell it to go on, after which it goes on by itself to its next breakpoint and the debugger is told it timed out, so no lock it holds is held for ever; 0 to go on at once.
 - **DIAGNOSTICS.LEVEL**: The least level of the events told to the diagnostics: ERROR, those alone; WARNING, warnings too; INFO, every event.
 - **DIAGNOSTICS.SLOW_STATEMENT_MS**: The milliseconds of work after which a statement is told to the diagnostics as slow; 0 for none.
@@ -210,6 +211,7 @@ Each in a sentence:
 - **OPTIMIZER.ELIMINATE_JOINS**: Whether the optimizer's rule eliminate_joins rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.EXTREMES_BY_ORDER**: Whether the optimizer's rule extremes_by_order rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.FACTOR_DISJUNCTIONS**: Whether the optimizer's rule factor_disjunctions rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.GROUP_BEFORE_OUTER_JOIN**: Whether the optimizer's rule group_before_outer_join rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.HOIST_RAISING_EXPRESSIONS**: Whether the optimizer's rule hoist_raising_expressions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.INLINE_FUNCTIONS**: Whether the optimizer's rule inline_functions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.MARK_JOINS**: Whether the optimizer's rule mark_joins rewrites plans: ON; or OFF, as to compare plans made without it.

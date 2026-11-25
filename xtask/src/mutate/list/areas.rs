@@ -42,10 +42,12 @@ mod estimates;
 mod group_table;
 mod hot_rows;
 mod insert_values;
+mod join_build;
 mod join_estimates;
 mod join_table;
 mod joins;
 mod late;
+mod load_limits;
 mod monitoring;
 mod oltp;
 mod orders;
@@ -91,7 +93,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 33] {
+pub fn core() -> [&'static [Mutation]; 34] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -126,6 +128,7 @@ pub fn core() -> [&'static [Mutation]; 33] {
         &range_reads::RANGE_READS,
         &review_fixes::REVIEW_FIXES,
         &checkpoint_cost::CHECKPOINT_COST,
+        &load_limits::LOAD_LIMITS,
     ]
 }
 
@@ -298,7 +301,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's and the routine
 /// debugger's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 28] {
+fn closing() -> [&'static [Mutation]; 29] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -313,6 +316,7 @@ fn closing() -> [&'static [Mutation]; 28] {
         &late::LATE,
         &group_table::GROUP_TABLE,
         &join_table::JOIN_TABLE,
+        &join_build::JOIN_BUILD,
         &xxhash::XXHASH,
         &semi_joins::SEMI_JOINS,
         &grouped_parts::GROUPED_PARTS,

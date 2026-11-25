@@ -364,6 +364,19 @@ fn failed(what: &str, path: &Path, e: &stdio::Error) -> SqlError {
     SqlError::new(Code::Io, format!("[DESIGN] could not {what} {}: {e}", path.display()))
 }
 
+/// The error of `path` not opened: SQLCODE -918 if the process or the
+/// system has no descriptor left for it (RULES.md D1136), which the file
+/// manager answers by closing one of its own; else -915.
+#[cfg(any(unix, windows))]
+pub(crate) fn not_opened(path: &Path, e: &stdio::Error) -> SqlError {
+    // EMFILE and ENFILE on Unix, ERROR_TOO_MANY_OPEN_FILES on Windows.
+    let spent: &[i32] = if cfg!(windows) { &[4] } else { &[23, 24] };
+    if e.raw_os_error().is_some_and(|code| spent.contains(&code)) {
+        return SqlError::new(Code::Resources, format!("[DESIGN] could not open {}: no file descriptor is left: {e}", path.display()));
+    }
+    failed("open", path, e)
+}
+
 /// The offset `done` bytes past `offset`; every byte a read or write touches
 /// must have one.
 fn advance(offset: u64, done: usize, path: &Path) -> Result<u64> {
@@ -387,7 +400,7 @@ impl FileSystem for OsFileSystem {
             OpenMode::ReadWrite => options.read(true).write(true),
             OpenMode::ReadOnly => options.read(true),
         };
-        let file = options.open(path).map_err(|e| failed("open", path, &e))?;
+        let file = options.open(path).map_err(|e| not_opened(path, &e))?;
         Ok(Box::new(OsFile { file, path: path.to_path_buf() }))
     }
     fn remove(&self, path: &Path) -> Result<()> {
@@ -473,7 +486,8 @@ fn owners_directories() -> fs::DirBuilder {
 /// On Unix a directory is synced like a file.
 #[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<()> {
-    File::open(path).and_then(|dir| dir.sync_all()).map_err(|e| failed("sync the directory", path, &e))
+    let dir = File::open(path).map_err(|e| not_opened(path, &e))?;
+    dir.sync_all().map_err(|e| failed("sync the directory", path, &e))
 }
 
 /// On Windows std cannot open a directory to sync it; NTFS journals the

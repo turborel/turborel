@@ -30,6 +30,7 @@
 
 mod batched;
 mod batches;
+mod build;
 mod each;
 mod grouped;
 mod indexed;

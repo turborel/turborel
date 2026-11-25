@@ -28,7 +28,8 @@ mod states;
 
 pub(crate) use hash::Seed;
 pub(in crate::exec) use hash::{hash_rows, hash_values};
-pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, keys_equal, values_hash};
+pub(in crate::exec) use join::{BUILD_PARTS, BuiltPart, Parted, Parting, Span};
+pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, keys_equal, numbers_hashed, values_hash};
 pub(in crate::exec) use keys::{Key, Keys};
 pub(in crate::exec) use made::Made;
 pub(in crate::exec) use runtime::{KEYSET_MAX, RuntimeFilter};
@@ -119,6 +120,9 @@ pub(in crate::exec) struct GroupTable<S: Columns = Vec<States>> {
     limit: usize,
     /// The rows and pieces its groups took since it was last empty.
     pub(in crate::exec) taken: usize,
+    /// The groups a merge found or made and the places of those it made,
+    /// kept between merges for their room (`made.rs`).
+    merging: (Vec<u32>, Vec<u32>),
 }
 
 impl GroupTable {
@@ -138,7 +142,21 @@ impl GroupTable {
             scratch: Vec::new(),
             limit,
             taken: 0,
+            merging: (Vec::new(), Vec::new()),
         }
+    }
+
+    /// \[DESIGN\] (RULES.md D1110) As `new`, with room for `room` groups
+    /// made at once: a morsel's table, given the groups the morsel before
+    /// it made, grows no vector a group at a time.
+    pub(in crate::exec) fn with_room(width: usize, aggs: &[AggCall], seed: &Seed, room: usize) -> GroupTable {
+        let mut table = GroupTable::new(width, aggs, seed, usize::MAX);
+        table.keys = Keys::with_room(width, room);
+        table.hashes.reserve(room);
+        table.firsts.reserve(room);
+        table.states.iter_mut().for_each(|states| states.reserve(room));
+        table.slots = Slots::with_room(room);
+        table
     }
 
     /// The set functions each group computes.
@@ -163,6 +181,7 @@ impl GroupTable<()> {
             scratch: Vec::new(),
             limit: usize::MAX,
             taken: 0,
+            merging: (Vec::new(), Vec::new()),
         }
     }
 }
@@ -400,6 +419,29 @@ impl GroupTable {
                 Ok((self.first(g), row))
             })
             .collect()
+    }
+
+    /// \[DESIGN\] (RULES.md D1111) Its groups `kept` says to keep, as
+    /// `finished` gives them: each group's row is made in one row's room,
+    /// and only a group kept takes a row of its own, so a HAVING condition
+    /// that keeps few of many groups allocates few rows.
+    ///
+    /// # Errors
+    ///
+    /// As a set function's `finish`, or `kept`.
+    pub(in crate::exec) fn finished_if(&self, mut kept: impl FnMut(&Row) -> Result<bool>) -> Result<Vec<(u64, Row)>> {
+        let (mut groups, mut row) = (Vec::new(), Row::new());
+        for g in 0..self.len() {
+            row.clear();
+            self.keys.values_into(g, &mut row);
+            for states in &self.states {
+                row.push(states.finish(g)?);
+            }
+            if kept(&row)? {
+                groups.push((self.first(g), row.clone()));
+            }
+        }
+        Ok(groups)
     }
 }
 

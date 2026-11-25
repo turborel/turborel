@@ -56,7 +56,7 @@
 //! comes due: when a transaction ends after CHECKPOINT.AFTER_CHANGES row
 //! changes were logged since the last taken (a failed one leaves them
 //! counted), or CHECKPOINT.AFTER_BYTES written to
-//! the tables file's side file, the ending thread asks for the checkpoint
+//! the tables file's side file or to the log (RULES.md D1137), the ending thread asks for the checkpoint
 //! job, which runs as JOBS.POLICY says (`db/background.rs`), so no
 //! transaction waits for it. Its thread holds the database weakly: it ends
 //! when the database is closed or dropped. Checkpoints overdue, the log growing
@@ -138,11 +138,13 @@ impl Database {
     }
 
     /// Whether a checkpoint is due: enough row changes logged, or bytes
-    /// written to the side file, since the last.
+    /// written to the side file or to the log (RULES.md D1137), since the
+    /// last.
     fn checkpoint_due(&self) -> bool {
         let (Ok(Some(files)), Ok(current)) = (self.files(), self.snapshot()) else { return false };
         let (changes, bytes) = (current.settings.integer(CHECKPOINT_AFTER_CHANGES), current.settings.integer(CHECKPOINT_AFTER_BYTES));
-        i128::from(current.tx.since_checkpoint()) >= changes || i128::from(files.shadows.pending_bytes()) >= bytes
+        let written = files.shadows.pending_bytes().max(current.tx.bytes_since_checkpoint());
+        i128::from(current.tx.since_checkpoint()) >= changes || i128::from(written) >= bytes
     }
 
     /// Asks for the checkpoint job if a checkpoint is due; tells, then, if
@@ -335,7 +337,7 @@ impl State {
             Some(crate::txn::Held::Deposed | crate::txn::Held::Retired) | None => log.end(),
         };
         self.capture_engines(through)?;
-        let counted = self.tx.logged.load(Ordering::Relaxed);
+        let counted = self.tx.captured();
         let image = self.image_of(clean, (through, self.tx.oldest_logged().map_or(through, |first| first.min(through))))?;
         Ok((image, counted))
     }

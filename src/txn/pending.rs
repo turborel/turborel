@@ -163,6 +163,7 @@ impl TxLog {
         // Appended with the buffer unlocked: the log is a plug-in (RULES.md
         // R-ERR-4). Its session writes under the gate, and a checkpoint
         // with the gate shut, so the two never write it at once.
+        shared.logged_bytes.fetch_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX), Ordering::Relaxed);
         let written = self.log.append_run(&bytes, &record_ends);
         let mut held = lock_builtin(&self.held);
         // Its buffers hold its next records, unless it holds some already.

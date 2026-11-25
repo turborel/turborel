@@ -6,14 +6,10 @@
 //! rows, as the serial join gives them (`joined/probe.rs`).
 
 use super::super::super::stream::Kept;
-use super::SharedTable;
+use super::{Pairs, SharedTable, pick};
 use crate::error::SqlError;
 use crate::exec::table::{KeyHashes, keys_equal};
-use crate::storage::{BATCH_ROWS, Batch};
-
-/// The pairs of a probe not yet gathered: of each, its left row and its
-/// built row, or none.
-type Pairs = (Vec<Option<usize>>, Vec<Option<usize>>);
+use crate::storage::{BATCH_ROWS, Batch, NO_ROW};
 
 impl SharedTable {
     /// The width of the operand's rows.
@@ -54,16 +50,17 @@ impl SharedTable {
             for p in self.table.candidates(h).filter(|_| !miss) {
                 if keys_equal((batch, left, r), (&self.right, &self.places, p), &self.nulls)? {
                     any = true;
-                    pairs.0.push(Some(r));
-                    pairs.1.push(Some(p));
+                    pairs.0.push(pick(r));
+                    pairs.1.push(pick(p));
                 }
                 if pairs.0.len() >= BATCH_ROWS {
                     out.push(Ok(self.gathered((batch, None), pairs)));
                 }
             }
             if !any {
-                pairs.0.push(Some(r));
-                pairs.1.push(None);
+                // No built row: its right columns null (RULES.md D1083).
+                pairs.0.push(pick(r));
+                pairs.1.push(NO_ROW);
             }
         }
         Ok(())

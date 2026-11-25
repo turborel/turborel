@@ -2,7 +2,7 @@
 
 For anyone who writes SQL against Turborel: the concepts, and how to use them, chapter by chapter.
 
-[The documentation set](../README.md)
+[Turborel Documentation](../README.md)
 
 ## Contents
 

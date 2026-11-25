@@ -8,6 +8,7 @@
 mod elimination;
 mod extremes;
 mod hoisting;
+mod pregrouped;
 mod pushdown;
 
 use turborel::db::{Database, Session};

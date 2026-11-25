@@ -1,4 +1,4 @@
-# The Turborel Documentation Set
+# Turborel Documentation
 
 Turborel is a relational database system: a library a program embeds, a
 server, `turboreld`, that serves its databases over a network, and a

@@ -12,10 +12,16 @@
 //! one value more, which no distinct count of a key needs. Any other
 //! column, an expression's, a set function's or a set operation's, has no
 //! table.
+//!
+//! \[DESIGN\] (RULES.md D1082) A projection's expression that is
+//! deterministic is a function of the columns it reads, so it takes no
+//! more values than those columns take together (`computed_of`), which
+//! bounds the groups of a grouping by it.
 
 use super::MAX_ESTIMATE_DEPTH;
 use crate::catalog::QualifiedName;
-use crate::logical::{Expr, LogicalPlan};
+use crate::logical::{Expr, LogicalPlan, expr_columns};
+use crate::optimizer::unnesting::expr_pure;
 
 /// A column's table: the scan reading it, its table, and the column's
 /// place among the table's columns.
@@ -35,6 +41,32 @@ pub(super) fn origin(plan: &LogicalPlan, column: usize) -> Option<Origin<'_>> {
             return Some(Origin { scan: next, table, column: place });
         }
         (at, column) = (next, place);
+    }
+    None
+}
+
+/// \[DESIGN\] (RULES.md D1082) The node whose columns `plan`'s column
+/// `column` is computed of, and those columns, ascending, if it is an
+/// expression of a projection, reached through the nodes that pass
+/// columns on, that gives the same value of the same columns each time
+/// (`expr_pure`): none of a table's column, nor of an expression that is
+/// not deterministic, which may take a value of its own for every row.
+pub(super) fn computed_of(plan: &LogicalPlan, column: usize) -> Option<(&LogicalPlan, Vec<usize>)> {
+    let (mut at, mut place) = (plan, column);
+    for _ in 0..MAX_ESTIMATE_DEPTH {
+        if let LogicalPlan::Project { exprs, input } = at
+            && let Some(e) = exprs.get(place).filter(|e| !matches!(e, Expr::Column(_)))
+        {
+            let mut read = Vec::new();
+            expr_columns(e, &mut read);
+            read.sort_unstable();
+            read.dedup();
+            return expr_pure(e).then_some((&**input, read));
+        }
+        if matches!(at, LogicalPlan::Scan { .. }) {
+            return None;
+        }
+        (at, place) = step(at, place)?;
     }
     None
 }

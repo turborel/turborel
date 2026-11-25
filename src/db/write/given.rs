@@ -10,6 +10,7 @@ use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::exec::{HeldRows, Subqueries};
 use crate::params::{Given, taken};
+use crate::spill::ListSpace;
 use crate::storage::Row;
 
 /// Whether `stmt` inserts one row whose values are its dynamic parameters,
@@ -43,7 +44,11 @@ pub(super) fn given_rows(
     if !of_parameters(stmt) {
         return Err(not_given());
     }
-    let mut rows = HeldRows::new(st.list_space());
+    // [DESIGN] RULES.md D1138: held, never spilled. Its caller holds every
+    // row given already, so these are no more than as many again, and a
+    // spill area made for each execution of a load was a file written and
+    // read back at once.
+    let mut rows = HeldRows::new(ListSpace { limit: usize::MAX, areas: None, ..st.list_space() });
     for values in taken(given)? {
         rows.push(target.candidate(st, values, subqueries)?)?;
     }

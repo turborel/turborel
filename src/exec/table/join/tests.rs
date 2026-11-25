@@ -49,7 +49,7 @@ fn a_table_finds_a_hashs_rows_in_build_order() {
 fn tags_turn_away_a_probe_of_no_bit() {
     let table = JoinTable::of(&[0x10_u64], &[false]);
     let at = table.slot(0x10);
-    let word = table.directory[at + 1];
+    let word = table.parts[0].directory[at + 1];
     assert_eq!(word & tag(0x11), 0);
     assert_ne!(word & tag(0x10), 0);
     assert_eq!(found(&table, 0x11), Vec::<usize>::new());
@@ -62,7 +62,7 @@ fn tags_turn_away_a_probe_of_no_bit() {
 fn a_table_has_two_slots_a_row() {
     let hashes: Vec<u64> = (0..1_000_u64).map(crate::hash::murmur::fmix64).collect();
     let table = JoinTable::of(&hashes, &vec![false; hashes.len()]);
-    let slots = table.directory.len() - 1;
+    let slots = table.parts[0].directory.len() - 1;
     assert!(slots.is_power_of_two() && slots >= 2_000);
     assert!(hashes.iter().enumerate().all(|(r, &h)| found(&table, h).contains(&r)));
 }

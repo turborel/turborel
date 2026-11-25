@@ -100,7 +100,7 @@ const QUERIES: &[&str] = &[
     "SELECT S, G FROM U EXCEPT ALL SELECT S, G FROM T",
     "SELECT S FROM T INTERSECT SELECT S FROM U",
     "SELECT S FROM U INTERSECT ALL SELECT S FROM U WHERE K > 500",
-    "SELECT K FROM W WHERE K + 3 IN (SELECT K FROM U)",
+    "SELECT K FROM T WHERE K + 3 IN (SELECT K FROM U)",
     "SELECT K FROM T WHERE S IN (SELECT S FROM U)",
     "SELECT K FROM T WHERE G >= ALL (SELECT G FROM U WHERE U.K < 2900)",
     "SELECT K FROM T WHERE EXISTS (SELECT * FROM U WHERE U.G = T.G AND U.K > 10)",
@@ -181,6 +181,28 @@ fn operators_spill_into_two_partitions_partitioned_again() {
 #[test]
 fn operators_spill_into_two_partitions_never_partitioned_again() {
     spilled_as((16 << 10, 2, 0));
+}
+
+/// Verifies: [DESIGN] RULES.md D38, D369, D1066: with MEMORY.WORK_BYTES at
+/// its least, the DISTINCT of an IN subquery of a computed expression,
+/// read as a grouping below the join that builds W's four rows, is told
+/// their keys, so its scan of U gives it their rows alone and it spills
+/// nothing; with the runtime filters off it holds every key of U, and
+/// spills, giving the same rows.
+#[test]
+fn a_distinct_told_the_keys_of_a_join_holds_their_rows_alone() {
+    let db = Database::new();
+    filled(&db);
+    let counted = Counted::default();
+    db.set_spill(Box::new(counted.clone())).unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &bytes(SMALL)).unwrap();
+    let (s, query) = (db.session("S"), "SELECT K FROM W WHERE K + 3 IN (SELECT K FROM U)");
+    let (plan, told) = (s.explain(query, &turborel::params::Params::new()).unwrap(), sorted(&s, query));
+    assert!(plan.contains("HashJoin") && plan.contains("Distinct"), "{plan}");
+    assert_eq!((told.len(), counted.taken()), (4, 0), "the keys of W alone held");
+    exec(&s, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
+    assert_eq!(sorted(&s, query), told);
+    assert!(counted.taken() > 0, "every key of U held");
 }
 
 /// Verifies: [DESIGN] [ISO/IEC 9075:1992 §7.5 GR1c]; RULES.md D15, D38:

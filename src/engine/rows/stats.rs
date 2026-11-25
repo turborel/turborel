@@ -7,13 +7,16 @@
 //! seed decides, so a pass reads about `SAMPLED_ROWS` rows however large
 //! the table, and the same rows each time; its rows are then the count the
 //! table keeps (`rows/counted.rs`), and the rest is scaled from the sample
-//! (`StatsBuilder::finish_sampled`). Its frozen rows are each looked at,
-//! those of runs not sampled left out. A table opened knows its count of rows
+//! (`StatsBuilder::finish_sampled`). Of its frozen rows only those of the
+//! runs sampled are read, and only their groups' headers
+//! (`frozen/sampled.rs`). A table opened knows its count of rows
 //! as it opens (`rows/counted.rs`), and has no statistics until first asked for, once recovery is
-//! done (`rows/recovery.rs`): then they are due, and the database's
-//! maintenance thread gathers them (`TableStorage::maintain`), the planner
-//! meanwhile estimating without them, so no statement waits for a pass
-//! over the table, and the pass is made once, however many plan at once.
+//! done (`rows/recovery.rs`): the plan that first asks gathers them itself,
+//! a pass of at most twice `SAMPLED_ROWS` rows whatever the table holds,
+//! and plans asking meanwhile wait for that pass, so none is made without
+//! them and the pass is made once (RULES.md D1092). If that pass fails
+//! they are due, and the database's maintenance thread gathers them
+//! (`TableStorage::maintain`), the planner meanwhile estimating without.
 //! After that, they are gathered again,
 //! by the database's maintenance thread, once a
 //! transaction that wrote the table ends and the table has had more
@@ -38,10 +41,11 @@
 
 use std::ops::Bound;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use super::RowTable;
+use super::frozen::Chosen;
 use super::key;
 use super::mvcc::Reader;
 use super::options::{self, Refresh};
@@ -52,7 +56,7 @@ use crate::error::Result;
 use crate::stats::parts::count;
 use crate::stats::since::{Changed, GROWING};
 use crate::stats::{Statistics, StatsBuilder, TableStats};
-use crate::sync::{read, write};
+use crate::sync::{lock_builtin, read, write};
 use crate::txn::{NO_TRANSACTION, TxId};
 use crate::value::compare;
 
@@ -81,6 +85,14 @@ fn sampled(chunk: u64, rows: u64) -> bool {
 /// A run of row ids a pass reads, by their keys: from, and up to.
 type Run = (Bound<Vec<u8>>, Bound<Vec<u8>>);
 
+/// The runs of row ids a pass reads of the tree: every one, or of a
+/// sampled pass those numbered `chunks`.
+fn runs_of(chunks: Option<&[u64]>) -> Vec<Run> {
+    let Some(chunks) = chunks else { return vec![(Bound::Unbounded, Bound::Unbounded)] };
+    let run = |c: u64| (key(c.saturating_mul(CHUNK_IDS)).to_vec(), key(c.saturating_add(1).saturating_mul(CHUNK_IDS)).to_vec());
+    chunks.iter().map(|&c| run(c)).map(|(low, high)| (Bound::Included(low), Bound::Excluded(high))).collect()
+}
+
 /// \[DESIGN\] A table's statistics, and how much it has changed since.
 pub(super) struct Gathered {
     /// How they are sampled and refreshed: the store's, and the table's own.
@@ -101,6 +113,9 @@ pub(super) struct Gathered {
     when_asked: AtomicBool,
     /// Set as a table opened is first asked for them, until gathered.
     asked: AtomicBool,
+    /// Held by the plan making a table opened's first pass, the plans
+    /// asking meanwhile waiting on it: whether that pass was tried.
+    first: Mutex<bool>,
     /// Set as a planning reads them, until a pass begins: the maintenance
     /// job gathers only statistics read since its last pass (RULES.md D473).
     read: AtomicBool,
@@ -124,6 +139,7 @@ impl Gathered {
             gathering: AtomicBool::default(),
             when_asked: AtomicBool::default(),
             asked: AtomicBool::default(),
+            first: Mutex::default(),
             read: AtomicBool::default(),
             made: Instant::now(),
             earliest: AtomicU64::default(),
@@ -256,10 +272,12 @@ impl RowTable {
         let sampling = rows > SAMPLED_ROWS.saturating_mul(2);
         let (columns, how) = (self.format.columns(), self.gathered.refresh().sampling);
         let mut builder = if sampling { StatsBuilder::counting(columns, how) } else { StatsBuilder::sampling(columns, how) };
-        let read = |id: u64| !sampling || sampled(id.checked_div(CHUNK_IDS).unwrap_or(0), rows);
+        // The runs of row ids a sampled pass reads, of the tree and of
+        // the groups alike.
+        let chunks = sampling.then(|| self.sampled_chunks(rows));
         // Its groups as they are before the tree is read, held to the end.
         let directory = self.frozen.directory()?;
-        let runs = self.runs(sampling.then_some(rows));
+        let runs = runs_of(chunks.as_deref());
         for (low, high) in &runs {
             for entry in self.tree.scan(low.as_ref().map(Vec::as_slice), high.as_ref().map(Vec::as_slice), Direction::Forward) {
                 let (key, newest) = entry?;
@@ -276,7 +294,8 @@ impl RowTable {
         // would be (`rows/frozen.rs`).
         let mut record = Vec::new();
         // Only the rows sampled are decoded.
-        self.each_unshadowed(&directory, read, |id, row| {
+        let chosen = chunks.as_deref().map(|numbers| Chosen { runs: numbers, ids: CHUNK_IDS });
+        self.each_unshadowed(&directory, chosen, |id, row| {
             record.clear();
             self.format.encode(&row, &mut record)?;
             builder.at_run(id.checked_div(CHUNK_IDS).unwrap_or(0));
@@ -295,14 +314,11 @@ impl RowTable {
         Ok(stats)
     }
 
-    /// The runs of row ids a pass reads: every one, or of a pass sampling
-    /// a table of `sampled` rows, those `sampled` chooses.
-    fn runs(&self, sampled_of: Option<u64>) -> Vec<Run> {
-        let Some(rows) = sampled_of else { return vec![(Bound::Unbounded, Bound::Unbounded)] };
+    /// The numbers of the runs of `CHUNK_IDS` row ids a pass sampling a
+    /// table of `rows` rows reads, those `sampled` chooses, in order.
+    fn sampled_chunks(&self, rows: u64) -> Vec<u64> {
         let ends = self.next.load(Ordering::Acquire).div_ceil(CHUNK_IDS);
-        let run = |c: u64| (key(c.saturating_mul(CHUNK_IDS)).to_vec(), key(c.saturating_add(1).saturating_mul(CHUNK_IDS)).to_vec());
-        let taken = (0..ends).filter(|&chunk| sampled(chunk, rows));
-        taken.map(run).map(|(low, high)| (Bound::Included(low), Bound::Excluded(high))).collect()
+        (0..ends).filter(|&chunk| sampled(chunk, rows)).collect()
     }
 
     /// Counts a row written by `tx`: at once outside a transaction, whose
@@ -319,6 +335,35 @@ impl RowTable {
     /// enough, and read by a plan since the last pass (RULES.md D473).
     pub(super) fn gather_wanted(&self) -> bool {
         self.gathered.due() && self.gathered.wanted()
+    }
+
+    /// Gathers the first statistics of a table opened, on the thread of
+    /// the plan first asking for them, those asking meanwhile waiting
+    /// until they are gathered (RULES.md D1092): tried once, a failure
+    /// leaving them due for the maintenance thread.
+    fn gather_first(&self) {
+        let gathered = &self.gathered;
+        if !gathered.when_asked.load(Ordering::Relaxed) || gathered.get().is_some() {
+            return;
+        }
+        let mut tried = lock_builtin(&gathered.first);
+        if *tried || gathered.get().is_some() {
+            return;
+        }
+        *tried = true;
+        // The maintenance thread at the same pass makes it instead.
+        if !gathered.gathering.swap(true, Ordering::Acquire) {
+            // A failure leaves them due when asked for (`asked_for`).
+            let _ = self.gather();
+            gathered.gathering.store(false, Ordering::Release);
+        }
+    }
+
+    /// Its statistics, as a plan asks for them (`TableStorage::statistics`):
+    /// a table opened's first gathered by the asking.
+    pub(super) fn statistics_asked(&self) -> Option<Arc<dyn Statistics>> {
+        self.gather_first();
+        self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
     }
 
     /// Gathers them if due and asked to `now`, or wanted and spaced from
@@ -403,6 +448,25 @@ mod tests {
         assert_eq!(small.rows, 1_000);
         assert!(!small.columns[0].unbounded && !small.columns[1].unbounded, "read whole");
         assert_eq!(small.sample.as_ref().map(|s| s.rows().len()), Some(1_000));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1092, first statistics: a table made
+    /// has none until a pass is made, as before; a table opened gathers
+    /// them on the thread of the plan that first asks, which is given
+    /// them at once, and those asking after are given the same, no pass
+    /// made again. MC/DC of the pass made by the asking: a table opened
+    /// with none (made) against one not opened, and one with some.
+    #[test]
+    fn a_table_opened_gathers_its_first_statistics_as_a_plan_asks() {
+        let table = table_of(1_000);
+        assert!(table.statistics().is_none(), "a table made");
+        assert_eq!(table.gathered.passes(), 0);
+        table.gathered.gather_when_asked();
+        let stats = table.statistics().expect("gathered by the asking");
+        assert!(stats.rows().is_some_and(|rows| (rows - 1_000.0_f64).abs() < 0.5_f64));
+        assert_eq!(table.gathered.passes(), 1);
+        assert!(table.statistics().is_some());
+        assert_eq!(table.gathered.passes(), 1, "made once");
     }
 
     /// Verifies: [DESIGN] RULES.md D381: a pass notes of each column at

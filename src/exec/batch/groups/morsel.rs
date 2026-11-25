@@ -17,7 +17,8 @@ use crate::storage::sel::nth;
 /// The groups of the rows of `batches`, one morsel's, as `read` reads them,
 /// keyed by hashes of `seed`, each its first row numbered from `first` in
 /// the order the rows come, its set functions `aggs` fed and not finished;
-/// their warnings heard by `runner`.
+/// their warnings heard by `runner`. The table is made with room for
+/// `room` groups, as many as the morsel is expected to make.
 ///
 /// # Errors
 ///
@@ -27,8 +28,9 @@ pub(in crate::exec) fn morsel_groups(
     aggs: &[AggCall],
     batches: Batches,
     (runner, first, seed): (&Runner, u64, &Seed),
+    room: usize,
 ) -> Result<GroupTable> {
-    let mut table = GroupTable::new(read.groups.len(), aggs, seed, usize::MAX);
+    let mut table = GroupTable::with_room(read.groups.len(), aggs, seed, room);
     let (mut hashes, mut scratch) = (Vec::new(), Vec::new());
     let mut number = first;
     for kept in batches {
