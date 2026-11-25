@@ -17,6 +17,7 @@
 
 mod collated;
 mod octets;
+mod pieces;
 mod streamed;
 
 use std::collections::HashMap;
@@ -82,6 +83,8 @@ pub fn like(value: &str, pattern: &str, escape: Option<char>) -> Result<bool> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LikePattern {
     specs: Vec<Spec>,
+    /// Its pieces between `%`s, if it has no `_` (RULES.md D1074).
+    pieces: Option<pieces::Pieces>,
 }
 
 impl LikePattern {
@@ -91,12 +94,20 @@ impl LikePattern {
     ///
     /// As `like`.
     pub fn new(pattern: &str, escape: Option<char>) -> Result<LikePattern> {
-        Ok(LikePattern { specs: specifiers(pattern, escape)? })
+        let specs = specifiers(pattern, escape)?;
+        let pieces = pieces::Pieces::of(&specs);
+        Ok(LikePattern { specs, pieces })
     }
 
-    /// [X3.135-1986 §5.14 GR5] Whether `value` matches it: an ASCII string
-    /// by its bytes, no character gathered; any other by its characters.
+    /// [X3.135-1986 §5.14 GR5] Whether `value` matches it: of a pattern
+    /// of no `_`, by its pieces, each searched for as a substring
+    /// (`like/pieces.rs`, RULES.md D1074); else a specifier at a time, an
+    /// ASCII string by its bytes, no character gathered, any other by its
+    /// characters.
     pub fn matches(&self, value: &str) -> bool {
+        if let Some(pieces) = &self.pieces {
+            return pieces.matches(value);
+        }
         if value.is_ascii() {
             return matched(&self.specs, value.as_bytes(), |b, c| u32::from(b) == u32::from(c));
         }

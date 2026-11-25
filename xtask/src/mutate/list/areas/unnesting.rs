@@ -8,7 +8,8 @@
 //! rows a sum is of left uncounted, a grouping's SUM typed as its
 //! argument, a scalar subquery of any number of rows taken as raising
 //! nothing, and a CASE bounded by its first result. Of D1064, a conjunct
-//! that can raise moved above a semi join.
+//! that can raise moved above a semi join. Of D1065, an uncorrelated NOT
+//! IN left nested.
 
 use super::super::{Mutation, Package};
 
@@ -31,7 +32,7 @@ const GROUPED: &str = "logical::raises::totals::tests::a_grouping_s_columns_are_
 const HELD: &str = "decorrelation::totals::a_subquery_holding_a_sum_s_subquery_is_a_semi_join";
 
 /// The mutations of unnesting and inlining.
-pub const UNNESTING: [Mutation; 18] = [
+pub const UNNESTING: [Mutation; 19] = [
     Mutation {
         name: "unnest-two-rows-pass",
         package: Package::Core,
@@ -210,6 +211,16 @@ pub const UNNESTING: [Mutation; 18] = [
         original: "&& !pure::cond_raises_over(c, input, ctx);",
         replacement: "&& (c.has_subquery() || !pure::cond_raises_over(c, input, ctx));",
         integration: &["decorrelation::totals::a_subquery_s_conjunct_is_judged_after_a_semi_join"],
+        unit: &[],
+    },
+    Mutation {
+        name: "uncorrelated-not-in-left-nested",
+        package: Package::Core,
+        breaks: "an uncorrelated NOT IN that is a conjunct is offered to the semi join rule, and made an antijoin (D1065)",
+        file: "src/optimizer/unnesting/found.rs",
+        original: "let taken = (not && quantifier != Quantifier::One) || quantifier == Quantifier::All;",
+        replacement: "let taken = !not && quantifier == Quantifier::All;",
+        integration: &["decorrelation::semi::semi_joins_match_the_subqueries"],
         unit: &[],
     },
 ];

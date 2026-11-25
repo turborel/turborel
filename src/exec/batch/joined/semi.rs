@@ -9,6 +9,18 @@
 //! A semi join keeps only left rows whose keys the right holds, so, as an
 //! inner join, it hands the left's scan a runtime filter of each key
 //! (RULES.md D369); an antijoin keeps the others, so it hands none.
+//!
+//! One planned to build its left operand, the operand of fewer rows
+//! (`SemiMethod::BuildLeft`), holds the left and marks its rows as it
+//! reads the right (`semi/marked.rs`, RULES.md D1070); it comes here,
+//! the left's batches it read given first, only if they outgrow the work
+//! area.
+
+mod marked;
+mod pairing;
+mod step;
+
+pub(in crate::exec) use step::SemiStep;
 
 use std::sync::Arc;
 
@@ -25,6 +37,7 @@ use crate::exec::join::{Built, Full, Right};
 use crate::exec::table::KeyHashes;
 use crate::exec::work::Work;
 use crate::exec::{Runner, broken};
+use crate::logical::Cond;
 use crate::physical::{JoinKey, Plan, SemiJoin};
 use crate::storage::{Batch, Sel};
 use crate::txn::TxId;
@@ -48,32 +61,82 @@ pub(super) fn semi_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
 pub(super) fn told_batches(plan: Plan, deferred: &Deferred, (db, tx): (&Db, TxId)) -> Result<Batches> {
     let building = runtime::built_side(&plan, deferred.filters(), db);
     let Plan::SemiJoin(s) = plan else { return Err(broken("a semi join is not one")) };
-    let SemiJoin { anti, left, right, keys, cond, widths, .. } = *s;
-    let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
+    let (left_columns, _) = stream::layout(&s.left, db).unwrap_or_default();
+    if !marked::builds_left(&s) {
+        let filtered = filtered_keys(&s, &s.left, db);
+        let join = Hashed { left_columns, filtered, building };
+        let SemiJoin { anti, left, right, keys, cond, widths, .. } = *s;
+        return hashed((anti, right, keys, cond, widths), (Left::Plan(Box::new(left)), join), deferred, (db, tx));
+    }
+    match marked::batches(*s, (&left_columns, deferred), (db, tx))? {
+        marked::Read::Marked(batches) => Ok(batches),
+        marked::Read::GaveWay(rest, left) => {
+            let join = Hashed { left_columns, filtered: Vec::new(), building };
+            hashed(*rest, (Left::Open(left), join), deferred, (db, tx))
+        }
+    }
+}
+
+/// The places among `s`'s keys of those a runtime filter is made of, of a
+/// semi join that builds its right: each whose filter reaches the scan of
+/// `left`, in no order; of an antijoin none.
+fn filtered_keys(s: &SemiJoin, left: &Plan, db: &Db) -> Vec<usize> {
+    if s.anti || !runtime::wanted(db) || in_order(left) {
+        return Vec::new();
+    }
+    s.keys.iter().enumerate().filter(|(_, k)| runtime::reaches(left, k.left, db)).map(|(n, _)| n).collect()
+}
+
+/// A hashed semi join's left operand: its plan, opened once the right is
+/// held, so it is told the right's filters; or its batches, opened by a
+/// join that built its left and gave way (`semi/marked.rs`).
+pub(super) enum Left {
+    Plan(Box<Plan>),
+    Open(Batches),
+}
+
+/// What a hashed semi join knows of its operands before it reads them:
+/// the columns its left's batches hold, the places among its keys of
+/// those a runtime filter is made of, and the filters its right is told
+/// as it is built.
+struct Hashed {
+    left_columns: Vec<usize>,
+    filtered: Vec<usize>,
+    building: Vec<Told>,
+}
+
+/// Whether an antijoin, the right operand, the keys, the condition beyond
+/// them and the operands' widths of a semi join.
+type Parts = (bool, Plan, Vec<JoinKey>, Option<Cond>, (usize, usize));
+
+/// The batches of the semi join of `parts` and `left`, its right built
+/// as `join` says, its left's scans told what `deferred` tells.
+///
+/// # Errors
+///
+/// As `semi_batches`.
+fn hashed(parts: Parts, (left, join): (Left, Hashed), deferred: &Deferred, (db, tx): (&Db, TxId)) -> Result<Batches> {
+    let (anti, right, keys, cond, widths) = parts;
+    let Hashed { left_columns, filtered, building } = join;
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let places: Option<Vec<JoinKey>> =
         keys.iter().map(|&k| left_columns.iter().position(|&c| c == k.left).map(|at| JoinKey { left: at, ..k })).collect();
     let places = places.ok_or_else(|| broken("a join key the left operand's batch lacks"))?;
     let mut work = Work::of(db, tx);
-    let filtered: Vec<usize> = if !anti && runtime::wanted(db) && !in_order(&left) {
-        keys.iter().enumerate().filter(|(_, k)| runtime::reaches(&left, k.left, db)).map(|(n, _)| n).collect()
-    } else {
-        Vec::new()
-    };
-    let (side, left) = match held::read(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
+    let mut told = deferred.filters().to_vec();
+    let side = match held::read(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
         Read::Held(held) => {
-            let mut told = deferred.filters().to_vec();
             told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told::of(Arc::clone(f), key.left))));
-            let left = left_late_batches(left, (db, tx), &Deferred::default().with_told(told))?;
-            (Side::Vectors(held), left)
+            Side::Vectors(held)
         }
         Read::Rest(rest) => match Built::of(rest.rows(), keys, (&mut work, Full::Table))? {
-            Right::Held(built) => {
-                let told = deferred.filters().to_vec();
-                (Side::Built(built), left_late_batches(left, (db, tx), &Deferred::default().with_told(told))?)
-            }
+            Right::Held(built) => Side::Built(built),
             Right::Partitioned(_) => return Err(broken("a semi join's right operand was partitioned")),
         },
+    };
+    let left = match left {
+        Left::Plan(plan) => left_late_batches(*plan, (db, tx), &Deferred::default().with_told(told))?,
+        Left::Open(batches) => batches,
     };
     let joined = Joined::matching((left_columns, right_columns), cond, widths, Runner::new(db, tx));
     Ok(Box::new(SemiProbe { left, joined, side, places, anti, _work: work }))
