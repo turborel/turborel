@@ -227,7 +227,6 @@ impl<'a> Chunk<'a> {
             | Body::Varying { .. }
             | Body::Constant { .. }
             | Body::Frame { .. }
-            | Body::Stepped(_)
             | Body::Dictionary { .. }
             | Body::Runs(_)
             | Body::Alp(_) => None,

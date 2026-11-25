@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of sampled statistics, in the order they run.
-pub const STATS: [Mutation; 21] = [
+pub const STATS: [Mutation; 19] = [
     Mutation {
         name: "stats-large-read-whole",
         package: Package::Core,
@@ -199,25 +199,5 @@ pub const STATS: [Mutation; 21] = [
         replacement: "FROZEN_FETCH_COLUMN * 4.0_f64;",
         integration: &[],
         unit: &["engine::rows::frozen::tests::fetched::a_frozen_fetch_is_priced_by_its_columns"],
-    },
-    Mutation {
-        name: "steps-greatest-not-divisor",
-        package: Package::Core,
-        breaks: "steps: the step is the greatest difference seen, not the greatest number dividing every one",
-        file: "src/engine/columns/encoded/stepped.rs",
-        original: "        (a, b) = (b, a.checked_rem(b).unwrap_or(0));",
-        replacement: "        (a, b) = (a.max(b), 0);",
-        integration: &[],
-        unit: &["engine::columns::tests::stepped::values_of_no_common_step_are_a_frame"],
-    },
-    Mutation {
-        name: "steps-signed-difference",
-        package: Package::Core,
-        breaks: "steps: a value's difference from the least is taken as a signed integer, so one past half the span is lost",
-        file: "src/engine/columns/encoded/stepped.rs",
-        original: "        n.abs_diff(least).checked_div(step).unwrap_or(0)",
-        replacement: "        u64::try_from(n.saturating_sub(least)).unwrap_or(0).checked_div(step).unwrap_or(0)",
-        integration: &[],
-        unit: &["engine::columns::tests::stepped::steps_hold_negative_values_and_the_extremes"],
     },
 ];

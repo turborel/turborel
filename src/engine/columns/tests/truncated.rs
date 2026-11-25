@@ -11,8 +11,7 @@ fn samples() -> Vec<(DataType, Vec<Value>, u8)> {
         (INTEGER, (-3..9000).step_by(1000).enumerate().map(|(k, n)| if k % 4 == 1 { Value::Null } else { int(n) }).collect(), FIXED),
         (TEXT, texts(6, &|k| "x".repeat(usize::try_from(k).unwrap())), VARYING),
         (INTEGER, vec![int(42); 20], CONSTANT),
-        (INTEGER, (1_000_000..1_000_100).map(int).chain([Value::Null]).collect(), FRAME),
-        (INTEGER, (1_000_000..1_000_600).step_by(6).map(int).chain([Value::Null]).collect(), STEPPED),
+        (INTEGER, (1_000_000..1_000_200).step_by(2).map(int).chain([Value::Null]).collect(), FRAME),
         (TEXT, texts(300, &|k| ["red", "green", "blue"][usize::try_from(k % 3).unwrap()].to_owned()), DICTIONARY),
         (INTEGER, (0..2000_i128).map(|n| int(n.checked_div(250).unwrap())).collect(), RUNS),
         (TEXT, texts(300, &|k| format!("customer{k}@mail{}.example.com", k % 7)), FSST),
@@ -32,7 +31,7 @@ fn refused(bytes: &[u8], t: &DataType, count: usize) -> bool {
 }
 
 /// Verifies: [DESIGN] RULES.md D31, column chunks, R-ERR-2: a chunk of
-/// every encoding (fixed, varying, constant, frame of reference, steps,
+/// every encoding (fixed, varying, constant, frame of reference,
 /// dictionary, runs, FSST and ALP) cut at any byte is refused with
 /// SQLCODE -916 when parsed or read, never a panic nor other values.
 #[test]

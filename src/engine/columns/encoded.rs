@@ -10,8 +10,6 @@
 //! FRAME:       bits u8 | least i64 | count × bits, bit-packed, each value of
 //!              8 bytes as a signed integer less the least, a null's zeroed
 //!              (`packed.rs`)
-//! STEPPED:     a frame whose differences share a divisor, each divided
-//!              by it (`encoded/stepped.rs`)
 //! RUNS:        runs of one value, of 8-byte fields as a frame's
 //!              (`runs.rs`)
 //! ALP:         approximate numbers as decimals, a frame of reference of
@@ -31,7 +29,6 @@
 //! a field be 8 bytes, any 8 bytes being a signed integer.
 
 mod dictionary;
-mod stepped;
 mod words;
 
 use std::collections::HashMap;
@@ -52,7 +49,6 @@ pub(super) const DICTIONARY: u8 = 5;
 pub(super) const RUNS: u8 = 6;
 pub(super) const ALP: u8 = 7;
 pub(super) const FSST: u8 = 8;
-pub(super) const STEPPED: u8 = 9;
 /// The bytes of a field frame of reference takes.
 const FRAMED: usize = 8;
 /// The most entries of a dictionary: as many as a code of 16 bits names.
@@ -71,9 +67,6 @@ pub(super) enum Plan {
     Constant,
     /// Frame of reference, each value less the least in this many bits.
     Frame(i64, u32),
-    /// Steps of the second number from the first, the least, each
-    /// value's count of steps in this many bits (`stepped.rs`).
-    Stepped(i64, u64, u32),
     /// A dictionary, each value's entry in a code of this many bits.
     Dictionary(u32),
     /// Runs of one value, each less the least in this many bits.
@@ -101,9 +94,6 @@ pub(super) struct Sizer<'f> {
     /// The runs of values alike among them, and the last value.
     runs: usize,
     last: Option<i64>,
-    /// The greatest number dividing each value's difference from the
-    /// first; 0 while every value is the first.
-    step: u64,
     framed: bool,
     entries: HashMap<&'f [u8], usize>,
     entry_bytes: usize,
@@ -132,7 +122,6 @@ impl<'f> Sizer<'f> {
             range: None,
             runs: 0,
             last: None,
-            step: 0,
             framed: width == Some(FRAMED),
             entries: HashMap::new(),
             entry_bytes: 0,
@@ -166,7 +155,6 @@ impl<'f> Sizer<'f> {
         }
         match (integer(f), self.framed) {
             (Some(n), true) => {
-                self.step = stepped::gcd(self.step, self.first.and_then(integer).map_or(0, |first| n.abs_diff(first)));
                 self.range = Some(self.range.map_or((n, n), |(lo, hi)| (lo.min(n), hi.max(n))));
                 if self.last != Some(n) {
                     self.runs = self.runs.saturating_add(1);
@@ -179,27 +167,6 @@ impl<'f> Sizer<'f> {
             let next = self.entries.len();
             self.entries.insert(f, next);
             self.entry_bytes = self.entry_bytes.saturating_add(f.len());
-        }
-    }
-
-    /// Adds to `found` the encodings of values of 8 bytes as integers
-    /// near one another, each with its bytes past `base`: a frame of
-    /// reference, runs, and steps where the values share one.
-    fn frames(&self, base: usize, found: &mut Vec<(Plan, usize)>) {
-        // One value throughout is a constant, though a frame of no bits
-        // takes a few bytes fewer.
-        if let (true, false, Some((lo, hi))) = (self.framed, self.same, self.range) {
-            let bits = bits_for(u64::try_from(i128::from(hi).saturating_sub(i128::from(lo))).unwrap_or(u64::MAX));
-            let packed = packed_len(self.count, bits).unwrap_or(usize::MAX);
-            found.push((Plan::Frame(lo, bits), base.saturating_add(1 + FRAMED).saturating_add(packed)));
-            let runs = runs_len((self.count, self.runs, bits)).unwrap_or(usize::MAX);
-            found.push((Plan::Runs(lo, bits), base.saturating_add(runs)));
-            // Only of a step that takes bits off each value (RULES.md D1098).
-            if self.step > 1 {
-                let steps = bits_for(hi.abs_diff(lo).checked_div(self.step).unwrap_or(u64::MAX));
-                let room = packed_len(self.count, steps).unwrap_or(usize::MAX);
-                found.push((Plan::Stepped(lo, self.step, steps), base.saturating_add(stepped::HEAD).saturating_add(room)));
-            }
         }
     }
 
@@ -217,7 +184,15 @@ impl<'f> Sizer<'f> {
         if self.same {
             found.push((Plan::Constant, base.saturating_add(WORD).saturating_add(self.first.map_or(0, <[u8]>::len))));
         }
-        self.frames(base, &mut found);
+        // One value throughout is a constant, though a frame of no bits
+        // takes a few bytes fewer.
+        if let (true, false, Some((lo, hi))) = (self.framed, self.same, self.range) {
+            let bits = bits_for(u64::try_from(i128::from(hi).saturating_sub(i128::from(lo))).unwrap_or(u64::MAX));
+            let packed = packed_len(self.count, bits).unwrap_or(usize::MAX);
+            found.push((Plan::Frame(lo, bits), base.saturating_add(1 + FRAMED).saturating_add(packed)));
+            let runs = runs_len((self.count, self.runs, bits)).unwrap_or(usize::MAX);
+            found.push((Plan::Runs(lo, bits), base.saturating_add(runs)));
+        }
         if let Some(((factors, least, bits), bytes)) = self.alp.as_ref().and_then(|a| a.best(self.count)) {
             found.push((Plan::Alp(factors, least, bits), base.saturating_add(bytes)));
         }
@@ -264,7 +239,6 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], (table, sorted): (O
             out.extend_from_slice(one);
         }
         Plan::Frame(least, bits) => framed(fields, (least, bits), out),
-        Plan::Stepped(least, step, bits) => stepped::encode(fields, (least, step, bits), out),
         Plan::Dictionary(bits) => dictionary::write(fields, (bits, sorted), out)?,
         Plan::Runs(least, bits) => super::runs::encode(fields, (least, bits), out)?,
         Plan::Alp(factors, least, bits) => super::alp::encode(fields, (factors, least, bits), out)?,
@@ -299,7 +273,6 @@ pub(super) enum Body<'a> {
     Varying { offsets: &'a [u8], values: &'a [u8] },
     Constant { field: &'a [u8] },
     Frame { least: i64, bits: u32, deltas: &'a [u8] },
-    Stepped(stepped::Stepped<'a>),
     Dictionary { bits: u32, sorted: bool, offsets: &'a [u8], entries: &'a [u8], codes: &'a [u8] },
     Runs(Runs<'a>),
     Alp(Alp<'a>),
@@ -358,7 +331,6 @@ pub(super) fn body<'a>(kind: u8, count: usize, (bytes, at): (&'a [u8], usize), t
             )?;
             Ok(Body::Dictionary { bits, sorted, offsets, entries: held, codes })
         }
-        STEPPED => Ok(Body::Stepped(stepped::Stepped::parse(rest, count)?)),
         RUNS => Ok(Body::Runs(Runs::parse(rest, count)?)),
         ALP => Ok(Body::Alp(Alp::parse(rest, count)?)),
         FSST => Ok(Body::Fsst(Coded::parse(rest, count, table)?)),
@@ -380,7 +352,6 @@ impl Body<'_> {
             }
             Body::Constant { field } => decoded(Some(field)),
             Body::Runs(runs) => decoded(runs.field(n).as_ref().map(<[u8; FRAMED]>::as_slice)),
-            Body::Stepped(stepped) => decoded(stepped.field(n).as_ref().map(<[u8; FRAMED]>::as_slice)),
             Body::Alp(alp) => decoded(alp.field(n).as_ref().map(<[u8; FRAMED]>::as_slice)),
             Body::Fsst(coded) => decoded(Some(&coded.text(n).ok_or_else(|| corrupt("a text's codes are malformed"))?)),
             Body::Frame { least, bits, deltas } => {
@@ -410,13 +381,7 @@ impl Body<'_> {
                 ends.push(base.checked_add(to.checked_sub(from)?)?);
                 Some(())
             }
-            Body::Frame { .. }
-            | Body::Stepped(_)
-            | Body::Alp(_)
-            | Body::Dictionary { .. }
-            | Body::Fixed { .. }
-            | Body::Varying { .. }
-            | Body::Fsst(_) => None,
+            Body::Frame { .. } | Body::Alp(_) | Body::Dictionary { .. } | Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => None,
         }
     }
 
@@ -527,7 +492,7 @@ impl Body<'_> {
                 let (from, to) = between(offsets, usize::from(self.code(n)?))?;
                 entries.get(from..to)
             }
-            Body::Fixed { .. } | Body::Frame { .. } | Body::Stepped(_) | Body::Runs(_) | Body::Alp(_) | Body::Fsst(_) => None,
+            Body::Fixed { .. } | Body::Frame { .. } | Body::Runs(_) | Body::Alp(_) | Body::Fsst(_) => None,
         }
     }
 }
@@ -544,7 +509,6 @@ pub(super) fn kind_of(plan: Plan) -> u8 {
         Plan::Varying => VARYING,
         Plan::Constant => CONSTANT,
         Plan::Frame(..) => FRAME,
-        Plan::Stepped(..) => STEPPED,
         Plan::Dictionary(_) => DICTIONARY,
         Plan::Runs(..) => RUNS,
         Plan::Alp(..) => ALP,

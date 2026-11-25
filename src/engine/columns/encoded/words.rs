@@ -25,7 +25,6 @@ impl Body<'_> {
         let count = to.checked_sub(from)?;
         match self {
             Body::Frame { least, bits, deltas } => unframed(*least, (*bits, deltas), (from, to), (out, kernels)),
-            Body::Stepped(stepped) => stepped.ints((from, to), out, kernels),
             Body::Runs(runs) => runs.ints((from, to), out),
             Body::Alp(alp) => alp.words((from, to), out, kernels),
             Body::Dictionary { bits, codes, .. } => match entries {
@@ -53,7 +52,6 @@ impl Body<'_> {
     pub(in crate::engine::columns) fn int_at(&self, n: usize, entries: Option<&[i64]>) -> Option<i64> {
         match self {
             Body::Frame { least, bits, deltas } => get(deltas, *bits, n).map(|d| least.wrapping_add(i64::from_le_bytes(d.to_le_bytes()))),
-            Body::Stepped(stepped) => stepped.int_at(n),
             Body::Runs(runs) => runs.field(n).map(i64::from_le_bytes),
             Body::Alp(alp) => alp.field(n).map(i64::from_le_bytes),
             Body::Dictionary { bits, codes, .. } => {
@@ -101,7 +99,7 @@ fn gathered(words: &[i64], (bits, codes): (u32, &[u8]), (from, to): (usize, usiz
 /// whose differences, of `bits` each, are `deltas`, pushed to `out`. A
 /// difference is less than 2^64, and the value it gives was an integer of
 /// 64 bits, so adding it wrapping gives that value.
-pub(super) fn unframed(
+fn unframed(
     least: i64,
     (bits, deltas): (u32, &[u8]),
     (from, to): (usize, usize),
