@@ -686,6 +686,7 @@ verification approach DO-178C expects (§8).
 | D1074 | A LIKE pattern of no `_` is matched by its pieces, each searched for as a substring |
 | D1075 | A hashed semi join's or antijoin's probe is a step of its left operand's pipeline |
 | D1076 | A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline |
+| D1077 | NOT IN of columns that hold no null is an antijoin hashed on their equality |
 
 ### The project
 
@@ -18677,6 +18678,20 @@ the join's table, so a condition of its own, as a LIKE, is judged on the
 part's threads. A LEFT join with a condition beyond its keys, and a
 RIGHT or FULL join, whose unmatched right rows no one morsel knows, end
 their pipelines as before.
+
+#### D1077. NOT IN of columns that hold no null is an antijoin hashed on their equality
+
+NOT IN is the antijoin on `(x = y) IS NOT FALSE`, which a null on either
+side satisfies (D541). That condition is no equality of columns, so the
+join was a nested loop, every outer row read against every row of the
+subquery, and an uncorrelated NOT IN made an antijoin (D1065) ran far
+longer than its subquery run once. Of a column of each operand declared
+to hold no null, `x = y` is never unknown, so the condition is `x = y`,
+and the rule that makes the antijoin writes it so
+(`optimizer/unnesting/filled.rs`). The join is then hashed on it, and a
+step of its left operand's pipeline (D1075). A column that may hold a
+null on either side keeps the condition as it was, so NOT IN keeps its
+exact meaning.
 
 ## 2. Project layout
 

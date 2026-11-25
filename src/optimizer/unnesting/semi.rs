@@ -88,6 +88,8 @@ fn semi_joined(node: &Node<'_>, cond: &Cond, found: &Found, ctx: &RuleContext<'_
     };
     let w = input.width();
     let joined = if let Some((on, right, _)) = direct(sub, w) {
+        // A NOT IN of columns that hold no null, keyed (RULES.md D1077).
+        let on = super::filled::keyed(on, (&left, &right), catalog);
         LogicalPlan::SemiJoin { anti, cond: on, left: Box::new(left), right: Box::new(right) }
     } else {
         let bound = simple::pulled(sub, ctx).filter(|b| b.defaults.is_none());

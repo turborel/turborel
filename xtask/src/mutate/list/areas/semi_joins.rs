@@ -18,7 +18,7 @@ const BUILT_LEFT: &str = "marked_semi::a_built_left_gives_the_rows_of_its_subque
 const STEP: &str = "marked_semi::a_hashed_semi_join_is_a_step_of_its_lefts_pipeline";
 
 /// Mechanisms whose removal must fail the semi join requirements.
-pub const SEMI_JOINS: [Mutation; 12] = [
+pub const SEMI_JOINS: [Mutation; 13] = [
     Mutation {
         name: "semi-built-left-keeps-matched",
         package: Package::Core,
@@ -140,6 +140,16 @@ pub const SEMI_JOINS: [Mutation; 12] = [
         original: "(s.method == SemiMethod::Hash && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream(&s.left)).flatten()",
         replacement: "(s.method == SemiMethod::Nested && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream(&s.left)).flatten()",
         integration: &[STEP],
+        unit: &[],
+    },
+    Mutation {
+        name: "not-in-keyed-of-a-nullable-column",
+        package: Package::Core,
+        breaks: "NOT IN is hashed on an equality though one of its columns may hold a null",
+        file: "src/optimizer/unnesting/filled.rs",
+        original: ".filter(|&(a, b)| filled(a) && filled(b))",
+        replacement: ".filter(|&(a, b)| filled(a) || filled(b))",
+        integration: &["marked_semi::not_in_of_columns_that_hold_no_null_is_hashed"],
         unit: &[],
     },
 ];

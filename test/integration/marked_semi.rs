@@ -212,3 +212,37 @@ fn a_hashed_semi_join_is_a_step_of_its_lefts_pipeline() {
         }
     }
 }
+
+/// Verifies: [ISO/IEC 9075:1992 §8.7 GR2; X3.135-1986 §5.16 GR2] (RULES.md
+/// D1077) NOT IN of a subquery, both columns declared to hold no null, is
+/// an antijoin hashed on their equality, as EXPLAIN shows, a step of its
+/// left's pipeline; of a column that may hold a null on either side it
+/// keeps its condition, a null among the values or the row's own null
+/// keeping no row. Each has the rows of the subquery run with no semi
+/// join.
+#[test]
+fn not_in_of_columns_that_hold_no_null_is_hashed() {
+    let (db, a) = tables();
+    for (o, l) in [("O", "L"), ("OW", "LW")] {
+        for (shape, hashed) in [
+            ("SELECT COUNT(*), SUM(D) FROM {o} WHERE K NOT IN (SELECT K FROM {o} WHERE D < 500)", true),
+            ("SELECT COUNT(*), SUM(D) FROM {o} WHERE D > 900 AND G NOT IN (SELECT K FROM {o} WHERE D < 5)", false),
+            ("SELECT COUNT(*), SUM(D) FROM {o} WHERE D > 900 AND K NOT IN (SELECT S FROM {l} WHERE A < 3)", false),
+            ("SELECT COUNT(*), SUM(D) FROM {o} WHERE D > 900 AND K NOT IN (SELECT S FROM {l} WHERE A < 3 AND S IS NOT NULL)", false),
+        ] {
+            let sql = shape.replace("{o}", o).replace("{l}", l);
+            set(&a, &["SET EXECUTOR.DEGREE = 1", "SET EXECUTOR.BATCHES = 'OFF'"]);
+            set_rule(&db, SEMI_JOINS, false);
+            let nested = rows(&a, &sql);
+            set_rule(&db, SEMI_JOINS, true);
+            assert!(nested.is_ok(), "{sql}: {nested:?}");
+            assert_eq!(rows(&a, &sql), nested, "alone: {sql}");
+            exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+            set(&a, &["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"]);
+            let shown = physical(&a, &sql);
+            assert_eq!(shown.contains("HashAntiJoin") || shown.contains("HashRightAntiJoin"), hashed, "{sql}\n{shown}");
+            assert!(shown.contains("AntiJoin"), "{sql}\n{shown}");
+            assert_eq!(rows(&a, &sql), nested, "by morsels: {sql}");
+        }
+    }
+}
