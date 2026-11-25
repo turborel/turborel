@@ -223,11 +223,11 @@ fn parallel_built(
     let (count, db_for, read, within) = (pipeline.count(), db.clone(), Arc::clone(&pipeline), limit.clone());
     let batched_width = shape.as_ref().map(|s| s.1);
     let work = Box::new(move |m: usize| morsel_built(&read, m, (&db_for, tx), (batched_width, &within)));
-    let (mut parts, from, mut read) = (Vec::new(), limit.held(), 0_usize);
+    let (mut parts, from, mut taken) = (Vec::new(), limit.held(), 0_usize);
     for (done, batch) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
         let Taken::Whole(batch, bytes) = batch? else { return Ok(Held::GaveWay) };
-        read = read.saturating_add(bytes);
-        if !limit.on_course((from, read), (done, count)) {
+        taken = taken.saturating_add(bytes);
+        if !limit.on_course((from, taken), (done, count)) {
             return Ok(Held::GaveWay);
         }
         parts.push(batch);
