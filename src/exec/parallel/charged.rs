@@ -12,7 +12,9 @@
 //!
 //! A morsel's rows gathered are charged until whoever reads them has
 //! taken them, so every morsel gathered and not yet read, as many as run
-//! ahead of the reader (`parallel/run.rs`), is held within the grant.
+//! ahead of the reader (`parallel/run.rs`), is held within the grant. A
+//! stream's are held within the rows its morsels scan too (`Ahead`, RULES.md
+//! D1153), so a result read at a client's pace holds a few morsels' rows.
 //! Before, each was held whole outside it, and a join whose keys each
 //! matched thousands of rows made tens of millions of rows of a morsel.
 
@@ -20,12 +22,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::Limit;
-use super::run::Morsels;
+use super::run::{Morsels, window};
 use crate::error::Result;
 use crate::exec::batch::{Batches, Kept};
 use crate::exec::{RowIter, broken};
 use crate::spill::row_bytes;
-use crate::storage::Row;
+use crate::storage::sel::kept_count;
+use crate::storage::{Row, Sel};
 use crate::txn::Stop;
 
 /// What a thread made of a morsel: all of it, with the bytes it holds of
@@ -35,23 +38,85 @@ pub(super) enum Taken<T> {
     Past,
 }
 
+/// \[DESIGN\] (RULES.md D1153) The rows a stream's morsels gathered and
+/// not yet read hold at most, shared by the threads gathering them: as
+/// many as the morsels a run takes past the one its reader waits for
+/// (`run::window`) scan, so a morsel that gives no more rows than it
+/// scans is gathered whole, and one whose joins multiply them is read
+/// by the reader as it is given. What waits for a reader, a client
+/// taking a result at its pace, so holds rows of a few morsels, however
+/// many its joins make and whatever MEMORY.WORK_BYTES grants; a grant
+/// is for what must hold its input, a build, a sort or a grouping.
+#[derive(Clone)]
+pub(super) struct Ahead {
+    most: usize,
+    held: Arc<AtomicUsize>,
+}
+
+impl Ahead {
+    /// The rows ahead of the reader of a run of `degree` threads over
+    /// morsels of `rows` rows.
+    pub(super) fn of(degree: usize, rows: usize) -> Ahead {
+        Ahead { most: window(degree).saturating_mul(rows.max(1)), held: Arc::new(AtomicUsize::new(0)) }
+    }
+
+    /// Holds `rows` more: whether they fit.
+    fn take(&self, rows: usize) -> bool {
+        let held = self.held.fetch_add(rows, Ordering::AcqRel).saturating_add(rows);
+        held <= self.most
+    }
+
+    /// Gives back `rows` it held.
+    fn give(&self, rows: usize) {
+        let mut seen = self.held.load(Ordering::Acquire);
+        while let Err(now) = self.held.compare_exchange_weak(seen, seen.saturating_sub(rows), Ordering::AcqRel, Ordering::Acquire) {
+            seen = now;
+        }
+    }
+}
+
 /// The bytes one morsel holds of its part's grant, as the thread reading
-/// it counts them.
+/// it counts them, and of a stream's, the rows it holds ahead of the
+/// reader.
 pub(super) struct Tally {
     limit: Limit,
+    ahead: Option<Ahead>,
     taken: AtomicUsize,
+    rows: AtomicUsize,
     past: AtomicBool,
 }
 
 impl Tally {
     /// A morsel's bytes, none yet, charged to `limit`.
     pub(super) fn of(limit: &Limit) -> Arc<Tally> {
-        Arc::new(Tally { limit: limit.clone(), taken: AtomicUsize::new(0), past: AtomicBool::new(false) })
+        Tally::within(limit, None)
+    }
+
+    /// A morsel's bytes, none yet, charged to `limit`, and its rows held
+    /// of `ahead`, if any.
+    fn within(limit: &Limit, ahead: Option<&Ahead>) -> Arc<Tally> {
+        let (taken, rows, past) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicBool::new(false));
+        Arc::new(Tally { limit: limit.clone(), ahead: ahead.cloned(), taken, rows, past })
     }
 
     /// Charges `bytes` more: whether the grant holds them. Once it does
     /// not, the morsel is past it.
     pub(super) fn add(&self, bytes: usize) -> bool {
+        self.added(bytes, 0)
+    }
+
+    /// Charges `bytes` and `rows` more: whether the grant holds the bytes
+    /// and the rows ahead of the reader the rows. Once they do not, the
+    /// morsel is past them.
+    fn added(&self, bytes: usize, rows: usize) -> bool {
+        if let Some(ahead) = &self.ahead {
+            if !ahead.take(rows) {
+                ahead.give(rows);
+                self.past.store(true, Ordering::Release);
+                return false;
+            }
+            self.rows.fetch_add(rows, Ordering::AcqRel);
+        }
         if self.limit.take(bytes) {
             self.taken.fetch_add(bytes, Ordering::AcqRel);
             return true;
@@ -86,6 +151,9 @@ impl Tally {
         let taken = self.taken.swap(0, Ordering::AcqRel);
         if self.past() {
             self.limit.give(taken);
+            if let Some(ahead) = &self.ahead {
+                ahead.give(self.rows.swap(0, Ordering::AcqRel));
+            }
             return Taken::Past;
         }
         Taken::Whole(made, taken)
@@ -98,24 +166,26 @@ impl Tally {
 const CHARGED_ROWS: usize = crate::storage::BATCH_ROWS;
 
 /// Items of `inner` charged to a tally, every `every` of them at once,
-/// their bytes as `bytes` counts them, and what is left once they end;
+/// their bytes as `bytes` counts them and their rows as `rows` does, and
+/// what is left once they end;
 /// ended at the first charge the grant does not hold, which the tally then
 /// says (`Tally::past`).
 struct Charged<T> {
     inner: Box<dyn Iterator<Item = Result<T>> + Send>,
     tally: Arc<Tally>,
     bytes: fn(&T) -> usize,
+    rows: fn(&T) -> usize,
     every: usize,
-    /// The items, and their bytes, given since the last charge.
-    since: (usize, usize),
+    /// The items, their bytes and their rows, given since the last charge.
+    since: (usize, usize, usize),
     ended: bool,
 }
 
 impl<T> Charged<T> {
     /// Charges what was given since the last charge: whether it fits.
     fn charged(&mut self) -> bool {
-        let (_, bytes) = std::mem::take(&mut self.since);
-        bytes == 0 || self.tally.add(bytes)
+        let (_, bytes, rows) = std::mem::take(&mut self.since);
+        (bytes == 0 && rows == 0) || self.tally.added(bytes, rows)
     }
 }
 
@@ -132,7 +202,8 @@ impl<T> Iterator for Charged<T> {
             return None;
         };
         if let Ok(given) = &item {
-            self.since = (self.since.0.saturating_add(1), self.since.1.saturating_add((self.bytes)(given)));
+            let (items, bytes, rows) = self.since;
+            self.since = (items.saturating_add(1), bytes.saturating_add((self.bytes)(given)), rows.saturating_add((self.rows)(given)));
             if self.since.0 >= self.every && !self.charged() {
                 self.ended = true;
                 return None;
@@ -147,36 +218,63 @@ impl<T> Iterator for Charged<T> {
 /// then says (`Tally::past`).
 pub(super) fn charged_batches(batches: Batches, tally: &Arc<Tally>) -> Batches {
     let bytes: fn(&Kept) -> usize = |(batch, _)| batch.bytes();
-    Box::new(Charged { inner: batches, tally: Arc::clone(tally), bytes, every: 1, since: (0, 0), ended: false })
+    Box::new(Charged { inner: batches, tally: Arc::clone(tally), bytes, rows: kept_rows, every: 1, since: (0, 0, 0), ended: false })
+}
+
+/// The rows of a batch a filter kept.
+fn kept_rows((batch, rows): &Kept) -> usize {
+    kept_count(rows.as_ref().map(Sel::as_slice), batch.rows)
+}
+
+/// A row, one row.
+fn one_row(_: &Row) -> usize {
+    1
 }
 
 /// `rows`, charged to `tally` as they are given, `CHARGED_ROWS` at a time;
 /// ended at the first charge the grant does not hold, which `tally` then
 /// says (`Tally::past`).
 pub(super) fn charged_rows(rows: RowIter, tally: &Arc<Tally>) -> RowIter {
-    Box::new(Charged { inner: rows, tally: Arc::clone(tally), bytes: row_bytes, every: CHARGED_ROWS, since: (0, 0), ended: false })
+    let since = (0, 0, 0);
+    Box::new(Charged { inner: rows, tally: Arc::clone(tally), bytes: row_bytes, rows: one_row, every: CHARGED_ROWS, since, ended: false })
 }
 
-/// The rows of `rows`, a morsel's, gathered within `limit`.
+/// The rows of `rows`, a stream's morsel's, gathered within `limit` and
+/// the rows `ahead` of its reader.
 ///
 /// # Errors
 ///
 /// As reading a row fails.
-pub(super) fn whole_rows(rows: RowIter, limit: &Limit) -> Result<Taken<Vec<Row>>> {
-    let tally = Tally::of(limit);
+pub(super) fn whole_rows(rows: RowIter, (limit, ahead): (&Limit, &Ahead)) -> Result<Taken<Vec<Row>>> {
+    let tally = Tally::within(limit, Some(ahead));
     let rows = charged_rows(rows, &tally).collect::<Result<Vec<Row>>>()?;
     Ok(tally.taken(rows))
 }
 
-/// The batches of `batches`, a morsel's, gathered within `limit`.
+/// The batches of `batches`, a stream's morsel's, gathered within `limit`
+/// and the rows `ahead` of its reader.
 ///
 /// # Errors
 ///
 /// As reading a batch fails.
-pub(super) fn whole_batches(batches: Batches, limit: &Limit) -> Result<Taken<Vec<Kept>>> {
-    let tally = Tally::of(limit);
+pub(super) fn whole_batches(batches: Batches, (limit, ahead): (&Limit, &Ahead)) -> Result<Taken<Vec<Kept>>> {
+    let tally = Tally::within(limit, Some(ahead));
     let batches = charged_batches(batches, &tally).collect::<Result<Vec<Kept>>>()?;
     Ok(tally.taken(batches))
+}
+
+impl Flow<Row> {
+    /// The rows of `morsels`, as `Flow::of`.
+    pub(super) fn of_rows(morsels: Morsels<Taken<Vec<Row>>>, alone: Alone<Row>, (limit, ahead): (&Limit, &Ahead), stop: Option<Arc<Stop>>) -> Flow<Row> {
+        Flow::of(morsels, alone, (limit, ahead, one_row), stop)
+    }
+}
+
+impl Flow<Kept> {
+    /// The batches of `morsels`, as `Flow::of`.
+    pub(super) fn of_batches(morsels: Morsels<Taken<Vec<Kept>>>, alone: Alone<Kept>, (limit, ahead): (&Limit, &Ahead), stop: Option<Arc<Stop>>) -> Flow<Kept> {
+        Flow::of(morsels, alone, (limit, ahead, kept_rows), stop)
+    }
 }
 
 /// Reads morsel `n` of a pipeline alone, holding none of it.
@@ -198,25 +296,32 @@ pub(super) struct Flow<T: Send + 'static> {
     morsels: Morsels<Taken<Vec<T>>>,
     alone: Alone<T>,
     now: Now<T>,
-    /// The bytes the morsel given now holds of the grant.
-    held: usize,
+    /// The bytes the morsel given now holds of the grant, and its rows
+    /// of those ahead of the reader.
+    held: (usize, usize),
     /// The number of the next morsel.
     next: usize,
     limit: Limit,
+    ahead: Ahead,
+    /// The rows an item is, as the morsel's tally counted them.
+    rows: fn(&T) -> usize,
     stop: Option<Arc<Stop>>,
     ended: bool,
 }
 
 impl<T: Send + 'static> Flow<T> {
-    /// The flow of `morsels`, each gathered within `limit` or left to
-    /// `alone`, for a statement `stop` cancels.
-    pub(super) fn of(morsels: Morsels<Taken<Vec<T>>>, alone: Alone<T>, limit: &Limit, stop: Option<Arc<Stop>>) -> Flow<T> {
-        Flow { morsels, alone, now: Now::Whole(Vec::new().into_iter()), held: 0, next: 0, limit: limit.clone(), stop, ended: false }
+    /// The flow of `morsels`, each gathered within `limit` and `ahead` or
+    /// left to `alone`, for a statement `stop` cancels.
+    fn of(morsels: Morsels<Taken<Vec<T>>>, alone: Alone<T>, (limit, ahead, rows): (&Limit, &Ahead, fn(&T) -> usize), stop: Option<Arc<Stop>>) -> Flow<T> {
+        let (now, limit, ahead) = (Now::Whole(Vec::new().into_iter()), limit.clone(), ahead.clone());
+        Flow { morsels, alone, now, held: (0, 0), next: 0, limit, ahead, rows, stop, ended: false }
     }
 
     /// Takes up the next morsel: whether there is one.
     fn taken_up(&mut self) -> Result<bool> {
-        self.limit.give(std::mem::take(&mut self.held));
+        let (bytes, rows) = std::mem::take(&mut self.held);
+        self.limit.give(bytes);
+        self.ahead.give(rows);
         if let Some(stop) = &self.stop {
             stop.check()?;
         }
@@ -225,7 +330,7 @@ impl<T: Send + 'static> Flow<T> {
         self.next = n.checked_add(1).ok_or_else(|| broken("a pipeline of too many morsels"))?;
         self.now = match taken {
             Taken::Whole(items, bytes) => {
-                self.held = bytes;
+                self.held = (bytes, items.iter().map(self.rows).sum());
                 Now::Whole(items.into_iter())
             }
             Taken::Past => Now::Alone((self.alone)(n)?),
@@ -272,8 +377,9 @@ impl<T: Send + 'static> Iterator for Flow<T> {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::Ordering;
 
-    use super::{Taken, whole_batches, whole_rows};
+    use super::{Ahead, Taken, whole_batches, whole_rows};
     use crate::catalog::QualifiedName;
     use crate::db::Database;
     use crate::exec::parallel::pipeline::Pipeline;
@@ -298,10 +404,11 @@ mod tests {
     }
 
     /// Of `db` as it is set, the first morsel of T joined with U on K
-    /// gathered within a grant of MEMORY.WORK_BYTES, by batch if it is
-    /// read so, else row by row: its rows, if it fit; and whether the
-    /// grant holds what the build held once the morsel is given up.
-    fn first_morsel(database: &Database) -> (Option<usize>, bool) {
+    /// gathered within a grant of MEMORY.WORK_BYTES and `ahead`, by batch
+    /// if it is read so, else row by row: its rows, if it fit; and whether
+    /// the grant holds what the build held once the morsel is given up,
+    /// and `ahead` no rows.
+    fn first_morsel(database: &Database, ahead: &Ahead) -> (Option<usize>, bool) {
         let join = Plan::HashJoin {
             left: scan("T"),
             right: scan("U"),
@@ -315,27 +422,28 @@ mod tests {
         let (pipeline, built) = (Arc::new(pipeline), limit.held());
         let (db, tx) = (&state, NO_TRANSACTION);
         let rows = if pipeline.batched.is_some() {
-            match whole_batches(pipeline.morsel_kept(0, (db, tx)).unwrap(), &limit).unwrap() {
+            match whole_batches(pipeline.morsel_kept(0, (db, tx)).unwrap(), (&limit, ahead)).unwrap() {
                 Taken::Whole(batches, _) => Some(batches.iter().map(|(b, _)| b.rows).sum()),
                 Taken::Past => None,
             }
         } else {
-            match whole_rows(pipeline.morsel_rows(0, (db, tx), Runner::new(db, tx)).unwrap(), &limit).unwrap() {
+            match whole_rows(pipeline.morsel_rows(0, (db, tx), Runner::new(db, tx)).unwrap(), (&limit, ahead)).unwrap() {
                 Taken::Whole(rows, _) => Some(rows.len()),
                 Taken::Past => None,
             }
         };
-        (rows, rows.is_some() || limit.held() == built)
+        (rows, rows.is_some() || (limit.held() == built && ahead.held.load(Ordering::Acquire) == 0))
     }
 
-    /// Verifies: [DESIGN] RULES.md D1150, D38: a morsel whose join makes
-    /// a hundred rows of each of its own is gathered whole if its rows fit
-    /// the part's grant, and is given up once they outgrow it, what it was
-    /// charged given back, by batch and row by row; before, it was held
-    /// whole whatever the grant.
+    /// Verifies: [DESIGN] RULES.md D1150, D1153, D38: a morsel whose join
+    /// makes a hundred rows of each of its own is gathered whole if its
+    /// rows fit the part's grant and the rows ahead of the reader, and is
+    /// given up once they outgrow either, what it was charged given back,
+    /// by batch and row by row; before, it was held whole whatever the
+    /// grant, and a grant of 64 MiB held it whatever its rows.
     ///
-    /// Decision: the morsel's rows fit the grant, or not; it is read by
-    /// batch, or row by row.
+    /// Decision: the morsel's rows fit the grant, or not; they fit the rows
+    /// ahead, or not; it is read by batch, or row by row.
     #[test]
     fn a_morsel_past_its_grant_is_given_up() {
         let db = Database::new();
@@ -349,10 +457,12 @@ mod tests {
         set("EXECUTOR.MORSEL_ROWS", Value::Exact(Decimal::new(100_000, 0)));
         for batches in ["ON", "OFF"] {
             set("EXECUTOR.BATCHES", Value::Char(batches.into()));
+            let (wide, narrow) = (Ahead::of(1, 100_000), Ahead::of(1, 300));
             set("MEMORY.WORK_BYTES", Value::Exact(Decimal::new(64 << 20, 0)));
-            assert_eq!(first_morsel(&db), (Some(30_000), true), "within the grant, batches {batches}");
+            assert_eq!(first_morsel(&db, &wide), (Some(30_000), true), "within the grant, batches {batches}");
+            assert_eq!(first_morsel(&db, &narrow), (None, true), "past the rows ahead, batches {batches}");
             set("MEMORY.WORK_BYTES", Value::Exact(Decimal::new(65_536, 0)));
-            assert_eq!(first_morsel(&db), (None, true), "past the grant, batches {batches}");
+            assert_eq!(first_morsel(&db, &wide), (None, true), "past the grant, batches {batches}");
         }
     }
 }

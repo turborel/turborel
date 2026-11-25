@@ -46,7 +46,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(super) use self::batches::streamed_batches;
-use self::charged::{Alone, Flow, whole_rows};
+use self::charged::{Ahead, Alone, Flow, whole_rows};
 pub(super) use self::each::each_morsel;
 pub(super) use self::grouped::grouped_told;
 use self::pipeline::Pipeline;
@@ -57,7 +57,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::physical::{Parallel, Plan};
-use crate::settings::{MEMORY_WORK_BYTES, work_bytes};
+use crate::settings::{EXECUTOR_MORSEL_ROWS, MEMORY_WORK_BYTES, work_bytes};
 use crate::spill::Grant;
 use crate::storage::Row;
 use crate::txn::{Stop, TxId};
@@ -166,14 +166,16 @@ pub(super) fn parallel(plan: Plan, db: &Db, tx: TxId) -> RowIter {
 /// grant, or read by the reader as it is given if it outgrows it
 /// (`parallel/charged.rs`, RULES.md D1150).
 fn streamed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
-    let limit = Limit::of(db);
+    let (limit, ahead) = (Limit::of(db), Ahead::of(degree, db.settings.count(EXECUTOR_MORSEL_ROWS)));
     let Held::Kept(pipeline) = Pipeline::of(plan, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
-    let (pipeline, db_for, within) = (Arc::new(pipeline), db.clone(), limit.clone());
+    let (pipeline, db_for, within) = (Arc::new(pipeline), db.clone(), (limit.clone(), ahead.clone()));
     let (count, read, db_alone) = (pipeline.count(), Arc::clone(&pipeline), db.clone());
-    let work = Box::new(move |m: usize| whole_rows(pipeline.morsel_rows(m, (&db_for, tx), Runner::new(&db_for, tx))?, &within));
+    let work = Box::new(move |m: usize| {
+        whole_rows(pipeline.morsel_rows(m, (&db_for, tx), Runner::new(&db_for, tx))?, (&within.0, &within.1))
+    });
     let alone: Alone<Row> = Box::new(move |m| read.morsel_rows(m, (&db_alone, tx), Runner::new(&db_alone, tx)));
     let morsels = Morsels::start(db, tx, (count, degree), work);
-    Ok(Held::Kept(Box::new(Flow::of(morsels, alone, &limit, db.tx.stop_of(tx)))))
+    Ok(Held::Kept(Box::new(Flow::of_rows(morsels, alone, (&limit, &ahead), db.tx.stop_of(tx)))))
 }
 
 /// Rows given a morsel's at a time, in order, the statement's

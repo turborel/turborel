@@ -254,7 +254,9 @@ many rows of, as one whose keys each match thousands of rows, is read
 again by the operator above the part as its rows are made, a sort or a
 window's partitions spilling them, a hash join's build giving way to
 the join run alone, so the part keeps to its grant however many rows
-its joins make. One of 4 MiB or less is held unreserved,
+its joins make. The rows of a part that streams its result, waiting for
+a client to take them, are held to those of two morsels a thread, of
+EXECUTOR.MORSEL_ROWS each, whatever the grant. One of 4 MiB or less is held unreserved,
 as a session that sets MEMORY.WORK_BYTES below 4 MiB asks.
 
 ```sql

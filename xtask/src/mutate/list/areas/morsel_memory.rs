@@ -1,7 +1,9 @@
-//! The mutations of a morsel's memory (RULES.md R-TEST-9, D1150, D1151):
-//! a morsel charged to its part's grant as it is gathered, one past it
-//! read again as it is given, its rows made as they are read, and a
-//! probe's pairs made a batch at a time.
+//! The mutations of a morsel's memory (RULES.md R-TEST-9, D1150, D1151,
+//! D1153, D1154): a morsel charged to its part's grant as it is gathered, one
+//! past it read again as it is given, its rows made as they are read, a
+//! probe's pairs made a batch at a time, a stream's rows ahead of its
+//! reader held to what its morsels scan, and a probe of streams stopped
+//! at a batch of pairs made (D1154).
 
 use super::super::{Mutation, Package};
 
@@ -9,7 +11,7 @@ use super::super::{Mutation, Package};
 const PAST: &str = "fan_out::a_join_past_its_grant_answers_as_alone";
 
 /// Mechanisms whose removal must fail the requirements of a morsel's memory.
-pub const MORSEL_MEMORY: [Mutation; 4] = [
+pub const MORSEL_MEMORY: [Mutation; 7] = [
     Mutation {
         name: "morsel-charge-unbounded",
         package: Package::Core,
@@ -49,5 +51,35 @@ pub const MORSEL_MEMORY: [Mutation; 4] = [
         replacement: "        if let Some(before) = self.seen.checked_sub(1).filter(|_| false)",
         integration: &[],
         unit: &["exec::batch::joined::shared::probing::tests::a_probe_gives_its_pairs_a_batch_at_a_time"],
+    },
+    Mutation {
+        name: "morsel-ahead-unbounded",
+        package: Package::Core,
+        breaks: "a stream's morsels ahead of its reader hold as many rows as the grant holds",
+        file: "src/exec/parallel/charged.rs",
+        original: "            if !ahead.take(rows) {",
+        replacement: "            if !ahead.take(0) {",
+        integration: &[],
+        unit: &["exec::parallel::charged::tests::a_morsel_past_its_grant_is_given_up"],
+    },
+    Mutation {
+        name: "stream-probe-unpaused",
+        package: Package::Core,
+        breaks: "a probe of streams makes every pair of a left batch before it gives one",
+        file: "src/exec/batch/joined/probe.rs",
+        original: "        if out.ready() {",
+        replacement: "        if out.ready() && n == usize::MAX {",
+        integration: &[],
+        unit: &["exec::batch::joined::pairs::tests::a_probe_holds_the_pairs_of_a_row_at_most"],
+    },
+    Mutation {
+        name: "outer-probe-unpaused",
+        package: Package::Core,
+        breaks: "a FULL join of streams makes every pair of a left batch before it gives one",
+        file: "src/exec/batch/joined/outer.rs",
+        original: "            if self.out.ready() {",
+        replacement: "            if self.out.ready() && n == usize::MAX {",
+        integration: &[],
+        unit: &["exec::batch::joined::pairs::tests::a_probe_holds_the_pairs_of_a_row_at_most"],
     },
 ];

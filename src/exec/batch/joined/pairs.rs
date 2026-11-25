@@ -106,6 +106,8 @@ impl Out {
         drop(left);
         self.left.clear();
         self.ready.push_back(Batch { columns, rows });
+        #[cfg(test)]
+        tests::MOST_READY.with(|most| most.set(most.get().max(self.ready.len())));
     }
 
     /// Makes a batch of the joined rows not yet in one, their left rows
@@ -136,4 +138,53 @@ impl Out {
 /// all its `count` rows.
 pub(super) fn kept_rows(rows: Option<crate::storage::Sel>, count: usize) -> Vec<usize> {
     crate::storage::sel::places_of(rows, count)
+}
+
+// Unit tests: a probe's batches made as they are read (RULES.md R-TEST-1).
+#[cfg(test)]
+pub(super) mod tests {
+    use std::cell::Cell;
+
+    use crate::db::Database;
+    use crate::value::{Decimal, Value};
+
+    thread_local! {
+        /// The most batches of pairs made and not yet given at once, on this
+        /// thread, since it was set to none.
+        pub(in crate::exec::batch::joined) static MOST_READY: Cell<usize> = const { Cell::new(0) };
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1154, D31: an inner, a LEFT and a FULL
+    /// hash join of streams, run on one thread by batch, whose left rows
+    /// each match a thousand right rows, hold no more than the batches of
+    /// one left row's pairs made and not yet given, and give every pair;
+    /// before, a left batch's million pairs were all made as it was probed.
+    ///
+    /// Regression test (R-TEST-7): a join whose keys each matched
+    /// thousands of rows held every pair of a left batch.
+    #[test]
+    fn a_probe_holds_the_pairs_of_a_row_at_most() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE L (K INTEGER, G INTEGER) CREATE TABLE B (G INTEGER, T INTEGER)").unwrap();
+        let a = db.session("A");
+        let rows = |n: i32| (0_i32..n).map(|k| format!("({k}, {})", k % 3_i32)).collect::<Vec<_>>().join(", ");
+        a.run(&format!("INSERT INTO L VALUES {}", rows(1_500_i32))).unwrap();
+        a.run(&format!("INSERT INTO B VALUES {}", (0_i32..3_000_i32).map(|t| format!("({}, {t})", t % 3_i32)).collect::<Vec<_>>().join(", "))).unwrap();
+        a.commit().unwrap();
+        db.set_setting("EXECUTOR.DEGREE", &Value::Exact(Decimal::new(1, 0))).unwrap();
+        db.set_setting("EXECUTOR.BATCHES", &Value::Char("ON".into())).unwrap();
+        for join in ["JOIN", "LEFT JOIN", "FULL JOIN"] {
+            MOST_READY.with(|most| most.set(0));
+            let sql = format!("SELECT L.K, B.T FROM L {join} B ON L.G = B.G");
+            let mut cursor = a.open_cursor(&sql).unwrap();
+            let mut count = 0_usize;
+            while cursor.fetch().unwrap().is_some() {
+                count = count.saturating_add(1);
+            }
+            a.commit().unwrap();
+            assert_eq!(count, 1_500_000, "{join}: every pair");
+            let most = MOST_READY.with(Cell::get);
+            assert!((1..=2).contains(&most), "{join}: {most} batches held at once");
+        }
+    }
 }

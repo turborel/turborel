@@ -697,6 +697,8 @@ verification approach DO-178C expects (§8).
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 | D1152 | A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates |
+| D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
+| D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 
 ### The project
@@ -18963,6 +18965,46 @@ column of a class whose distinct values neither statistics count nor a
 key proves is now counted of no more than the least of those that are
 (`physical/cardinality/composite.rs`), for the estimates and the
 enumeration alike. A class with no column so known is left as it was.
+
+#### D1153. A stream's morsels ahead of its reader hold no more rows than they scan
+
+The morsels a stream's threads gathered and its reader had not taken
+were charged to the part's work grant (D1150), so a result read at a
+client's pace held up to MEMORY.WORK_BYTES of rows it had not sent, 32
+GiB where the grant is set so, and each statement so read took as much
+of the budget. A grant is for what must hold its input, a build, a sort
+or a grouping, and a stream holds its rows only to keep its threads
+busy while its reader takes them.
+
+The rows a stream's morsels hold ahead of its reader are now counted
+too, shared by its threads (`exec/parallel/charged.rs`): at most the
+rows the morsels a run takes past the one its reader waits for scan,
+two a thread (D290), each of EXECUTOR.MORSEL_ROWS. A morsel that gives
+no more rows than it scans is gathered whole, as before. One whose
+joins multiply its rows past what is left is given up and read by the
+reader as it is given, as a morsel past the grant is (D1150), so a
+result of billions of rows holds a few morsels' rows whatever the
+grant. A thread never waits for the reader: a worker so held would hold
+its thread from every other statement while a client is slow.
+
+#### D1154. A hash join of streams probed by batch stops at each batch of pairs it makes
+
+A hash join of streams run by batch (D31) probed its right operand with
+every row of a left batch before it gave a pair, its pairs made into
+batches held until read. A left batch of 2,048 rows whose keys each
+match thousands of right rows so held millions of pairs at once, and
+one whose keys each match a million held billions, past any grant.
+
+The probe now stops at the left row after which a batch of pairs is
+made, and takes the batch up there again once that batch is read
+(`exec/batch/joined/probe.rs`); its keys are hashed once, as its first
+row is probed. A batch so holds the pairs of one left row at most past
+the batch made, and those of a row are no more than the right rows,
+held within the work area. A FULL or RIGHT join's probe, and a LEFT
+join's the simple probe does not take, stop so too
+(`exec/batch/joined/outer.rs`). The pairs come in the order they did,
+those before an error first, then the error, as before. A probe of a
+table its morsels share stops so already (D1151).
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
