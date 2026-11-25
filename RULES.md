@@ -706,6 +706,7 @@ verification approach DO-178C expects (§8).
 | D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
+| D1162 | A late column of rows kept in order is decoded of their places, none searched for |
 
 ### The project
 
@@ -19192,6 +19193,22 @@ A grouping on one thread groups so too (`exec/batch/groups.rs`). Its
 memo holds only groups it holds, as a row of a group written past the
 work area is found by its key, and it forgets them as the work area is
 split and the groups held after the split are moved.
+
+#### D1162. A late column of rows kept in order is decoded of their places, none searched for
+
+A late column (D361) resolved of the rows a filter kept listed their
+places, sorted them if they were not in order, took out those given
+twice, and then searched the places decoded for each row's, to gather
+the values to the rows. Of a column no join gathered, the rows a filter
+keeps are ascending, each once, and so are their places, so the search
+found the `k`th row's value at the `k`th place every time. Of a scan of
+a large table filtered by a comparison of two of its columns, that
+search was the most of the samples outside the join.
+
+Such a column is now resolved of its rows' places as they come, and the
+`k`th row kept takes the `k`th value decoded (`storage/batch/late.rs`).
+Rows given out of order or more than once, and a column a join
+gathered, are resolved as before.
 
 ## 2. Project layout
 
