@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of sampled statistics, in the order they run.
-pub const STATS: [Mutation; 13] = [
+pub const STATS: [Mutation; 15] = [
     Mutation {
         name: "stats-large-read-whole",
         package: Package::Core,
@@ -108,7 +108,7 @@ pub const STATS: [Mutation; 13] = [
         original: "        self.changes.store(live.abs_diff(stats.rows), Ordering::Relaxed);",
         replacement: "        self.changes.store(0, Ordering::Relaxed);",
         integration: &[],
-        unit: &["engine::rows::stats::saved::tests::statistics_saved_are_a_table_openeds"],
+        unit: &["engine::rows::stats::saved::tests::rows_written_after_the_pass_are_a_table_openeds_changes"],
     },
     Mutation {
         name: "stats-kept-not-sealed",
@@ -139,5 +139,25 @@ pub const STATS: [Mutation; 13] = [
         replacement: "        (Some(TABLE_FORMAT), META_LEN) => {}",
         integration: &[],
         unit: &["engine::rows::stats::saved::tests::a_meta_page_of_no_statistics_word_opens_with_none"],
+    },
+    Mutation {
+        name: "chunk-in-place-always",
+        package: Package::Core,
+        breaks: "a chunk read in place: the bytes of a chunk its encodings open are not kept, and are opened again by every run",
+        file: "src/engine/columns/group.rs",
+        original: "        let in_place = matches!(opened, Cow::Borrowed(_));",
+        replacement: "        let in_place = true;",
+        integration: &[],
+        unit: &["engine::columns::prepared::tests::a_chunk_stored_as_it_is_is_read_in_the_pool"],
+    },
+    Mutation {
+        name: "chunk-in-place-copied",
+        package: Package::Core,
+        breaks: "a chunk read in place: the bytes of a chunk stored as it is are copied out of the pool to be read",
+        file: "src/engine/columns/prepared.rs",
+        original: "        if !in_place {",
+        replacement: "        if true {",
+        integration: &[],
+        unit: &["engine::columns::prepared::tests::a_chunk_stored_as_it_is_is_read_in_the_pool"],
     },
 ];

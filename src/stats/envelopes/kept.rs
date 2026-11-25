@@ -32,15 +32,17 @@ impl EnvelopeStats {
         match self.frame {
             Some(frame) => {
                 out.put_u8(FRAMED);
-                frame.lower().into_iter().chain(frame.upper()).for_each(|x| put_f64(out, x));
+                for x in frame.lower().into_iter().chain(frame.upper()) {
+                    put_f64(out, x);
+                }
             }
             None => out.put_u8(0),
         }
         out.put_u32(u32::try_from(self.cells.len()).unwrap_or(u32::MAX));
-        for cell in &self.cells {
-            [cell.share, cell.width, cell.height].into_iter().for_each(|x| put_f64(out, x));
+        let cells = self.cells.iter().flat_map(|cell| [cell.share, cell.width, cell.height]);
+        for x in cells.chain([self.empty, self.vertices, self.clustering]) {
+            put_f64(out, x);
         }
-        [self.empty, self.vertices, self.clustering].into_iter().for_each(|x| put_f64(out, x));
     }
 
     /// The statistics `put` wrote, read of `r`.
@@ -49,12 +51,11 @@ impl EnvelopeStats {
     ///
     /// SQLCODE -916 if they are not what `put` writes.
     pub fn read(r: &mut Reader<'_>) -> Result<EnvelopeStats> {
-        let frame = match r.u8()? {
-            0 => None,
-            _ => {
-                let lower = [f64_of(r)?, f64_of(r)?];
-                Some(Bounds::new(lower, [f64_of(r)?, f64_of(r)?]).map_err(|_| r.corrupt("a frame that is no envelope"))?)
-            }
+        let frame = if r.u8()? == 0 {
+            None
+        } else {
+            let lower = [f64_of(r)?, f64_of(r)?];
+            Some(Bounds::new(lower, [f64_of(r)?, f64_of(r)?]).map_err(|_| r.corrupt("a frame that is no envelope"))?)
         };
         let cells =
             (0..r.u32()?).map(|_| Ok(Cell { share: f64_of(r)?, width: f64_of(r)?, height: f64_of(r)? })).collect::<Result<Vec<Cell>>>()?;

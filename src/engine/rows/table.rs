@@ -35,13 +35,8 @@ pub(super) struct Found {
 
 /// The table's statistics, none yet, kept as `options` say and saved
 /// with its pages (`rows/stats/saved.rs`).
-fn gathered(
-    files: &TableFiles,
-    (meta, counted): (PageId, &Arc<Counted>),
-    format: &RecordFormat,
-    options: &TableOptions,
-) -> Result<Gathered> {
-    let kept = Arc::new(Kept::new(files, meta, counted, format));
+fn gathered(files: &TableFiles, (meta, counted): (PageId, &Arc<Counted>), types: &[DataType], options: &TableOptions) -> Result<Gathered> {
+    let kept = Arc::new(Kept::new(files, meta, counted, &RecordFormat::new(types)));
     files.note_statistics(&kept)?;
     Ok(Gathered::new(options.statistics).kept_by(kept))
 }
@@ -142,8 +137,6 @@ impl RowTable {
         // A row's record shares its leaf entry with its key and its version.
         let spill = Spill { threshold, most: tree.max_entry().saturating_sub(KEY).saturating_sub(VERSION) };
         let lobs = Arc::new(LobSpace::open((&files.pool, files.file), types, lobs, Arc::clone(&sealing))?);
-        let format = RecordFormat::new(types);
-        let gathered = gathered(files, (meta, &counted), &format, &options)?;
         Ok(RowTable {
             lobs,
             pool: Arc::clone(&files.pool),
@@ -152,14 +145,14 @@ impl RowTable {
             versions: Versions::bounded(options.bounds(), Arc::clone(&files.work), Arc::clone(&files.statuses)),
             meta,
             tree,
-            format,
+            format: RecordFormat::new(types),
             spill,
             next,
             blocks: IdBlocks::new(),
             reserved: AtomicU64::new(reserved),
             reserving: Mutex::new(()),
+            gathered: gathered(files, (meta, &counted), types, &options)?,
             counted,
-            gathered,
             durable: Arc::clone(&files.durable),
             discarded: AtomicBool::new(false),
             sealing,

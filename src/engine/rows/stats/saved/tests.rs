@@ -34,8 +34,9 @@ fn int(n: u64) -> Value {
 }
 
 fn row(n: u64) -> Row {
-    let text = if n % 7 == 0 { Value::Null } else { Value::Char(format!("secret {}", if n % 2 == 0 { 0 } else { n % 5 }).into()) };
-    let day = crate::value::cast(Value::Char(format!("2026-01-{:02}", n % 28 + 1).into()), &DataType::Date).unwrap();
+    let word = if n.is_multiple_of(2) { 0 } else { n % 5 };
+    let text = if n.is_multiple_of(7) { Value::Null } else { Value::Char(format!("secret {word}").into()) };
+    let day = crate::value::cast(Value::Char(format!("2026-01-{:02}", (n % 28).wrapping_add(1)).into()), &DataType::Date).unwrap();
     vec![int(n), text, day]
 }
 
@@ -69,12 +70,11 @@ fn shown(stats: &TableStats) -> String {
 }
 
 /// Verifies: [DESIGN] RULES.md D1093, statistics kept: those a pass
-/// gathered are saved by the next checkpoint and are the table's as it is
-/// opened, every number, bound, histogram bound, common value, frequency
-/// and sampled row as gathered, no pass made by the plan that asks; a
-/// second checkpoint with no pass since writes nothing; rows written
-/// after the save count as changes of the table opened, which is then
-/// due as it would have been. MC/DC of the pass made by the asking: none
+/// gathered are saved by the next checkpoint, on a page the meta page
+/// names, and are the table's as it is opened, every number, bound,
+/// histogram bound, common value, frequency and sampled row as gathered,
+/// no pass made by the plan that asks; a second checkpoint with no pass
+/// since writes nothing. MC/DC of the pass made by the asking: none
 /// saved (made, the test of D1092) against saved (not made).
 #[test]
 fn statistics_saved_are_a_table_openeds() {
@@ -89,10 +89,6 @@ fn statistics_saved_are_a_table_openeds() {
     let version = files.pool.read(files.file, page).unwrap().to_vec();
     files.save_statistics().unwrap();
     assert_eq!(files.pool.read(files.file, page).unwrap().to_vec(), version, "nothing waits");
-    for n in 0..400 {
-        table.insert(NO_TRANSACTION, row(5_000 + n)).unwrap();
-    }
-    files.save_counts().unwrap();
     let meta = table.meta();
     drop(table);
     let again = opened(&files, meta);
@@ -106,8 +102,31 @@ fn statistics_saved_are_a_table_openeds() {
     let asked = again.statistics().expect("the plan asking is given them");
     assert_eq!(again.gathered.passes(), 0, "no pass made by the asking");
     assert!(asked.selectivity(0, CompOp::Lt, &int(500)).is_some_and(|s| s > 0.2_f64 && s < 0.6_f64));
-    assert!(again.gather_wanted(), "400 rows more than the 1,000 they found: due");
+    assert!(!again.gather_wanted(), "as many rows as they found: not due");
     assert_eq!(again.gathered.page(), page, "the page kept");
+}
+
+/// Verifies: [DESIGN] RULES.md D1093, statistics kept of a table changed
+/// since: the rows a table opened holds more than its statistics found
+/// count as changes since their pass, so a table that grew past the
+/// share after its last pass is due once a plan has read them, as it
+/// would have been. MC/DC of the changes counted: rows written after
+/// the pass (due) against none (not due, the test above).
+#[test]
+fn rows_written_after_the_pass_are_a_table_openeds_changes() {
+    let (_, files) = paged();
+    let table = table_of(&files, 1_000);
+    table.gather().unwrap();
+    files.save_statistics().unwrap();
+    for n in 0..400 {
+        table.insert(NO_TRANSACTION, row(n)).unwrap();
+    }
+    files.save_counts().unwrap();
+    let meta = table.meta();
+    drop(table);
+    let again = opened(&files, meta);
+    assert!(again.statistics().is_some() && again.gathered.passes() == 0);
+    assert!(again.gather_wanted(), "400 rows more than the 1,000 they found: due");
 }
 
 /// Verifies: [DESIGN] RULES.md D1093, a table written before statistics
@@ -125,7 +144,7 @@ fn a_meta_page_of_no_statistics_word_opens_with_none() {
         let mut page = files.pool.write(files.file, meta).unwrap();
         let named = parse_meta(&page).unwrap();
         let mut before = meta_content(named);
-        before.truncate(before.len() - 8);
+        before.truncate(before.len().saturating_sub(8));
         assert_eq!(parse_meta(&before), Some(named));
         *page = before;
     }
@@ -252,13 +271,13 @@ fn a_malformed_statistics_page_is_read_as_none() {
     let format = RecordFormat::new(&types());
     let content = encoded(&stats, &format).unwrap();
     assert_eq!(decoded(&content, &format).map(|s| shown(&s)).unwrap(), shown(&stats));
-    let code = |bytes: &[u8], format: &RecordFormat| decoded(bytes, format).err().map(|e| e.code);
+    let code = |bytes: &[u8], of: &RecordFormat| decoded(bytes, of).err().map(|e| e.code);
     let mut other = content.clone();
     other[0] = 9;
     assert_eq!(code(&other, &format), Some(Code::Corrupt), "another format");
     let fewer = RecordFormat::new(&types()[..2]);
     assert_eq!(code(&content, &fewer), Some(Code::Corrupt), "other columns");
-    assert_eq!(code(&content[..content.len() - 3], &format), Some(Code::Corrupt), "cut short");
+    assert_eq!(code(&content[..content.len().saturating_sub(3)], &format), Some(Code::Corrupt), "cut short");
     assert_eq!(code(&[content.as_slice(), &[0]].concat(), &format), Some(Code::Corrupt), "bytes left over");
     assert_eq!(encoded(&stats, &fewer).err().map(|e| e.code), Some(Code::Api));
     files.save_statistics().unwrap();

@@ -86,9 +86,13 @@ fn put_column(out: &mut Vec<u8>, column: &ColumnStats) {
     );
     put_count(out, column.histogram.bounds().len());
     put_count(out, column.common.len());
-    column.common.iter().for_each(|(_, share)| put_f64(out, *share));
+    for (_, share) in &column.common {
+        put_f64(out, *share);
+    }
     if let Some(Frequencies { most, median, p90, p99 }) = column.frequencies {
-        [most, median, p90, p99].into_iter().for_each(|x| put_f64(out, x));
+        for x in [most, median, p90, p99] {
+            put_f64(out, x);
+        }
     }
     if let Some(envelopes) = &column.envelopes {
         envelopes.put(out);
@@ -126,7 +130,9 @@ pub(super) fn encoded(stats: &TableStats, format: &RecordFormat) -> Result<Vec<u
     out.put_u64(stats.rows);
     put_f64(&mut out, stats.width);
     put_count(&mut out, stats.columns.len());
-    stats.columns.iter().for_each(|c| put_column(&mut out, c));
+    for column in &stats.columns {
+        put_column(&mut out, column);
+    }
     let row_of =
         |of: &dyn Fn(&ColumnStats) -> Option<Value>| -> Row { stats.columns.iter().map(|c| of(c).unwrap_or(Value::Null)).collect() };
     put_record(format, &mut out, &row_of(&|c| c.min.clone()))?;
@@ -175,13 +181,13 @@ pub(super) fn decoded(content: &[u8], format: &RecordFormat) -> Result<TableStat
     if count_of(&mut r)? != format.columns() {
         return Err(r.corrupt("of other columns than the table's"));
     }
-    let read = (0..format.columns()).map(|_| column_of(&mut r)).collect::<Result<Vec<Read>>>()?;
+    let heads = (0..format.columns()).map(|_| column_of(&mut r)).collect::<Result<Vec<Read>>>()?;
     let (least, greatest) = (format.decode(r.bytes()?)?, format.decode(r.bytes()?)?);
     let (bounds, common) = (records_of(&mut r, format)?, records_of(&mut r, format)?);
     let mut columns = Vec::new();
     let ends = least.into_iter().zip(greatest);
-    for (at, (read, (min, max))) in read.into_iter().zip(ends).enumerate() {
-        let Read { mut column, bounds: held, shares } = read;
+    for (at, (head, (min, max))) in heads.into_iter().zip(ends).enumerate() {
+        let Read { mut column, bounds: held, shares } = head;
         column.min = (!min.is_null()).then_some(min);
         column.max = (!max.is_null()).then_some(max);
         column.histogram = Histogram::of_bounds(values_of(&bounds, at, held, &r)?);
