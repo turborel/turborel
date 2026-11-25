@@ -132,7 +132,15 @@ impl PhysicalPlanner<'_> {
         let Some(width) = sizes.width else { return Some(live) };
         let shown = |c: usize, name: String| if reads.contains(&c) { name } else { "NULL".to_owned() };
         let detail = if self.shown {
-            self.names(operand, width).into_iter().enumerate().map(|(c, name)| shown(c, name)).collect::<Vec<_>>().join(", ")
+            // A projection's own names, as it shows them, if one for each.
+            let own: Option<Vec<String>> = if let Plan::Project { exprs, detail, .. } = &*operand {
+                let pieces: Vec<String> = detail.split(", ").map(str::to_owned).collect();
+                (pieces.len() == exprs.len()).then_some(pieces)
+            } else {
+                None
+            };
+            let names = own.unwrap_or_else(|| self.names(operand, width));
+            names.into_iter().enumerate().map(|(c, name)| shown(c, name)).collect::<Vec<_>>().join(", ")
         } else {
             String::new()
         };

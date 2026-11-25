@@ -20053,9 +20053,11 @@ of its columns giving that column null, or, if it is a projection of
 columns, gives the null itself. An operand whose columns holding a
 value are not known here, as an index's scan, is left as it is, and the
 join over it is the one put under the projection. The join or the sort
-carries a
-vector of nulls in its place, which costs nothing to copy, and a filter
-or a join's key drops out after its operator. Every column keeps its
+carries a vector of nulls in its place, which costs nothing to copy.
+Such a vector is charged to a work area only once its values are made
+(`storage/batch/held.rs`). It was charged a value a row, so an operand
+mostly of nulls outgrew its work area and was joined row by row. A filter's
+column or a join's key drops out after its operator. Every column keeps its
 place, so nothing above is renumbered and the plan's columns and their
 order are as they were. EXPLAIN shows each such projection, the columns
 kept by name and the others as NULL. A projection of columns and the

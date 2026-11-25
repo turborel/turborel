@@ -424,7 +424,7 @@ OK
  Project S.NAME
    Filter S.SALARY > CASE WHEN 1 IS NULL THEN NULL ELSE AVG(T.SALARY) END
      HashJoin S.DEPT = T.DEPT
-       Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT
+       Project NULL, S.NAME, NULL, S.SALARY, S.DEPT
          SeqScan ANN.STAFF  (rows=4, cost=3.8)
        Project T.DEPT, 1, AVG(T.SALARY)
          Project T.DEPT, AVG(T.SALARY)

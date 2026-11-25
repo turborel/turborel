@@ -5,7 +5,9 @@
 //! table reads it.
 
 use turborel::db::{Database, Session};
+use turborel::error::Code;
 use turborel::params::Params;
+use turborel::parser::MAX_NESTING_DEPTH;
 
 use crate::common::rows;
 
@@ -125,4 +127,74 @@ fn a_changed_row_is_written_whole_and_given_back() {
     assert_eq!(rows(&s, stored).unwrap(), ["0,part 0 green,NX", "1,part 1 blue,N1", "5,part 5 green,NX"]);
     s.run("DELETE FROM B WHERE S LIKE '%blue%' AND K < 5").unwrap();
     assert_eq!(rows(&s, "SELECT COUNT(*), MIN(S) FROM B").unwrap(), ["46,part 0 green"]);
+}
+
+/// Stack for the deep plans: half of Rust's default 2 MiB thread stack, as
+/// the nesting test has it.
+const HALF_DEFAULT_STACK: usize = 1024 * 1024;
+
+/// Builds a statement whose plan has about `n` operators one in another.
+type DeepSql = fn(usize) -> String;
+
+/// Statement shapes whose plan grows one operator the pruning walks per
+/// `n`, each reading a column nothing above reads, and whether the parser
+/// bounds it. A select list's subqueries it does not, and each is joined.
+fn deep_shapes() -> Vec<(&'static str, bool, DeepSql)> {
+    vec![
+        ("joins", true, |n| {
+            let (from, on): (Vec<String>, Vec<String>) =
+                (1..=n).map(|i| (format!(", B B{i}"), format!(" AND B{i}.K = B0.K AND B{i}.S LIKE '%green%'"))).unzip();
+            format!("SELECT B0.N FROM B B0{} WHERE B0.K = 5{}", from.concat(), on.concat())
+        }),
+        ("outer joins", true, |n| {
+            let joins: String = (1..=n).map(|i| format!(" LEFT OUTER JOIN B B{i} ON B{i}.K = B0.K AND B{i}.S LIKE '%green%'")).collect();
+            format!("SELECT B0.N FROM B B0{joins} WHERE B0.K = 5")
+        }),
+        ("semijoins", true, |n| {
+            let semi: String =
+                (1..=n).map(|i| format!(" AND EXISTS (SELECT * FROM B B{i} WHERE B{i}.K = B0.K AND B{i}.S LIKE '%green%')")).collect();
+            format!("SELECT B0.N FROM B B0 WHERE B0.K = 5{semi}")
+        }),
+        ("groupings", true, |n| {
+            let grouped = "SELECT K, MAX(S) AS S, MAX(N) AS N FROM (".repeat(n);
+            format!("{grouped}SELECT K, S, N FROM B WHERE K = 5{}", ") AS D GROUP BY K".repeat(n))
+        }),
+        ("a select list's subqueries", false, |n| {
+            let list: String = (1..=n).map(|i| format!(", (SELECT MAX(B{i}.V) FROM A B{i} WHERE B{i}.K = B0.K)")).collect();
+            format!("SELECT B0.N{list} FROM B B0 WHERE B0.K = 5")
+        }),
+    ]
+}
+
+/// What `sql` gives on a thread of `HALF_DEFAULT_STACK`, planned for
+/// EXPLAIN too, whose names are found as it is pruned.
+fn on_half_stack(db: &Database, sql: &str) -> Result<usize, Code> {
+    std::thread::scope(|scope| {
+        let deep = std::thread::Builder::new().name("deep".to_owned()).stack_size(HALF_DEFAULT_STACK);
+        let ran = deep.spawn_scoped(scope, || {
+            let s = db.session("APP");
+            let given = rows(&s, sql)?;
+            physical(&s, sql);
+            Ok(given.len())
+        });
+        ran.expect("the thread starts").join().expect("the statement does not panic")
+    })
+}
+
+/// Verifies: [DESIGN] RULES.md D1167, R-CF-6: the deepest plan of each
+/// shape the parser accepts is pruned within half the default stack, and
+/// so is one of as many subqueries of a select list.
+///
+/// Regression test: the pruning once held a plan's nodes on the stack, and
+/// a select list of ordered set functions, each a subquery joined,
+/// overflowed it.
+#[test]
+fn the_deepest_plan_is_pruned_within_half_the_default_stack() {
+    let db = tables();
+    for (shape, bounded, sql) in deep_shapes() {
+        let deepest = (1..=MAX_NESTING_DEPTH).rev().find(|&n| on_half_stack(&db, &sql(n)) != Err(Code::Unsupported));
+        let deepest = deepest.unwrap_or_else(|| panic!("{shape}: never accepted within {MAX_NESTING_DEPTH}"));
+        assert_eq!(deepest < MAX_NESTING_DEPTH, bounded, "{shape}: {deepest}");
+        assert_eq!(on_half_stack(&db, &sql(deepest)), Ok(1), "{shape}: {deepest}");
+    }
 }
