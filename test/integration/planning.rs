@@ -473,7 +473,8 @@ fn conditions_move_into_outer_joins_7_5() {
             "RightOuterJoin",
         ),
         ("SELECT T.ID, CODE FROM T FULL JOIN U ON T.ID = U.ID + 1 WHERE U.CODE = 'A'".into(), &["2,A  "], "RightOuterJoin"),
-        ("SELECT T.ID, CODE FROM T FULL JOIN U ON T.ID = U.ID + 1 WHERE U.CODE = 'A' AND T.ID = 2".into(), &["2,A  "], "NestedLoop"),
+        // An inner join on a key computed of U's columns (RULES.md D1086).
+        ("SELECT T.ID, CODE FROM T FULL JOIN U ON T.ID = U.ID + 1 WHERE U.CODE = 'A' AND T.ID = 2".into(), &["2,A  "], "HashJoin"),
         ("SELECT T.ID, CODE FROM T FULL JOIN U ON T.ID = U.ID + 1 WHERE T.ID = 2".into(), &["2,A  ", "2,B  "], "LeftOuterJoin"),
         ("SELECT T.ID, CODE FROM T FULL JOIN U ON T.ID = U.ID + 1 WHERE COALESCE(T.ID, 0) < 2".into(), &["1,NULL"], "FullOuterJoin"),
     ];

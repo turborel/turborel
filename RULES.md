@@ -694,6 +694,7 @@ verification approach DO-178C expects (§8).
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
 | D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
+| D1086 | An equality of an expression of each operand's columns is a hash join on the keys computed once a row |
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
@@ -18902,6 +18903,30 @@ is not judged. The rows kept, and their order, are what judging each
 row gives. A comparison of integers known as runs is still judged once
 a run, not by the kernel over every row: measured on TPC-H, the kernel
 was the slower of the two.
+
+#### D1086. An equality of an expression of each operand's columns is a hash join on the keys computed once a row
+
+A hash join's keys are columns (D35). A condition equating sort keys of
+a collation of a column of each operand had them made columns of its
+operands, computed by a projection under the join, which another takes
+away above it (D60). Any other equality of expressions, as
+`Q.K = X.TAG + X.K`, found no key, and the join was a nested loop that
+computed both sides for every pair, even at degree 1.
+
+Now any equality, or IS NOT DISTINCT FROM, of an expression of the left
+operand's columns alone with one of the right's alone is lifted so
+(`physical/collated.rs`), unless both are columns alone, which the join
+keys as they are. Each key is computed once a row of its operand, the
+join is planned as any, by either store and in parallel, and its rows
+are the nested loop's: a null key matches none, or a null if the
+condition is IS NOT DISTINCT FROM. An expression lifted is
+deterministic and holds no subquery, so a row's key is the value the
+condition compares of it with every row of the other operand. A
+condition that can raise an exception condition by its columns'
+declared types is not hashed at all (D776), so computing the key of a
+row that no pair holds raises nothing the nested loop would not. An
+outer join keeps such a condition whole too, as its keys would be
+computed of every row of an operand even when the other has none.
 
 ### Column store reads
 
