@@ -711,6 +711,7 @@ verification approach DO-178C expects (§8).
 | D1115 | A semi join that builds its left holds a left run in parallel by the threads that read it |
 | D1116 | An analyzed grouping over another that crosses its partitions passes the counts of the projections between them |
 | D1117 | A grouping over a LEFT outer join by a key of its left table, its right grouped first, is a projection of the joined rows |
+| D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19423,6 +19424,27 @@ Every other shape keeps the grouping above: grouping columns that hold
 no key, a key that may hold a null, a deferrable key, a key or a
 grouping of a collation, a left operand that is a join, and a join
 equating strings, whose equal strings may differ as values.
+
+#### D1118. A LIKE pattern's pieces are each made once into a finder that marks eight places at a time
+
+A pattern of no `_` is matched by its pieces (D1074), each piece between
+its first and its last searched for by the library's substring search.
+That search made its searcher again for each value it searched, so of
+TPC-H Q13's `'%special%requests%'` over fifteen million comments the
+making took a third of the time the matching took.
+
+Each piece between is now made once, as its pattern is, into a finder
+(`value/like/finder.rs`). The finder reads the eight bytes from a place
+of the value and the eight bytes the piece's length less one further on
+as two words. It marks each of the eight places whose byte is the
+piece's first and whose byte that far on is its last, by the test of a
+word for zero bytes. That test marks every zero byte and at times a
+byte above one, so a mark is a candidate, which is compared with the
+whole piece. No place that holds the piece goes unmarked. The places
+past the last whole word are compared one at a time. The first place
+that holds the piece is taken, as the substring search took it, so the
+rows are those D1074 gives, as a test compares the finder with that
+search over pieces and values.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
