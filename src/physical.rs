@@ -539,7 +539,9 @@ impl<'a> PhysicalPlanner<'a> {
         }
         plannings::counted();
         let estimates = Estimates::over(self.db, logical, self.values);
-        estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan)
+        let planned = estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan);
+        // Each operator carrying only the columns read above it (`blind/pruned.rs`, D1167).
+        self.pruned(planned)
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if

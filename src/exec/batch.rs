@@ -26,6 +26,7 @@ mod judge;
 mod keyed;
 mod late;
 mod parted;
+mod picks;
 mod project;
 mod runtime;
 mod shaped;

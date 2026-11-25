@@ -1,6 +1,6 @@
 //! \[DESIGN\] The steps a morsel's batches are taken through (RULES.md
 //! D290, D354): a filter's, judged over the vectors (`judge.rs`), a
-//! projection's, of columns moved (`stream::pick`) or of expressions
+//! projection's, of columns moved (`picks::pick`) or of expressions
 //! evaluated (`project::computed`), a hash join's probe of a table its
 //! built operand made (`joined/shared.rs`), a semi join's or an antijoin's
 //! probe of one (`joined/semi/step.rs`), each by the functions the serial
@@ -12,9 +12,10 @@ use std::sync::Arc;
 
 use super::joined::{SemiStep, SharedTable};
 use super::judge::Judging;
+use super::picks::{pick, picked};
 use super::project::{Place, computed, place_of};
 use super::runtime::{Told, applied};
-use super::stream::{Batches, filtered, pick, picked};
+use super::stream::{Batches, filtered};
 use crate::exec::Db;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr};
@@ -28,8 +29,9 @@ use crate::txn::TxId;
 pub(in crate::exec) enum Shaped {
     /// [X3.135-1986 §5.21 GR2] the rows the condition is true of kept.
     Filter(Box<Judging>),
-    /// [X3.135-1986 §5.25 GR2] the vectors at these places, moved.
-    Pick(Vec<usize>),
+    /// [X3.135-1986 §5.25 GR2] the vectors at these places, moved, a
+    /// vector of nulls for none (RULES.md D1167).
+    Pick(Vec<Option<usize>>),
     /// [X3.135-1986 §5.25 GR2] each expression evaluated of its vectors.
     Compute(Vec<Place>),
     /// [X3.135-1986 §5.20 GR2b] each row joined with each built row whose

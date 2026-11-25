@@ -21,6 +21,7 @@ use super::Step;
 use super::chain::{Key, keys, leaves};
 use super::tree::schedule;
 use crate::db::State;
+use crate::logical::Expr;
 use crate::physical::Plan;
 
 /// \[DESIGN\] The most the keys of a step's filter may be of the values of
@@ -99,7 +100,7 @@ fn taken(db: &State, reduced: &mut [Reduced<'_>], step: Step) -> Option<f64> {
 /// The values of column `column` of the rows of `leaf`, if it is a scan
 /// of a table, filtered or not, whose statistics tell.
 fn distinct(db: &State, leaf: &Plan, column: usize) -> Option<f64> {
-    let mut at = leaf.bare();
+    let (mut at, mut column) = (leaf.bare(), column);
     for _ in 0..super::chain::LINKS {
         if let Plan::SeqScan { table, .. } = at {
             return db.statistics(table)?.distinct(column);
@@ -107,6 +108,12 @@ fn distinct(db: &State, leaf: &Plan, column: usize) -> Option<f64> {
         at = if let Plan::Parallel(p) = at {
             p.input.bare()
         } else if let Plan::Filter { input, .. } = at {
+            input.bare()
+        } else if let Plan::Project { exprs, input, .. } = at
+            && let Some(Expr::Column(c)) = exprs.get(column)
+        {
+            // A projection of the columns read above (RULES.md D1167).
+            column = *c;
             input.bare()
         } else {
             return None;

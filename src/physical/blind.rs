@@ -18,6 +18,7 @@
 //! join whose condition can raise is left, as the first match stops it
 //! judging the other pairs (D15).
 
+mod pruned;
 mod width;
 
 use width::Sized;

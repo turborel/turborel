@@ -40,7 +40,7 @@ impl PhysicalPlanner<'_> {
             Plan::SeqScan { table: name, located, .. } | Plan::IndexScan { table: name, located, .. } => {
                 alone(table(name).map(|w| w.saturating_add(usize::from(*located))))
             }
-            Plan::Filter { input, .. } => {
+            Plan::Filter { input, .. } | Plan::Sort { input, .. } | Plan::Limit { input, .. } => {
                 let kid = self.sized(input);
                 Sized { width: kid.width, kids: vec![kid] }
             }
@@ -55,9 +55,9 @@ impl PhysicalPlanner<'_> {
                 Sized { width: kid.width.map(|w| w.saturating_add(found)), kids: vec![kid] }
             }
             Plan::SemiJoin(s) => alone(Some(s.widths.0)),
+            Plan::OuterJoin { widths, .. } => alone(Some(widths.0.saturating_add(widths.1))),
             Plan::Nearest(_)
             | Plan::Counted(_)
-            | Plan::OuterJoin { .. }
             | Plan::MergeJoin(_)
             | Plan::RangeJoin(_)
             | Plan::MarkJoin(_)
@@ -68,8 +68,6 @@ impl PhysicalPlanner<'_> {
             | Plan::Values { .. }
             | Plan::Append { .. }
             | Plan::MergeAppend { .. }
-            | Plan::Sort { .. }
-            | Plan::Limit { .. }
             | Plan::Recursive { .. }
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }

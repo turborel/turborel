@@ -109,11 +109,13 @@ fn texts_gathered(texts: &Texts, picks: &[Option<usize>]) -> Texts {
         let codes = picks.iter().map(|p| p.and_then(|r| coded.codes.get(r)).copied().unwrap_or(0)).collect();
         return Texts::coded(Coded { codes, entries: std::sync::Arc::clone(&coded.entries) }, null);
     }
-    let (mut text, mut ends) = (String::new(), Vec::with_capacity(picks.len()));
-    for p in picks {
-        if let Some(s) = p.and_then(|r| texts.get(r)) {
-            text.push_str(s);
-        }
+    // Each text found once, and the buffer made of their bytes at once, not
+    // grown as they are copied (RULES.md D1167).
+    let found: Vec<&str> = picks.iter().map(|p| p.and_then(|r| texts.get(r)).unwrap_or_default()).collect();
+    let mut text = String::with_capacity(found.iter().map(|s| s.len()).sum());
+    let mut ends = Vec::with_capacity(picks.len());
+    for s in found {
+        text.push_str(s);
         ends.push(text.len());
     }
     Texts::new(text, ends, null)
