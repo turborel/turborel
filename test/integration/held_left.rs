@@ -14,7 +14,7 @@ use crate::common::{exec, rows};
 /// Tables O, orders, of 5000 rows, and L, their lines, of 9000, of the
 /// column store in groups of 2048, and OW and LW, of the row store,
 /// alike. O has K, a key; G, one of 9, null for every 17th; T, a text of
-/// G; D, a number below 1000. L has K, an order's key or one no order
+/// G; D, a number below 1000; W, a text of 180 letters. L has K, an order's key or one no order
 /// has, null for every 19th; S, one of 5; T, a text of S; A and B,
 /// numbers compared. N names each G but the last, its V a text.
 fn tables() -> (Database, Session) {
@@ -23,9 +23,9 @@ fn tables() -> (Database, Session) {
     db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
-           CREATE TABLE O (K INTEGER PRIMARY KEY, G INTEGER, T VARCHAR(8), D INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)
+           CREATE TABLE O (K INTEGER PRIMARY KEY, G INTEGER, T VARCHAR(8), D INTEGER, W VARCHAR(200)) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)
            CREATE TABLE L (K INTEGER, S INTEGER, T VARCHAR(8), A INTEGER, B INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)
-           CREATE TABLE OW (K INTEGER PRIMARY KEY, G INTEGER, T VARCHAR(8), D INTEGER)
+           CREATE TABLE OW (K INTEGER PRIMARY KEY, G INTEGER, T VARCHAR(8), D INTEGER, W VARCHAR(200))
            CREATE TABLE LW (K INTEGER, S INTEGER, T VARCHAR(8), A INTEGER, B INTEGER)
            CREATE TABLE N (G INTEGER PRIMARY KEY, V VARCHAR(8))",
     )
@@ -33,8 +33,10 @@ fn tables() -> (Database, Session) {
     let a = db.session("A");
     let null_or = |null: bool, v: i64| if null { "NULL".to_owned() } else { v.to_string() };
     for table in ["O", "OW"] {
-        let values: Vec<String> =
-            (0_i64..5000).map(|k| format!("({k}, {}, 't{}', {})", null_or(k % 17 == 0, k % 9), k % 5, k * 7919 % 1000)).collect();
+        let wide = |k: i64| format!("w{k}{}", "x".repeat(170));
+        let values: Vec<String> = (0_i64..5000)
+            .map(|k| format!("({k}, {}, 't{}', {}, '{}')", null_or(k % 17 == 0, k % 9), k % 5, k * 7919 % 1000, wide(k)))
+            .collect();
         a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
     }
     for table in ["L", "LW"] {
@@ -164,4 +166,33 @@ fn a_left_held_by_its_parts_raises_as_alone() {
     }
     let none = "SELECT O.K FROM O JOIN N ON N.G = O.G WHERE O.D < 0 AND EXISTS (SELECT * FROM L WHERE L.K = O.K)";
     assert_eq!(rows(&a, none), Ok(Vec::new()));
+}
+
+/// Verifies: [DESIGN] (RULES.md D1115, D1150, D297) a left held by its
+/// parts that reads a range of an index, cut into morsels at its tree's
+/// inner keys, as EXPLAIN shows, gives the rows it gives holding the left
+/// on one thread, within the work area and past it: a morsel past the
+/// grant is read on from where its thread left it, as an index's part is
+/// read once.
+#[test]
+fn a_left_held_by_its_parts_over_an_index_range_past_the_work_area() {
+    let (db, a) = tables();
+    // Probes priced low, as of a table too large to scan for a range.
+    db.set_setting("PLANNER.INDEX_DESCENT_COST", &Value::Approx(0.01_f64)).unwrap();
+    let sql = "SELECT OW.K, OW.W, N.V, OW.D FROM OW JOIN N ON N.G = OW.G WHERE OW.K BETWEEN 1000 AND 1400
+                 AND EXISTS (SELECT * FROM LW WHERE LW.K = OW.K AND LW.A < LW.B)";
+    let (alone, together, shown) = both(&a, sql);
+    assert!(held_by_parts(&shown) && shown.contains("IndexScan"), "{shown}");
+    assert!(alone.as_ref().is_ok_and(|r| r.len() > 100), "{alone:?}");
+    assert_eq!(alone, together, "{shown}");
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(65_536, 0))).unwrap();
+    for morsel in ["SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.MORSEL_ROWS = 4096"] {
+        exec(&a, morsel).unwrap();
+        let mut past = rows(&a, sql).unwrap_or_else(|e| panic!("{morsel}: {e:?}"));
+        let mut held = alone.clone().unwrap_or_default();
+        // The join that builds its right gives the rows in no order.
+        past.sort();
+        held.sort();
+        assert_eq!(past, held, "{morsel}");
+    }
 }
