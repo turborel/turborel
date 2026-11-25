@@ -491,7 +491,9 @@ mod tests {
             let kept = |b: &[crate::exec::batch::Kept]| b.iter().map(super::kept_rows).sum::<usize>();
             match whole_batches(pipeline.morsel_kept(0, (db, tx)).unwrap(), (&limit, ahead)).unwrap() {
                 Gathered::Whole(batches, _) => (kept(&batches), true),
-                Gathered::Past(batches, rest) => (kept(&batches).saturating_add(kept(&rest.collect::<Result<Vec<_>, _>>().unwrap())), false),
+                Gathered::Past(batches, rest) => {
+                    (kept(&batches).saturating_add(kept(&rest.collect::<Result<Vec<_>, _>>().unwrap())), false)
+                }
             }
         } else {
             match whole_rows(pipeline.morsel_rows(0, (db, tx), Runner::new(db, tx)).unwrap(), (&limit, ahead)).unwrap() {
