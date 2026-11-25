@@ -313,7 +313,8 @@ impl PhysicalPlanner<'_> {
         let (all, cost) = (cost_of(storage.row_count()), self.weights());
         let distinct = || self.db.distinct_keys(read.table, on.found);
         let most = (ix.method == BTREE_METHOD).then_some(BTreeMethod::MOST_COUNTED);
-        let (est, probed_cost) = priced((on.found, &distinct, most), &c, (all, on.types.len(), cost.index_descent), storage);
+        let (est, probed_cost) =
+            priced((on.found, &distinct, most), &c, (all, on.types.len(), cost.index_descent), (storage, read.needed.len()));
         // Of a covering index, the rows its table says every reader
         // sees are made of their entries, not fetched (RULES.md D34); nor
         // are the entries a scan decides reading no column of their rows,
@@ -323,9 +324,10 @@ impl PhysicalPlanner<'_> {
         let whole = !predicate::named(&c.probes) && !ix.is_collated() && covers(kind, (&ix.columns, on.types), read.needed);
         let visible = (whole || entries).then(|| storage.visible_share()).flatten();
         let row = storage.scan_cost(read.needed) / all.max(1.0_f64);
-        let saved = |share: f64| est * share * (storage.fetch_cost() - ENTRY_SCAN_ROWS * row).max(0.0_f64);
+        let fetch = storage.fetch_cost(read.needed.len());
+        let saved = |share: f64| est * share * (fetch - ENTRY_SCAN_ROWS * row).max(0.0_f64);
         let clustering = c.stated.map_or(0.0_f64, |s| s.clustering);
-        let clustered = geometric::clustered_saving(est, clustering, (storage.fetch_cost(), row));
+        let clustered = geometric::clustered_saving(est, clustering, (fetch, row));
         let path_cost = probed_cost - visible.map_or(clustered, saved) + est * on.evaluation.per_row;
         let bounded = bounded::bounded(ix, &c, whole);
         let path_cost = if bounded { self.bounded_cost((on, &c), read.needed, path_cost) } else { path_cost };
@@ -435,7 +437,7 @@ impl PhysicalPlanner<'_> {
             }
             let descent = cost.index_descent * cost_of(storage.row_count().saturating_add(1)).log2();
             let pages = found.probe_pages(&probe).map_or(descent, |pages| cost.index_descent * pages);
-            let total = pages + found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost() + storage.fetch_cost();
+            let total = pages + found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost() + storage.fetch_cost(read.needed.len());
             let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
             let covering = covers(&**kind, (&ix.columns, &types), read.needed) && storage.visible_share().is_some();
             let chosen = Probed { index, method, columns, probes: vec![probe], slots, used, loose: false, covering, decided: None };
@@ -475,7 +477,7 @@ fn priced(
     (index, distinct, most): (&dyn Index, &dyn Fn() -> Option<f64>, Option<usize>),
     c: &Candidate,
     (all, width, descent): (f64, usize, f64),
-    storage: &dyn TableStorage,
+    (storage, needed): (&dyn TableStorage, usize),
 ) -> (f64, f64) {
     let levels = descent * cost_of(storage.row_count().saturating_add(1)).log2();
     let missed = index.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();
@@ -491,7 +493,7 @@ fn priced(
         est += geometric::Stated::rows(c.stated.as_ref()).or_else(counted).unwrap_or_else(guessed);
         found += index.probe_pages(probe).map_or(levels, |pages| descent * pages) + missed;
     }
-    (est, found + est * storage.fetch_cost())
+    (est, found + est * storage.fetch_cost(needed))
 }
 
 /// Whether an index of `method` on `columns`, of `types`, holds in its

@@ -67,16 +67,24 @@ impl Made {
 }
 
 impl GroupTable {
-    /// Its groups, made, split among `parts` partitions by their hashes.
+    /// Its groups, made, split among `parts` partitions by their hashes;
+    /// or, of `lanes` some, by the hashes of their keys of those lanes
+    /// alone, so every group of a value of them goes to one partition
+    /// (RULES.md D1113).
     ///
     /// # Errors
     ///
     /// SQLCODE -910 if an accumulator writes no state.
-    pub(in crate::exec) fn made(mut self, parts: usize) -> Result<Made> {
+    pub(in crate::exec) fn made(mut self, parts: usize, lanes: &[usize]) -> Result<Made> {
+        let by: Vec<u64> = if lanes.is_empty() {
+            std::mem::take(&mut self.hashes)
+        } else {
+            (0..self.hashes.len()).map(|g| self.keys.hash_of(g, lanes, &self.seed)).collect()
+        };
         // Counted, then placed: each partition's places one after another
         // in one vector made once (RULES.md D1110).
         let mut starts = vec![0_u32; parts.saturating_add(1)];
-        for &hash in &self.hashes {
+        for &hash in &by {
             if let Some(count) = starts.get_mut(part_of(hash, parts).saturating_add(1)) {
                 *count = count.saturating_add(1);
             }
@@ -86,13 +94,16 @@ impl GroupTable {
             sum = sum.saturating_add(*start);
             *start = sum;
         }
-        let (mut places, mut next) = (vec![0_u32; self.hashes.len()], starts.clone());
-        for (g, &hash) in self.hashes.iter().enumerate() {
+        let (mut places, mut next) = (vec![0_u32; by.len()], starts.clone());
+        for (g, &hash) in by.iter().enumerate() {
             let Some(at) = next.get_mut(part_of(hash, parts)) else { continue };
             if let Some(place) = places.get_mut(crate::storage::mask::index(*at)) {
                 *place = narrow(g);
             }
             *at = at.saturating_add(1);
+        }
+        if lanes.is_empty() {
+            self.hashes = by;
         }
         // Each partition finds its groups by the hashes they came with.
         self.keyed = None;

@@ -83,7 +83,7 @@ impl PhysicalPlanner<'_> {
         (width, type_at): (usize, TypeAt<'_>),
     ) -> (Probing, Vec<Cond>) {
         let Some((column, data_type)) = self.next_bounded(&probing) else { return (probing, rest) };
-        let fetch = self.db.storage_of(&probing.table).map_or(1.0_f64, |s| s.fetch_cost());
+        let fetch = self.db.storage_of(&probing.table).map_or(1.0_f64, |s| s.fetch_cost(probing.needed.len()));
         let of_table = |c: usize| {
             let at = c.checked_sub(width)?;
             probing.through.as_ref().map_or(Some(at), |(columns, _)| columns.get(at).copied())

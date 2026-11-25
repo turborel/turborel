@@ -294,7 +294,7 @@ impl PhysicalPlanner<'_> {
             let missed = found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost();
             // Of each partition's index, each partition a probe is routed to probed.
             let (partitions, shown) = routing.as_ref().map_or((1.0_f64, String::new()), |r| r.probes(&probed));
-            let cost = (model.index_descent * pages + missed) * partitions + each * storage.fetch_cost();
+            let cost = (model.index_descent * pages + missed) * partitions + each * storage.fetch_cost(needed.len());
             if best.as_ref().is_none_or(|b| cost < b.cost) {
                 best = Some(Probing {
                     table: table.clone(),
