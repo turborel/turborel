@@ -19275,10 +19275,12 @@ one batch by the thread that read them, and the statement's thread
 takes the morsels' batches in the order of their numbers, so the rows
 are held in the order the part alone gives them. They are put in their
 table by those threads too, as a hash join's built operand is (D1080).
-The rows held are charged as their batches are taken, as the serial
-reading charges them. Past the work area the batches taken so far are
-given on, then the rest as their morsels give them, to the join that
-builds its right, so every left row is read once and in order. The
+Each morsel's rows are charged to the join's work grant as its thread
+gathers them (D1150). Once a morsel outgrows the grant, or the rows
+taken are on course to, the batches taken so far are given on, then the
+rest in order, to the join that builds its right, a morsel past the
+grant read again by the statement's thread a batch at a time, so every
+left row is read once and in order. The
 first morsel that fails, in the order of their numbers, is the error
 raised, after the rows before it are taken (D15). A pipeline whose
 morsels are not read by batch, or whose batches hold other columns

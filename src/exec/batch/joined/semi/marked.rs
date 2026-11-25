@@ -109,7 +109,7 @@ pub(super) fn batches(s: SemiJoin, (left_columns, deferred): (&[usize], &Deferre
     let places = keys.iter().map(|k| place(k.left, left_columns)).collect::<Result<Vec<usize>>>()?;
     let nulls: Vec<bool> = keys.iter().map(|k| k.nulls).collect();
     let told = deferred.filters().to_vec();
-    let held = match read_left(left, (places, nulls, (left_columns, &keys)), (told, work.limit()), (db, tx))? {
+    let held = match read_left(left, (places, nulls, (left_columns, &keys)), (told, &work), (db, tx))? {
         LeftRead::Held(held) => held,
         LeftRead::Rest(batches) => return Ok(Read::GaveWay(Box::new((anti, right, keys, cond, widths)), batches)),
     };
@@ -130,16 +130,16 @@ pub(super) fn batches(s: SemiJoin, (left_columns, deferred): (&[usize], &Deferre
 /// The left operand `left` read and held, its key columns of `keys` at
 /// `places` of its batches of the vectors of `columns`, a null matching a
 /// null as `nulls` says of each, its scans told `told`, while it holds no
-/// more than `limit` bytes; past them, its batches, those read first. A
+/// more than `work`'s bytes; past them, its batches, those read first. A
 /// pipeline run in parallel is held by the threads that read it, if it
 /// does not give way (`parallel/held.rs`, RULES.md D1115).
 fn read_left(
     left: Plan,
     (places, nulls, (columns, keys)): (Vec<usize>, Vec<bool>, Keyed<'_>),
-    (told, limit): (Vec<Told>, usize),
+    (told, work): (Vec<Told>, &Work),
     (db, tx): (&Db, TxId),
 ) -> Result<LeftRead> {
-    let width = columns.len();
+    let (width, limit) = (columns.len(), work.limit());
     if let Plan::Parallel(p) = &left
         && pipelined(&p.input)
         && !in_order(&left)
@@ -148,7 +148,7 @@ fn read_left(
         let built: Vec<JoinKey> = keys.iter().map(|k| JoinKey { left: k.right, right: k.left, nulls: k.nulls }).collect();
         let layout = stream::layout(&p.input, db).unwrap_or_default();
         if layout.0 == columns {
-            match held_left(&p.input, (db, tx), (p.degree, &told, &layout), (&built, limit))? {
+            match held_left(&p.input, (db, tx), (p.degree, &told, &layout), (&built, work.grant()))? {
                 Held::Kept(Left::Held(table)) => return Ok(LeftRead::Held(Box::new(HeldLeft::of_table(*table)))),
                 Held::Kept(Left::Rest(batches)) => return Ok(LeftRead::Rest(batches)),
                 Held::GaveWay => {}

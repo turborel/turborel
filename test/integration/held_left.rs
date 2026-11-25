@@ -109,10 +109,12 @@ fn a_left_held_by_its_parts_gives_its_rows_in_order() {
     }
 }
 
-/// Verifies: [DESIGN] (RULES.md D1115, D38) a left held by its parts past
-/// the work area gives way to the join that builds its right, the
-/// batches read of it given first, then the rest as its morsels give
-/// them: its rows are those it gives within a work area that holds it.
+/// Verifies: [DESIGN] (RULES.md D1115, D1150, D38) a left held by its
+/// parts past the work area gives way to the join that builds its right,
+/// the batches read of it given first, then the rest as its morsels give
+/// them, of morsels of 256 rows, and of 4096, each past the grant as it
+/// is gathered and read again: its rows are those it gives within a work
+/// area that holds it.
 #[test]
 fn a_left_held_by_its_parts_past_the_work_area_is_read_once() {
     let (db, a) = tables();
@@ -120,29 +122,46 @@ fn a_left_held_by_its_parts_past_the_work_area_is_read_once() {
     set(&a, &["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"]);
     let held: Vec<_> = queries.iter().map(|sql| rows(&a, sql)).collect();
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(65_536, 0))).unwrap();
-    for (sql, held) in queries.iter().zip(held) {
-        assert!(held.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {held:?}");
-        let mut past = rows(&a, sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
-        let mut held = held.unwrap_or_default();
-        // The join that builds its right gives the rows in no order.
-        past.sort();
-        held.sort();
-        assert_eq!(past, held, "{sql}");
+    for morsel in ["SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.MORSEL_ROWS = 4096"] {
+        exec(&a, morsel).unwrap();
+        for (sql, held) in queries.iter().zip(&held) {
+            assert!(held.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {held:?}");
+            let mut past = rows(&a, sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+            let mut held = held.clone().unwrap_or_default();
+            // The join that builds its right gives the rows in no order.
+            past.sort();
+            held.sort();
+            assert_eq!(past, held, "{morsel}: {sql}");
+        }
     }
 }
 
 /// Verifies: [X3.135-1986 §6.3 GR4] (RULES.md D1115, D15) a left held by
 /// its parts that raises for a row raises what it raises held on one
-/// thread; of no row held, a semi join gives none.
+/// thread, of both engines, within the work area and past it: of the row
+/// store, of a morsel taken after the rows before it are on course past
+/// the grant; of the column store, of a morsel past the grant read
+/// again. Of no row held, a semi join gives none.
 #[test]
 fn a_left_held_by_its_parts_raises_as_alone() {
-    let (_db, a) = tables();
-    let sql = "SELECT O.K, N.V FROM O JOIN N ON N.G = O.G WHERE O.D < 600 AND 10 / (O.K - 3000) < 100
-                 AND EXISTS (SELECT * FROM L WHERE L.K = O.K AND L.A < L.B)";
-    let (alone, together, shown) = both(&a, sql);
-    assert!(held_by_parts(&shown), "{shown}");
-    assert!(alone.is_err(), "{alone:?}");
-    assert_eq!(alone, together, "{shown}");
+    let (db, a) = tables();
+    // Of the column store, a morsel past a grant of 64 KiB, read again;
+    // of the row store, of 192 KiB, the morsels' rows on course past it
+    // and those ahead of the reader within it, so the morsel that fails
+    // is taken as it failed.
+    for (o, l, past) in [("O", "L", 65_536), ("OW", "LW", 196_608)] {
+        let sql = format!(
+            "SELECT {o}.K, N.V FROM {o} JOIN N ON N.G = {o}.G WHERE {o}.D < 600 AND 10 / ({o}.K - 2048) < 100
+               AND EXISTS (SELECT * FROM {l} WHERE {l}.K = {o}.K AND {l}.A < {l}.B)"
+        );
+        db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(1 << 30, 0))).unwrap();
+        let (alone, together, shown) = both(&a, &sql);
+        assert!(held_by_parts(&shown), "{shown}");
+        assert!(alone.is_err(), "{alone:?}");
+        assert_eq!(alone, together, "{shown}");
+        db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(past, 0))).unwrap();
+        assert_eq!(rows(&a, &sql), alone, "past the work area: {sql}");
+    }
     let none = "SELECT O.K FROM O JOIN N ON N.G = O.G WHERE O.D < 0 AND EXISTS (SELECT * FROM L WHERE L.K = O.K)";
     assert_eq!(rows(&a, none), Ok(Vec::new()));
 }

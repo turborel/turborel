@@ -90,6 +90,11 @@ impl Limit {
         Limit { most: grant.bytes(), held: Arc::new(AtomicUsize::new(0)), grant }
     }
 
+    /// The grant `grant`, an operator's work area's, charged anew.
+    fn of_grant(grant: Arc<Grant>) -> Limit {
+        Limit { most: grant.bytes(), held: Arc::new(AtomicUsize::new(0)), grant }
+    }
+
     /// Its bytes.
     fn most(&self) -> usize {
         self.most
