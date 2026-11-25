@@ -366,6 +366,7 @@ mod row_waits;
 mod rows;
 mod rowstore;
 mod rule_settings;
+mod running_mark;
 mod savepoints;
 mod schema_statements;
 mod schema_transactions;

@@ -65,20 +65,23 @@ fn a_column_stores_chunks_are_shown_by_encoding() {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1, §21.2.9]; [DESIGN]
-/// RULES.md D1165: a row store's columns are ROW, their bytes their rows
-/// times their mean width once its statistics are gathered; a user sees
-/// the columns it holds a privilege on, none of a table it holds none on.
+/// RULES.md D1165: a row store's columns are ROW, their rows counted and
+/// no bytes their own, gathered statistics or not, the tree's the
+/// table's; a user sees the columns it holds a privilege on, none of a
+/// table it holds none on.
 #[test]
-fn a_row_stores_columns_are_shown_by_their_width_to_whom_may_see_them() {
+fn a_row_stores_columns_are_shown_by_their_rows_to_whom_may_see_them() {
     let db = owned();
     let owner = db.session("OWNER");
-    let sql = "SELECT COLUMN_NAME, ENCODING, ROW_COUNT, BYTES > 0 FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'R' ORDER BY ORDINAL_POSITION";
-    assert_eq!(rows(&owner, sql).unwrap(), ["K,ROW,100,NULL", "S,ROW,100,NULL"], "no width measured");
+    let sql = "SELECT COLUMN_NAME, ENCODING, ROW_COUNT, BYTES FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'R' ORDER BY ORDINAL_POSITION";
+    assert_eq!(rows(&owner, sql).unwrap(), ["K,ROW,100,NULL", "S,ROW,100,NULL"], "no bytes of a column of a tree");
     db.analyze("C.R").unwrap();
-    assert_eq!(rows(&owner, sql).unwrap(), ["K,ROW,100,TRUE", "S,ROW,100,TRUE"], "its width gathered");
+    assert_eq!(rows(&owner, sql).unwrap(), ["K,ROW,100,NULL", "S,ROW,100,NULL"], "nor once its statistics are gathered");
+    let table = "SELECT BYTES > 0 FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_NAME = 'R'";
+    assert_eq!(rows(&owner, table).unwrap(), ["TRUE"], "the tree's bytes the table's");
     db.session("C").run("GRANT UPDATE (S) ON R TO P").unwrap();
     db.session("C").commit().unwrap();
-    assert_eq!(rows(&db.session("P"), sql).unwrap(), ["S,ROW,100,TRUE"], "its column's alone");
+    assert_eq!(rows(&db.session("P"), sql).unwrap(), ["S,ROW,100,NULL"], "its column's alone");
     let any = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMN_STORAGE";
     assert_eq!(rows(&db.session("NOBODY"), any).unwrap(), ["0"], "none of a table it holds no privilege on");
 }

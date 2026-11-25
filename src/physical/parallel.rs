@@ -452,6 +452,19 @@ mod tests {
         assert!(matches!(parallel_run(&state, project(*values()), false), Plan::Project { .. }));
     }
 
+    /// Verifies: [DESIGN] RULES.md D1166: an estimate past what a `u32`
+    /// holds is its own ceiling as a count, the most a count holds only
+    /// of one reaching it, never of any past 2^32.
+    #[test]
+    fn an_estimate_past_a_u32_is_counted_as_itself() {
+        assert_eq!(rows_of(4_294_967_295.5_f64), 4_294_967_296);
+        assert_eq!(rows_of(5.0e9_f64), 5_000_000_000);
+        assert_eq!(rows_of(1.0e18_f64), 1_000_000_000_000_000_000);
+        assert_eq!(rows_of(1.0e19_f64), usize::MAX >> 1_u32);
+        assert_eq!(rows_of(f64::INFINITY), usize::MAX >> 1_u32);
+        assert_eq!(rows_of(f64::NAN), 1);
+    }
+
     /// An aggregation by `groups` of `input`, computing `aggs`, of
     /// `seeds`, streamed or not.
     fn grouping(groups: Vec<usize>, (aggs, seeds): (Vec<AggCall>, Vec<Vec<Value>>), input: Plan, streamed: bool) -> Plan {

@@ -196,8 +196,8 @@ pub struct ColumnSizes {
     pub chunks: Option<u64>,
     /// The rows they hold.
     pub rows: u64,
-    /// Their bytes, encoded; of a tree's rows, their number times the
-    /// column's mean width; none if not known.
+    /// Their bytes, encoded; none of a tree's rows, kept whole, or if
+    /// not known.
     pub bytes: Option<u64>,
     /// The bytes of the pages its chunks take: a page each of a chunk on a
     /// page of its own, the chunk's bytes of one sharing its page; none of

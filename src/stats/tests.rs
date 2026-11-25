@@ -290,3 +290,19 @@ fn frequencies_of_each_value() {
     }
     assert_eq!(sampled.finish_sampled(1_000).frequencies(0).map(|f| f.most), Some(400.0_f64), "a sample of 10 of 1,000 rows");
 }
+
+/// Verifies: [DESIGN] RULES.md D1166, a count as an `f64`: exact past
+/// 2^32, so a table's bytes past it over its rows are their mean width,
+/// not the most a `u32` holds over them.
+#[test]
+fn a_count_past_a_u32_is_itself_and_a_width_past_four_gigabytes_too() {
+    assert!(near(count(u64::from(u32::MAX)), 4_294_967_295.0_f64, 0.5_f64));
+    assert!(near(count(u64::from(u32::MAX) + 1), 4_294_967_296.0_f64, 0.5_f64));
+    assert!(near(count(1_u64 << 40_u32), 1_099_511_627_776.0_f64, 0.5_f64));
+    assert!(near(count(u64::MAX) / 2.0_f64.powi(64), 1.0_f64, 1.0e-12_f64));
+    let mut builder = StatsBuilder::new(1);
+    for n in 0..2 {
+        builder.add(&vec![number(n)], 3_000_000_000);
+    }
+    assert!(near(builder.finish().width, 3.0e9_f64, 1.0_f64), "two rows of 3e9 bytes each");
+}

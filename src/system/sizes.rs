@@ -66,9 +66,10 @@ pub(super) fn named(seen: &Seen<'_>, name: &QualifiedName) -> Row {
     vec![catalog_name(seen), text(&name.auth), text(&name.ident)]
 }
 
-/// A count, or the null value.
+/// A count, or the null value of none or of one past what a column of
+/// counts (`BIGINT`) holds.
 pub(super) fn maybe(n: Option<u64>) -> Value {
-    n.map_or(Value::Null, count)
+    n.filter(|n| i64::try_from(*n).is_ok()).map_or(Value::Null, count)
 }
 
 /// A time, an instant the clock read, or the null value.
@@ -77,12 +78,12 @@ fn when(at: Option<i64>) -> Value {
 }
 
 /// The bytes of `leaves`, the partitions of a table or the table alone,
-/// none if one does not know its own.
+/// none if one does not know its own or their sum passes a count's.
 pub(super) fn sizes_of(seen: &Seen<'_>, leaves: &[QualifiedName], columns: bool) -> Option<TableSizes> {
     let mut all = TableSizes::default();
     for leaf in leaves {
         let own = seen.state.storage_of(leaf).ok()?.sizes(columns)?;
-        all.bytes = all.bytes.saturating_add(own.bytes);
+        all.bytes = all.bytes.checked_add(own.bytes).filter(|n| i64::try_from(*n).is_ok())?;
         all.estimated |= own.estimated;
         all.columns.extend(own.columns);
     }
@@ -163,3 +164,6 @@ impl SystemTable for IndexStatistics {
         Ok(rows)
     }
 }
+
+#[cfg(test)]
+mod tests;
