@@ -711,6 +711,7 @@ verification approach DO-178C expects (§8).
 | D1138 | The rows an execution of a load is given are held, never spilled |
 | D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
+| D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 
 ### The project
 
@@ -19335,6 +19336,37 @@ Each value is now cast as the cursor opens (`db/prepared.rs`), and the
 first that does not cast raises CAST's error there, before any plan is
 looked for. A value already of its type is not cast again. The plans
 still cast each value as they read it, which then raises nothing.
+
+#### D1161. Rows whose grouping columns are all codes of dictionaries are grouped by their codes
+
+The column store gives a character string column's rows as codes of a
+dictionary its batches share (`storage::Coded`). A grouping of a morsel
+read each row's text of its code to hash it, read it again for each
+group it was compared with, and compared the texts. A grouping by two
+such columns of a few values each spent most of its time there.
+
+A morsel's rows whose grouping columns are all coded are now grouped by
+their codes (`exec/batch/groups/coded.rs`). Each row's codes, a null's a
+place after its dictionary's codes, are its place in a memo of the
+groups its codes have gone to. A row whose place has a group goes to it,
+no key hashed, read or compared. The first row of a place is hashed and
+its group found or made by its key as before. So two codes whose texts
+are equal as keys, a text and the same with trailing spaces, find one
+group, and a group's text is copied once, as it is made. The memo holds
+while the batches come of the same dictionaries and is made anew when
+one differs.
+
+A grouping by a column that is not coded, as a mix of a coded column
+and one of integers, is grouped as before, and so is one whose places
+pass 65,536. That memo is 256 KiB of group numbers, an eighth of the
+2 MiB a performance core of the benchmark machine caches next to it, and the
+groupings it is for, by a column or two of few values, take a small
+part of it.
+
+A grouping on one thread groups so too (`exec/batch/groups.rs`). Its
+memo holds only groups it holds, as a row of a group written past the
+work area is found by its key, and it forgets them as the work area is
+split and the groups held after the split are moved.
 
 ## 2. Project layout
 
