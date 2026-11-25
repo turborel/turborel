@@ -700,6 +700,7 @@ verification approach DO-178C expects (§8).
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
 | D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
+| D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19071,6 +19072,39 @@ above every row beyond one a left row. So the rule rewrites only where
 the right operand's estimated rows less its estimated keys outnumber
 the left operand's rows. Without statistics a column's distinct values
 are taken as its table's rows (D370), so the rule then leaves the plan.
+
+#### D1113. A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both
+
+DISTINCT_AGGREGATES (D340) makes a query of DISTINCT set functions two
+groupings, the first by the grouping columns and each argument, the
+second by the grouping columns alone. Only the first was a part run in
+parallel (D293). Its groups, as many as the query's rows nearly, were
+merged in order on the statement's thread, which then grouped them
+again a row at a time while the workers waited.
+
+A grouping over another is now one part when the second groups by some
+of the first's grouping columns and no others, neither by a collation
+nor with groups of empty grouping sets, its set functions none DISTINCT
+nor an inverse distribution function and each evaluated by a worker
+alone, and the first's states merge (`physical::first_level`). The
+first's groups are split among the partitions by the hash of their
+values of the second's columns alone (`GroupTable::made`), the same of
+a value in every morsel, so each partition holds every group of the
+first that a group of the second takes. The thread finishing a
+partition orders its groups by their first rows and groups them again
+(`exec/parallel/grouped/regrouped.rs`), each set function taking its
+values in that order, as the serial plan feeds them. A group of the
+second is numbered by its first group of the first, so the statement's
+thread merges only the second's groups, in the order the plan run alone
+gives them. A HAVING condition over the pair is judged of the second's
+groups by the same thread. A join's runtime filters (D1063) are of the
+second's columns, so the part's pipeline is told none. The results,
+their order and the warnings are as before. EXPLAIN shows both
+groupings under one `Parallel`, and EXPLAIN ANALYZE counts the first's
+groups as its partitions finish them.
+
+A grouping by no column is left as it was, as its one group would be
+one partition's and one thread's.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 

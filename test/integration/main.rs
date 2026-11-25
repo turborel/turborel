@@ -331,6 +331,7 @@ mod recovery;
 mod referenceable_views;
 mod refusals;
 mod regex_functions;
+mod regrouped_parts;
 mod regular_expressions;
 mod rekeying;
 mod renamed_columns;

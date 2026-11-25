@@ -89,7 +89,7 @@ pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degre
         if table.len().saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= table.taken {
             return table.frozen().map(Handed::Whole);
         }
-        table.made(PARTS).map(|made| Handed::Parted(Arc::new(made)))
+        table.made(PARTS, making.lanes()).map(|made| Handed::Parted(Arc::new(made)))
     });
     let frozen: Frozen = Arc::new((0..PARTS).map(|_| Mutex::new(None)).collect());
     let mut waves = Waves {
@@ -143,7 +143,7 @@ impl Waves<'_> {
     /// As `GroupTable::made`, or merging a wave.
     fn flushed(&mut self) -> Result<bool> {
         let Some(table) = self.direct.take() else { return Ok(true) };
-        let made = table.made(PARTS)?;
+        let made = table.made(PARTS, self.grouping.lanes())?;
         self.limit.give(self.direct_bytes);
         self.direct_bytes = 0;
         self.parted(Arc::new(made))
@@ -182,8 +182,7 @@ impl Waves<'_> {
     fn finished(mut self) -> Result<Runs> {
         if !self.waved && self.wave.is_empty() {
             let Some(table) = self.direct.take() else { return Ok(Held::Kept(Vec::new())) };
-            let mut groups = self.grouping.kept_of(&table, &Runner::new(self.run.0, self.run.1))?;
-            groups.sort_unstable_by_key(|g| g.0);
+            let groups = self.grouping.kept_of(&table, &Runner::new(self.run.0, self.run.1))?;
             return Ok(Held::Kept(vec![groups]));
         }
         if !self.flushed()? {
@@ -252,9 +251,7 @@ fn finished_wave(
     let (grouping, kept, wave, db_for) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), db.clone());
     let finish = Box::new(move |p: usize| {
         let table = thawed_and_merged(&grouping, (&kept, p), &wave)?;
-        let mut groups = grouping.kept_of(&table, &Runner::new(&db_for, tx))?;
-        groups.sort_unstable_by_key(|g| g.0);
-        Ok(groups)
+        grouping.kept_of(&table, &Runner::new(&db_for, tx))
     });
     Morsels::start(db, tx, (PARTS, degree), finish).collect()
 }
