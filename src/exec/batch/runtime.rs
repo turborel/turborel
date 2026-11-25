@@ -4,7 +4,8 @@
 //! them down to its scan through those that pass a column on as it is and
 //! raise no error: a filter whose condition cannot raise and reads no
 //! subquery, a projection of columns, the column it passes on mapped to
-//! the one it is of, if none of its expressions can raise, and an inner
+//! the one it is of, if none of its expressions can raise by the declared
+//! types of the columns it reads (`typed.rs`, RULES.md D1062), and an inner
 //! hash join, to both its operands (RULES.md D600): its left of the
 //! left's columns, or of the left key a right key equals, and its right,
 //! as it builds it, of the right's columns, or of the right key a left
@@ -25,6 +26,7 @@ use std::sync::Arc;
 
 use super::stream::{self, Batches};
 use super::told;
+use super::typed;
 use crate::db::State;
 use crate::exec::table::RuntimeFilter;
 use crate::logical::{Cond, Expr};
@@ -72,7 +74,7 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
     match plan {
         Plan::SeqScan { order, .. } => order.is_empty().then_some((column, false)),
         Plan::Filter { cond, .. } => (!cond.can_raise() && !cond.has_subquery()).then_some((column, false)),
-        Plan::Project { exprs, .. } => moved(exprs, column).filter(|_| !exprs.iter().any(Expr::can_raise)).map(|c| (c, false)),
+        Plan::Project { exprs, input, .. } => moved(exprs, column).filter(|_| !typed::exprs_raise(exprs, input, db)).map(|c| (c, false)),
         Plan::HashJoin { left, keys, .. } => {
             let (_, width) = stream::layout(left, db)?;
             let right = column.checked_sub(width);
@@ -108,8 +110,13 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
-        | Plan::Parallel(..)
         | Plan::Transfer(_) => None,
+        // A grouping run in parallel that takes filters, as it does run
+        // alone (RULES.md D1063).
+        Plan::Parallel(_) => {
+            let grouping = super::parted::grouping_of(plan).filter(|_| super::parted::grouping(plan, db))?;
+            row_by_row(grouping, column, db)
+        }
         // An analyzed plan's count of an operator's rows passes them on.
         Plan::Counted(_) => Some((column, false)),
     }
@@ -248,7 +255,7 @@ pub(super) fn reaches(plan: &Plan, column: usize, db: &State) -> bool {
     match below(plan) {
         Some(input) => reaches(input, next, db),
         // A grouping judges it of its input's batches at least.
-        None => matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Aggregate { .. }),
+        None => matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. } | Plan::Aggregate { .. } | Plan::Parallel(_)),
     }
 }
 

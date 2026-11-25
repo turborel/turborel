@@ -3,7 +3,9 @@
 //! that can raise and the operands it may read again, the typed bound of
 //! exact arithmetic, the filters that may go into a set operation or below
 //! a window, the FETCH FIRST that may go into UNION ALL, and the keys a
-//! join is removed on.
+//! join is removed on; of D1061, an outer join left by a comparison of
+//! both operands, a CASE taken as its first result that may be chosen,
+//! and the operand given nulls mistaken under a product.
 
 use super::super::{Mutation, Package};
 
@@ -14,7 +16,7 @@ const RAISING: &str = "rewrites::hoisting::hoisted_parts_raise_as_the_product_wo
 const KEPT: &str = "rewrites::elimination::joins_that_could_change_rows_are_kept";
 
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 13] = [
+pub const REWRITES: [Mutation; 16] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -143,6 +145,36 @@ pub const REWRITES: [Mutation; 13] = [
         original: "    let immediate = desc.constraints.iter().any(|c| &c.name == name && !c.attributes.deferrable);",
         replacement: "    let immediate = desc.constraints.iter().any(|c| &c.name == name);",
         integration: &[KEPT],
+        unit: &[],
+    },
+    Mutation {
+        name: "outer-join-mixed-conjunct-unbounded",
+        package: Package::Core,
+        breaks: "a WHERE comparison of both operands of an outer join makes it the inner join (D1061)",
+        file: "src/optimizer/outer.rs",
+        original: "(side(c, lw) == Some(s) && rejects_nulls(c, width)) || bounded(c, s));",
+        replacement: "(side(c, lw) == Some(s) && rejects_nulls(c, width)) || (bounded(c, s) && width > usize::MAX));",
+        integration: &["outer_rejection::a_comparison_of_both_operands_makes_an_outer_join_inner_7_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "outer-join-case-first-possible",
+        package: Package::Core,
+        breaks: "a CASE is null of a null operand only if every result it may give is, not its first that may be chosen (D1061)",
+        file: "src/optimizer/outer/rejecting.rs",
+        original: "                if may == May::only(Truth::True) {",
+        replacement: "                if may.yes {",
+        integration: &[],
+        unit: &["optimizer::outer::rejecting::tests::a_case_is_null_where_its_chosen_result_is"],
+    },
+    Mutation {
+        name: "outer-join-within-product-wrong-operand",
+        package: Package::Core,
+        breaks: "an outer join under a filtered product is made inner by a conjunct never true of the operand it gives nulls (D1061)",
+        file: "src/optimizer/outer/within.rs",
+        original: "let no_right_nulls = kind.keeps_left() && rejected(middle, end);",
+        replacement: "let no_right_nulls = kind.keeps_left() && rejected(offset, middle);",
+        integration: &["outer_rejection::a_comparison_of_both_operands_makes_an_outer_join_inner_7_5"],
         unit: &[],
     },
 ];

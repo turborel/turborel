@@ -141,3 +141,23 @@ fn column_types_are_found_through_plans() {
     assert!(plan_column_type(&filter, 1, &catalog).is_some());
     assert!(plan_column_type(&LogicalPlan::Distinct { input: Box::new(values()) }, 0, &catalog).is_none());
 }
+
+/// Verifies: [ISO/IEC 9075:1992 §6.9 GR2] [DESIGN] RULES.md D1060: a CASE
+/// of exact results is within the most digits before the point and the
+/// most after it of any of them, a null result bounding nothing, so
+/// arithmetic on it fits while those do; a result of no known bound
+/// leaves the CASE unbounded.
+#[test]
+fn a_case_is_bounded_by_its_widest_results() {
+    let when = || Cond::IsNull(Expr::Column(0), true);
+    let case = |result: Expr, otherwise: Expr| Expr::Case(vec![(when(), result)].into(), Box::new(otherwise));
+    let plus_one = |e: Expr| arith(e, ArithOp::Add, number(1, 0));
+    let coalesced = plus_one(case(Expr::Column(0), number(0, 2)));
+    assert!(!raises(&coalesced, &exact(35, 0), &exact(1, 0)), "35 digits and 2, then one more");
+    assert!(raises(&coalesced, &exact(36, 0), &exact(1, 0)), "36 digits and 2, then one more");
+    let nulled = plus_one(case(Expr::Const(Value::Null), Expr::Column(0)));
+    assert!(!raises(&nulled, &exact(37, 0), &exact(1, 0)), "a null result bounds nothing");
+    assert!(raises(&plus_one(case(Expr::Const(Value::Null), Expr::Const(Value::Null))), &exact(1, 0), &exact(1, 0)), "all null");
+    let unbounded = plus_one(case(Expr::Column(0), Expr::Column(1)));
+    assert!(raises(&unbounded, &exact(5, 0), &DataType::Date), "a result of no exact type");
+}
