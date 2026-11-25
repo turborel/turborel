@@ -694,6 +694,7 @@ verification approach DO-178C expects (§8).
 | D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
 | D1095 | A scan that keeps few rows of a run decodes the next run into the vectors it judged the last by, and holds the rows kept in vectors with room for a batch |
 | D1096 | A request to read ahead pages the pool holds takes no lock scans share |
+| D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 
 ### The project
 
@@ -18884,6 +18885,31 @@ so a request whose pages are all held never takes its lock
 (`buffer/pool/ahead.rs`). A hint may name a frame being emptied, whose
 page is then taken as held and not read ahead. The scan reads that
 page itself, as it reads any page the reader has not reached.
+
+#### D1097. A fetch of a frozen row is priced by the number of columns it reads
+
+The planner priced a fetch of a frozen row as one of four columns
+(D1091), whatever it read. A frozen row read by its id reads one chunk
+of each column asked for, each on a page of its own, so a fetch of one
+column costs less than a fetch of the tree's row and one of every
+column of a wide table several times more. One figure could not be
+right for both, and a join that fetched one column of a frozen table
+was priced as if it read four.
+
+`TableStorage::fetch_cost` is now given the number of columns read,
+and every planner's and executor's caller passes the columns its plan
+reads. A frozen row costs `FROZEN_FETCH` to find its group and place
+and `FROZEN_FETCH_COLUMN` for each column read, against a fetch of the
+tree's row costing 1 (`engine/rows/frozen.rs`). The two are the line
+through the cases of `bench/fetch.rs` that read one and four columns of
+a frozen table by scattered ids, against its case of the tree's row
+read by scattered ids. Its cases of eight and of all seventeen columns
+lie near that line, the seventeen, wide texts among them, a little
+above it, so a column's cost is taken as one whatever its type. A
+table whose rows are
+in its tree reads them whole, and its fetch costs the same whatever is
+read. So does that of an engine that does not keep its columns apart,
+the default.
 
 ## 2. Project layout
 

@@ -591,5 +591,6 @@ fn groups_are_written_again_when_their_layout_changes() {
     assert_eq!(scanned(&table, NO_TRANSACTION), in_order);
 }
 
+mod fetched;
 mod morsels;
 mod thawed;

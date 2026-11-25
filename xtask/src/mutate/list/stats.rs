@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of sampled statistics, in the order they run.
-pub const STATS: [Mutation; 18] = [
+pub const STATS: [Mutation; 19] = [
     Mutation {
         name: "stats-large-read-whole",
         package: Package::Core,
@@ -189,5 +189,15 @@ pub const STATS: [Mutation; 18] = [
         replacement: "        let held = 0_usize;",
         integration: &[],
         unit: &["disk::buffer::pool::ahead::tests::a_request_of_pages_held_takes_no_lock"],
+    },
+    Mutation {
+        name: "frozen-fetch-columns-unpriced",
+        package: Package::Core,
+        breaks: "a frozen fetch is priced as of four columns, whatever it reads",
+        file: "src/engine/rows/frozen.rs",
+        original: "FROZEN_FETCH_COLUMN * crate::storage::cost_of(columns);",
+        replacement: "FROZEN_FETCH_COLUMN * 4.0_f64;",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::fetched::a_frozen_fetch_is_priced_by_its_columns"],
     },
 ];

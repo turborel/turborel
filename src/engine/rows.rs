@@ -371,8 +371,8 @@ impl TableStorage for RowTable {
 
     /// 8.6 of a table the buffer pool holds, more as it holds less of it, shared with the other tables and indexes of its file,
     /// to 72, to 5900 as the system's cache holds none of the rest; more by the share of the rows frozen (`rows/frozen.rs`).
-    fn fetch_cost(&self) -> f64 {
-        self.frozen_fetch_cost()
+    fn fetch_cost(&self, columns: usize) -> f64 {
+        self.frozen_fetch_cost(columns)
     }
 
     /// 63.4 while its file's pages past the pool fit the system's cache, more as they do not, to 5891.4 (`rows/frozen.rs`).

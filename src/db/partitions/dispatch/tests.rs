@@ -57,8 +57,8 @@ fn rows_are_read_from_the_partition_their_id_names() {
     assert!(d.newest(NO_TRANSACTION, gone).unwrap().row.is_none());
     assert_eq!(d.row_count(), 3_usize);
     assert_eq!(Arc::clone(&d).scan(NO_TRANSACTION, &[0]).count(), 0);
-    assert!(d.fetch_cost() > 0.0_f64);
-    assert_eq!(Dispatched { leaves: HashMap::new() }.fetch_cost().to_bits(), DEFAULT_FETCH_COST.to_bits());
+    assert!(d.fetch_cost(1) > 0.0_f64);
+    assert_eq!(Dispatched { leaves: HashMap::new() }.fetch_cost(1).to_bits(), DEFAULT_FETCH_COST.to_bits());
     let row = || vec![Value::Exact(Decimal::new(1, 0))];
     let refusals = [
         d.insert(NO_TRANSACTION, row()).map(|_| ()),
