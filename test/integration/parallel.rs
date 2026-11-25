@@ -121,6 +121,37 @@ fn parallel_parts_give_the_rows_alone_gives() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1128 [ISO/IEC 9075:1992 §7.11 GR1;
+/// X3.135-1986 §5.13, §5.17, §5.23]: a subquery with no outer reference,
+/// run once with its parts in parallel, gives the statement the rows it
+/// gives run alone, of either engine: a scalar subquery of a set function
+/// in WHERE and in HAVING, of a grouping, IN a subquery, every row of it
+/// read, EXISTS, which stops at its first row, and a subquery that
+/// raises an error, raised as alone.
+#[test]
+fn a_subquery_run_once_gives_in_parallel_what_it_gives_alone() {
+    let (_db, a) = tables();
+    for table in ["R", "C"] {
+        for query in [
+            "SELECT COUNT(*), SUM(K) FROM {t} WHERE N > (SELECT AVG(N) FROM {t} WHERE G < 5)",
+            "SELECT K FROM {t} WHERE N = (SELECT MAX(N) FROM {t}) ORDER BY K",
+            "SELECT K FROM {t} WHERE N = (SELECT MAX(M) FROM (SELECT G, SUM(N) / 900 AS M FROM {t} GROUP BY G) AS Q) ORDER BY K",
+            "SELECT COUNT(*) FROM {t} WHERE G IN (SELECT G FROM {t} WHERE N > 990)",
+            "SELECT COUNT(*) FROM {t} WHERE EXISTS (SELECT * FROM {t} WHERE N > 5)",
+            "SELECT COUNT(*) FROM {t} WHERE S = (SELECT MIN(S) FROM (SELECT DISTINCT S FROM {t}) AS Q)",
+            "SELECT G, SUM(N) FROM {t} GROUP BY G HAVING SUM(N) > (SELECT SUM(N) / 8 FROM {t}) ORDER BY G",
+            "SELECT COUNT(*) FROM {t} WHERE N > (SELECT 10 / (MIN(N) - MIN(N)) FROM {t})",
+            "SELECT COUNT(*) FROM {t} WHERE N > (SELECT N FROM {t} WHERE G = 3)",
+        ] {
+            let sql = query.replace("{t}", table);
+            let (alone, together, _) = both(&a, &sql);
+            assert_eq!(alone, together, "{sql}");
+        }
+    }
+    let kept = rows(&a, "SELECT COUNT(*) FROM C WHERE N > (SELECT AVG(N) FROM C WHERE G < 5)").unwrap();
+    assert_ne!(kept, ["0"], "some rows are kept");
+}
+
 /// Verifies: [DESIGN] RULES.md D292 a hash join whose built operand is a
 /// table big enough is built by morsels, and probed by morsels, its rows
 /// those of the join run alone, in order; and a grouping over the join.

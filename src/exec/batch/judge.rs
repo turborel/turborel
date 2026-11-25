@@ -28,7 +28,7 @@ use crate::exec::eval::compared;
 use crate::exec::{Runner, Subqueries, eval_cond};
 use crate::kernels::Kernels;
 use likes::Operand;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::logical::{Cond, Expr, InSet, Truth, compared_with_constant, in_list};
 use crate::storage::mask::index;
@@ -144,6 +144,12 @@ pub(in crate::exec) struct Judging {
     /// Whether it can raise an error.
     raising: bool,
     width: usize,
+    /// \[DESIGN\] (RULES.md D1127) Of a filter holding a scalar subquery
+    /// that reads nothing of its rows, how the filter judges with each
+    /// such subquery the constant it gives, made as its first row is
+    /// judged (`judge/bound.rs`); none of a filter holding no such
+    /// subquery.
+    late: Option<OnceLock<Box<Judging>>>,
 }
 
 impl Judging {
@@ -151,7 +157,19 @@ impl Judging {
     pub(super) fn of(cond: &Cond, columns: &[usize]) -> Judging {
         let (judged, rest) = split(cond, columns);
         let width = columns.iter().max().map_or(0, |&c| c.saturating_add(1));
-        Judging { columns: columns.to_vec(), judged, rest, whole: cond.clone(), raising: cond.can_raise(), width }
+        let late = bound::binds(cond).then(OnceLock::new);
+        Judging { columns: columns.to_vec(), judged, rest, whole: cond.clone(), raising: cond.can_raise(), width, late }
+    }
+
+    /// \[DESIGN\] (RULES.md D1127) The filter with its subqueries of no
+    /// outer reference made constants, held in `late`: made the first
+    /// time it is asked for, as the filter's first row is judged.
+    fn bound<'j>(&self, late: &'j OnceLock<Box<Judging>>, runner: &Runner) -> Result<&'j Judging> {
+        if let Some(made) = late.get() {
+            return Ok(made);
+        }
+        let cond = bound::bound(&self.whole, runner)?;
+        Ok(late.get_or_init(|| Box::new(Judging::of(&cond, &self.columns))))
     }
 
     /// The rows of `batch` the filter keeps, of those at `rows`, which a
@@ -162,6 +180,13 @@ impl Judging {
     /// row given, as row by row it would be (RULES.md D15), the rows each
     /// keeps a mask, the masks joined.
     pub(super) fn kept_of(&self, batch: &Batch, rows: Option<&[u32]>, runner: &Runner) -> Result<Sel> {
+        if let Some(late) = &self.late {
+            // No row judged runs no subquery.
+            if rows.map_or(batch.rows, <[u32]>::len) == 0 {
+                return Ok(Sel::of(Vec::new()));
+            }
+            return self.bound(late, runner)?.kept_of(batch, rows, runner);
+        }
         if self.raising {
             return self.kept_raising(batch, rows, runner);
         }
@@ -227,6 +252,14 @@ impl Judging {
     /// stops at one of them, as EXISTS does (RULES.md D15), sees the error
     /// as it would row by row: not at all.
     pub(super) fn in_order_of(&self, batch: &Batch, rows: Option<&[u32]>, runner: &Runner) -> (Sel, Option<SqlError>) {
+        // A subquery that raises an error is run by the first row judged,
+        // which then raises it among its own, in their order.
+        let judges = rows.map_or(batch.rows, <[u32]>::len) > 0;
+        if let Some(late) = self.late.as_ref().filter(|_| judges)
+            && let Ok(made) = self.bound(late, runner)
+        {
+            return made.in_order_of(batch, rows, runner);
+        }
         let (kept, failed) = self.in_order(&self.whole, batch, &places(rows, batch.rows), runner);
         (kept.into_iter().collect(), failed)
     }
@@ -387,6 +420,7 @@ fn vectored(cond: &Cond, columns: &[usize]) -> Option<Judged> {
 
 // Unit tests: which conjuncts of a filter are judged over vectors, and
 // what each keeps (RULES.md R-TEST-1).
+mod bound;
 mod calls;
 mod ints;
 mod kinds;

@@ -18,8 +18,8 @@ use crate::exec::Subqueries;
 use crate::exec::eval::{compared_read, like_truth};
 use crate::exec::{Escape, like_escape};
 use crate::logical::{InSet, Truth};
-use crate::storage::mask::WORD_BITS;
-use crate::storage::{Bools, Column, Mask};
+use crate::storage::mask::{WORD_BITS, index};
+use crate::storage::{Bools, Column, Mask, Texts};
 use crate::value::comparison::compare_strings;
 use crate::value::{CompOp, LikePattern, Value, distinct as value_distinct, pow10};
 
@@ -216,9 +216,29 @@ pub(super) fn liked(x: &Vector<'_>, pattern: Option<&LikePattern>, count: usize)
 /// [X3.135-1986 §5.13 GR2] Whether each row's `x` is IN `set`: none if a
 /// row's would raise.
 pub(super) fn within(x: &Vector<'_>, set: &InSet, count: usize) -> Option<Vector<'static>> {
+    if let Some(Column::Texts(texts)) = x.column()
+        && set.of_strings()
+    {
+        return Some(bools(texts_within(texts, set, count)));
+    }
     let seq = x.seq();
     let made = (0..count).map(|n| set.truth_read(seq.get(n)).ok()).collect::<Option<Vec<Truth>>>()?;
     Some(bools(judged(count, None, |n| decided(made.get(n).copied().unwrap_or(Truth::Unknown)))))
+}
+
+/// \[DESIGN\] (RULES.md D1126) Whether each of `texts` is IN `set`, a
+/// list of strings, by its text, no value made of it: a dictionary's
+/// entries each judged once, while they are no more than the rows.
+fn texts_within(texts: &Texts, set: &InSet, count: usize) -> Bools {
+    let found = |s: Option<&str>| s.and_then(|s| set.text_truth(s)).and_then(decided);
+    match texts.coded.as_deref().filter(|coded| coded.entries.len() <= count) {
+        Some(coded) => {
+            let entries: Vec<Option<bool>> = (0..coded.entries.len()).map(|e| found(coded.entries.get(e))).collect();
+            let of_row = |n: usize| coded.codes.get(n).and_then(|&c| entries.get(index(c)).copied().flatten());
+            judged(count, texts.nulls.clone(), |n| if texts.is_null(n) { None } else { of_row(n) })
+        }
+        None => judged(count, texts.nulls.clone(), |n| found(texts.get(n))),
+    }
 }
 
 /// [X3.135-1986 §5.14 GR4, GR5] Whether each row's `x` matches its

@@ -693,6 +693,7 @@ verification approach DO-178C expects (§8).
 | D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
+| D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
@@ -700,6 +701,12 @@ verification approach DO-178C expects (§8).
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
 | D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
+| D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
+| D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
+| D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
+| D1129 | A grouping that a filter's input and a subquery of its condition compute alike is computed once |
+| D1130 | A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them |
+| D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
@@ -18885,6 +18892,27 @@ texts, of integers of scales apart, which match when rescaled, and a
 key whose nulls match. The pairs, and their order, are the same of
 either.
 
+#### D1084. Integers known as runs are judged by walking their runs and the rows asked of together
+
+A column store's scan and a filter judge a conjunct of integers known as
+runs once a run (D31, D360). Each judgment made the list of every row
+asked of first, even of all of a run's rows, then found each run's rows
+in it by a binary search, and gave the rows kept one at a time. A key
+of a fact table read in its order, as an order's number in its lines,
+is runs of a few rows each. A join's runtime filter tells its scan the
+key's least and greatest built values (D600), so every row of such a
+key was judged that way, and the judging took more of a query than the
+probe did.
+
+Now the runs and the rows asked of are walked together, both ascending
+(`storage/batch/runs.rs`). Each run is met once and each row once. No
+list of every row is made when all are asked of, since a kept run is
+given on as the span of its places. A run that holds no row asked of
+is not judged. The rows kept, and their order, are what judging each
+row gives. A comparison of integers known as runs is still judged once
+a run, not by the kernel over every row: measured on TPC-H, the kernel
+was the slower of the two.
+
 ### Column store reads
 
 #### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
@@ -19069,6 +19097,175 @@ above every row beyond one a left row. So the rule rewrites only where
 the right operand's estimated rows less its estimated keys outnumber
 the left operand's rows. Without statistics a column's distinct values
 are taken as its table's rows (D370), so the rule then leaves the plan.
+
+#### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
+
+A function with no body over vectors is called for each row of a batch
+with the row's values (D363). SUBSTRING had none, so a filter such as
+`SUBSTRING(C FROM 1 FOR 2) IN ('13', '31')` made a value of every string
+of the column, a vector of characters and a string for each call, and a
+value of each result to look for in the list (D1067).
+
+SUBSTRING now has a body over vectors (`functions/strings/slices.rs`). Of
+a vector of character strings and a start and a length that are
+constants, each string's slice is copied from the vector's text into the
+result's. The slice is the one the call gives [ISO/IEC 9075:1992 §6.7
+GR1], placed by the same rule, the octets of a string of one octet a
+character and the characters of any other. The entries of a dictionary
+are sliced once each and the rows keep their codes, while the entries
+are no more than the rows. Of more entries each row is sliced, as most
+entries would be sliced for no row.
+
+The body gives none wherever a row's call could differ from a slice,
+and the rows are then called one by one as before. That is a start or a
+length that is no constant or is null, a negative length, which raises
+an error of every string not null [§6.7 GR1d], and a count in octets of
+a string that holds a character of several, whose cut characters the
+call leaves out.
+
+IN a list whose constants are character strings, nulls aside, is judged
+of a vector's text too (`exec/batch/expr/compare.rs`). A string is
+looked for without its trailing spaces among the constants without
+theirs, as two strings are equal if they are equal so [X3.135-1986 §5.11
+GR5], which a long list already did for a column (D31). A list of any
+length keeps that set. A dictionary's entries are each judged once.
+
+#### D1127. A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant
+
+A scalar subquery that reads nothing of the rows around it has one value
+for the statement [ISO/IEC 9075:1992 §7.11 GR1], and its runner runs it
+once (`exec/subquery.rs`). A filter that held one was still judged a row
+at a time whole. No vector holds a subquery, and a filter that can raise
+is judged over vectors only if all of it can be (D15, D362). So
+`C > (SELECT AVG(C) FROM T)` beside any other conjunct made a row of
+every row of every batch.
+
+A filter read by batch now runs such subqueries as its first row is
+judged, and judges every row with their values in their places
+(`exec/batch/judge/bound.rs`). The condition is then of columns and
+constants, judged by the kernels and programs that judge any other.
+
+The errors are those the filter raised before. A filter evaluates both
+operands of every AND and OR of each row it judges (D15), so its first
+row runs each subquery that is an operand of a comparison, of IS NULL or
+of IS DISTINCT FROM, or of arithmetic, a monadic minus or a cast under
+one. Those alone are made constants. A subquery under CASE, a function,
+LIKE, IN or a quantified predicate is left where it is, as a row may not
+reach it. A batch of which no row is judged runs none. If a subquery
+raises an error, the batch is judged a row at a time by the condition as
+it was written, so the first row raises what it raised, after the error
+of any operand before the subquery.
+
+#### D1128. A subquery run once for its statement is planned as a statement is, its parts in parallel
+
+A statement's plan has its parts marked to run in parallel (D291) and
+its chains of joins given predicate transfer (D665) as it is compiled
+(`db/compiled.rs`). A subquery's plan is made as it is first run, by its
+runner (`exec/subquery.rs`), which marked nothing. So a subquery with no
+outer reference read its tables on the statement's thread alone, however
+many rows they held, while the same tables in the statement around it
+were read by every worker. A view read in a statement and again in such
+a subquery of it was computed the second time on one thread.
+
+The runner now marks the plan of a subquery it runs once for the
+statement as a statement's is marked (`physical::parallel_run`). That is
+a subquery with no outer reference, and one decorrelated, which is run
+once without its equalities (D35). The statement's thread runs it, as
+no part's worker evaluates a subquery (D291), so its parts take workers
+as a statement's parts do and give way as they do.
+
+A run asked for its first rows alone, as EXISTS and a scalar subquery
+ask, stops as it has them, and parts read morsels ahead of the rows
+taken. Such a run is marked only if its plan reads its input whole
+before its first row, under a grouping or DISTINCT not streamed or a
+sort, where stopping early saves nothing. A run that reads every row, as
+IN and a quantified comparison ask, is always marked. A subquery run
+again for each set of outer values is planned as before.
+
+#### D1129. A grouping that a filter's input and a subquery of its condition compute alike is computed once
+
+A view or a WITH query is bound in each place it is read, and each place
+is planned and run. A statement that compares a view's rows with a set
+function of the same view, as
+`... FROM V WHERE V.TOTAL = (SELECT MAX(TOTAL) FROM V)` does, grouped the
+view's tables twice, once for the statement and once for the subquery.
+
+As a filter is opened, the subqueries of its condition that have no
+outer reference are planned, as their run would plan them
+(`exec/shared.rs`). The groupings by hash of the filter's input and of
+those plans are written out, operator by operator, with their tables,
+the columns read of each, their conditions, expressions, join keys,
+grouping columns and set functions (`exec/shared/written.rs`). Costs,
+estimates, labels and the marks of parts run in parallel are left out.
+Two groupings written alike are the same operators over the same tables,
+and one statement reads them, so they give the same rows. Each place
+such a grouping stands becomes a reader of one cell (`Plan::Shared`).
+The reader that opens first runs the grouping and keeps its rows, in
+memory within its work area and in a run of the spill area past it
+(D38). Each reader reads them from there. The plans made of the
+subqueries go to the runner, which runs them and plans nothing again.
+
+Only a plan that gives the same rows each time it runs is written. That
+is one of scans of whole tables in no order, filters, projections, hash
+joins and groupings by hash of COUNT, SUM, AVG, MAX and MIN, with
+expressions of columns and constants by deterministic functions that
+raise no warning, and no subquery, outer reference, parameter, sequence
+or routine. The same grouping under another filter, or reading other
+columns, is written otherwise and is another grouping.
+
+Nothing runs that did not run before, and nothing runs sooner. A reader
+runs the grouping as it is opened, where its own plan ran it, and a
+place never opened runs nothing, so the errors and warnings are those of
+the plans run apart (D15). A grouping that raises an error keeps no
+rows, and each reader that runs it raises the error. The executor makes
+the readers of copies of the plans it runs. The planner makes none, so
+no kept plan, no plan shown and no part run in parallel holds one, and
+no cell outlives its execution.
+
+A reader is told no runtime filter (D1062, D1063), as each reader is
+given every row. A grouping read once is not made a reader and takes
+its filters as before. A join computed alike in two places under
+different groupings is still run in each.
+
+#### D1130. A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them
+
+A LIKE whose pattern is a prefix and `%` was estimated by the share of
+the range of strings beginning with the prefix, by the column's common
+values and histogram (D381), and at least an equality's. A histogram's
+bucket of strings places a value within it by the characters where its
+bounds part. A prefix of a word, whose strings fill part of a bucket
+whose bounds part at its first characters, was placed in almost no
+share of it. So `P_NAME LIKE 'forest%'`, a ninety-second of a table of
+words drawn from a list, was estimated at one row. The plan made with
+that estimate read the rows it joins by an index, one probe for each of
+thousands of rows, where a hash join had read them in a part of the
+time.
+
+The share is now that of the table's sample of rows whose string begins
+with the prefix, as the sample holds at least `SAMPLE_HITS` of them or
+is the whole table (`physical/estimate/like.rs`). That is the share a
+conjunction the sample can tell is given (D382). Of fewer, the range is
+estimated as before. A pattern with more than `%` after its prefix takes
+this share times what the sample says the rest keeps of it, as before.
+
+#### D1131. A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them
+
+A chunk of the column store holds its strings as octets, and a batch
+holds them as text (D361). Of a chunk of varying fields, each field read
+was judged UTF-8 by itself before it was copied into the batch's text.
+The octets from the start of the first field read to the end of the last
+are now judged once, and each field is a slice of them
+(`engine/columns/encoded.rs`). Strings that are each UTF-8 are UTF-8
+together, and a field that begins or ends within a character gives no
+text as before, so the batch is the one each judgment gave.
+
+IN a list of strings judged of a vector's text (D1126) compared a
+string of a short list with each constant, each made unpadded again for
+each row, and hashed it for a longer one. The constants are now unpadded
+once as the set is made, sorted and each kept once
+(`logical/sets.rs`), and a string is looked for by halving them, which
+compares it with as many as that takes. A string is found if it equals
+one without trailing spaces [X3.135-1986 §5.11 GR5], as before.
 
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 
