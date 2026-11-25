@@ -163,3 +163,21 @@ fn a_case_is_bounded_by_its_widest_results() {
     let unbounded = plus_one(case(Expr::Column(0), Expr::Column(1)));
     assert!(raises(&unbounded, &exact(5, 0), &DataType::Date), "a result of no exact type");
 }
+
+/// Verifies: [ISO/IEC 9075:1992 §6.7 GR1d] [DESIGN] RULES.md D1132:
+/// SUBSTRING of a character string column, of a constant start and no
+/// length or a constant one not negative, cannot raise; of a negative
+/// length, a length a column gives, or a string not of a character type,
+/// it can.
+#[test]
+fn a_substring_of_constant_bounds_raises_nothing() {
+    let substring = crate::functions::Registry::with_set_functions().scalar("SUBSTRING").unwrap();
+    let call = |args: Vec<Expr>| Expr::Call(substring.clone(), args);
+    let text = varying(15);
+    assert!(!raises(&call(vec![Expr::Column(0), number(1, 0), number(2, 0)]), &text, &text), "FROM 1 FOR 2");
+    assert!(!raises(&call(vec![Expr::Column(0), number(-3, 0)]), &text, &text), "FROM -3");
+    assert!(!raises(&call(vec![Expr::Column(0), number(1, 0), number(0, 0)]), &text, &text), "FOR 0");
+    assert!(raises(&call(vec![Expr::Column(0), number(1, 0), number(-1, 0)]), &text, &text), "FOR -1 raises");
+    assert!(raises(&call(vec![Expr::Column(0), number(1, 0), Expr::Column(1)]), &text, &exact(9, 0)), "a length of a column");
+    assert!(raises(&call(vec![Expr::Column(0), number(1, 0), number(2, 0)]), &exact(9, 0), &text), "not a string column");
+}

@@ -1,13 +1,14 @@
 //! The mutations of a grouping run in parallel under its HAVING
 //! condition and of a grouping a join reads (RULES.md R-TEST-9, D1072,
 //! D1073, D1113): the groups a part keeps, the conditions a part takes,
-//! the filters a grouping that takes none is told, and a grouping over
-//! another that a part makes whole.
+//! the filters a grouping that takes none is told, a grouping over
+//! another that a part makes whole, and one that crosses its partitions,
+//! merged by the statement's thread (D1133).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 8] = [
+pub const GROUPED_PARTS: [Mutation; 11] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -23,8 +24,8 @@ pub const GROUPED_PARTS: [Mutation; 8] = [
         package: Package::Core,
         breaks: "a HAVING condition that can raise is judged by its grouping's part, in no order",
         file: "src/physical/parallel.rs",
-        original: "return (calm_cond(cond) && !cond.can_raise()).then(|| rooted(input)).flatten();",
-        replacement: "return calm_cond(cond).then(|| rooted(input)).flatten();",
+        original: "return (calm_cond(cond) && !cond.can_raise()).then(|| rooted(input, db)).flatten();",
+        replacement: "return calm_cond(cond).then(|| rooted(input, db)).flatten();",
         integration: &["grouped_parts::a_having_condition_that_can_raise_stays_above_its_part"],
         unit: &[],
     },
@@ -86,6 +87,36 @@ pub const GROUPED_PARTS: [Mutation; 8] = [
         original: "made.push((first, values, fresh(&self.spec.aggs)));",
         replacement: "made.push((u64::MAX - first, values, fresh(&self.spec.aggs)));",
         integration: &["regrouped_parts::distinct_set_functions_are_regrouped_by_their_part"],
+        unit: &[],
+    },
+    Mutation {
+        name: "crossing-not-counts-only",
+        package: Package::Core,
+        breaks: "a second grouping of set functions other than COUNT crosses the partitions, its states merged in no order of its rows (RULES.md D1133)",
+        file: "src/physical/parallel.rs",
+        original: "let counts = aggs.iter().all(|a| a.func.0.columnar().is_some_and(|c| c.0 == crate::functions::ColumnarKind::Count));",
+        replacement: "let counts = aggs.iter().all(|a| a.func.0.columnar().is_some());",
+        integration: &["crossed_parts::other_set_functions_stay_above_and_a_raising_projection_gives_way"],
+        unit: &[],
+    },
+    Mutation {
+        name: "crossing-merge-numbered-last",
+        package: Package::Core,
+        breaks: "a merged group is numbered by the first of the partition met first, not the least, so the groups come in no order of the plan run alone (RULES.md D1133)",
+        file: "src/exec/parallel/grouped/regrouped.rs",
+        original: "            group.0 = group.0.min(number);\n",
+        replacement: "",
+        integration: &["crossed_parts::a_count_of_counts_is_merged_across_partitions"],
+        unit: &[],
+    },
+    Mutation {
+        name: "crossing-projection-fails-unnoted",
+        package: Package::Core,
+        breaks: "a projection that fails in a partition leaves its groups out, so the part gives fewer groups and not the error (RULES.md D1133, D15)",
+        file: "src/exec/parallel/grouped/regrouped.rs",
+        original: "                crossing.failed.store(true, Ordering::Relaxed);\n",
+        replacement: "",
+        integration: &["crossed_parts::other_set_functions_stay_above_and_a_raising_projection_gives_way"],
         unit: &[],
     },
 ];

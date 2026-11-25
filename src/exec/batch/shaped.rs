@@ -124,9 +124,11 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&D
         Shaped::Probe(table, places) => probed(inner, Arc::clone(table), places.clone()),
         Shaped::Outer(table, places) => {
             let (table, places) = (Arc::clone(table), places.clone());
-            Box::new(inner.flat_map(move |kept| match kept {
-                Ok((batch, rows)) => table.probed_left((&batch, rows.as_deref()), &places),
-                Err(e) => vec![Err(e)],
+            Box::new(inner.flat_map(move |kept| -> Batches {
+                match kept {
+                    Ok(kept) => Box::new(SharedTable::probing(Arc::clone(&table), kept, (places.clone(), None), true)),
+                    Err(e) => Box::new(std::iter::once(Err(e))),
+                }
             }))
         }
         Shaped::Semi(step) => Arc::clone(step).through(inner, Runner::new(db, tx)),
@@ -144,10 +146,13 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&D
 }
 
 /// `batches`, each kept row joined with each built row of `table` its
-/// keys at `places` match, in order; an error after the pairs before it.
+/// keys at `places` match, in order, a batch of pairs made as it is asked
+/// for (RULES.md D1151); an error after the pairs before it.
 fn probed(batches: Batches, table: Arc<SharedTable>, places: Vec<usize>) -> Batches {
-    Box::new(batches.flat_map(move |kept| match kept {
-        Ok((batch, rows)) => table.probed((&batch, rows.as_deref()), (&places, None)),
-        Err(e) => vec![Err(e)],
+    Box::new(batches.flat_map(move |kept| -> Batches {
+        match kept {
+            Ok(kept) => Box::new(SharedTable::probing(Arc::clone(&table), kept, (places.clone(), None), false)),
+            Err(e) => Box::new(std::iter::once(Err(e))),
+        }
     }))
 }

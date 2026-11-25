@@ -3,8 +3,9 @@
 //! rows joined into one batch in the order the operand gives them, each
 //! morsel's in turn, and put in a join's table (`exec/table/join.rs`),
 //! which no thread writes again. A morsel read by batch probes it a batch
-//! at a time (`probed`), its pairs gathered into batches of the left's
-//! vectors and the right's, each of its kind; one read row by row probes
+//! at a time (`probing.rs`), its pairs gathered into batches of the left's
+//! vectors and the right's, each of its kind, a batch of them made as it
+//! is asked for (RULES.md D1151); one read row by row probes
 //! it a row at a time (`each_match`). Either way a probing row's matches
 //! come in the order the operand gave them.
 //!
@@ -21,16 +22,17 @@
 mod found;
 mod outer;
 mod paired;
+mod probing;
 
 use std::sync::Arc;
 
 use super::super::runtime::Told;
 use super::super::stream::Kept;
-use crate::error::{Result, SqlError};
+use crate::error::Result;
 use crate::exec::table::{Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal, values_hash};
 use crate::kernels::Kernels;
 use crate::physical::JoinKey;
-use crate::storage::{BATCH_ROWS, Batch, Column, NO_ROW, Picks, Row};
+use crate::storage::{Batch, Column, NO_ROW, Picks, Row};
 use crate::value::{Value, key_equal};
 
 /// A hash join's right operand, built for a pipeline's morsels.
@@ -59,6 +61,13 @@ pub(in crate::exec) struct SharedTable {
 /// The pairs of a probing batch not yet gathered: of each, its row of the
 /// batch and its built row, or `NO_ROW` of a LEFT join's row none matches.
 type Pairs = (Vec<u32>, Vec<u32>);
+
+/// \[DESIGN\] (RULES.md D1087) The bytes of a table past which a probe
+/// looks first in its key's Bloom filter: 4 MiB, about the third-level
+/// cache a thread has of a processor of several cores, 36 MiB for 8
+/// threads of the build machine, so a larger table is read from memory
+/// at random while a filter of 8 bits a key stays in the second level.
+const SCREENED_BYTES: usize = 4 << 20;
 
 /// Row `r` as a pick: `NO_ROW` of one past what a pick numbers.
 fn pick(r: usize) -> u32 {
@@ -174,6 +183,14 @@ impl SharedTable {
         }
     }
 
+    /// \[DESIGN\] (RULES.md D1115) Its rows, their columns and keys as it
+    /// was framed, and their table, for a semi join that marks the rows
+    /// it holds (`semi/marked.rs`).
+    pub(in crate::exec) fn into_held(self) -> (Frame, JoinTable) {
+        let SharedTable { right, columns, width, places, nulls, table, seed, keyed, .. } = self;
+        (Frame { right, columns, width, places, nulls, seed, keyed }, table)
+    }
+
     /// \[DESIGN\] (RULES.md D1083) It, its pairs' integers gathered on
     /// `kernels`, the statement's.
     #[must_use]
@@ -207,6 +224,18 @@ impl SharedTable {
         Ok(shared)
     }
 
+    /// \[DESIGN\] (RULES.md D1087) Of the probes whose keys' hashes are
+    /// `hashes`, the places of those the Bloom filter of its one key may
+    /// hold, if its table is past `SCREENED_BYTES` and the filter, made with
+    /// it, still pays; none to look at every probe in the table.
+    pub(super) fn screened(&self, hashes: &[u64]) -> Option<Vec<u32>> {
+        if self.places.len() != 1 || self.table.is_direct() || self.table.bytes() <= SCREENED_BYTES {
+            return None;
+        }
+        let filter = self.made.as_ref()?.first()?.as_ref()?;
+        filter.screened(hashes, &*self.kernels)
+    }
+
     /// The runtime filters of its keys `keys` (RULES.md D369, D389), each
     /// told of the left column of its key.
     ///
@@ -227,6 +256,13 @@ impl SharedTable {
             }
         }
         Ok(told)
+    }
+
+    /// Whether its probes are screened by its key's Bloom filter (RULES.md
+    /// D1087).
+    #[cfg(test)]
+    pub(in crate::exec) fn screens(&self) -> bool {
+        self.screened(&[0]).is_some()
     }
 
     /// The rows it holds.
@@ -275,17 +311,33 @@ impl SharedTable {
     /// As `each` fails; a column a row lacks, or a value nested deeper
     /// than a type may (SQLCODE -910).
     pub(in crate::exec) fn each_match(&self, keys: &[JoinKey], l: &Row, mut each: impl FnMut(&Row) -> Result<()>) -> Result<()> {
+        for p in self.matching(keys, l)? {
+            each(&self.row_of(p))?;
+        }
+        Ok(())
+    }
+
+    /// The built rows matching left row `l` on `keys`, in order: their
+    /// numbers, each made a row as it is read (`row_of`), so a row's
+    /// matches hold a number each, not a row.
+    ///
+    /// # Errors
+    ///
+    /// A column a row lacks, or a value nested deeper than a type may
+    /// (SQLCODE -910).
+    pub(in crate::exec) fn matching(&self, keys: &[JoinKey], l: &Row) -> Result<Vec<usize>> {
         let values = keys
             .iter()
             .map(|k| l.get(k.left).ok_or_else(|| crate::exec::broken("a join key a row lacks")))
             .collect::<Result<Vec<&Value>>>()?;
-        let Some(h) = values_hash(values.iter().copied(), &self.nulls, self.hashing())? else { return Ok(()) };
+        let Some(h) = values_hash(values.iter().copied(), &self.nulls, self.hashing())? else { return Ok(Vec::new()) };
+        let mut found = Vec::new();
         for p in self.table.candidates(h) {
             if self.row_matches(&values, p)? {
-                each(&self.row_of(p))?;
+                found.push(p);
             }
         }
-        Ok(())
+        Ok(found)
     }
 
     /// The pairs of each row of `batch` and each built row its key, of
@@ -331,67 +383,6 @@ impl SharedTable {
             }
         }
         Ok(true)
-    }
-
-    /// The batches of the pairs of each row of `batch` at `rows`, or of
-    /// all, its key columns at `left`, and each built row its key matches,
-    /// in order: the rows paired before an error, then the error.
-    /// A probe's batches hold the vectors of `batch` at `left_shown`, or
-    /// all.
-    pub(in crate::exec) fn probed(
-        &self,
-        (batch, rows): (&Batch, Option<&[u32]>),
-        (left, left_shown): (&[usize], Option<&[usize]>),
-    ) -> Vec<Result<Kept>> {
-        let given: Vec<usize> = (0..crate::storage::sel::kept_count(rows, batch.rows)).map(|n| crate::storage::sel::nth(rows, n)).collect();
-        let mut out = Vec::new();
-        let mut pairs = (Vec::with_capacity(BATCH_ROWS), Vec::with_capacity(BATCH_ROWS));
-        if let Err(e) = self.paired((batch, &given), (left, left_shown), &mut pairs, &mut out) {
-            out.push(Ok(self.gathered((batch, left_shown), &mut pairs)));
-            out.push(Err(e));
-            return out;
-        }
-        if !pairs.0.is_empty() {
-            out.push(Ok(self.gathered((batch, left_shown), &mut pairs)));
-        }
-        out
-    }
-
-    /// Pairs each row of `batch` at `given` with the built rows its key
-    /// matches into `pairs`, a batch of them gathered into `out` each time
-    /// they are `BATCH_ROWS`.
-    fn paired(
-        &self,
-        (batch, given): (&Batch, &[usize]),
-        (left, left_shown): (&[usize], Option<&[usize]>),
-        pairs: &mut Pairs,
-        out: &mut Vec<Result<Kept>>,
-    ) -> std::result::Result<(), SqlError> {
-        // A key of one column of integers is paired in its units (RULES.md
-        // D1083).
-        if let Some(units) = self.unit_keys(batch, left) {
-            return self.paired_units(units, (batch, given, left), |r, p| {
-                pairs.0.push(r);
-                pairs.1.push(p);
-                if pairs.0.len() >= BATCH_ROWS {
-                    out.push(Ok(self.gathered((batch, left_shown), pairs)));
-                }
-            });
-        }
-        let mut hashes = KeyHashes::default();
-        hashes.of_batch((batch, Some(given)), (left, &self.nulls), self.hashing())?;
-        for ((&r, &h), &miss) in given.iter().zip(&hashes.hashes).zip(&hashes.misses) {
-            for p in self.table.candidates(h).filter(|_| !miss) {
-                if keys_equal((batch, left, r), (&self.right, &self.places, p), &self.nulls)? {
-                    pairs.0.push(pick(r));
-                    pairs.1.push(pick(p));
-                }
-                if pairs.0.len() >= BATCH_ROWS {
-                    out.push(Ok(self.gathered((batch, left_shown), pairs)));
-                }
-            }
-        }
-        Ok(())
     }
 
     /// The batch of `pairs`, emptied: the left's vectors of `batch` at

@@ -22,6 +22,7 @@
 
 use std::sync::Arc;
 
+use super::charged::{Taken, Tally, charged_batches, charged_rows};
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit};
@@ -208,6 +209,9 @@ fn width_of(rows: &[Row], keys: &[JoinKey]) -> usize {
 /// `pipeline`, a hash join's operand, built by its morsels on up to
 /// `degree` threads, each morsel's rows gathered into a batch: of its
 /// batches, kept rows alone, if it is read by batch, else of its rows.
+/// Each morsel's rows are charged to `limit` as they are gathered
+/// (RULES.md D1150), so the join gives way once they outgrow it, not
+/// after a morsel whose rows a join below made many more than its table's.
 fn parallel_built(
     pipeline: Pipeline,
     keys: &[JoinKey],
@@ -216,26 +220,13 @@ fn parallel_built(
 ) -> Result<Held<Arc<Table>>> {
     let pipeline = Arc::new(pipeline);
     let shape = pipeline.batched.as_ref().map(|b| (b.layout.clone(), b.width));
-    let (count, db_for, read) = (pipeline.count(), db.clone(), Arc::clone(&pipeline));
+    let (count, db_for, read, within) = (pipeline.count(), db.clone(), Arc::clone(&pipeline), limit.clone());
     let batched_width = shape.as_ref().map(|s| s.1);
-    let work = Box::new(move |m: usize| -> Result<Batch> {
-        let Some(width) = batched_width else {
-            let rows = read.morsel(m, &Runner::new(&db_for, tx))?;
-            return Ok(batch_of(&rows, rows.first().map_or(0, Vec::len)));
-        };
-        let parts = read.morsel_kept(m, (&db_for, tx))?.map(|k| {
-            k.map(|(b, rows)| {
-                let places = crate::storage::sel::places_of(rows, b.rows);
-                (b, places)
-            })
-        });
-        let parts = parts.collect::<Result<Vec<_>>>()?;
-        Ok(if parts.is_empty() { Batch::empty(width) } else { Batch::joined(parts) })
-    });
+    let work = Box::new(move |m: usize| morsel_built(&read, m, (&db_for, tx), (batched_width, &within)));
     let (mut parts, from) = (Vec::new(), limit.held());
     for (done, batch) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
-        let batch = batch?;
-        if !limit.take(held_bytes(&batch)) || !limit.on_course(from, (done, count)) {
+        let Taken::Whole(batch, _) = batch? else { return Ok(Held::GaveWay) };
+        if !limit.on_course(from, (done, count)) {
             return Ok(Held::GaveWay);
         }
         parts.push(batch);
@@ -249,6 +240,44 @@ fn parallel_built(
     // Put together by the threads that read it (RULES.md D1080).
     let shared = super::build::shared(parts, (columns, width), keys, super::build::Crew { db, tx, degree })?;
     Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared.on(crate::db::kernels::chosen(db))) })))
+}
+
+/// Morsel `m` of `pipeline`, a hash join's operand, gathered into a batch
+/// charged to `limit` as it grows: of the kept rows of its batches if it
+/// is read by batch, those of `width`, else of its rows; nothing if it
+/// outgrows the grant.
+///
+/// # Errors
+///
+/// As reading the morsel fails.
+fn morsel_built(
+    pipeline: &Arc<Pipeline>,
+    m: usize,
+    (db, tx): (&Db, TxId),
+    (width, limit): (Option<usize>, &Limit),
+) -> Result<Taken<Batch>> {
+    let tally = Tally::of(limit);
+    let batch = match width {
+        None => {
+            let rows = charged_rows(pipeline.morsel_rows(m, (db, tx), Runner::new(db, tx))?, &tally).collect::<Result<Vec<Row>>>()?;
+            batch_of(&rows, rows.first().map_or(0, Vec::len))
+        }
+        Some(width) => {
+            let parts = charged_batches(pipeline.morsel_kept(m, (db, tx))?, &tally)
+                .map(|k| {
+                    k.map(|(b, rows)| {
+                        let places = crate::storage::sel::places_of(rows, b.rows);
+                        (b, places)
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            if parts.is_empty() || tally.past() { Batch::empty(width) } else { Batch::joined(parts) }
+        }
+    };
+    // What the batch holds, its table's share with it, in place of what
+    // its rows held as they were gathered.
+    tally.settle(held_bytes(&batch));
+    Ok(tally.taken(batch))
 }
 
 // Unit tests: a key's partition, and an operand built by batch (RULES.md
@@ -322,6 +351,58 @@ mod tests {
         db.set_setting("EXECUTOR.BATCHES", &Value::Char("ON".into())).unwrap();
         db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(65_536, 0))).unwrap();
         assert_eq!(built_of(&db, &filtered_scan()), None, "past the work area");
+    }
+
+    /// The scan of column K of table `t` of schema A.
+    fn scan_of(t: &str) -> Box<Plan> {
+        Box::new(Plan::SeqScan {
+            table: crate::catalog::QualifiedName { auth: "A".into(), ident: t.into() },
+            columns: vec![0],
+            rows: 0,
+            cost: 0.0_f64,
+            order: Vec::new(),
+            backward: false,
+            most: None,
+            located: false,
+        })
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1150, D38: a hash join's operand that
+    /// is a part run in parallel, itself a join whose every row matches a
+    /// hundred, is built of its morsels while their rows fit the grant;
+    /// once a morsel outgrows it, the morsel is given up as it is gathered
+    /// and the build gives way to the serial join, which partitions its
+    /// rows to its spill area, so no morsel is held past the grant. By
+    /// batch and row by row.
+    ///
+    /// Decision: the operand's morsels fit the grant, or not; they are
+    /// read by batch, or row by row.
+    #[test]
+    fn a_build_of_morsels_past_its_grant_gives_way() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER) CREATE TABLE U (K INTEGER)").unwrap();
+        let a = db.session("A");
+        let keys: Vec<String> = (0_i32..300_i32).map(|k| format!("({})", k % 3_i32)).collect();
+        a.run(&format!("INSERT INTO T VALUES {}", keys.join(", "))).unwrap();
+        a.run(&format!("INSERT INTO U VALUES {}", keys.join(", "))).unwrap();
+        a.commit().unwrap();
+        let join = Plan::HashJoin {
+            left: scan_of("T"),
+            right: scan_of("U"),
+            keys: vec![JoinKey { left: 0, right: 0, nulls: false }],
+            detail: String::new(),
+            est: 0.0_f64,
+        };
+        let operand = Plan::Parallel(Box::new(crate::physical::Parallel { degree: 2, input: join }));
+        let bytes = |n: i128| Value::Exact(Decimal::new(n, 0));
+        db.set_setting("EXECUTOR.MORSEL_ROWS", &bytes(64)).unwrap();
+        for batches in ["ON", "OFF"] {
+            db.set_setting("EXECUTOR.BATCHES", &Value::Char(batches.into())).unwrap();
+            db.set_setting("MEMORY.WORK_BYTES", &bytes(64_i128 << 20_u32)).unwrap();
+            assert_eq!(built_of(&db, &operand).map(|b| b.0), Some(30_000), "within the grant, batches {batches}");
+            db.set_setting("MEMORY.WORK_BYTES", &bytes(65_536)).unwrap();
+            assert_eq!(built_of(&db, &operand), None, "past the grant, batches {batches}");
+        }
     }
 
     /// Verifies: [DESIGN] RULES.md D357: a key's partition is the same each

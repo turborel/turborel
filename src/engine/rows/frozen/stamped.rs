@@ -1,7 +1,7 @@
 //! \[EXTENSION\] Groups a load writes straight from its rows (RULES.md
 //! D533). A column store table that holds no row past its last group as a
-//! load into it begins, its lock held alone, takes the load's batches as
-//! groups, never through its tree. Such a group is stamped with who made
+//! load into it begins takes the load's batches as groups, never through
+//! its tree; loads at once each write their own (RULES.md D1142). Such a group is stamped with who made
 //! it: its transaction while open, seen by it alone; its commit timestamp
 //! once committed, seen by each snapshot taken at or after it; and none
 //! once committed before every snapshot, as every other group is. A
@@ -27,7 +27,7 @@ use crate::engine::rows::options::LoadTo;
 use std::mem;
 use std::ops::Bound;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use super::freeze::ordered;
 use super::{Directory, Entry};
@@ -49,9 +49,12 @@ const STAMPED: u32 = 1 << 31;
 /// A table's loads straight to groups.
 #[derive(Default)]
 pub(in crate::engine::rows) struct Loads {
-    /// The transaction whose rows go straight to groups, if any, else
-    /// `NO_TRANSACTION`.
-    direct: AtomicU64,
+    /// The transactions whose rows go straight to groups, each writing its
+    /// own (RULES.md D1142).
+    direct: std::sync::Mutex<Vec<TxId>>,
+    /// How many `direct` holds, so an insert or a transaction's end with
+    /// no load under way reads this word alone.
+    loading: std::sync::atomic::AtomicUsize,
     /// Groups stored as made by a transaction open then, held apart until
     /// recovery settles them.
     doubtful: std::sync::Mutex<Vec<Arc<Entry>>>,
@@ -212,13 +215,22 @@ impl RowTable {
     }
 
     /// Ends the load of `tx` straight to groups, if one is under way: the
-    /// word read first, as every insert and every end of a transaction
-    /// asks, and an exchange that fails still takes its cache line from
-    /// the other sessions.
+    /// count read first, as every insert and every end of a transaction
+    /// asks, so with no load under way no lock is taken.
     pub(in crate::engine::rows) fn end_direct(&self, tx: TxId) {
-        if tx != NO_TRANSACTION && self.frozen.loads.direct.load(Ordering::Acquire) == tx {
-            let _ = self.frozen.loads.direct.compare_exchange(tx, NO_TRANSACTION, Ordering::AcqRel, Ordering::Acquire);
+        if tx == NO_TRANSACTION || self.frozen.loads.loading.load(Ordering::Acquire) == 0 {
+            return;
         }
+        let mut direct = lock_builtin(&self.frozen.loads.direct);
+        if let Some(at) = direct.iter().position(|&by| by == tx) {
+            direct.swap_remove(at);
+            self.frozen.loads.loading.store(direct.len(), Ordering::Release);
+        }
+    }
+
+    /// Whether `tx`'s rows go straight to groups.
+    fn loads_directly(&self, tx: TxId) -> bool {
+        self.frozen.loads.loading.load(Ordering::Acquire) != 0 && lock_builtin(&self.frozen.loads.direct).contains(&tx)
     }
 
     /// Takes the group `tx` made holding row `first` out of the directory,
@@ -256,19 +268,20 @@ impl Loading for RowTable {
         if self.tree.scan(lower, Bound::Unbounded, Direction::Forward).next().is_some() {
             return Ok(None);
         }
-        let direct = &self.frozen.loads.direct;
-        let begun = direct.compare_exchange(NO_TRANSACTION, tx, Ordering::AcqRel, Ordering::Acquire);
-        if begun.is_err_and(|by| by != tx) {
-            return Ok(None);
+        let mut direct = lock_builtin(&self.frozen.loads.direct);
+        if !direct.contains(&tx) {
+            direct.push(tx);
+            self.frozen.loads.loading.store(direct.len(), Ordering::Release);
         }
         Ok(Some(usize::try_from(columns.group_rows).unwrap_or(usize::MAX)))
     }
 
     fn insert_group(&self, tx: TxId, rows: &[Row]) -> Result<Option<Vec<RowId>>> {
-        let direct = self.frozen.loads.direct.load(Ordering::Acquire) == tx;
+        let direct = self.loads_directly(tx);
         let Some(columns) = (*read(&self.frozen.columns)?).filter(|_| direct && !rows.is_empty()) else { return Ok(None) };
-        let ids = rows.iter().map(|_| self.next_id()).collect::<Result<Vec<_>>>()?;
-        let first = ids.first().copied().unwrap_or_default();
+        // One run of ids, so the groups of loads at once never share a range.
+        let first = self.next_ids(rows.len())?;
+        let ids: Vec<RowId> = (first..).take(rows.len()).collect();
         let group = self.group_from(ids.clone(), rows, &columns)?;
         let pages = group.pages();
         let entry = self.entry_of(group)?;

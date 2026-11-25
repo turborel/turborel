@@ -208,3 +208,47 @@ fn a_checkpoint_during_an_open_load_recovers_without_it() {
         drop((db, s, crashed));
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D1142, loads at once: two copies into T,
+/// their executions taking turns, each writes its own groups, the second
+/// waiting for no lock of the first; one rolled back takes out its groups
+/// alone, a third goes on beside the first, and once both commit every row
+/// is in a group, none through the tree, read by a scan and by its key,
+/// and after a checkpoint and a crash the groups are recovered, their
+/// ranges of row ids apart. A regression test (R-TEST-7) that fails if a
+/// load into groups takes the table's lock alone, the second copy then
+/// refused past LOCKS.TIMEOUT_MS, or if the second's rows go to the tree.
+#[test]
+fn loads_at_once_each_write_their_own_groups() {
+    let scratch = Scratch::new("bulk-groups-together");
+    let dir = scratch.path("db");
+    let (db, _) = reopened_after_crash(&dir);
+    db.schema(SCHEMA).unwrap();
+    let [first, second, third] = [db.session("S"), db.session("S"), db.session("S")];
+    let insert = "INSERT INTO T (K, A, C) VALUES (?, ?, ?)";
+    let (p1, p2, p3) = (first.prepare(insert).unwrap(), second.prepare(insert).unwrap(), third.prepare(insert).unwrap());
+    for session in [&second, &third] {
+        session.run("SET LOCKS.TIMEOUT_MS = 200").unwrap();
+    }
+    for (n, start) in (0..ROWS).step_by(4096).enumerate() {
+        let (session, prepared) = if n % 2 == 0 { (&first, &p1) } else { (&second, &p2) };
+        session.execute_prepared_rows(prepared, &given(start, (start + 4096).min(ROWS)), Load::Going).unwrap();
+    }
+    second.rollback().unwrap();
+    third.execute_prepared_rows(&p3, &given(ROWS, ROWS + 8192), Load::Going).unwrap();
+    first.execute_prepared_rows(&p1, &[], Load::Ending).unwrap();
+    third.execute_prepared_rows(&p3, &[], Load::Ending).unwrap();
+    first.commit().unwrap();
+    third.commit().unwrap();
+    // The first took the first and third batches, 7904 rows; the second's were undone; the third's 8192.
+    assert_eq!((count(&first, "SELECT K FROM T"), count(&first, "SELECT K FROM T WHERE K = 9000")), (16_096, 1));
+    assert_eq!(count(&first, "SELECT K FROM T WHERE K = 5000"), 0, "the second's rows undone with it");
+    assert!(all_frozen(&first), "no row through the tree");
+    db.checkpoint().unwrap();
+    drop((first, second, third, db));
+    let (again, opened) = reopened_after_crash(&dir);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    let r = again.session("S");
+    assert_eq!(count(&r, "SELECT K FROM T"), 16_096, "recovered, the groups' ranges apart");
+    assert!(all_frozen(&r));
+}

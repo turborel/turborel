@@ -319,7 +319,11 @@ impl PhysicalPlanner<'_> {
     /// swapped.
     #[inline(never)]
     pub(super) fn outer_join(&self, (kind, cond): (OuterJoin, &Cond), left: &LogicalPlan, right: &LogicalPlan, want: &[SortKey]) -> Built {
-        if let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
+        // A key computed under the join is computed of every row of its
+        // operand, the other's empty or not, so one that can raise by its
+        // columns' declared types stays in the condition (RULES.md D1086).
+        let raises = cond.can_raise() && self.cond_raises(cond, (left, right));
+        if !raises && let Some(Lifted { cond, left, right, kept }) = lifted(cond, left, right) {
             let joined = LogicalPlan::OuterJoin { kind, cond, left: Box::new(left), right: Box::new(right) };
             let plan = LogicalPlan::Project { exprs: kept, input: Box::new(joined) };
             return self.build_node(&plan, want);

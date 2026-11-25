@@ -13,7 +13,9 @@
 //! joined to the first once the bytes between them come. Nothing is held
 //! for the bytes between two runs, which the file may hold already. A
 //! write over bytes held has those written first, and a write as long as
-//! the buffer, as of zeros written ahead, goes to the file. Reads see the
+//! the buffer goes to the file: of records, after what is held, so the
+//! file never holds a record past bytes held (RULES.md D1141); of zeros
+//! written ahead, leaving what is held. Reads see the
 //! runs over the file, so a record is read back from the moment it is
 //! appended.
 //!
@@ -215,6 +217,13 @@ impl Buffered {
             self.write_held(tail)?;
         }
         if data.len() >= self.limit {
+            // [DESIGN] RULES.md D1141: what is held goes first, but for
+            // zeros written ahead, so the file never holds a record past
+            // bytes still held, which a failure of the process would leave
+            // as zeros before it: a segment's header lost under its records.
+            if data.iter().any(|&b| b != 0) {
+                self.write_held(tail)?;
+            }
             return self.file.write_all_at(data, offset);
         }
         tail.put(data, offset);

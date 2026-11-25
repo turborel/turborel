@@ -44,6 +44,7 @@ use crate::db::State;
 use crate::index::Probe;
 use crate::logical::{AggCall, Cond, Expr, OuterJoin, SetOp};
 use crate::settings::{EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS};
+use crate::value::Value;
 
 /// \[DESIGN\] How deep a plan is walked for its parts (RULES.md R-CF-6):
 /// deeper than any plan the binder makes nests.
@@ -138,7 +139,7 @@ impl<'a> Asked<'a> {
 /// (RULES.md D550).
 pub(super) fn runs_parallel(db: &State, plan: &Plan) -> bool {
     let asked = Asked::of(db);
-    let Some(rows) = rooted(plan).filter(|_| asked.most > 1) else { return false };
+    let Some(rows) = rooted(plan, Some(db)).filter(|_| asked.most > 1) else { return false };
     !asked.kept_whole(plan, rows) && asked.degree(plan, rows) > 1
 }
 
@@ -178,7 +179,7 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
     if depth >= MAX_DEPTH || crate::exec::storage_counted(plan, asked.db).is_some() {
         return;
     }
-    let rooted = rooted(plan);
+    let rooted = rooted(plan, Some(asked.db));
     if rooted.is_some_and(|rows| asked.kept_whole(plan, rows)) {
         return;
     }
@@ -188,7 +189,7 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
         // A limit of few rows over a stream reads too few for workers to
         // share, unless a filter leaves out rows it would read.
         if let Plan::Limit { input, .. } = plan
-            && stream(input).is_some()
+            && stream_in(input, Some(asked.db)).is_some()
             && !filtered(input)
         {
             return outside(asked, input, deeper);
@@ -196,7 +197,10 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
         if let Plan::SemiJoin(s) = plan
             && s.method == SemiMethod::BuildLeft
         {
-            walk(asked, &mut s.left, deeper);
+            // Its left is held as a hash join's built operand is
+            // (`exec/batch/joined/semi/marked.rs`), by batch whatever its
+            // store (RULES.md D1132).
+            built(asked, &mut s.left, deeper);
             return built(asked, &mut s.right, deeper);
         }
         return plan.each_input(&mut |input| walk(asked, input, deeper));
@@ -238,7 +242,7 @@ fn outside(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
 /// no row made of them, so the reason a scan by batch of such a table
 /// stays serial (RULES.md D291) does not hold of it.
 fn built(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
-    let degree = stream(plan).filter(|_| depth < MAX_DEPTH).map_or(1, |rows| asked.by_rows(rows));
+    let degree = stream_in(plan, Some(asked.db)).filter(|_| depth < MAX_DEPTH).map_or(1, |rows| asked.by_rows(rows));
     if degree < 2 {
         return walk(asked, plan, depth);
     }
@@ -258,64 +262,106 @@ fn filtered(plan: &Plan) -> bool {
     matches!(plan, Plan::Filter { .. } | Plan::SemiJoin(_))
 }
 
-/// \[DESIGN\] (RULES.md D1113) The first grouping of `plan`, if `plan`
-/// is a grouping over it, an analyzed plan's count between them or none,
-/// that a part runs whole: the second by some of the first's grouping
-/// columns and no others, neither by a collation nor with groups of empty
-/// grouping sets, the second's set functions none DISTINCT nor an inverse
-/// distribution function and calm, the first's states merging. Its
-/// partitions are then of those columns alone, so each holds every group
-/// of the first that one of the second takes, and its thread makes the
-/// second's groups too, as DISTINCT_AGGREGATES makes such pairs (RULES.md
-/// D340).
+/// \[DESIGN\] (RULES.md D1113, D1133) The first grouping of `plan`, if
+/// `plan` is a grouping over it, an analyzed plan's count between them or
+/// none, that a part runs whole: neither by a collation nor with groups
+/// of empty grouping sets, the second's set functions none DISTINCT nor
+/// an inverse distribution function and calm, the first's states merging.
+/// The second groups by some of the first's grouping columns and no
+/// others, so the partitions are of those columns alone, each holds every
+/// group of the first that one of the second takes, and its thread makes
+/// the second's groups too, as DISTINCT_AGGREGATES makes such pairs
+/// (RULES.md D340). Or it crosses them (`crosses`).
 pub(crate) fn first_level(plan: &Plan) -> Option<&Plan> {
     let Plan::Aggregate { groups, collations, aggs, seeds, input, streamed: false, .. } = plan else { return None };
-    let first = if let Plan::Counted(c) = &**input { &c.input } else { input };
+    let (steps, below) = between(input, 0);
+    let first = if let Plan::Counted(c) = below { &c.input } else { below };
     let Plan::Aggregate { groups: keys, collations: by, aggs: parts, seeds: seeded, streamed: false, .. } = first else { return None };
-    let within = !groups.is_empty() && groups.iter().all(|&g| g < keys.len());
+    let within = steps.is_empty() && !groups.is_empty() && groups.iter().all(|&g| g < keys.len());
     let uncollated = collations.is_empty() && by.is_empty() && seeds.is_empty() && seeded.is_empty();
     let calm_parts = |a: &AggCall| a.arg.as_ref().is_none_or(calm) && a.filter.as_ref().is_none_or(calm_cond);
     let whole = aggs.iter().all(|a| !a.distinct && a.distribution.is_none() && calm_parts(a));
-    (within && uncollated && whole && mergeable(parts)).then_some(first)
+    let calm_steps = steps.iter().all(|exprs| exprs.iter().all(calm));
+    let joined = within || (crosses(plan) && calm_steps);
+    (joined && uncollated && whole && mergeable(parts)).then_some(first)
 }
 
-/// The rows a part rooted at `plan` reads, if it is one.
-fn rooted(plan: &Plan) -> Option<usize> {
+/// \[DESIGN\] (RULES.md D1133) Whether `plan`, a grouping over another,
+/// crosses the first's partitions: it groups by some columns, its set
+/// functions are COUNT alone, and a projection lies between them or it
+/// groups by a column other than the first's grouping columns. Its
+/// partitions are then the first's, by its whole key, each partition's
+/// thread groups its own groups of the first again, and the statement's
+/// thread merges each group's counts of the partitions, of no more groups
+/// than the second's of each. A count is the same whatever order its
+/// rows are counted in, so the merge gives what the serial grouping gives.
+pub(crate) fn crosses(plan: &Plan) -> bool {
+    let Plan::Aggregate { groups, aggs, input, .. } = plan else { return false };
+    let (steps, below) = between(input, 0);
+    let first = if let Plan::Counted(c) = below { &c.input } else { below };
+    let Plan::Aggregate { groups: keys, .. } = first else { return false };
+    let counts = aggs.iter().all(|a| a.func.0.columnar().is_some_and(|c| c.0 == crate::functions::ColumnarKind::Count));
+    let within = steps.is_empty() && groups.iter().all(|g| *g < keys.len());
+    !groups.is_empty() && counts && !within
+}
+
+/// The projections of `plan`'s rows down from it, the nearest first, and
+/// the operator under them, `depth` down; past `MAX_DEPTH` none more.
+pub(crate) fn between(plan: &Plan, depth: usize) -> (Vec<&[Expr]>, &Plan) {
+    let Plan::Project { exprs, input, .. } = plan else { return (Vec::new(), plan) };
+    if depth >= MAX_DEPTH {
+        return (Vec::new(), plan);
+    }
+    let (mut steps, below) = between(input, depth.saturating_add(1));
+    steps.insert(0, exprs);
+    (steps, below)
+}
+
+/// The rows a part rooted at `plan` reads, if it is one, its filters'
+/// subqueries judged of `db`'s tables if given (`stream_in`).
+fn rooted(plan: &Plan, db: Option<&State>) -> Option<usize> {
     if let Some(first) = first_level(plan) {
-        return rooted(first);
+        return rooted(first, db);
     }
     // A streamed grouping or DISTINCT reads its input in order, a group
     // at a time, which no morsel's table of groups does (RULES.md D550).
     if let Plan::Aggregate { aggs, input, streamed: false, .. } = plan {
-        return mergeable(aggs).then(|| stream(input)).flatten();
+        return mergeable(aggs).then(|| stream_in(input, db)).flatten();
     }
     if let Plan::Distinct { input, streamed: false, .. } = plan {
-        return stream(input);
+        return stream_in(input, db);
     }
     // A HAVING condition over a grouping that is a part is judged of each
     // group by the part's threads (RULES.md D1073).
     if let Plan::Filter { cond, input, .. } = plan
         && matches!(**input, Plan::Aggregate { streamed: false, .. })
     {
-        return (calm_cond(cond) && !cond.can_raise()).then(|| rooted(input)).flatten();
+        return (calm_cond(cond) && !cond.can_raise()).then(|| rooted(input, db)).flatten();
     }
     if let Plan::Sort { input, most, .. } = plan {
-        return most.is_none_or(|m| !m.ties).then(|| stream(input)).flatten();
+        return most.is_none_or(|m| !m.ties).then(|| stream_in(input, db)).flatten();
     }
     if let Plan::Window { window, .. } = plan {
         let Plan::Sort { input, most: None, .. } = &window.input else { return None };
         let calm_calls = window.exprs().all(calm) && window.conds().all(calm_cond);
-        return (calm_calls && !window.partition.is_empty()).then(|| stream(input)).flatten();
+        return (calm_calls && !window.partition.is_empty()).then(|| stream_in(input, db)).flatten();
     }
     if let Plan::SetOp { op: SetOp::Except | SetOp::Intersect, left, right, .. } = plan {
-        return Some(stream(left)?.saturating_add(stream(right)?));
+        return Some(stream_in(left, db)?.saturating_add(stream_in(right, db)?));
     }
-    stream(plan)
+    stream_in(plan, db)
 }
 
 /// The rows the stream `plan` reads, if it is one: a pipeline, its rows
 /// in their order, morsel by morsel.
 pub(crate) fn stream(plan: &Plan) -> Option<usize> {
+    stream_in(plan, None)
+}
+
+/// As `stream`, a filter whose scalar subqueries are bound before the
+/// part's morsels start taken as a step of it, if `db` is given to judge
+/// them of (`bound_calm`).
+fn stream_in(plan: &Plan, db: Option<&State>) -> Option<usize> {
     if let Plan::SeqScan { order, located, rows, .. } = plan {
         return (order.is_empty() && !located).then_some(*rows);
     }
@@ -323,26 +369,27 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
         return (!matches!(probe, Probe::Xml(_) | Probe::Predicate { .. })).then(|| rows_of(*est));
     }
     if let Plan::Filter { cond, input, .. } = plan {
-        return calm_cond(cond).then(|| stream(input)).flatten();
+        let calm = calm_cond(cond) || db.is_some_and(|db| bound_calm(cond, db));
+        return calm.then(|| stream_in(input, db)).flatten();
     }
     if let Plan::Project { exprs, input, .. } = plan {
-        return exprs.iter().all(calm).then(|| stream(input)).flatten();
+        return exprs.iter().all(calm).then(|| stream_in(input, db)).flatten();
     }
     if let Plan::HashJoin { left, .. } = plan {
-        return stream(left);
+        return stream_in(left, db);
     }
     // A LEFT join's probe on its keys alone is a step of its left's
     // pipeline (RULES.md D1076).
     if let Plan::OuterJoin { kind: OuterJoin::Left, left, keys, cond: None, own: None, .. } = plan {
-        return (!keys.is_empty()).then(|| stream(left)).flatten();
+        return (!keys.is_empty()).then(|| stream_in(left, db)).flatten();
     }
     // A hashed semi join's or antijoin's probe is a step of its left's
     // pipeline (RULES.md D1075).
     if let Plan::SemiJoin(s) = plan {
-        return (s.method == SemiMethod::Hash && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream(&s.left)).flatten();
+        return (s.method == SemiMethod::Hash && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream_in(&s.left, db)).flatten();
     }
     let Plan::Append { left, right, .. } = plan else { return None };
-    Some(stream(left)?.saturating_add(stream(right)?))
+    Some(stream_in(left, db)?.saturating_add(stream_in(right, db)?))
 }
 
 /// \[DESIGN\] Whether the part `plan` reads a table kept by column with
@@ -407,127 +454,29 @@ fn calm(e: &Expr) -> bool {
 }
 
 /// Whether a worker evaluates `c` alone, as `calm` says of expressions.
-fn calm_cond(c: &Cond) -> bool {
+pub(crate) fn calm_cond(c: &Cond) -> bool {
     let mut all = c.subqueries().is_empty();
     c.for_each_expr(&mut |e| all = all && calm(e));
     all
 }
 
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::*;
-    use crate::value::{Decimal, Value};
-
-    /// Verifies: [DESIGN] RULES.md D1128: a plan reads its input whole
-    /// before its first row if it is a grouping or DISTINCT not streamed,
-    /// or a sort, under any projections and filters; a streamed grouping
-    /// or DISTINCT, or a projection of rows as they come, does not, so a
-    /// run that stops at its first rows keeps it as it is.
-    #[test]
-    fn a_plan_reads_whole_first_under_a_grouping_a_distinct_or_a_sort() {
-        let values = || Box::new(Plan::Values { rows: Vec::new(), detail: String::new() });
-        let distinct = |streamed: bool| Plan::Distinct { input: values(), est: 0.0_f64, streamed };
-        let project = |input: Plan| Plan::Project { exprs: Vec::new(), detail: String::new(), input: Box::new(input) };
-        let filter = |input: Plan| {
-            let cond = Cond::Const(crate::logical::Truth::True);
-            Plan::Filter { cond, detail: String::new(), est: 0.0_f64, of_read: false, input: Box::new(input) }
-        };
-        let aggregate = |streamed: bool| {
-            let (groups, collations, aggs, seeds) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-            Plan::Aggregate { groups, collations, aggs, seeds, detail: String::new(), input: values(), est: 0.0_f64, streamed }
-        };
-        assert!(whole_first(&distinct(false), 0));
-        assert!(!whole_first(&distinct(true), 0), "streamed, it gives rows as it reads them");
-        assert!(whole_first(&aggregate(false), 0));
-        assert!(!whole_first(&aggregate(true), 0), "streamed, it gives groups as it reads them");
-        assert!(whole_first(&Plan::Sort { keys: Vec::new(), detail: String::new(), input: values(), most: None }, 0));
-        assert!(whole_first(&project(filter(distinct(false))), 0), "under a projection and a filter");
-        assert!(!whole_first(&project(*values()), 0), "a projection of rows as they come");
-        assert!(!whole_first(&project(distinct(false)), MAX_DEPTH), "past the depth walked, none is found");
-        // A run that stops at its first rows keeps such a plan as it is.
-        let db = crate::db::Database::new();
-        let state = db.snapshot().unwrap();
-        assert!(matches!(parallel_run(&state, project(*values()), false), Plan::Project { .. }));
-    }
-
-    /// Verifies: [DESIGN] RULES.md D1166: an estimate past what a `u32`
-    /// holds is its own ceiling as a count, the most a count holds only
-    /// of one reaching it, never of any past 2^32.
-    #[test]
-    fn an_estimate_past_a_u32_is_counted_as_itself() {
-        assert_eq!(rows_of(4_294_967_295.5_f64), 4_294_967_296);
-        assert_eq!(rows_of(5.0e9_f64), 5_000_000_000);
-        assert_eq!(rows_of(1.0e18_f64), 1_000_000_000_000_000_000);
-        assert_eq!(rows_of(1.0e19_f64), usize::MAX >> 1_u32);
-        assert_eq!(rows_of(f64::INFINITY), usize::MAX >> 1_u32);
-        assert_eq!(rows_of(f64::NAN), 1);
-    }
-
-    /// An aggregation by `groups` of `input`, computing `aggs`, of
-    /// `seeds`, streamed or not.
-    fn grouping(groups: Vec<usize>, (aggs, seeds): (Vec<AggCall>, Vec<Vec<Value>>), input: Plan, streamed: bool) -> Plan {
-        let (collations, detail, input, est) = (Vec::new(), String::new(), Box::new(input), 0.0_f64);
-        Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed }
-    }
-
-    /// COUNT of column 0, DISTINCT or not.
-    fn count(distinct: bool) -> AggCall {
-        let func = crate::functions::Registry::with_set_functions().aggregate("COUNT").unwrap();
-        let result = func.0.result_type(None).unwrap();
-        AggCall { func, arg: Some(Expr::Column(0)), distinct, result, filter: None, distribution: None, label: "COUNT".to_owned() }
-    }
-
-    /// Verifies: [DESIGN] RULES.md D1113: a grouping over another is a
-    /// pair a part holds whole if it groups by some of the first's
-    /// grouping columns and no others, an analyzed plan's count between
-    /// them or none; not of no grouping column, of a column past the
-    /// first's grouping columns, of a collation, of groups of empty
-    /// grouping sets of either, of a first streamed, of a DISTINCT set
-    /// function in the second, or of the first's states that do not merge.
-    #[test]
-    fn a_grouping_over_one_holding_its_columns_is_a_pair() {
-        let values = || Plan::Values { rows: Vec::new(), detail: String::new() };
-        let none = || (Vec::new(), Vec::new());
-        let first = |seeds: Vec<Vec<Value>>, streamed: bool| grouping(vec![0, 1], (Vec::new(), seeds), values(), streamed);
-        let pair = |groups: Vec<usize>, aggs: Vec<AggCall>, input: Plan| grouping(groups, (aggs, Vec::new()), input, false);
-        assert!(first_level(&pair(vec![0], vec![count(false)], first(Vec::new(), false))).is_some());
-        assert!(first_level(&pair(vec![1, 0], Vec::new(), first(Vec::new(), false))).is_some(), "of every column, in any order");
-        let count_node = Arc::new(crate::physical::NodeCount::default());
-        let counted = Plan::Counted(Box::new(crate::physical::Counted { count: count_node, input: first(Vec::new(), false) }));
-        assert!(first_level(&pair(vec![0], Vec::new(), counted)).is_some(), "an analyzed plan's count between");
-        assert!(first_level(&pair(Vec::new(), Vec::new(), first(Vec::new(), false))).is_none(), "of no grouping column");
-        assert!(first_level(&pair(vec![2], Vec::new(), first(Vec::new(), false))).is_none(), "of a set function's column");
-        assert!(first_level(&pair(vec![0], Vec::new(), first(vec![vec![Value::Null, Value::Null]], false))).is_none(), "of seeds");
-        assert!(first_level(&grouping(vec![0], (Vec::new(), vec![vec![Value::Null]]), first(Vec::new(), false), false)).is_none());
-        assert!(first_level(&pair(vec![0], Vec::new(), first(Vec::new(), true))).is_none(), "of a first streamed");
-        assert!(first_level(&grouping(vec![0], none(), first(Vec::new(), false), true)).is_none(), "of a second streamed");
-        assert!(first_level(&pair(vec![0], vec![count(true)], first(Vec::new(), false))).is_none(), "of DISTINCT in the second");
-        let unmerged = grouping(vec![0, 1], (vec![count(true)], Vec::new()), values(), false);
-        assert!(first_level(&pair(vec![0], Vec::new(), unmerged)).is_none(), "of the first's states that do not merge");
-        let mut collated = pair(vec![0], Vec::new(), first(Vec::new(), false));
-        if let Plan::Aggregate { collations, .. } = &mut collated {
-            collations.push(None);
-        }
-        assert!(first_level(&collated).is_none(), "of a collation");
-        assert!(first_level(&first(Vec::new(), false)).is_none(), "of a grouping over no grouping");
-    }
-
-    /// Verifies: [DESIGN] RULES.md D405, D682: once a database starts, the
-    /// system's threads are kept, and EXECUTOR.WORKERS of 0 is planned by
-    /// them, however many times and from whichever thread it is asked.
-    #[test]
-    fn workers_of_none_set_are_the_threads_kept_as_a_database_starts() {
-        let db = crate::db::Database::new();
-        let kept = SYSTEM_THREADS.get().copied();
-        assert!(kept.is_some_and(|n| n >= 1), "kept as it started");
-        db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(0, 0))).unwrap();
-        let state = db.snapshot().unwrap();
-        let asked = std::thread::scope(|s| s.spawn(|| workers_of(&state)).join().unwrap());
-        assert_eq!(Some(asked), kept);
-        assert_eq!(Some(workers_of(&state)), kept);
-        db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(3, 0))).unwrap();
-        assert_eq!(workers_of(&db.snapshot().unwrap()), 3, "a setting is what it says");
-    }
+/// \[DESIGN\] (RULES.md D1132) Whether a worker evaluates `c` alone once
+/// its scalar subqueries that read nothing of its rows, and that every
+/// row it judges runs, are made constants on the statement's thread
+/// before the part's morsels start (`exec/parallel/pipeline.rs`): each
+/// such subquery raises no error and no warning, as `quiet` judges it of
+/// `db`'s tables, so running it there is seen by nothing but its value,
+/// and with them made constants `c` is calm.
+fn bound_calm(c: &Cond, db: &State) -> bool {
+    let mut quiet = true;
+    let mut placed = |e: Expr| {
+        let silent = if let Expr::Subquery(s, _) = &e { crate::optimizer::unnesting::quiet(s, db) } else { false };
+        quiet = quiet && silent;
+        Ok(if silent { Expr::Const(Value::Null) } else { e })
+    };
+    crate::exec::bound_by(c, &mut placed).is_ok_and(|bound| quiet && calm_cond(&bound))
 }
+
+// Unit tests of the parts a plan runs in parallel (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

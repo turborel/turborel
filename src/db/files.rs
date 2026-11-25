@@ -575,6 +575,7 @@ impl Database {
         let logged = |s: &&Arc<dyn TableStorage>| s.capabilities().persistence == Persistence::Logged;
         let oldest = snapshot.storage.values().filter(logged).map(|s| s.durable_through()).min().unwrap_or(image.through);
         let (report, mut touched) = if image.clean && oldest >= log.end() {
+            self.settle_closed_loads(mode)?;
             (None, Touched::default())
         } else {
             let from = oldest.min(image.start);

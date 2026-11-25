@@ -36,6 +36,8 @@ use crate::storage::sel::rows_of;
 use crate::storage::{Batch, Column, Mask, Sel};
 use crate::value::{CompOp, LikePattern, Value, constant_pattern};
 
+pub(crate) use bound::bound_by;
+
 /// A conjunct judged over a batch's vectors, of the column at a place of
 /// the batch.
 #[derive(Debug, Clone)]

@@ -83,7 +83,7 @@ pub(super) fn probed(
             let mut told = deferred.filters().to_vec();
             told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told::of(Arc::clone(f), key.left))));
             let left = left_late_batches(left, (db, tx), &deferred.with_told(told))?;
-            return Ok(Box::new(Probe { left, joined, right: Holding::Vectors(*held), places, out, _work: work }));
+            return Ok(Box::new(Probe { left, joined, right: Holding::Vectors(*held), places, out, at: None, _work: work }));
         }
         Read::Rest(rest) => rest,
     };
@@ -97,7 +97,7 @@ pub(super) fn probed(
         let out = Out::new(left_columns.len(), right_columns.clone(), crate::db::kernels::chosen(db));
         let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
         let left = left_batches(left, db, tx)?;
-        return Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, _work: work }));
+        return Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, at: None, _work: work }));
     };
     narrowed((left, rest, keys), (Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) }, places), work, db, tx)
 }
@@ -131,7 +131,7 @@ fn narrowed(
     match Built::of(rest.narrow(), narrow, (&mut work, Full::Partition))? {
         Right::Held(built) => {
             let (out, left) = (Out::new(left_width, rights, crate::db::kernels::chosen(db)), left_batches(left, db, tx)?);
-            Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, _work: work }))
+            Ok(Box::new(Probe { left, joined, right: Holding::Built(built), places, out, at: None, _work: work }))
         }
         Right::Partitioned(parts) => {
             // In no order but the partitions', where none is asked for.
@@ -247,27 +247,42 @@ struct Probe {
     /// column.
     places: Vec<JoinKey>,
     out: Out,
+    /// The left batch probing now, the places of its rows kept, and how
+    /// many of them probed.
+    at: Option<(Batch, Vec<usize>, usize)>,
     /// The work area the right operand is built in, held while it is.
     _work: Work,
 }
 
 impl Probe {
-    /// Probes the right operand with the rows of `batch` at `rows`: held
-    /// as vectors, their keys hashed a vector at a time first; else row by
-    /// row.
-    fn probe(&mut self, batch: &Batch, rows: &[usize]) -> Result<()> {
+    /// \[DESIGN\] (RULES.md D1154) Probes the right operand with the rows
+    /// of `batch` at `rows` from the one at `from`, until a batch of pairs
+    /// is made or they end: how many of them are probed. Held as vectors,
+    /// their keys are hashed a vector at a time first, as the first is
+    /// probed; else row by row. A left batch whose keys each match
+    /// thousands of rows so holds a batch of its pairs and those of one
+    /// row, not all of them at once.
+    fn probe(&mut self, batch: &Batch, rows: &[usize], from: usize) -> Result<usize> {
         if let Holding::Vectors(held) = &mut self.right {
             let left: Vec<usize> = self.places.iter().map(|k| k.left).collect();
-            held.hash_probing((batch, &left), rows)?;
+            if from == 0 {
+                held.hash_probing((batch, &left), rows)?;
+            }
             let probing = std::mem::take(&mut held.probing);
-            let probed = probe_hashed(held, (&mut self.joined, &mut self.out), (batch, &left), (rows, &probing));
+            let probed = probe_hashed(held, (&mut self.joined, &mut self.out), (batch, &left), (rows, &probing, from));
             held.probing = probing;
-            probed?;
-            return held.settle();
+            let probed = probed?;
+            if probed >= rows.len() {
+                held.settle()?;
+            }
+            return Ok(probed);
         }
         let mut values: Vec<Value> = Vec::with_capacity(self.places.len());
         let mut key: Vec<Bucket> = Vec::with_capacity(self.places.len());
-        for &r in rows {
+        for (n, &r) in rows.iter().enumerate().skip(from) {
+            if self.out.ready() {
+                return Ok(n);
+            }
             values.clear();
             values.extend(self.places.iter().map(|k| batch.cell(k.left, r).to_value()));
             let keyed = keyed(&self.places, &values, &mut key)?;
@@ -284,15 +299,16 @@ impl Probe {
                 self.out.push_held(Some(batch), Some(r), None);
             }
         }
-        Ok(())
+        Ok(rows.len())
     }
 }
 
 /// Adds to `out` the pairs `joined` keeps of each left row of `batch` at
-/// `rows` and the rows of `held` of its key, its key columns at `left`,
-/// their hashes `probing`: each row's in the order they were built, and
-/// of a LEFT join, a row none matches with nulls [ISO/IEC 9075:1992 §7.5
-/// GR4, GR5b].
+/// `rows` from the one at `from`, until a batch of pairs is made, and the
+/// rows of `held` of its key, its key columns at `left`, their hashes
+/// `probing`: each row's in the order they were built, and of a LEFT
+/// join, a row none matches with nulls [ISO/IEC 9075:1992 §7.5 GR4,
+/// GR5b]. How many of `rows` are probed.
 ///
 /// # Errors
 ///
@@ -301,9 +317,12 @@ fn probe_hashed(
     held: &HeldRight,
     (joined, out): (&mut Joined, &mut Out),
     (batch, left): (&Batch, &[usize]),
-    (rows, probing): (&[usize], &KeyHashes),
-) -> Result<()> {
-    for ((&r, &h), &miss) in rows.iter().zip(&probing.hashes).zip(&probing.misses) {
+    (rows, probing, from): (&[usize], &KeyHashes, usize),
+) -> Result<usize> {
+    for (n, ((&r, &h), &miss)) in rows.iter().zip(&probing.hashes).zip(&probing.misses).enumerate().skip(from) {
+        if out.ready() {
+            return Ok(n);
+        }
         let mut found = false;
         for p in held.candidates(h).filter(|_| !miss) {
             let equal = held.matches((batch, left, r), p)?;
@@ -316,7 +335,7 @@ fn probe_hashed(
             out.push_held(Some(batch), Some(r), None);
         }
     }
-    Ok(())
+    Ok(rows.len())
 }
 
 /// Whether the key `values` of `keys` has a bucket, put in `key`: none if
@@ -381,13 +400,23 @@ impl Iterator for Probe {
             if let Some(given) = self.out.next() {
                 return Some(given);
             }
-            let (batch, rows) = match self.left.next()? {
-                Ok(kept) => kept,
-                Err(e) => return Some(Err(e)),
+            let Some((batch, rows, from)) = self.at.take() else {
+                let (batch, rows) = match self.left.next()? {
+                    Ok(kept) => kept,
+                    Err(e) => return Some(Err(e)),
+                };
+                let rows = kept_rows(rows, batch.rows);
+                self.at = Some((batch, rows, 0));
+                continue;
             };
-            let rows = kept_rows(rows, batch.rows);
-            let done = self.probe(&batch, &rows);
-            self.out.settle(Some(&batch), done);
+            let done = self.probe(&batch, &rows, from);
+            if let Ok(probed) = done
+                && probed < rows.len()
+            {
+                self.at = Some((batch, rows, probed));
+            } else {
+                self.out.settle(Some(&batch), done.map(|_| ()));
+            }
         }
     }
 }

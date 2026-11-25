@@ -111,6 +111,21 @@ fn a_full_buffer_is_written() {
     assert_eq!(bytes_of(&*beside, 0, 28), b"abcdefghijklmnopqr0123456789");
 }
 
+/// Verifies: [DESIGN] RULES.md D1141, a record as long as the buffer goes
+/// to the file after what is held: a segment's header held, then a record
+/// longer than the buffer, leaves the file holding both, the header first,
+/// though nothing synced it. A regression test (R-TEST-7) that fails if
+/// such a record goes to the file alone: the process then failing leaves
+/// a segment whose header reads as zeros, which the log cannot open.
+#[test]
+fn a_long_record_goes_to_the_file_after_what_is_held() {
+    let (file, beside, writes, _) = buffered(8);
+    file.write_all_at(b"HEAD", 0).unwrap();
+    file.write_all_at(b"0123456789", 4).unwrap();
+    assert_eq!(writes.load(Ordering::SeqCst), 2, "the header, then the record");
+    assert_eq!(bytes_of(&*beside, 0, 14), b"HEAD0123456789");
+}
+
 /// Verifies: [DESIGN] RULES.md D921, writes apart are held apart, nothing
 /// held for the bytes between them, which the file keeps; a write as long
 /// as the buffer, as zeros written ahead, goes to the file and leaves what

@@ -4,8 +4,9 @@
 //! subquery with no outer reference made a constant as its first row is
 //! judged (D1127), a subquery run once planned with its parts in parallel
 //! (D1128), and a grouping a filter's input and its subqueries compute
-//! alike computed once (D1129), and a chunk's texts judged UTF-8 once and
-//! strings looked for among a list's in order (D1131).
+//! alike computed once (D1129), a chunk's texts judged UTF-8 once and
+//! strings looked for among a list's in order (D1131), and a filter's
+//! quiet scalar subqueries bound before a part's morsels (D1132).
 
 use super::super::{Mutation, Package};
 
@@ -16,8 +17,22 @@ const LISTED: &str = "exec::batch::expr::tests::in_a_list_of_strings_is_judged_o
 /// A filter holding a subquery, by batch and a row at a time.
 const BOUND: &str = "batch_exprs::a_filter_s_subquery_of_no_outer_reference_is_run_once_as_rows_run_it";
 
+/// The judgment of a set function's nulls and of what raises.
+const QUIET_NULLS: &str = "optimizer::unnesting::quiet::tests::a_set_function_of_a_filled_column_is_quiet_and_one_of_nulls_is_not";
+/// The judgment of what raises.
+const QUIET_RAISES: &str = "optimizer::unnesting::quiet::tests::a_subquery_that_may_raise_is_not_quiet";
+/// A quiet subquery's filter in a part, the others serial.
+const QUIET_PART: &str = "optimizer::unnesting::quiet::tests::a_filter_of_a_quiet_subquery_runs_in_parallel_and_others_do_not";
+
+/// A quiet subquery bound as a pipeline is made.
+const SETTLED: &str = "exec::parallel::pipeline::tests::a_quiet_subquery_is_bound_before_the_morsels";
+/// A quiet subquery joined only to probe an index.
+const UNJOINED: &str = "optimizer::unnesting::quiet::tests::a_quiet_subquery_is_joined_only_to_probe_an_index";
+/// SUBSTRING's bounds judged.
+const SUBSTRING_FREE: &str = "logical::raises::tests::a_substring_of_constant_bounds_raises_nothing";
+
 /// Mechanisms of the work done once whose removal must fail their tests.
-pub const SHARED_WORK: [Mutation; 9] = [
+pub const SHARED_WORK: [Mutation; 17] = [
     Mutation {
         name: "substring-vector-slice-end",
         package: Package::Core,
@@ -107,5 +122,85 @@ pub const SHARED_WORK: [Mutation; 9] = [
         replacement: "",
         integration: &[],
         unit: &[LISTED],
+    },
+    Mutation {
+        name: "quiet-nulls-unjudged",
+        package: Package::Core,
+        breaks: "a set function of a column that may hold a null is taken to warn of nothing (D1132)",
+        file: "src/optimizer/unnesting/quiet.rs",
+        original: "                Some(Expr::Column(c)) => filled(input, *c, catalog, 0),",
+        replacement: "                Some(Expr::Column(_)) => true,",
+        integration: &[],
+        unit: &[QUIET_NULLS],
+    },
+    Mutation {
+        name: "quiet-raises-unjudged",
+        package: Package::Core,
+        breaks: "a subquery whose plan may raise is taken to raise nothing (D1132)",
+        file: "src/optimizer/unnesting/quiet.rs",
+        original: "    silent && !plan_raises(&s.plan, &RuleContext { db })",
+        replacement: "    silent && plan_raises(&s.plan, &RuleContext { db }) == plan_raises(&s.plan, &RuleContext { db })",
+        integration: &[],
+        unit: &[QUIET_RAISES],
+    },
+    Mutation {
+        name: "quiet-rows-unjudged",
+        package: Package::Core,
+        breaks: "a subquery that may give two rows is taken to raise nothing (D1132)",
+        file: "src/optimizer/unnesting/quiet.rs",
+        original: "s.outer.is_empty() && s.plan.one_row_at_most() && ",
+        replacement: "s.outer.is_empty() && ",
+        integration: &[],
+        unit: &[QUIET_RAISES],
+    },
+    Mutation {
+        name: "quiet-filter-serial",
+        package: Package::Core,
+        breaks: "a filter of quiet subqueries stays off the part below it (D1132)",
+        file: "src/physical/parallel.rs",
+        original: "        let calm = calm_cond(cond) || db.is_some_and(|db| bound_calm(cond, db));",
+        replacement: "        let calm = calm_cond(cond) || db.is_some_and(|db| bound_calm(cond, db) && false);",
+        integration: &[],
+        unit: &[QUIET_PART],
+    },
+    Mutation {
+        name: "quiet-filter-nulls-unjudged",
+        package: Package::Core,
+        breaks: "a column a filter below a set function compares is taken to may hold a null (D1132)",
+        file: "src/optimizer/unnesting/quiet.rs",
+        original: "        return conjuncts.iter().any(|c| rejects(c, column)) || filled(input, column, catalog, deeper);",
+        replacement: "        return filled(input, column, catalog, deeper);",
+        integration: &[],
+        unit: &[QUIET_NULLS],
+    },
+    Mutation {
+        name: "substring-length-unjudged",
+        package: Package::Core,
+        breaks: "a SUBSTRING of a negative constant length is taken to raise nothing (D1132)",
+        file: "src/functions/strings.rs",
+        original: "        [c, from, length] => string(c) && whole(from, i128::MIN) && whole(length, 0),",
+        replacement: "        [c, from, length] => string(c) && whole(from, i128::MIN) && whole(length, i128::MIN),",
+        integration: &[],
+        unit: &[SUBSTRING_FREE],
+    },
+    Mutation {
+        name: "pipeline-subquery-unbound",
+        package: Package::Core,
+        breaks: "a filter's quiet subquery is left for each morsel to run, not bound once before them (D1132)",
+        file: "src/exec/parallel/pipeline.rs",
+        original: "            return eval(&e, &none, &runner).map(Expr::Const);",
+        replacement: "            return Ok(e);",
+        integration: &[],
+        unit: &[SETTLED],
+    },
+    Mutation {
+        name: "quiet-subquery-joined",
+        package: Package::Core,
+        breaks: "a comparison with a quiet subquery of no index to probe is made a semi join (D1132)",
+        file: "src/optimizer/unnesting/scalar.rs",
+        original: "    uses_all && (!super::quiet(sub, ctx.db) || probed())",
+        replacement: "    uses_all",
+        integration: &[],
+        unit: &[UNJOINED],
     },
 ];
