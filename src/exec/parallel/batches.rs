@@ -19,7 +19,7 @@ use super::run::Morsels;
 use super::{Held, Limit};
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{Batches, Kept, gathered, rows_of};
+use crate::exec::batch::{Batches, gathered, rows_of};
 use crate::physical::Plan;
 use crate::settings::EXECUTOR_MORSEL_ROWS;
 use crate::txn::TxId;

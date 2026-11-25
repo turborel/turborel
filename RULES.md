@@ -19662,8 +19662,9 @@ that morsel's read as its thread left it, after the rows the thread
 gathered, a row or a batch at a time, holding none, while the threads go
 on with those after it. It never reads the morsel again, since a split's
 part is read once: an index scan's entries are taken by the morsel that
-reads them. A sort writes it to its runs as it reads it; a window's
-or a set operation's partitions put its rows in their lists, which
+reads them. A sort writes the rows its thread gathered and then the
+rest of that read to its runs, or the morsel's run if it outgrew the
+grant only once sorted; a window's or a set operation's partitions put its rows in their lists, which
 spill; a join's build gives way to the serial join, which partitions.
 A grouping's morsel is fed its rows as they are made and holds its
 groups alone. Every answer, and its order, is the one the plan gives
