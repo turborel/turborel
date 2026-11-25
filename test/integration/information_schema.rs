@@ -59,8 +59,8 @@ fn tables_and_columns_are_described_21_2_7() {
     let own = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'INFORMATION_SCHEMA'";
     assert_eq!(
         seen(&db.session("NOBODY"), own),
-        ["171"],
-        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 10 of usage, the 6 of what is supported, the 3 of registered XML Schemas, the 47 short name views, the 8 of property graphs, GRAPH_STATISTICS among them, the 2 of node and edge tables, the 2 of graph types and GQL graphs, GRAPH_ALGO_RUNS, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, ADJACENCY_INDEXES, PARTITIONED_TABLES, PARTITIONS, PARTITION_INDEXES, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS, STATEMENT_STATISTICS, TABLE_STATISTICS, INDEX_STATISTICS, COLUMN_STATISTICS, the 4 of embedding models and pipelines, the 2 of vectors, the 3 of extensions, HOST_PLUGINS and the 3 of backups"
+        ["172"],
+        "24 views, ELEMENT_TYPES, FIELDS, the 6 views of user-defined types and routines, the 7 of structured types, the 9 of roles, the 6 of triggers, the 5 of modules, the 10 of usage, the 6 of what is supported, the 3 of registered XML Schemas, the 47 short name views, the 8 of property graphs, GRAPH_STATISTICS among them, the 2 of node and edge tables, the 2 of graph types and GQL graphs, GRAPH_ALGO_RUNS, TABLE_OPTIONS, PERIODS, INDEXES, INDEX_OPTIONS, ADJACENCY_INDEXES, PARTITIONED_TABLES, PARTITIONS, PARTITION_INDEXES, INFORMATION_SCHEMA_CATALOG_NAME, SETTINGS, USERS, MEMORY_RESERVATIONS, JOBS, FILES, FILE_FORMATS, ASSERTION_TOTALS, STATEMENT_STATISTICS, TABLE_STATISTICS, INDEX_STATISTICS, COLUMN_STATISTICS, COLUMN_STORAGE, the 4 of embedding models and pipelines, the 2 of vectors, the 3 of extensions, HOST_PLUGINS and the 3 of backups"
     );
     assert_eq!(
         seen(&owner, "SELECT CATALOG_NAME, SCHEMA_NAME, DEFAULT_CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.SCHEMATA"),

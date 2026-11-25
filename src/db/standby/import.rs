@@ -30,7 +30,8 @@ const PIECE: usize = 1 << 20;
 
 /// Removes the files of `dir` that hold the database's state, the
 /// export's replacing them: the data file and its side files, the
-/// plug-ins' and the catalog's; the log's and the lock stay.
+/// plug-ins', the catalog's and the mark of running; the log's and the
+/// lock stay.
 ///
 /// # Errors
 ///
@@ -38,7 +39,9 @@ const PIECE: usize = 1 << 20;
 pub(in crate::db) fn clear_state_files(fs: &dyn FileSystem, dir: &Path) -> Result<()> {
     for path in walk(fs, dir)? {
         let within = path.strip_prefix(dir).unwrap_or(&path);
-        let replaced = matches!(FileKind::of(within), FileKind::Data | FileKind::Shadow | FileKind::Plugin | FileKind::Catalog);
+        let kind = FileKind::of(within);
+        // The mark of running too: of the state replaced, not the export's.
+        let replaced = matches!(kind, FileKind::Data | FileKind::Shadow | FileKind::Plugin | FileKind::Catalog | FileKind::Opened);
         if replaced && within != Path::new(LOCK) {
             fs.remove(&path)?;
         }

@@ -43,8 +43,10 @@
 //! leaving none of a zone's versions to collect, or taking out a
 //! deletion, unsettles it again; a version whose index entries it could
 //! not take back is left to collect until they are
-//! (`TableStorage::taken_back`). Kept in memory alone: a table opened
-//! has every zone unsettled, of tables that keep no column too.
+//! (`TableStorage::taken_back`). Kept in memory, and with the zone
+//! where its segment is saved: a table opened has a zone saved settled
+//! visible so, every other unsettled, of tables that keep no column too
+//! (`zones/saved.rs`, RULES.md D1163).
 //!
 //! Once a pass of the maintenance thread has looked at every zone due,
 //! the zones rest for `REST`, asking for no maintenance, so writes going

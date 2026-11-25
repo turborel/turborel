@@ -257,6 +257,15 @@ passes the most rows the most frequent values could give. A query with a conditi
 a division can, is planned in the greedy order described next, which
 keeps the errors raised the same whatever the order.
 
+A hash join's keys need not be columns. An equality of an expression
+of one table's columns with one of the other's, as
+`Q.K = X.TAG + X.K` or `Q.D = CAST(X.K AS DECIMAL(12,2))`, is a hash
+join on the two values, each computed once a row of its table, not once
+a pair. EXPLAIN shows the computed key as a column of a projection
+under the join. The expressions must be deterministic and hold no
+subquery, and the condition must raise no error by the columns'
+declared types, as a sum of two INTEGER columns cannot.
+
 A range join answers a condition that compares a value of each table
 by order, as a band `A.X BETWEEN B.Y - 5 AND B.Y + 5` or the overlap of
 two periods does, without judging every pair. It sorts one table once by

@@ -57,7 +57,7 @@ const BITS_PER_KEY: usize = 8;
 /// \[DESIGN\] (RULES.md D600) The most distinct keys a filter holds as a
 /// set: a row's found by halving in a dozen steps, about a Bloom
 /// filter's hash and read.
-pub(in crate::exec) const KEYSET_MAX: usize = 4_096;
+const KEYSET_MAX: usize = 4_096;
 
 /// \[DESIGN\] (RULES.md D600) The most spans of more keys a scan is told:
 /// enough to skip what lies in their widest gaps, few enough that a zone
@@ -249,6 +249,18 @@ impl RuntimeFilter {
         }
         let keys = self.keys.as_ref()?;
         Some(Box::new(move |u: i64| at_scale(u, from, scale).is_some_and(|k| keys.binary_search(&k).is_ok())))
+    }
+
+    /// \[DESIGN\] (RULES.md D1087) The places among `hashes`, a join's
+    /// probing keys hashed as its table hashes them, whose keys its Bloom
+    /// filter may hold, in order, counted toward whether it pays; none if
+    /// it has no Bloom filter or no longer judges.
+    pub(in crate::exec) fn screened(&self, hashes: &[u64], kernels: &dyn Kernels) -> Option<Vec<u32>> {
+        let words = self.bloom.as_ref().filter(|_| self.judging())?;
+        let mut held = Vec::with_capacity(hashes.len());
+        kernels.bloom_probe(words, hashes, &mut held);
+        self.count((hashes.len(), held.len()));
+        Some(held)
     }
 
     /// Counts a batch judged, of `judged` rows of which it kept `kept`.

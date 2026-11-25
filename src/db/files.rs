@@ -43,8 +43,8 @@
 //!
 //! Either way, a table its engine cannot reopen is made anew and its rows
 //! replayed from the log, and an index its method cannot reopen is built
-//! from its table. Before anything else runs, the catalog file records the
-//! image again, not clean, so a crash from then on is recovered.
+//! from its table. Before anything else runs, one recovered records the
+//! image again, not clean; one reopened marks itself running (`running.rs`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -79,6 +79,7 @@ use crate::txn::Persistence;
 use crate::value::Value;
 
 mod reopening;
+mod running;
 use reopening::undo_log;
 
 const DATA: &str = "data";
@@ -353,7 +354,7 @@ impl Database {
             snapshot.keep_plugins_in(&place)?;
             return self.create_files(&place, &started, mode);
         };
-        let image = found.last().map(|record| Image::decode(&record, &snapshot.types)).transpose()?;
+        let image = running::as_left(fs, dir, found.last().map(|record| Image::decode(&record, &snapshot.types)).transpose()?)?;
         let recorded = |name: &str| image.as_ref().and_then(|i| i.snapshot.setting(name)).cloned();
         let values = snapshot.recorded(&recorded)?;
         let mut layout = snapshot.layout(&values)?;
@@ -373,7 +374,7 @@ impl Database {
         // again: the one given before it opened, else the one recorded.
         snapshot.memory.set_limit(crate::settings::budget_bytes(values.get(crate::settings::MEMORY_BUDGET_BYTES)));
         let (image, opened) = self.reopen_or_recover(&place, image, (&*log, cut), mode)?;
-        catalog.record(&Image { clean: false, ..image }.encode(), self.snapshot()?.compact_after())?;
+        running::begun((fs, dir), (&*catalog, self.snapshot()?.compact_after()), (opened, &image))?;
         self.set_log(log)?;
         self.attach_files(place.files(catalog))?;
         self.opened(&started, mode)?;
@@ -574,6 +575,7 @@ impl Database {
         let logged = |s: &&Arc<dyn TableStorage>| s.capabilities().persistence == Persistence::Logged;
         let oldest = snapshot.storage.values().filter(logged).map(|s| s.durable_through()).min().unwrap_or(image.through);
         let (report, mut touched) = if image.clean && oldest >= log.end() {
+            self.settle_closed_loads(mode)?;
             (None, Touched::default())
         } else {
             let from = oldest.min(image.start);

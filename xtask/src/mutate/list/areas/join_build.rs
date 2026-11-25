@@ -11,7 +11,11 @@
 //! keys of scales apart or of matching nulls paired as values, and a
 //! row's matches in the order built; of D1084, integers known as runs
 //! judged of the rows asked of alone, a run no row asks of left unjudged,
-//! and a null of a run kept never.
+//! and a null of a run kept never; of D1086, a join on keys computed of
+//! each operand's columns, and only of deterministic ones; of D1087, a
+//! probe of a table past a thread's share of the cache screened by its
+//! Bloom filter on the kernels, and a semi join of many held keys
+//! filtering its right.
 
 use super::super::{Mutation, Package};
 
@@ -41,14 +45,20 @@ const RUNS: &str = "src/storage/batch/runs.rs";
 /// The test of rows kept by runs.
 const BY_RUNS: &str = "storage::batch::runs::tests::rows_kept_by_runs_are_the_rows_judged_one_at_a_time";
 
-pub const JOIN_BUILD: [Mutation; 17] = [
+/// The file of a join on computed keys.
+const COLLATED: &str = "src/physical/collated.rs";
+
+/// The test of joins on computed keys.
+const COMPUTED: &str = "computed_keys::an_equality_of_computed_keys_is_a_hash_join";
+
+pub const JOIN_BUILD: [Mutation; 23] = [
     Mutation {
         name: "probe-units-reversed",
         package: Package::Core,
         breaks: "a key paired in its units gives a row's matches in the order they were built (D1083)",
-        file: PAIRED,
-        original: "                for &p in self.table.rows_of(key) {",
-        replacement: "                for &p in self.table.rows_of(key).iter().rev() {",
+        file: "src/exec/batch/joined/shared/probing.rs",
+        original: "            for &p in table.table.rows_of(key).get(self.seen..).unwrap_or_default() {",
+        replacement: "            for &p in table.table.rows_of(key).get(self.seen..).unwrap_or_default().iter().rev() {",
         integration: &[],
         unit: &["exec::batch::joined::shared::paired::tests::a_key_of_integers_paired_in_its_units_pairs_as_values_do"],
     },
@@ -56,9 +66,9 @@ pub const JOIN_BUILD: [Mutation; 17] = [
         name: "probe-units-null-pairs",
         package: Package::Core,
         breaks: "a null probing row of a key paired in its units pairs with no row (D1083)",
-        file: PAIRED,
-        original: "probe.units.get(r).filter(|_| !probe.is_null(r)) else { continue };",
-        replacement: "probe.units.get(r) else { continue };",
+        file: "src/exec/batch/joined/shared/probing.rs",
+        original: "probe.units.get(r).filter(|_| !probe.is_null(r)) else { return Ok(true) };",
+        replacement: "probe.units.get(r) else { return Ok(true) };",
         integration: &[],
         unit: &[AS_VALUES],
     },
@@ -211,5 +221,65 @@ pub const JOIN_BUILD: [Mutation; 17] = [
         replacement: "            (None, Some(_)) => out.extend(places()),",
         integration: &[],
         unit: &[BY_RUNS],
+    },
+    Mutation {
+        name: "computed-keys-unlifted",
+        package: Package::Core,
+        breaks: "an equality of an expression of each operand's columns is a hash join on the computed keys (D1086)",
+        file: COLLATED,
+        original: "    match (of_left(first, width)?, of_left(second, width)?) {",
+        replacement: "    match (of_left(first, width)?, of_left(first, width)?) {",
+        integration: &[COMPUTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "computed-keys-impure",
+        package: Package::Core,
+        breaks: "a key of an expression that is not deterministic is not computed once a row (D1086)",
+        file: COLLATED,
+        original: "    if !e.all_subqueries().is_empty() || !expr_pure(e) {",
+        replacement: "    if !e.all_subqueries().is_empty() {",
+        integration: &[],
+        unit: &["physical::collated::tests::keys_computed_of_each_operands_columns_are_equated"],
+    },
+    Mutation {
+        name: "computed-keys-outer-raising",
+        package: Package::Core,
+        breaks: "an outer join's condition that can raise has no key computed under the join (D1086)",
+        file: "src/physical/join.rs",
+        original: "        let raises = cond.can_raise() && self.cond_raises(cond, (left, right));",
+        replacement: "        let raises = false;",
+        integration: &[COMPUTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "probe-screen-never",
+        package: Package::Core,
+        breaks: "a probe of a table past a thread's share of the cache is screened by its Bloom filter (D1087)",
+        file: "src/exec/batch/joined/shared.rs",
+        original: "|| self.table.bytes() <= SCREENED_BYTES {",
+        replacement: "|| self.table.bytes() > 0 {",
+        integration: &[],
+        unit: &["exec::parallel::build::tests::probes_screened_by_the_bloom_filter_pair_as_every_probe"],
+    },
+    Mutation {
+        name: "marked-filter-few-keys",
+        package: Package::Core,
+        breaks: "a semi join of more held keys than a filter lists filters its right (D1087)",
+        file: "src/exec/batch/joined/semi/marked.rs",
+        original: "        if !runtime::wanted(db) || in_order(read) {",
+        replacement: "        if !runtime::wanted(db) || in_order(read) || self.batch.rows > 4_096 {",
+        integration: &["marked_semi::a_built_left_of_many_keys_filters_its_right"],
+        unit: &[],
+    },
+    Mutation {
+        name: "simd-bloom-keeps-all",
+        package: Package::Simd,
+        breaks: "the vector Bloom probe keeps only the hashes the filter may hold (D1087)",
+        file: "simd/src/x86/bloom.rs",
+        original: "    out.truncate(len.saturating_add(keep));",
+        replacement: "    out.truncate(len.saturating_add(keep | 1));",
+        integration: &[],
+        unit: &["tests::every_available_set_gives_the_portable_results"],
     },
 ];

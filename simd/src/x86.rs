@@ -17,6 +17,7 @@ use turborel::value::CompOp;
 use crate::Level;
 
 mod alp;
+mod bloom;
 mod distance;
 mod hash;
 mod select;
@@ -137,6 +138,16 @@ pub(crate) fn min_max_i64(isa: Isa, values: &[i64], given: Given<'_>) -> Option<
         (Isa::Avx512, (nulls, None)) => sum::min_max_avx512(values, nulls),
         (Isa::Avx2, (nulls, Some(picks))) => sum::min_max_picked(sum::Wide::Avx2, values, (nulls, picks)),
         (Isa::Avx512, (nulls, Some(picks))) => sum::min_max_picked(sum::Wide::Avx512, values, (nulls, picks)),
+    }
+}
+
+/// `Kernels::bloom_probe`: four or eight hashes' words and bits a step
+/// on AVX2 or AVX-512, each tested with no branch (RULES.md D1087).
+pub(crate) fn bloom_probe(isa: Isa, words: &[u64], hashes: &[u64], out: &mut Vec<u32>) {
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::bloom::bloom_probe(words, hashes, out),
+        Isa::Avx2 => bloom::probe_avx2(words, hashes, out),
+        Isa::Avx512 => bloom::probe_avx512(words, hashes, out),
     }
 }
 

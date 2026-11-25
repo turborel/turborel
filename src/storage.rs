@@ -38,8 +38,8 @@ pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of, sized_row};
-pub use rows::{Piece, Pieces};
+pub use rows::{ColumnSizes, Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder};
+pub use rows::{Piece, Pieces, TableSizes, located, project, row_id_of, sized_row};
 pub use split::Split;
 
 use std::sync::Arc;
@@ -245,8 +245,8 @@ pub trait TableStorage: Send + Sync {
     }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
-    /// \[DESIGN\] The bytes it takes, without a pass over its rows (TABLE_STATISTICS, RULES.md D522). Default: not known.
-    fn sizes(&self) -> Option<TableSizes> {
+    /// \[DESIGN\] Its bytes, its `columns`' if asked (TABLE_STATISTICS, COLUMN_STORAGE, D522, D1165). Default: none.
+    fn sizes(&self, _columns: bool) -> Option<TableSizes> {
         None
     }
     /// `tx` is about to read, by `get`, the rows an index chose by `condition`: its result depends on every row the condition

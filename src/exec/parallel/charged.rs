@@ -1,0 +1,538 @@
+//! \[DESIGN\] (RULES.md D1150) What a thread holds of a morsel as it reads
+//! it, charged to the part's work grant as it grows (RULES.md D38, D298).
+//! A morsel's rows are as many as its joins' matches make them, however
+//! few its table gives, so what a thread gathers of one is charged a batch
+//! at a time (`Tally`), and a morsel that outgrows the grant is given up,
+//! what it was charged given back (`Taken::Past`). What reads the part
+//! then does what it does of rows past its grant: a stream reads the rest
+//! of that morsel's own read, a row or a batch at a time, holding none
+//! (`Gathered::Past`, `Flow`), so no morsel is read twice; a
+//! sort writes it to its runs; a window's or a set operation's partitions
+//! put it in their lists, which spill; a join's build gives way to the
+//! plan run alone.
+//!
+//! A morsel's rows gathered are charged until whoever reads them has
+//! taken them, so every morsel gathered and not yet read, as many as run
+//! ahead of the reader (`parallel/run.rs`), is held within the grant. A
+//! stream's are held within the rows its morsels scan too (`Ahead`, RULES.md
+//! D1153), so a result read at a client's pace holds a few morsels' rows.
+//! Before, each was held whole outside it, and a join whose keys each
+//! matched thousands of rows made tens of millions of rows of a morsel.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use super::Limit;
+use super::run::{Morsels, window};
+use crate::error::Result;
+use crate::exec::RowIter;
+use crate::exec::batch::{Batches, Kept};
+use crate::spill::row_bytes;
+use crate::storage::sel::kept_count;
+use crate::storage::{Row, Sel};
+use crate::txn::Stop;
+
+/// What a thread made of a morsel: all of it, with the bytes it holds of
+/// the grant, or nothing, the morsel past the grant.
+pub(super) enum Taken<T> {
+    Whole(T, usize),
+    Past,
+}
+
+/// What a thread gathered of a stream's morsel: all of it, with the bytes
+/// it holds of the grant; or, past the grant or the rows ahead of the
+/// reader, the items it gathered, charged no more, and the rest of the
+/// morsel's read, for the reader to read as it is given. A split's part
+/// is read once (an index scan's entries are taken by the morsel that
+/// reads them), so the reader goes on with the read the thread began.
+pub(super) enum Gathered<T> {
+    Whole(Vec<T>, usize),
+    Past(Vec<T>, Box<dyn Iterator<Item = Result<T>> + Send>),
+}
+
+/// \[DESIGN\] (RULES.md D1153) The rows a stream's morsels gathered and
+/// not yet read hold at most, shared by the threads gathering them: as
+/// many as the morsels a run takes past the one its reader waits for
+/// (`run::window`) scan, so a morsel that gives no more rows than it
+/// scans is gathered whole, and one whose joins multiply them is read
+/// by the reader as it is given. What waits for a reader, a client
+/// taking a result at its pace, so holds rows of a few morsels, however
+/// many its joins make and whatever MEMORY.WORK_BYTES grants; a grant
+/// is for what must hold its input, a build, a sort or a grouping.
+#[derive(Clone)]
+pub(super) struct Ahead {
+    most: usize,
+    held: Arc<AtomicUsize>,
+}
+
+impl Ahead {
+    /// The rows ahead of the reader of a run of `degree` threads over
+    /// morsels of `rows` rows.
+    pub(super) fn of(degree: usize, rows: usize) -> Ahead {
+        Ahead { most: window(degree).saturating_mul(rows.max(1)), held: Arc::new(AtomicUsize::new(0)) }
+    }
+
+    /// Holds `rows` more: whether they fit.
+    fn take(&self, rows: usize) -> bool {
+        let held = self.held.fetch_add(rows, Ordering::AcqRel).saturating_add(rows);
+        held <= self.most
+    }
+
+    /// Gives back `rows` it held.
+    fn give(&self, rows: usize) {
+        let mut seen = self.held.load(Ordering::Acquire);
+        while let Err(now) = self.held.compare_exchange_weak(seen, seen.saturating_sub(rows), Ordering::AcqRel, Ordering::Acquire) {
+            seen = now;
+        }
+    }
+}
+
+/// The bytes one morsel holds of its part's grant, as the thread reading
+/// it counts them, and of a stream's, the rows it holds ahead of the
+/// reader.
+pub(super) struct Tally {
+    limit: Limit,
+    ahead: Option<Ahead>,
+    taken: AtomicUsize,
+    rows: AtomicUsize,
+    past: AtomicBool,
+}
+
+impl Tally {
+    /// A morsel's bytes, none yet, charged to `limit`.
+    pub(super) fn of(limit: &Limit) -> Arc<Tally> {
+        Tally::within(limit, None)
+    }
+
+    /// A morsel's bytes, none yet, charged to `limit`, and its rows held
+    /// of `ahead`, if any.
+    fn within(limit: &Limit, ahead: Option<&Ahead>) -> Arc<Tally> {
+        let (taken, rows, past) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicBool::new(false));
+        Arc::new(Tally { limit: limit.clone(), ahead: ahead.cloned(), taken, rows, past })
+    }
+
+    /// Charges `bytes` more: whether the grant holds them. Once it does
+    /// not, the morsel is past it.
+    pub(super) fn add(&self, bytes: usize) -> bool {
+        self.added(bytes, 0)
+    }
+
+    /// Charges `bytes` and `rows` more: whether the grant holds the bytes
+    /// and the rows ahead of the reader the rows. Once they do not, the
+    /// morsel is past them.
+    fn added(&self, bytes: usize, rows: usize) -> bool {
+        if let Some(ahead) = &self.ahead {
+            if !ahead.take(rows) {
+                ahead.give(rows);
+                self.past.store(true, Ordering::Release);
+                return false;
+            }
+            self.rows.fetch_add(rows, Ordering::AcqRel);
+        }
+        if self.limit.take(bytes) {
+            self.taken.fetch_add(bytes, Ordering::AcqRel);
+            return true;
+        }
+        self.limit.give(bytes);
+        self.past.store(true, Ordering::Release);
+        false
+    }
+
+    /// Whether the morsel outgrew the grant.
+    pub(super) fn past(&self) -> bool {
+        self.past.load(Ordering::Acquire)
+    }
+
+    /// Charges the morsel `bytes` in all, what it holds once made, in
+    /// place of what it was charged while read: whether the grant holds
+    /// them.
+    pub(super) fn settle(&self, bytes: usize) -> bool {
+        let taken = self.taken.swap(0, Ordering::AcqRel);
+        if bytes <= taken {
+            self.limit.give(taken.saturating_sub(bytes));
+            self.taken.store(bytes, Ordering::Release);
+            return !self.past();
+        }
+        self.taken.store(taken, Ordering::Release);
+        self.add(bytes.saturating_sub(taken))
+    }
+
+    /// `made` of the morsel, with the bytes it is charged; or, of a
+    /// morsel past the grant, nothing, its bytes given back.
+    pub(super) fn taken<T>(&self, made: T) -> Taken<T> {
+        if self.past() {
+            self.given_up();
+            return Taken::Past;
+        }
+        Taken::Whole(made, self.taken.swap(0, Ordering::AcqRel))
+    }
+
+    /// Gives back what the morsel was charged, of the grant and of the
+    /// rows ahead of the reader.
+    pub(super) fn given_up(&self) {
+        self.limit.give(self.taken.swap(0, Ordering::AcqRel));
+        if let Some(ahead) = &self.ahead {
+            ahead.give(self.rows.swap(0, Ordering::AcqRel));
+        }
+    }
+}
+
+/// \[DESIGN\] The rows charged to a grant at once: a batch's worth, as a
+/// morsel read by batch is charged a batch at a time, so a thread looks
+/// at the grant shared by every thread once a batch, not once a row.
+const CHARGED_ROWS: usize = crate::storage::BATCH_ROWS;
+
+/// Items of `inner` charged to a tally, every `every` of them at once,
+/// their bytes as `bytes` counts them and their rows as `rows` does, and
+/// what is left once they end;
+/// ended after the item of the first charge the grant does not hold,
+/// which the tally then says (`Tally::past`).
+struct Charged<T> {
+    inner: Box<dyn Iterator<Item = Result<T>> + Send>,
+    tally: Arc<Tally>,
+    bytes: fn(&T) -> usize,
+    rows: fn(&T) -> usize,
+    every: usize,
+    /// The items, their bytes and their rows, given since the last charge.
+    since: (usize, usize, usize),
+    ended: bool,
+}
+
+impl<T> Charged<T> {
+    /// Charges what was given since the last charge: whether it fits.
+    fn charged(&mut self) -> bool {
+        let (_, bytes, rows) = std::mem::take(&mut self.since);
+        (bytes == 0 && rows == 0) || self.tally.added(bytes, rows)
+    }
+}
+
+impl<T> Iterator for Charged<T> {
+    type Item = Result<T>;
+
+    fn next(&mut self) -> Option<Result<T>> {
+        if self.ended {
+            return None;
+        }
+        let Some(item) = self.inner.next() else {
+            self.ended = true;
+            self.charged();
+            return None;
+        };
+        if let Ok(given) = &item {
+            let (items, bytes, rows) = self.since;
+            self.since = (items.saturating_add(1), bytes.saturating_add((self.bytes)(given)), rows.saturating_add((self.rows)(given)));
+            if self.since.0 >= self.every && !self.charged() {
+                self.ended = true;
+            }
+        }
+        Some(item)
+    }
+}
+
+/// `batches`, each charged to `tally` as it is given, the bytes of its
+/// vectors; ended at the first the grant does not hold, which `tally`
+/// then says (`Tally::past`).
+pub(super) fn charged_batches(batches: Batches, tally: &Arc<Tally>) -> Batches {
+    Box::new(batches_charged(batches, tally))
+}
+
+/// `batches` charged to `tally` a batch at a time.
+fn batches_charged(batches: Batches, tally: &Arc<Tally>) -> Charged<Kept> {
+    let bytes: fn(&Kept) -> usize = |(batch, _)| batch.bytes();
+    Charged { inner: batches, tally: Arc::clone(tally), bytes, rows: kept_rows, every: 1, since: (0, 0, 0), ended: false }
+}
+
+/// The rows of a batch a filter kept.
+fn kept_rows((batch, rows): &Kept) -> usize {
+    kept_count(rows.as_ref().map(Sel::as_slice), batch.rows)
+}
+
+/// A row, one row.
+fn one_row(_: &Row) -> usize {
+    1
+}
+
+/// `rows`, charged to `tally` as they are given, `CHARGED_ROWS` at a time;
+/// ended at the first charge the grant does not hold, which `tally` then
+/// says (`Tally::past`).
+pub(super) fn charged_rows(rows: RowIter, tally: &Arc<Tally>) -> RowIter {
+    Box::new(rows_charged(rows, tally))
+}
+
+/// `rows` charged to `tally` `CHARGED_ROWS` at a time.
+fn rows_charged(rows: RowIter, tally: &Arc<Tally>) -> Charged<Row> {
+    let since = (0, 0, 0);
+    Charged { inner: rows, tally: Arc::clone(tally), bytes: row_bytes, rows: one_row, every: CHARGED_ROWS, since, ended: false }
+}
+
+/// The items a morsel's thread gathered, and the rest of its read: none
+/// left of one within its tally, all it did not read of one past it.
+pub(super) type Gather<T> = (Vec<T>, Box<dyn Iterator<Item = Result<T>> + Send>);
+
+/// What `charged` gives, gathered until it ends, and the rest of its read.
+///
+/// # Errors
+///
+/// As reading an item fails.
+fn gather<T>(mut charged: Charged<T>) -> Result<Gather<T>> {
+    let mut items = Vec::new();
+    for item in charged.by_ref() {
+        items.push(item?);
+    }
+    Ok((items, charged.inner))
+}
+
+/// `rows` gathered as charged to `tally`, `CHARGED_ROWS` at a time, until
+/// they end or outgrow it, and the rest of their read.
+///
+/// # Errors
+///
+/// As reading a row fails.
+pub(super) fn gather_rows(rows: RowIter, tally: &Arc<Tally>) -> Result<Gather<Row>> {
+    gather(rows_charged(rows, tally))
+}
+
+/// `batches` gathered as charged to `tally`, a batch at a time, until they
+/// end or outgrow it, and the rest of their read.
+///
+/// # Errors
+///
+/// As reading a batch fails.
+pub(super) fn gather_batches(batches: Batches, tally: &Arc<Tally>) -> Result<Gather<Kept>> {
+    gather(batches_charged(batches, tally))
+}
+
+/// What a stream's morsel `gathered` of `tally` is: whole, or past it with
+/// the rest of its read.
+fn gathered<T>((items, rest): Gather<T>, tally: &Tally) -> Gathered<T> {
+    match tally.taken(()) {
+        Taken::Whole((), bytes) => Gathered::Whole(items, bytes),
+        Taken::Past => Gathered::Past(items, rest),
+    }
+}
+
+/// The rows of `rows`, a stream's morsel's, gathered within `limit` and
+/// the rows `ahead` of its reader.
+///
+/// # Errors
+///
+/// As reading a row fails.
+pub(super) fn whole_rows(rows: RowIter, (limit, ahead): (&Limit, &Ahead)) -> Result<Gathered<Row>> {
+    let tally = Tally::within(limit, Some(ahead));
+    Ok(gathered(gather_rows(rows, &tally)?, &tally))
+}
+
+/// The batches of `batches`, a stream's morsel's, gathered within `limit`
+/// and the rows `ahead` of its reader.
+///
+/// # Errors
+///
+/// As reading a batch fails.
+pub(super) fn whole_batches(batches: Batches, (limit, ahead): (&Limit, &Ahead)) -> Result<Gathered<Kept>> {
+    let tally = Tally::within(limit, Some(ahead));
+    Ok(gathered(gather_batches(batches, &tally)?, &tally))
+}
+
+impl Flow<Row> {
+    /// The rows of `morsels`, as `Flow::of`.
+    pub(super) fn of_rows(morsels: Morsels<Gathered<Row>>, (limit, ahead): (&Limit, &Ahead), stop: Option<Arc<Stop>>) -> Flow<Row> {
+        Flow::of(morsels, (limit, ahead, one_row), stop)
+    }
+}
+
+impl Flow<Kept> {
+    /// The batches of `morsels`, as `Flow::of`.
+    pub(super) fn of_batches(morsels: Morsels<Gathered<Kept>>, (limit, ahead): (&Limit, &Ahead), stop: Option<Arc<Stop>>) -> Flow<Kept> {
+        Flow::of(morsels, (limit, ahead, kept_rows), stop)
+    }
+}
+
+/// What a flow gives now: a morsel gathered, or one read as it is given.
+enum Now<T> {
+    Whole(std::vec::IntoIter<T>),
+    Alone(Box<dyn Iterator<Item = Result<T>> + Send>),
+}
+
+/// \[DESIGN\] (RULES.md D1150) A pipeline's rows, or batches, given a
+/// morsel's at a time, in order: a morsel a thread gathered within the
+/// grant, its bytes given back once it is read; of one past the grant,
+/// what its thread gathered and then the rest of its read, read here as
+/// it is given, a row or a batch at a time, the threads gathering those
+/// after it meanwhile. The statement's cancellation is looked at as
+/// each morsel is taken up (RULES.md D44).
+pub(super) struct Flow<T: Send + 'static> {
+    morsels: Morsels<Gathered<T>>,
+    now: Now<T>,
+    /// The bytes the morsel given now holds of the grant, and its rows
+    /// of those ahead of the reader.
+    held: (usize, usize),
+    limit: Limit,
+    ahead: Ahead,
+    /// The rows an item is, as the morsel's tally counted them.
+    rows: fn(&T) -> usize,
+    stop: Option<Arc<Stop>>,
+    ended: bool,
+}
+
+impl<T: Send + 'static> Flow<T> {
+    /// The flow of `morsels`, each gathered within `limit` and `ahead` or
+    /// past them, for a statement `stop` cancels.
+    fn of(morsels: Morsels<Gathered<T>>, (limit, ahead, rows): (&Limit, &Ahead, fn(&T) -> usize), stop: Option<Arc<Stop>>) -> Flow<T> {
+        let (now, limit, ahead) = (Now::Whole(Vec::new().into_iter()), limit.clone(), ahead.clone());
+        Flow { morsels, now, held: (0, 0), limit, ahead, rows, stop, ended: false }
+    }
+
+    /// Takes up the next morsel: whether there is one.
+    fn taken_up(&mut self) -> Result<bool> {
+        let (bytes, rows) = std::mem::take(&mut self.held);
+        self.limit.give(bytes);
+        self.ahead.give(rows);
+        if let Some(stop) = &self.stop {
+            stop.check()?;
+        }
+        let Some(taken) = self.morsels.next().transpose()? else { return Ok(false) };
+        self.now = match taken {
+            Gathered::Whole(items, charged) => {
+                self.held = (charged, items.iter().map(self.rows).sum());
+                Now::Whole(items.into_iter())
+            }
+            Gathered::Past(items, rest) => Now::Alone(Box::new(items.into_iter().map(Ok).chain(rest))),
+        };
+        Ok(true)
+    }
+}
+
+impl<T: Send + 'static> Iterator for Flow<T> {
+    type Item = Result<T>;
+
+    fn next(&mut self) -> Option<Result<T>> {
+        loop {
+            if self.ended {
+                return None;
+            }
+            let item = match &mut self.now {
+                Now::Whole(items) => items.next().map(Ok),
+                Now::Alone(items) => items.next(),
+            };
+            match item {
+                Some(Ok(item)) => return Some(Ok(item)),
+                Some(Err(e)) => {
+                    // A failed morsel ends its run: a cursor cut short stays failed.
+                    self.ended = true;
+                    return Some(Err(e));
+                }
+                None => {}
+            }
+            match self.taken_up() {
+                Ok(true) => {}
+                Ok(false) => return None,
+                Err(e) => {
+                    self.ended = true;
+                    return Some(Err(e));
+                }
+            }
+        }
+    }
+}
+
+// Unit tests: a morsel gathered within its grant (RULES.md R-TEST-1,
+// R-TEST-8).
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering;
+
+    use super::{Ahead, Gathered, whole_batches, whole_rows};
+    use crate::catalog::QualifiedName;
+    use crate::db::Database;
+    use crate::exec::parallel::pipeline::Pipeline;
+    use crate::exec::parallel::{Held, Limit};
+    use crate::exec::{Db, Runner};
+    use crate::physical::{JoinKey, Plan};
+    use crate::txn::NO_TRANSACTION;
+    use crate::value::{Decimal, Value};
+
+    /// The scan of column K of table `t` of schema A.
+    fn scan(t: &str) -> Box<Plan> {
+        Box::new(Plan::SeqScan {
+            table: QualifiedName { auth: "A".into(), ident: t.into() },
+            columns: vec![0],
+            rows: 0,
+            cost: 0.0_f64,
+            order: Vec::new(),
+            backward: false,
+            most: None,
+            located: false,
+        })
+    }
+
+    /// Of `db` as it is set, the first morsel of T joined with U on K
+    /// gathered within a grant of MEMORY.WORK_BYTES and the rows ahead of
+    /// a reader of one thread over morsels of `ahead` rows, by batch
+    /// if it is read so, else row by row: its rows, if it fit, else those
+    /// gathered and the rest of its read; whether it fit; and whether the
+    /// grant holds what the build held once the morsel is given up, and no
+    /// row is held ahead.
+    fn first_morsel(database: &Database, ahead: usize) -> (usize, bool, bool) {
+        let ahead = &Ahead::of(1, ahead);
+        let join = Plan::HashJoin {
+            left: scan("T"),
+            right: scan("U"),
+            keys: vec![JoinKey { left: 0, right: 0, nulls: false }],
+            detail: String::new(),
+            est: 0.0_f64,
+        };
+        let state = Db::from(database.snapshot().unwrap());
+        let limit = Limit::of(&state);
+        let Held::Kept(pipeline) = Pipeline::of(&join, (&state, NO_TRANSACTION), &limit).unwrap() else { panic!("the build gave way") };
+        let (pipeline, built) = (Arc::new(pipeline), limit.held());
+        let (db, tx) = (&state, NO_TRANSACTION);
+        let (rows, whole) = if pipeline.batched.is_some() {
+            let kept = |b: &[crate::exec::batch::Kept]| b.iter().map(super::kept_rows).sum::<usize>();
+            match whole_batches(pipeline.morsel_kept(0, (db, tx)).unwrap(), (&limit, ahead)).unwrap() {
+                Gathered::Whole(batches, _) => (kept(&batches), true),
+                Gathered::Past(batches, rest) => {
+                    (kept(&batches).saturating_add(kept(&rest.collect::<Result<Vec<_>, _>>().unwrap())), false)
+                }
+            }
+        } else {
+            match whole_rows(pipeline.morsel_rows(0, (db, tx), Runner::new(db, tx)).unwrap(), (&limit, ahead)).unwrap() {
+                Gathered::Whole(rows, _) => (rows.len(), true),
+                Gathered::Past(rows, rest) => (rows.len().saturating_add(rest.count()), false),
+            }
+        };
+        (rows, whole, whole || (limit.held() == built && ahead.held.load(Ordering::Acquire) == 0))
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1150, D1153, D38: a morsel whose join
+    /// makes a hundred rows of each of its own is gathered whole if its
+    /// rows fit the part's grant and the rows ahead of the reader, and is
+    /// given up once they outgrow either, what it was charged given back,
+    /// its rows still every one, those gathered and the rest of its read,
+    /// by batch and row by row; before, it was held whole whatever the
+    /// grant, and a grant of 64 MiB held it whatever its rows.
+    ///
+    /// Decision: the morsel's rows fit the grant, or not; they fit the rows
+    /// ahead, or not; it is read by batch, or row by row.
+    #[test]
+    fn a_morsel_past_its_grant_is_given_up() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER) CREATE TABLE U (K INTEGER)").unwrap();
+        let a = db.session("A");
+        let keys: Vec<String> = (0_i32..300_i32).map(|k| format!("({})", k % 3_i32)).collect();
+        a.run(&format!("INSERT INTO T VALUES {}", keys.join(", "))).unwrap();
+        a.run(&format!("INSERT INTO U VALUES {}", keys.join(", "))).unwrap();
+        a.commit().unwrap();
+        let set = |name: &str, value: Value| db.set_setting(name, &value).unwrap();
+        set("EXECUTOR.MORSEL_ROWS", Value::Exact(Decimal::new(100_000, 0)));
+        for batches in ["ON", "OFF"] {
+            set("EXECUTOR.BATCHES", Value::Char(batches.into()));
+            let (wide, narrow) = (100_000, 300);
+            set("MEMORY.WORK_BYTES", Value::Exact(Decimal::new(64 << 20, 0)));
+            assert_eq!(first_morsel(&db, wide), (30_000, true, true), "within the grant, batches {batches}");
+            assert_eq!(first_morsel(&db, narrow), (30_000, false, true), "past the rows ahead, batches {batches}");
+            set("MEMORY.WORK_BYTES", Value::Exact(Decimal::new(65_536, 0)));
+            assert_eq!(first_morsel(&db, wide), (30_000, false, true), "past the grant, batches {batches}");
+        }
+    }
+}

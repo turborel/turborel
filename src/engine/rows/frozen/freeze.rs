@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use super::{Directory, Entry, Retiring};
+use super::{Directory, Entry, Freeing, Retiring};
 use crate::disk::pager::PageId;
 use crate::engine::columns::group::Group;
 use crate::engine::rows::options::{Columns, Places};
@@ -119,6 +119,7 @@ impl RowTable {
             || super::rewrite::due(shadowed, columns.group_rows, &columns)
             || self.frozen.directory().is_ok_and(|d| super::rewrite::stale(&d.groups, &columns))
             || !lock_builtin(&self.frozen.retiring).is_empty()
+            || !lock_builtin(&self.frozen.freeing).is_empty()
     }
 
     /// Freezes the rows due, if any, committed at or before `horizon`, and
@@ -286,11 +287,12 @@ impl RowTable {
             let unread = retiring.iter().take_while(|r| r.before.strong_count() == 0).count();
             retiring.drain(..unread).collect::<Vec<_>>()
         };
+        let mut pages = Vec::new();
         for retired in ready {
             let mut zone = None;
             for (id, bytes) in retired.entries {
                 if self.tree.delete_if(&key(id), &bytes)? {
-                    self.free_values(id, Version::parse(&bytes)?.record);
+                    pages.extend(self.values_out_of_line(id, Version::parse(&bytes)?.record));
                 }
                 // Its zone may be wider than the tree's rows now, to be
                 // summed up again (`rows/zones.rs`).
@@ -300,6 +302,33 @@ impl RowTable {
                     zone = at;
                 }
             }
+        }
+        self.free_unread(pages)
+    }
+
+    /// \[DESIGN\] Frees `pages`, the values out of line of entries just
+    /// taken out, once no reader holds the directory that stands now, and
+    /// the pages so held before whose readers are done, in the order held
+    /// (RULES.md D1140). A read that may have found such an entry holds
+    /// that directory, or one before it, from before it read the tree
+    /// until it has fetched the entry's values: a scan as it is made, a
+    /// read by row id as it begins (`Frozen::pinned`). The directory is
+    /// put again as another of the same groups, so reads after it, which
+    /// cannot find the entries, hold up no free.
+    fn free_unread(&self, pages: Vec<PageId>) -> Result<()> {
+        if !pages.is_empty() {
+            let mut held = write(&self.frozen.directory)?;
+            let again = Arc::new(held.again());
+            let stood = mem::replace(&mut *held, again);
+            lock_builtin(&self.frozen.freeing).push(Freeing { after: Arc::downgrade(&stood), pages });
+        }
+        let ready = {
+            let mut freeing = lock_builtin(&self.frozen.freeing);
+            let unread = freeing.iter().take_while(|f| f.after.strong_count() == 0).count();
+            freeing.drain(..unread).collect::<Vec<_>>()
+        };
+        for freed in ready {
+            self.free(&freed.pages);
         }
         Ok(())
     }

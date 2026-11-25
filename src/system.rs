@@ -41,6 +41,7 @@
 
 mod backups;
 mod column_stats;
+mod column_storage;
 mod definition;
 mod embedding;
 mod extensions;
@@ -222,6 +223,7 @@ pub(crate) fn builtin() -> SystemTables {
     tables.extend(vectors::tables());
     tables.extend(sizes::tables());
     tables.extend(column_stats::tables());
+    tables.extend(column_storage::tables());
     tables.into_iter().map(|t| (name_of(&*t), t)).collect()
 }
 

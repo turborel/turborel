@@ -196,6 +196,13 @@ impl JoinTable {
         dense.rows_of(key)
     }
 
+    /// The bytes its hashed parts hold: their directories, rows and hashes.
+    pub(in crate::exec) fn bytes(&self) -> usize {
+        let of =
+            |p: &Part| p.directory.len().saturating_add(p.hashes.len()).saturating_mul(8).saturating_add(p.rows.len().saturating_mul(4));
+        self.parts.iter().map(of).fold(0, usize::saturating_add)
+    }
+
     /// Whether it is direct, its probes giving their keys' numbers, not
     /// hashes (RULES.md D601).
     pub(in crate::exec) fn is_direct(&self) -> bool {
@@ -264,5 +271,20 @@ impl Iterator for Candidates<'_> {
             Candidates::Scan(pairs, h) => pairs.find(|(x, _)| **x == *h).map(|(_, &r)| r),
         };
         row.map(crate::storage::mask::index)
+    }
+
+    /// The `n`th row on, of a run at once, so a probe that gives its pairs
+    /// a batch at a time takes up a key's rows where it left them for what
+    /// one step costs (`batch/joined/shared/probing.rs`).
+    fn nth(&mut self, n: usize) -> Option<usize> {
+        match self {
+            Candidates::Run(rows) => rows.nth(n).copied().map(crate::storage::mask::index),
+            Candidates::Scan(..) => {
+                for _ in 0..n {
+                    self.next()?;
+                }
+                self.next()
+            }
+        }
     }
 }

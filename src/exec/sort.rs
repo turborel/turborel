@@ -163,6 +163,19 @@ impl Sorter {
         Ok(())
     }
 
+    /// Adds `rows`, a morsel of a sort run in parallel that outgrew its
+    /// work area alone, written to runs of `work` as they outgrow it and
+    /// once they end, so the runs keep the order of the morsels (RULES.md
+    /// D1150).
+    pub(super) fn push_rows(&mut self, rows: RowIter, work: &mut Work) -> Result<()> {
+        for row in rows {
+            self.push(row?, work)?;
+        }
+        self.bytes = 0;
+        let held = std::mem::take(&mut self.rows);
+        self.push_run(held, work)
+    }
+
     /// Adds `batches`, a run of a sort run in parallel past its work area,
     /// sorted, written to a run of `work` (RULES.md D380).
     pub(super) fn push_batches(&mut self, batches: Vec<crate::storage::Batch>, work: &mut Work) -> Result<()> {
