@@ -669,6 +669,10 @@ verification approach DO-178C expects (§8).
 | D1045 | A range join is costed as a plan of no order |
 | D1046 | A correlated subquery stays probed past its runs only if its kept plan is one probe of a whole unique key |
 | D1047 | A read, a write, an accept or a connect a signal interrupts is made again, and is no failure of a connection |
+| D1050 | A hash join of a part builds an operand that gives batches of its vectors, not of rows made one by one |
+| D1051 | A hash join's built operand reading the column store is a part of its own |
+| D1052 | A column store's split judges its table's zones once for all its morsels |
+| D1053 | A join's built operand keeps datetimes and truth values as vectors, and is joined of its parts' words |
 | D1060 | SUM and AVG of exact values whose sum the declared types keep within 38 digits raise nothing, so their subqueries are unnested as COUNT's are |
 | D1061 | A WHERE conjunct over both operands of an outer join that is never true of a null operand makes the join the join it is |
 | D1062 | A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null |
@@ -18261,6 +18265,82 @@ crate reads and writes no socket itself. A wait made again begins its
 timeout again, so a call interrupted waits at most its timeout after
 the last signal.
 
+### Parallel joins
+
+#### D1050. A hash join of a part builds an operand that gives batches of its vectors, not of rows made one by one
+
+A hash join probed by a part run in parallel builds its right operand
+before the probing side is split (D292). An operand that was itself a
+part was read by its morsels. Any other was read through the row
+executor, one row of values at a time, and its rows pushed into vectors
+of values. Over the column store that undid everything its scan by
+batch does: no condition was judged on the encoded column, no column
+was decoded late, and every value of every row the scan read was made,
+kept or not. Such an operand is the usual one, as D291 keeps a filtered
+scan of the column store off the workers. So a join whose built operand
+was a filtered scan of a large table ran many times slower in a part
+than alone, where the serial join reads the operand by batch.
+
+Now an operand that gives batches (`stream::layout`) and whose tables
+read by batch is read by `stream::whole_batches`, as the serial join
+reads it. Each batch's kept rows are held as vectors of their kinds and
+charged to the part's grant, and the operand gives way past it as
+before. The table then hashes typed vectors, so keys of whole numbers
+dense in their span get a direct table (D601), which vectors of values
+never did. An operand that gives no batches, as a grouping or VALUES,
+and any operand while EXECUTOR.BATCHES is off, is read row by row as
+before.
+
+#### D1051. A hash join's built operand reading the column store is a part of its own
+
+D291 keeps a scan, filter or projection of a column store table off the
+workers, since a part's rows are made one by one where it hands them to
+the statement's thread. That reason does not hold of the operand a hash
+join of a part builds. Its morsels are read by batch on the workers and
+each morsel's kept rows are gathered into a batch of vectors
+(`exec/parallel/probe.rs`), with no row made. So the planner marks such
+an operand, if it is a pipeline, by its rows alone, whatever store its
+tables are of (`physical/parallel.rs`, `built`). An operand below
+EXECUTOR.PARALLEL_MIN_ROWS is no part and is read by batch on the
+statement's thread (D1050). An operand that is not a pipeline is walked
+for its parts as before.
+
+#### D1052. A column store's split judges its table's zones once for all its morsels
+
+A morsel of a column store table reads its groups, then the rows of its
+tree within its row ids, of the zones the scan's condition may match
+(D354). Each morsel asked the table's zones for those ranges itself, a
+pass over every zone of the table under each zone's lock, though it
+keeps only the few within its own ids. A scan of a large table in
+thousands of morsels so made thousands of passes over all its zones,
+and its threads spent a large share of their time there and on those
+locks. A split of the row store judged the zones once, as it was made
+(`engine/rows/split.rs`).
+
+Now a split of either store does. It holds the ranges the condition
+may match as they were when it was split, and hands each morsel those
+within its ids. A zone that would pass only later holds no row the
+split's reader sees, as its rows were written after the reader's
+snapshot, so each morsel still reads every row it would have.
+
+#### D1053. A join's built operand keeps datetimes and truth values as vectors, and is joined of its parts' words
+
+A hash join holds its built operand as one batch joined of the batches
+read (`Batch::joined`, D38). Integers of one scale, approximate numbers
+and character strings stayed vectors of their kind. A column of dates,
+times, timestamps or truth values became a vector of values, one made
+for each built row, so every row a probe gathered of it cloned a value
+and every expression over it above the join left the vectors. And each
+vector was put together a row at a time through the kind of its part,
+its nulls looked for in every row.
+
+Now datetimes of one type and truth values stay vectors of their kind
+(`storage/batch/joined.rs`). A vector of integers, approximate numbers
+or datetimes is made of its parts' words, a part all of whose rows are
+kept, in order, copied whole, and truth values a word of bits at a
+time. Nulls are looked for only if some part holds a mask of them or
+lacks the column. Datetimes of two types, or with displacements in
+some parts alone, are joined as values, as before.
 ### Subquery plans
 
 #### D1060. SUM and AVG of exact values whose sum the declared types keep within 38 digits raise nothing, so their subqueries are unnested as COUNT's are
