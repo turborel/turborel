@@ -196,10 +196,10 @@ mod tests {
         assert_eq!(d.utc, [10, 20, 30, 60, 40]);
         assert_eq!(marked(d.nulls.as_ref()), [false, false, false, true, false]);
         let plain = joined_column(&[(Some(&first), &[0, 1, 2]), (Some(&first), &[1])], 4);
-        assert!(matches!(&plain, Column::Datetimes(d) if d.nulls.is_none() && d.utc == [10, 20, 30, 20]), "{plain:?}");
+        assert!(matches!(&plain, Column::Datetimes(p) if p.nulls.is_none() && p.utc == [10, 20, 30, 20]), "{plain:?}");
         let (yes, no) = (truths_of(&[true, false, true], None), truths_of(&[false, true, true], Some(vec![true, false, false])));
-        let joined = joined_column(&[(Some(&yes), &[0, 1, 2]), (Some(&no), &[2, 0])], 5);
-        let Column::Bools(b) = &joined else { panic!("not truth values: {joined:?}") };
+        let truths = joined_column(&[(Some(&yes), &[0, 1, 2]), (Some(&no), &[2, 0])], 5);
+        let Column::Bools(b) = &truths else { panic!("not truth values: {truths:?}") };
         assert_eq!(b.bits.to_bools(), [true, false, true, true, false]);
         assert_eq!(marked(b.nulls.as_ref()), [false, false, false, false, true]);
         let stamps = Column::Datetimes(Datetimes::new(vec![7], None, (Moment::Timestamp, false, 6), None));
@@ -218,8 +218,8 @@ mod tests {
         let joined = joined_column(&[(Some(&a), &[0, 1, 2]), (Some(&b), &[1, 0, 9])], 6);
         assert!(matches!(&joined, Column::Ints(i) if i.units == [1, 2, 3, 5, 4, 0] && i.scale == 2 && i.nulls.is_none()), "{joined:?}");
         let floats = Column::Floats(Floats::new(vec![1.5_f64, 2.5_f64], Some(vec![false, true].into())));
-        let joined = joined_column(&[(Some(&floats), &[1, 0])], 2);
-        let Column::Floats(f) = &joined else { panic!("not numbers: {joined:?}") };
+        let halves = joined_column(&[(Some(&floats), &[1, 0])], 2);
+        let Column::Floats(f) = &halves else { panic!("not numbers: {halves:?}") };
         assert_eq!(marked(f.nulls.as_ref()), [true, false]);
         assert!(f.get(1).is_some_and(|x| (x - 1.5_f64).abs() < f64::EPSILON));
     }
