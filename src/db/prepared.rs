@@ -37,10 +37,10 @@ use crate::binder::{self, DescribedKey, OutColumn, SearchedTarget, WriteKind, bi
 use crate::catalog::{ParameterMode, QualifiedName, WHOLE};
 use crate::error::{Code, Result, SqlError, SqlState};
 use crate::lexer::{Tok, Token, kw, lex};
-use crate::params::{DynamicParameter, ParameterType, Params};
+use crate::params::{DynamicParameter, ParameterType, Params, conformed};
 use crate::parser::begins_word_statement;
 use crate::settings::FUNCTION_CALLS;
-use crate::value::Value;
+use crate::value::{Value, held};
 
 /// What a prepared statement is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -468,9 +468,20 @@ impl Session {
         Ok(())
     }
 
-    /// [§17.9 GR5a] `values`, one for each of `p`'s parameters.
+    /// [§17.9 GR5a, GR5f] `values`, one for each of `p`'s parameters, each
+    /// cast to its type as the cursor opens (RULES.md D1093). A plan made
+    /// with the values casts them as it is made, but a plan kept reads
+    /// them where they are and casts one only as it reads it, which may be
+    /// at a FETCH, so whether a value that does not cast raises at OPEN
+    /// would follow whether the plan was kept yet.
     fn values_for(p: &Prepared, values: &[Value]) -> Result<Params> {
         Self::one_each(p, values.len())?;
+        for (value, input) in values.iter().zip(&p.inputs) {
+            let to = input.clone().data_type();
+            if !held(value, &to) {
+                conformed(value.clone(), &to)?;
+            }
+        }
         Ok(Params::executing(values.to_vec()))
     }
 

@@ -265,3 +265,41 @@ fn prepared_statements_are_refused_saying_why() {
     assert_eq!(s.open_prepared(&q, &[text("one")]).err().map(state), Some((Code::Data, "22018".to_owned())), "CAST's");
     assert_eq!(s.execute_prepared(&w, &[int(1)]).unwrap().sqlcode(), 0, "values right, it runs");
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.9 GR5f] RULES.md D1093: a
+/// value CAST cannot make of its parameter's type raises CAST's error at
+/// OPEN, by the executor and by a direct range read alike, whether the
+/// query's plan is made with its values, as at its first opening, or kept
+/// once learned, which reads its values where they are; the statistics
+/// never gathered, so the plan learned is never learned again.
+#[test]
+fn a_value_that_does_not_cast_raises_at_open_whether_the_plan_is_kept_or_not() {
+    let db = Database::new();
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE R (W INTEGER NOT NULL, K INTEGER NOT NULL, PRIMARY KEY (W, K))").unwrap();
+    let s = db.session("X");
+    let rows: Vec<String> = (1..=2).flat_map(|w| (1..=100).map(move |k| format!("({w}, {k})"))).collect();
+    s.run(&format!("INSERT INTO R VALUES {}", rows.join(", "))).unwrap();
+    s.commit().unwrap();
+    let opened = |p: &turborel::db::Prepared, values: &[Value]| match s.open_prepared(p, values) {
+        Ok(mut c) => loop {
+            match c.fetch() {
+                Ok(Some(_)) => {}
+                Ok(None) => break "end".to_owned(),
+                Err(e) => break format!("error at fetch {}", e.sqlstate()),
+            }
+        },
+        Err(e) => format!("error at open {}", e.sqlstate()),
+    };
+    for how in ["ON", "OFF"] {
+        s.run(&format!("SET EXECUTOR.POINT_OPERATIONS = '{how}'")).unwrap();
+        let p = s.prepare("SELECT K FROM R WHERE W = ? AND K < ?").unwrap();
+        assert_eq!(opened(&p, &[text("x"), int(4)]), "error at open 22018", "{how}, planned with its values");
+        for k in 2..=13 {
+            assert_eq!(opened(&p, &[int(k % 2 + 1), int(k)]), "end", "{how}");
+        }
+        assert_eq!(opened(&p, &[text("x"), int(4)]), "error at open 22018", "{how}, its plan kept");
+        assert_eq!(opened(&p, &[int(1), text("y")]), "error at open 22018", "{how}, the bound's value");
+        assert_eq!(opened(&p, &[Value::Null, int(4)]), "end", "{how}, a null casts");
+    }
+}

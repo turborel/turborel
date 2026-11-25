@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 10] = [
+pub const RANGE_READS: [Mutation; 11] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -110,6 +110,16 @@ pub const RANGE_READS: [Mutation; 10] = [
         original: "        visit(&mut |row| self.fold.feed(&mut folding, row, &at))?;",
         replacement: "        visit(&mut |_| Ok(()))?;",
         integration: &["range_reads::set_functions_over_a_delta_table_are_folded_as_the_general_path_makes_them"],
+        unit: &[],
+    },
+    Mutation {
+        name: "open-casts-no-value",
+        package: Package::Core,
+        breaks: "a prepared cursor's values are not cast as it opens, so one of a plan kept that does not cast raises at FETCH (D1093)",
+        file: "src/db/prepared.rs",
+        original: "                conformed(value.clone(), &to)?;",
+        replacement: "                drop(conformed(value.clone(), &to));",
+        integration: &["prepared::a_value_that_does_not_cast_raises_at_open_whether_the_plan_is_kept_or_not"],
         unit: &[],
     },
 ];

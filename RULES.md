@@ -690,6 +690,7 @@ verification approach DO-178C expects (§8).
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
+| D1093 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 
 ### The project
 
@@ -18771,6 +18772,24 @@ runs of row ids chosen, passes over a group none of them lies in with
 its header unread, and of a group whose rows are every id of its range
 in order reckons a run's places from its ids
 (`engine/rows/frozen/sampled.rs`).
+
+#### D1093. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
+
+A value given for a `?` is cast to the parameter's type [ISO/IEC
+9075:1992 §17.9 GR5f]. A plan made with the values casts each as it is
+made, so a value that does not cast raised at OPEN. A plan kept reads
+its values where they are and casts one as it reads it (D610). That is
+at OPEN for a plan that can raise, which is read whole then (D931), and
+at the first FETCH for another. So the moment a cursor raised followed
+whether its plan was kept yet, and a plan learned before its table had
+statistics is learned again once they are known (D839), which the
+maintenance thread decides as it runs. The same cursor raised at OPEN
+in one run and at FETCH in another.
+
+Each value is now cast as the cursor opens (`db/prepared.rs`), and the
+first that does not cast raises CAST's error there, before any plan is
+looked for. A value already of its type is not cast again. The plans
+still cast each value as they read it, which then raises nothing.
 
 ## 2. Project layout
 
