@@ -82,18 +82,32 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
     Some((shaped, layout, width))
 }
 
-/// \[DESIGN\] (RULES.md D361, D366) The columns of `branch`'s scan no step
-/// reads before its rows, `width` wide at its end, are made, if a filter
-/// drops rows on the way: its morsels give them late, decoded of the rows
-/// kept at the pipeline's end (`morsel_kept`), as the serial stream does.
+/// \[DESIGN\] (RULES.md D361, D366, D1081) The columns of `branch`'s scan
+/// no step reads before its rows, `width` wide at its end, are made, if a
+/// filter or a hash join's probe drops rows on the way: its morsels give
+/// them late, decoded of the rows kept at the pipeline's end
+/// (`morsel_kept`), as the serial stream does. A probe reads its keys'
+/// columns and carries the left's others as their rows' places
+/// (`Deferred::left_of`), so a column of the probing table is decoded of
+/// the rows every join of the pipeline kept alone.
 fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
-    let Some((scanned, _)) = &branch.scanned else { return Vec::new() };
+    let Some((scanned, read)) = &branch.scanned else { return Vec::new() };
+    // The width of the rows each step is given.
+    let (mut given, mut wide) = (Vec::with_capacity(branch.steps.len()), *read);
+    for step in &branch.steps {
+        given.push(wide);
+        wide = match step {
+            Step::Project(exprs) => exprs.len(),
+            Step::Probe(table) => table.shared.joined_layout((&[], wide)).1,
+            Step::Filter(_) | Step::Runtime(_) | Step::Count(_) => wide,
+        };
+    }
     let mut deferred = Deferred::all(width);
-    for step in branch.steps.iter().rev() {
+    for (step, &left) in branch.steps.iter().zip(&given).rev() {
         deferred = match step {
             Step::Filter(cond) => deferred.filtered(cond),
             Step::Project(exprs) => deferred.projected(exprs),
-            Step::Probe(_) => Deferred::default(),
+            Step::Probe(table) => deferred.left_of(table.keys(), left),
             Step::Runtime(told) => deferred.judged(&told.iter().map(|t| t.column).collect::<Vec<_>>()),
             Step::Count(_) => deferred,
         };
@@ -134,5 +148,74 @@ impl Pipeline {
     pub(super) fn morsel_rows(&self, n: usize, (db, tx): (&Db, TxId), runner: &crate::exec::Runner) -> Result<Vec<Row>> {
         let Some(by) = &self.batched else { return self.morsel(n, runner) };
         rows_of(self.morsel_kept(n, (db, tx))?, by.layout.clone(), by.width).collect()
+    }
+}
+
+// Unit tests: the columns a pipeline's morsels give late (RULES.md
+// R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod tests {
+    use super::super::pipeline::Pipeline;
+    use super::super::{Held, Limit};
+    use crate::db::Database;
+    use crate::exec::Db;
+    use crate::logical::{Cond, Expr};
+    use crate::physical::{JoinKey, Plan};
+    use crate::value::{CompOp, Decimal, Value};
+
+    /// A scan of `columns` of table `ident` of schema A.
+    fn scan(ident: &str, columns: Vec<usize>) -> Plan {
+        Plan::SeqScan {
+            table: crate::catalog::QualifiedName { auth: "A".into(), ident: ident.into() },
+            columns,
+            rows: 0,
+            cost: 0.0_f64,
+            order: Vec::new(),
+            backward: false,
+            most: None,
+            located: false,
+        }
+    }
+
+    /// F joined with D on F's column `left` and D's K.
+    fn joined(left: usize) -> Plan {
+        let keys = vec![JoinKey { left, right: 0, nulls: false }];
+        Plan::HashJoin {
+            left: Box::new(scan("F", vec![0, 1, 2])),
+            right: Box::new(scan("D", vec![0, 1])),
+            keys,
+            detail: String::new(),
+            est: 0.0_f64,
+        }
+    }
+
+    /// The columns of F the morsels of `plan` give late.
+    fn late(db: &Database, plan: &Plan) -> Vec<usize> {
+        let state = Db::from(db.snapshot().unwrap());
+        let Held::Kept(pipeline) = Pipeline::of(plan, (&state, crate::txn::NO_TRANSACTION), &Limit::of(&state)).unwrap() else {
+            panic!("the pipeline gave way")
+        };
+        pipeline.batched.unwrap().late.remove(0)
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1081: a pipeline's morsels give late
+    /// the columns of the probing table that no step reads, across a hash
+    /// join's probe: all but the probe's key; not one a filter above the
+    /// probe reads; and none of a pipeline that drops no row.
+    #[test]
+    fn a_probe_carries_the_probing_tables_unread_columns_late() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE F (K INTEGER, P INTEGER, Q INTEGER) CREATE TABLE D (K INTEGER, N INTEGER)")
+            .unwrap();
+        let a = db.session("A");
+        a.run("INSERT INTO F VALUES (1, 10, 100), (2, 20, 200)").unwrap();
+        a.run("INSERT INTO D VALUES (1, 7)").unwrap();
+        a.commit().unwrap();
+        assert_eq!(late(&db, &joined(0)), [1, 2], "all but the key");
+        assert_eq!(late(&db, &joined(1)), [0, 2], "the key read is the one the join names");
+        let cond = Cond::Compare(Expr::Column(2), CompOp::Ge, Expr::Const(Value::Exact(Decimal::new(100, 0))));
+        let filtered = Plan::Filter { cond, detail: String::new(), est: 0.0_f64, of_read: false, input: Box::new(joined(0)) };
+        assert_eq!(late(&db, &filtered), [1], "a column a filter above reads is read");
+        assert_eq!(late(&db, &scan("F", vec![0, 1, 2])), Vec::<usize>::new(), "no step drops a row");
     }
 }

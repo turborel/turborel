@@ -4,7 +4,8 @@
 //! of a null key kept, keys given as numbers hashed for a hashed table,
 //! each vector of the batch joined of its own column, the runtime
 //! filters made beside the table, and an operand of a morsel's rows left
-//! to the statement's thread.
+//! to the statement's thread; of D1081, the probing table's unread
+//! columns carried late across a pipeline's probe.
 
 use super::super::{Mutation, Package};
 
@@ -22,7 +23,17 @@ const BUILT: &str = "exec::parallel::build::tests::a_table_built_by_many_threads
 
 /// Mechanisms whose removal must fail the requirements of a join's
 /// operand built by many threads.
-pub const JOIN_BUILD: [Mutation; 7] = [
+pub const JOIN_BUILD: [Mutation; 8] = [
+    Mutation {
+        name: "join-probe-unlate",
+        package: Package::Core,
+        breaks: "a pipeline's probe carries the probing table's unread columns late (D1081)",
+        file: "src/exec/parallel/batched.rs",
+        original: "            Step::Probe(table) => deferred.left_of(table.keys(), left),",
+        replacement: "            Step::Probe(_) => Deferred::default(),",
+        integration: &[],
+        unit: &["exec::parallel::batched::tests::a_probe_carries_the_probing_tables_unread_columns_late"],
+    },
     Mutation {
         name: "join-build-run-order",
         package: Package::Core,

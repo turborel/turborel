@@ -679,6 +679,7 @@ verification approach DO-178C expects (§8).
 | D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
 | D1080 | A hash join's operand read by its morsels is joined, hashed, placed in its table and summed up in its filters by those threads, the table in parts of the hashes' high bits |
+| D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
 
 ### The project
 
@@ -18563,6 +18564,27 @@ statement's thread as before. The first took one thread's work to
 read, and the others have no threads of their own. No setting turns
 this on or off, as the result is the same and the threads are those
 the part already has.
+
+#### D1081. A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe
+
+The serial stream carries the columns of an inner hash join's left
+operand that no operator reads as the places of their rows, through
+the join, and decodes them of the rows the join kept (D361). A pipeline
+run in parallel did so only up to its first probe (D366). At a probe it
+counted every column as read, so a morsel decoded every column the
+pipeline carries, of every row its filters kept, before the first join
+dropped any. A scan of a large table probing a selective operand so
+decoded, gathered and copied its other columns for rows the join then
+dropped, and again at each join after it.
+
+Now a probe step counts as read the columns of its keys alone
+(`Deferred::left_of`), as the serial join does, and as dropping rows.
+The other columns of the probing table that no later step reads go
+through each probe as places, which a probe's gather composes with its
+pairs (`Late::gathered`), and are decoded at the pipeline's end of the
+rows every join kept (`morsel_kept`). The built operand's columns are
+held as vectors as before. A column a later filter, projection or
+probe reads is decoded at the scan as before.
 
 ## 2. Project layout
 
