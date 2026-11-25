@@ -706,6 +706,7 @@ verification approach DO-178C expects (§8).
 | D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
 | D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
 | D1114 | An index nested-loop join over a part run in parallel probes its index on the part's threads |
+| D1115 | A semi join that builds its left holds a left run in parallel by the threads that read it |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19251,6 +19252,32 @@ by a function's predicate, which a statement's prepared budget bounds,
 stay on the statement's thread, as does a join over a left operand that
 holds no part. The degree is the greatest of the parts the left operand
 holds.
+
+#### D1115. A semi join that builds its left holds a left run in parallel by the threads that read it
+
+A semi join or an antijoin that builds its left (D1070) read its left
+operand's batches on the statement's thread, though that operand was a
+part run in parallel. Each batch's kept rows were gathered into a
+batch of their own, then all of them joined into one, hashed and put
+in the join's table there, while the workers that read the part waited.
+Of a wide left of many rows, as the lines and suppliers of an order
+waiting on its suppliers are, that thread ran a stretch of the join
+alone between the left's reading and the right's.
+
+Such a left is now held by the threads that read it
+(`exec/parallel/held.rs`). Each morsel's kept rows are gathered into
+one batch by the thread that read them, and the statement's thread
+takes the morsels' batches in the order of their numbers, so the rows
+are held in the order the part alone gives them. They are put in their
+table by those threads too, as a hash join's built operand is (D1080).
+The rows held are charged as their batches are taken, as the serial
+reading charges them. Past the work area the batches taken so far are
+given on, then the rest as their morsels give them, to the join that
+builds its right, so every left row is read once and in order. The
+first morsel that fails, in the order of their numbers, is the error
+raised, after the rows before it are taken (D15). A pipeline whose
+morsels are not read by batch, or whose batches hold other columns
+than the plan's, and a left asked for in an order are read as before.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 

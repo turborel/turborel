@@ -237,7 +237,10 @@ columns alone, so each thread makes the second grouping's groups of its
 own, and EXPLAIN shows both groupings under one `Parallel`. An index
 nested-loop join over a part, as of a correlated EXISTS, probes its
 index on the part's threads, each taking a sixteenth of a morsel's rows
-of its left operand at a time. A scan or sort of a column
+of its left operand at a time. A semi join or an antijoin that holds
+its left operand, shown as `HashRightSemiJoin` or `HashRightAntiJoin`,
+holds a left run in parallel by the part's threads, each gathering the
+rows it read and putting them in the join's table. A scan or sort of a column
 store table stays on it too while EXECUTOR.BATCHES is on, since its
 scan by batch is faster alone; a join, window functions, a grouping or
 DISTINCT over one still run in parallel, a grouping a batch at a time

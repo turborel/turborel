@@ -32,7 +32,7 @@ const JOINED: &str = "storage::batch::joined::tests::datetimes_and_truth_values_
 const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 21] = [
+pub const PARALLEL: [Mutation; 24] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -241,6 +241,36 @@ pub const PARALLEL: [Mutation; 21] = [
         original: "return self.failed.take().map(Err);",
         replacement: "return None;",
         integration: &["looped_parts::an_index_join_over_a_part_raises_as_alone"],
+        unit: &[],
+    },
+    Mutation {
+        name: "held-left-out-of-order",
+        package: Package::Core,
+        breaks: "a semi join's left held by its parts holds each morsel's rows before those of the morsels before it (D1115)",
+        file: "src/exec/parallel/held.rs",
+        original: "        parts.push(batch);\n        if bytes > limit {",
+        replacement: "        parts.insert(0, batch);\n        if bytes > limit {",
+        integration: &["held_left::a_left_held_by_its_parts_gives_its_rows_in_order"],
+        unit: &[],
+    },
+    Mutation {
+        name: "held-left-read-dropped",
+        package: Package::Core,
+        breaks: "a semi join's left held by its parts past the work area drops the batches it read before (D1115)",
+        file: "src/exec/parallel/held.rs",
+        original: "Box::new(read.into_iter().chain(rest))",
+        replacement: "Box::new(read.into_iter().take(0).chain(rest))",
+        integration: &["held_left::a_left_held_by_its_parts_past_the_work_area_is_read_once"],
+        unit: &[],
+    },
+    Mutation {
+        name: "held-left-error-lost",
+        package: Package::Core,
+        breaks: "a semi join's left held by its parts holds the rows before a failed morsel and drops its error (D1115)",
+        file: "src/exec/parallel/held.rs",
+        original: "        let batch = batch?;",
+        replacement: "        let Ok(batch) = batch else { break };",
+        integration: &["held_left::a_left_held_by_its_parts_raises_as_alone"],
         unit: &[],
     },
 ];

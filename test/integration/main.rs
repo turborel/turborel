@@ -192,6 +192,7 @@ mod group_commit;
 mod grouped_parts;
 mod grouping_sets;
 mod guarded_reads;
+mod held_left;
 mod held_lobs;
 mod held_records;
 mod host_plugins;
