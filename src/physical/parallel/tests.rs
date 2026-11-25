@@ -84,7 +84,7 @@ fn a_grouping_over_one_holding_its_columns_is_a_pair() {
     let pair = |groups: Vec<usize>, aggs: Vec<AggCall>, input: Plan| grouping(groups, (aggs, Vec::new()), input, false);
     assert!(first_level(&pair(vec![0], vec![count(false)], first(Vec::new(), false))).is_some());
     assert!(first_level(&pair(vec![1, 0], Vec::new(), first(Vec::new(), false))).is_some(), "of every column, in any order");
-    let count_node = Arc::new(crate::physical::NodeCount::default());
+    let count_node = Arc::new(NodeCount::default());
     let counted = Plan::Counted(Box::new(crate::physical::Counted { count: count_node, input: first(Vec::new(), false) }));
     assert!(first_level(&pair(vec![0], Vec::new(), counted)).is_some(), "an analyzed plan's count between");
     assert!(first_level(&pair(Vec::new(), Vec::new(), first(Vec::new(), false))).is_none(), "of no grouping column");

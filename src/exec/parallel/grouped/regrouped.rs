@@ -33,7 +33,7 @@ use crate::error::Result;
 use crate::exec::group::Spec;
 use crate::exec::{Runner, broken, eval};
 use crate::logical::Expr;
-use crate::physical::parallel::{between, crosses};
+use crate::physical::parallel::{between, counted_between, crosses};
 use crate::physical::{NodeCount, Plan, first_level};
 use crate::spill::norm_row;
 use crate::storage::Row;
@@ -43,6 +43,10 @@ use crate::storage::Row;
 pub(super) struct Outer {
     pub(super) spec: Spec,
     count: Option<Arc<NodeCount>>,
+    /// \[EXTENSION\] (RULES.md D1116) Of an analyzed plan, the counts of
+    /// the projections between the two, each given a row a group of the
+    /// first.
+    projected: Vec<Arc<NodeCount>>,
     /// \[DESIGN\] (RULES.md D1133) Of one that crosses the first's
     /// partitions, the projections between the two, the nearest the first
     /// last; its partitions' groups, each with its first and its states
@@ -73,11 +77,12 @@ impl Outer {
         let count = if let Plan::Counted(c) = below { Some(Arc::clone(&c.count)) } else { None };
         let steps = steps.into_iter().map(<[Expr]>::to_vec).collect();
         let crossing = crosses(plan).then(|| Crossing { steps, groups: Mutex::new(Vec::new()), failed: AtomicBool::new(false) });
-        if let Some(c) = &count {
+        let projected = counted_between(input, 0);
+        for c in count.iter().chain(&projected) {
             c.opened();
         }
         let spec = Spec { groups: groups.clone(), collations: Vec::new(), aggs: aggs.clone(), seeds: Vec::new() };
-        Some((Outer { spec, count, crossing }, first))
+        Some((Outer { spec, count, projected, crossing }, first))
     }
 
     /// The lanes of the first grouping's keys its partitions are split
@@ -102,7 +107,7 @@ impl Outer {
     ///
     /// As a set function fails.
     pub(super) fn regrouped(&self, firsts: Vec<(u64, Row)>, runner: &Runner) -> Result<Vec<(u64, Row)>> {
-        if let Some(count) = &self.count {
+        for count in self.count.iter().chain(&self.projected) {
             count.stepped(u64::try_from(firsts.len()).unwrap_or(u64::MAX));
         }
         let mut found: HashMap<Vec<u8>, usize> = HashMap::new();

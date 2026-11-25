@@ -709,6 +709,7 @@ verification approach DO-178C expects (§8).
 | D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
 | D1114 | An index nested-loop join over a part run in parallel probes its index on the part's threads |
 | D1115 | A semi join that builds its left holds a left run in parallel by the threads that read it |
+| D1116 | An analyzed grouping over another that crosses its partitions passes the counts of the projections between them |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19357,6 +19358,24 @@ first morsel that fails, in the order of their numbers, is the error
 raised, after the rows before it are taken (D15). A pipeline whose
 morsels are not read by batch, or whose batches hold other columns
 than the plan's, and a left asked for in an order are read as before.
+
+#### D1116. An analyzed grouping over another that crosses its partitions passes the counts of the projections between them
+
+EXPLAIN ANALYZE wraps each operator in a count (D378). Of a grouping
+crossing another's partitions (D1133), as TPC-H Q13 groups customers by
+their count of orders, a projection between the two was wrapped too.
+The pair was found by the projections down from the second grouping,
+and a count is no projection, so the part no longer saw a pair. It took
+the rows for a pipeline, met the first grouping, which is no step of
+one, and failed with "a part run in parallel is not a pipeline". The
+query ran, and its analysis failed.
+
+The projections between the two are now found under their counts
+(`physical::between`), so an analyzed plan runs the part the plan run
+alone runs. A partition's thread takes each group of the first through
+the projections, so each projection's count is given a row for each
+group of the first, as the first grouping's own count is, and is shown
+with no time of its own, as a step of a pipeline is.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
