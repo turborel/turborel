@@ -2,7 +2,7 @@
 
 The language, element by element, and each statement on a reference page of its own.
 
-[The documentation set](../README.md)
+[Turborel Documentation](../README.md)
 
 ## Contents
 

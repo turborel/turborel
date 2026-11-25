@@ -82,6 +82,25 @@ fn groupings_are_estimated_by_their_groups() {
     assert!(near(rows(&s, joined), 10.0), "{}", rows(&s, joined));
 }
 
+/// Verifies: [DESIGN] RULES.md D1082: a grouping by a deterministic
+/// expression has no more groups than the columns it reads have values
+/// together: of one column its values, of two their combinations, of a
+/// constant one, beside a column of a table its groups times that
+/// column's; an expression over an expression is bounded through both.
+#[test]
+fn a_grouping_by_an_expression_is_bounded_by_its_columns() {
+    let (_db, s) = database();
+    let groups = |sql: &str| rows(&s, sql);
+    assert!(groups("SELECT H, COUNT(*) FROM (SELECT G + 1 AS H FROM T) AS D GROUP BY H") <= 10.5_f64, "of one column of 10 values");
+    assert!(groups("SELECT H, COUNT(*) FROM (SELECT G * 2 - K AS H FROM T) AS D GROUP BY H") > 500.0_f64, "K is a key");
+    let pair = groups("SELECT H, COUNT(*) FROM (SELECT A + B AS H FROM W) AS D GROUP BY H");
+    assert!(pair <= 1_000.0_f64 && pair > 500.0_f64, "of two columns of 100 values each, at most the rows: {pair}");
+    let nested = groups("SELECT I, COUNT(*) FROM (SELECT H * 2 AS I FROM (SELECT G + 1 AS H FROM T) AS D) AS E GROUP BY I");
+    assert!(nested <= 10.5_f64, "through two projections: {nested}");
+    let beside = groups("SELECT H, J, COUNT(*) FROM (SELECT T.G + 1 AS H, V.K AS J FROM T, V) AS D GROUP BY H, J");
+    assert!(near(beside, 100.0_f64), "10 values beside 10: {beside}");
+}
+
 /// Verifies: [DESIGN] RULES.md D370: UNION ALL is the sum, UNION the
 /// groups of the sum, INTERSECT at most the smaller, EXCEPT at most the
 /// left; a limit its count, past its offset.
@@ -439,4 +458,44 @@ fn a_range_of_a_slot_is_estimated_by_its_width() {
     assert!((past - 1.0_f64).abs() < f64::EPSILON, "no range to ask: {past}");
     let wide = estimates.width_capped(&table, &slotted(), 1.0_f64);
     assert!(near(wide * 20_000.0_f64, 10.0_f64), "ten values of K under G: {wide}");
+}
+
+/// A function of one argument, deterministic if `.0`.
+struct Drawn(bool);
+
+impl crate::functions::ScalarFunction for Drawn {
+    fn name(&self) -> &'static str {
+        "DRAWN"
+    }
+    fn return_type(&self, _: &[crate::value::DataType]) -> crate::error::Result<crate::value::DataType> {
+        Ok(crate::value::DataType::Exact { precision: 1, scale: 0, spelled: crate::value::Spelled::Numeric })
+    }
+    fn call(&self, _: &[Value]) -> crate::error::Result<Value> {
+        Ok(Value::Null)
+    }
+    fn deterministic(&self) -> bool {
+        self.0
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1082 (MC/DC): a projection's expression
+/// is bounded by the columns it reads only if it is deterministic.
+/// Decision: the column is an expression, and the expression is
+/// deterministic. Each alone leaves it unbounded: a column passed on, of
+/// a table, and a call that is not deterministic, which is the plan's
+/// rows; the deterministic call of the same column has that column's
+/// values.
+#[test]
+fn an_expression_not_deterministic_is_not_bounded() {
+    let (_db, s) = database();
+    let st = state(&s);
+    let call = |fixed: bool| Expr::Call(crate::functions::ScalarRef(Arc::new(Drawn(fixed))), vec![Expr::Column(1)]);
+    let over = |e: Expr| LogicalPlan::Project { exprs: vec![e], input: Box::new(scan("T", 2)) };
+    let estimates = Estimates::new(&st);
+    assert!(super::lineage::computed_of(&over(Expr::Column(1)), 0).is_none(), "a table's column");
+    assert!(super::lineage::computed_of(&over(call(false)), 0).is_none(), "not deterministic");
+    assert_eq!(super::lineage::computed_of(&over(call(true)), 0).map(|(_, read)| read), Some(vec![1]));
+    assert!(near(estimates.grouped_distinct(&over(call(true)), 0, 0), 10.0_f64), "G's 10 values");
+    assert!(near(estimates.grouped_distinct(&over(call(false)), 0, 0), 1_000.0_f64), "a value a row");
+    assert!(near(estimates.distinct(&over(call(true)), 0), 1_000.0_f64), "a join's key is counted as before");
 }

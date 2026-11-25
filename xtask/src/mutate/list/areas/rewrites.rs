@@ -16,7 +16,7 @@ const RAISING: &str = "rewrites::hoisting::hoisted_parts_raise_as_the_product_wo
 const KEPT: &str = "rewrites::elimination::joins_that_could_change_rows_are_kept";
 
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 16] = [
+pub const REWRITES: [Mutation; 22] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -175,6 +175,66 @@ pub const REWRITES: [Mutation; 16] = [
         original: "let no_right_nulls = kind.keeps_left() && rejected(middle, end);",
         replacement: "let no_right_nulls = kind.keeps_left() && rejected(offset, middle);",
         integration: &["outer_rejection::a_comparison_of_both_operands_makes_an_outer_join_inner_7_5"],
+        unit: &[],
+    },
+    Mutation {
+        name: "computed-in-list-of-two-expressions",
+        package: Package::Core,
+        breaks: "an OR of equalities is made a set only of one computed expression, not of two that differ (D1067)",
+        file: "src/logical/sets.rs",
+        original: "        return same(e, other, 0).then_some((e, list));",
+        replacement: "        return (same(e, other, 0) || !list.is_empty()).then_some((e, list));",
+        integration: &[],
+        unit: &["logical::sets::tests::a_list_of_a_computed_expression_is_a_set"],
+    },
+    Mutation {
+        name: "pregrouped-count-null-of-none",
+        package: Package::Core,
+        breaks: "a left row no group matched counts null, not 0 (RULES.md D1112)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "(Cond::IsNull(Expr::Column(column), false), zero())",
+        replacement: "(Cond::IsNull(Expr::Column(column), true), zero())",
+        integration: &["rewrites::pregrouped::a_grouping_over_a_left_join_is_grouped_first_below_it"],
+        unit: &[],
+    },
+    Mutation {
+        name: "pregrouped-takes-nullable",
+        package: Package::Core,
+        breaks: "the right operand is grouped first of a column that may hold a null, whose warning differs (RULES.md D1112)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "if !ctx.db.catalog.table(table)?.columns.get(own)?.not_null {",
+        replacement: "if ctx.db.catalog.table(table)?.columns.get(own).is_none() {",
+        integration: &["rewrites::pregrouped::a_grouping_the_rewrite_could_change_is_left"],
+        unit: &[],
+    },
+    Mutation {
+        name: "pregrouped-takes-sum",
+        package: Package::Core,
+        breaks: "SUM is merged of the groups below as MAX and MIN are (RULES.md D1112)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "Standard::Sum | Standard::Avg => false,",
+        replacement: "Standard::Sum | Standard::Avg => exact,",
+        integration: &["rewrites::pregrouped::a_grouping_the_rewrite_could_change_is_left"],
+        unit: &[],
+    },
+    Mutation {
+        name: "pregrouped-whatever-it-spares",
+        package: Package::Core,
+        breaks: "the right operand is grouped first though it has a row a key (RULES.md D1112)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "rows - keys > estimated_rows(ctx.db, shape.left)",
+        replacement: "rows - keys > -1.0_f64",
+        integration: &["rewrites::pregrouped::a_grouping_the_rewrite_could_change_is_left"],
+        unit: &[],
+    },
+    Mutation {
+        name: "pregrouped-by-right-columns",
+        package: Package::Core,
+        breaks: "a grouping by the right operand's columns is grouped first below the join (RULES.md D1112)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "|| groups.iter().any(|&g| g >= width)",
+        replacement: "",
+        integration: &["rewrites::pregrouped::a_grouping_the_rewrite_could_change_is_left"],
         unit: &[],
     },
 ];

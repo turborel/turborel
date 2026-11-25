@@ -58,12 +58,14 @@ fn row(rng: &mut Rng, k: usize) -> String {
 }
 
 /// Queries whose filters go below an index scan, an index join, a merge
-/// join, a grouping and a semi join, of `{t}`, F or R: groupings of each
+/// join, a grouping, a DISTINCT and a semi join, of `{t}`, F or R: groupings of each
 /// set function that takes a filter, SUM of an INTEGER column among them, a join
 /// by R's index of G, merge joins of L and M in K's order, IN and EXISTS,
 /// and NOT IN of a subquery with a null, which an antijoin's filter would
 /// change, and of one without.
-const QUERIES: [&str; 12] = [
+const QUERIES: [&str; 14] = [
+    "SELECT X.G FROM (SELECT DISTINCT G FROM {t}) AS X JOIN D ON X.G = D.K WHERE D.TAG < 3",
+    "SELECT D.K, X.H FROM D JOIN (SELECT DISTINCT G, H FROM {t}) AS X ON X.G = D.K WHERE D.TAG = 5",
     "SELECT X.G, X.C FROM (SELECT G, COUNT(*) AS C FROM {t} GROUP BY G) AS X JOIN D ON X.G = D.K WHERE D.TAG < 2",
     "SELECT X.G, X.C, X.N FROM (SELECT G, COUNT(H) AS C, MIN(H) AS N FROM {t} GROUP BY G) AS X JOIN D ON X.G = D.K WHERE D.TAG = 3",
     "SELECT X.G, X.M FROM (SELECT G, MAX(K) AS M FROM {t} GROUP BY G) AS X JOIN D ON X.G = D.K WHERE D.TAG > 4",
@@ -152,6 +154,12 @@ fn a_filter_reaches_the_scan_below_a_grouping() {
     assert!(summed_on < 600, "N gave {summed_on} of\n{summed_plan}");
     assert_eq!(sums_on, sorted(&a, &summed("N")), "the sums with the filters off");
     assert!(halved_on < 600, "N gave {halved_on} of\n{halved_plan}");
+    // A DISTINCT by hash is a grouping by every column, and takes it too.
+    exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'ON'").unwrap();
+    let (distinct_on, distinct_plan) =
+        given(&a, "SELECT X.G FROM (SELECT DISTINCT G FROM F) AS X JOIN D ON X.G = D.K WHERE D.TAG = 3", "SeqScan A.F");
+    assert!(distinct_on < 600, "F gave {distinct_on} of\n{distinct_plan}");
+    exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
     assert_eq!(wide_on, 6000, "SUM of 38 digits takes no filter");
 }
 
@@ -186,7 +194,9 @@ fn a_grouping_told_a_filter_warns_as_of_every_row() {
 /// makes the groups of those keys alone, where with the filters off it
 /// makes every group, and gives the same sums; one whose SUM is of a
 /// column that may hold a null takes none, and warns of the null of a
-/// row the filter would have dropped, with the filters on as off.
+/// row the filter would have dropped, with the filters on as off. Of
+/// 5000 keys spread over half the groups, more than a range or a key set
+/// says, the morsels still make the groups of those keys alone.
 #[test]
 fn a_filter_reaches_a_grouping_run_in_parallel() {
     let (_db, a) = tables(31);
@@ -210,4 +220,22 @@ fn a_filter_reaches_a_grouping_run_in_parallel() {
     assert!(groups_on <= 6 && groups_off > 100, "{groups_on} groups told, {groups_off} untold, of\n{plan}");
     rows(&a, &summed("F")).unwrap();
     assert_eq!(a.warning(), SqlState::parse("01003"), "filters off");
+    // Keys too many for a filter's range or key set to say: every other
+    // key of 10000, of 20000 groups, which the morsels' own step judges.
+    exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'ON'").unwrap();
+    exec(&a, "CREATE TABLE N2 (G INTEGER, H INTEGER NOT NULL) USING columnstore").unwrap();
+    exec(&a, "CREATE TABLE D2 (K INTEGER PRIMARY KEY, TAG INTEGER)").unwrap();
+    for from in (0..20_000).step_by(1000) {
+        let facts: Vec<String> = (from..from + 1000).map(|k| format!("({k}, 1)")).collect();
+        exec(&a, &format!("INSERT INTO N2 VALUES {}", facts.join(", "))).unwrap();
+    }
+    for from in (0..10_000).step_by(1000) {
+        let keys: Vec<String> = (from..from + 1000).step_by(2).map(|k| format!("({k}, 0)")).collect();
+        exec(&a, &format!("INSERT INTO D2 VALUES {}", keys.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    let many = "SELECT X.G, X.S FROM (SELECT G, SUM(H) AS S FROM N2 GROUP BY G) AS X JOIN D2 ON X.G = D2.K";
+    let (told, told_plan) = given(&a, many, "Aggregate");
+    assert_eq!(sorted(&a, many).len(), 5000);
+    assert!(told_plan.contains("Parallel") && told < 6000, "{told} groups of\n{told_plan}");
 }

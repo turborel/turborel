@@ -16,12 +16,13 @@
 //! order, and a bitmap filter's span at its bound; of D1062, a filter
 //! stopped at a projection the declared types prove cannot raise; of
 //! D1063, a grouping run in parallel that judges no filter, and one
-//! told a filter over a column that may hold a null.
+//! told a filter over a column that may hold a null; of D1066, a DISTINCT
+//! told no filter.
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the join table's requirements.
-pub const JOIN_TABLE: [Mutation; 25] = [
+pub const JOIN_TABLE: [Mutation; 26] = [
     Mutation {
         name: "join-table-build-order",
         package: Package::Core,
@@ -37,8 +38,8 @@ pub const JOIN_TABLE: [Mutation; 25] = [
         package: Package::Core,
         breaks: "a slot's word holds a tag bit of each of its rows' hashes",
         file: "src/exec/table/join.rs",
-        original: "            let tags = table.hashes.get(*from..*to).unwrap_or_default().iter().fold(0_u64, |t, &h| t | tag(h));",
-        replacement: "            let tags = table.hashes.get(*from..*to).unwrap_or_default().iter().fold(0_u64, |t, _| t);",
+        original: "            let tags = hashes.get(*from..*to).unwrap_or_default().iter().fold(0_u64, |t, &h| t | tag(h));",
+        replacement: "            let tags = hashes.get(*from..*to).unwrap_or_default().iter().fold(0_u64, |t, _| t);",
         integration: &[],
         unit: &["exec::table::join::tests::tags_turn_away_a_probe_of_no_bit"],
     },
@@ -217,8 +218,8 @@ pub const JOIN_TABLE: [Mutation; 25] = [
         package: Package::Core,
         breaks: "a span of exactly four times the rows built makes a direct table (D601)",
         file: "src/exec/table/join/direct.rs",
-        original: "        if keyed.is_empty() || width > keyed.len().saturating_mul(DENSE_SPAN) {",
-        replacement: "        if keyed.is_empty() || width >= keyed.len().saturating_mul(DENSE_SPAN) {",
+        original: "        if !self.whole || self.keyed == 0 || width > self.keyed.saturating_mul(DENSE_SPAN) {",
+        replacement: "        if !self.whole || self.keyed == 0 || width >= self.keyed.saturating_mul(DENSE_SPAN) {",
         integration: &[],
         unit: &["exec::table::join::direct::tests::a_span_of_four_times_the_rows_is_direct"],
     },
@@ -227,8 +228,8 @@ pub const JOIN_TABLE: [Mutation; 25] = [
         package: Package::Core,
         breaks: "a direct table finds a key's rows in the order they were built (D601)",
         file: "src/exec/table/join/direct.rs",
-        original: "        for &(r, key) in &keyed {",
-        replacement: "        for &(r, key) in keyed.iter().rev() {",
+        original: "        for (r, place) in built() {",
+        replacement: "        for (r, place) in built().collect::<Vec<_>>().into_iter().rev() {",
         integration: &["dense_joins::dense_joins_answer_as_hashed"],
         unit: &["exec::table::join::direct::tests::a_direct_table_finds_a_keys_rows_in_build_order"],
     },
@@ -257,8 +258,8 @@ pub const JOIN_TABLE: [Mutation; 25] = [
         package: Package::Core,
         breaks: "a grouping run in parallel judges the filters it is told of each morsel's batches (D1063)",
         file: "src/exec/parallel/pipeline.rs",
-        original: "|| !stepped(&mut branches, 0, judged(told)) {",
-        replacement: "|| !stepped(&mut branches, 0, judged(told.into_iter().skip(usize::MAX).collect())) {",
+        original: "    told.iter().filter(|t| t.above).cloned()",
+        replacement: "    told.iter().filter(|t| t.above && t.moved && !t.moved).cloned()",
         integration: &["join_filters_told::a_filter_reaches_a_grouping_run_in_parallel"],
         unit: &[],
     },
@@ -270,6 +271,16 @@ pub const JOIN_TABLE: [Mutation; 25] = [
         original: "let below = if read.taken.iter().any(warns) {",
         replacement: "let below = if read.taken.iter().any(warns) && read.taken.is_empty() {",
         integration: &["join_filters_told::a_filter_reaches_a_grouping_run_in_parallel"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-told-no-filter",
+        package: Package::Core,
+        breaks: "a DISTINCT by hash under a join is read as a grouping by every column and takes the join's filter (D1066)",
+        file: "src/exec/batch/told.rs",
+        original: "        return super::distinct_groupable(plan, db).map(|width| ((0..width).collect(), width));",
+        replacement: "        return super::distinct_groupable(plan, db).filter(|w| *w > usize::MAX).map(|width| ((0..width).collect(), width));",
+        integration: &["join_filters_told::a_filter_reaches_the_scan_below_a_grouping"],
         unit: &[],
     },
 ];

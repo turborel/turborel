@@ -11,6 +11,7 @@
 use crate::error::Result;
 use crate::logical::AggCall;
 
+use super::slots::MAX_PROBE;
 use super::states::{Sent, States};
 use super::{GroupTable, Key, Keys, Seed, narrow};
 
@@ -31,8 +32,12 @@ pub(in crate::exec) struct Made {
     hashes: Vec<u64>,
     firsts: Vec<u64>,
     states: Vec<Sent>,
-    /// The places of each partition's groups.
-    parts: Vec<Vec<u32>>,
+    /// The places of its groups, partition by partition, in one vector:
+    /// each its own number, as the groups are held in that order.
+    places: Vec<u32>,
+    /// Where each partition's places begin in `places`, and the last's
+    /// end; empty of groups frozen whole.
+    starts: Vec<u32>,
     /// The keyed hashes its groups are placed by, if its table took them
     /// (RULES.md D357).
     keyed: Option<Vec<u64>>,
@@ -42,7 +47,7 @@ impl Made {
     /// The bytes it holds.
     pub(in crate::exec) fn bytes(&self) -> usize {
         let words = self.hashes.capacity().saturating_add(self.firsts.capacity()).saturating_mul(size_of::<u64>());
-        let places = self.parts.iter().map(|p| p.capacity().saturating_mul(size_of::<u32>())).sum::<usize>();
+        let places = self.places.capacity().saturating_add(self.starts.capacity()).saturating_mul(size_of::<u32>());
         let states = self.states.iter().map(Sent::bytes).sum::<usize>();
         let keyed = self.keyed.as_ref().map_or(0, |k| k.capacity().saturating_mul(size_of::<u64>()));
         words.saturating_add(keyed).saturating_add(places).saturating_add(states).saturating_add(self.keys.bytes())
@@ -50,7 +55,14 @@ impl Made {
 
     /// How many groups of partition `part` it holds.
     pub(in crate::exec) fn groups_of(&self, part: usize) -> usize {
-        self.parts.get(part).map_or(0, Vec::len)
+        self.places_of(part).len()
+    }
+
+    /// The places of partition `part`'s groups, in their order.
+    fn places_of(&self, part: usize) -> &[u32] {
+        let bound = |at: usize| self.starts.get(at).map(|&start| crate::storage::mask::index(start));
+        let range = bound(part).zip(part.checked_add(1).and_then(bound));
+        range.and_then(|(from, to)| self.places.get(from..to)).unwrap_or(&[])
     }
 }
 
@@ -61,18 +73,40 @@ impl GroupTable {
     ///
     /// SQLCODE -910 if an accumulator writes no state.
     pub(in crate::exec) fn made(mut self, parts: usize) -> Result<Made> {
-        let mut places: Vec<Vec<u32>> = (0..parts).map(|_| Vec::new()).collect();
-        for (g, &hash) in self.hashes.iter().enumerate() {
-            if let Some(part) = places.get_mut(part_of(hash, parts)) {
-                part.push(narrow(g));
+        // Counted, then placed: each partition's places one after another
+        // in one vector made once (RULES.md D1110).
+        let mut starts = vec![0_u32; parts.saturating_add(1)];
+        for &hash in &self.hashes {
+            if let Some(count) = starts.get_mut(part_of(hash, parts).saturating_add(1)) {
+                *count = count.saturating_add(1);
             }
         }
-        // Held until its partitions merge it, so none of its room is spare.
-        places.iter_mut().for_each(Vec::shrink_to_fit);
+        let mut sum = 0_u32;
+        for start in &mut starts {
+            sum = sum.saturating_add(*start);
+            *start = sum;
+        }
+        let (mut places, mut next) = (vec![0_u32; self.hashes.len()], starts.clone());
+        for (g, &hash) in self.hashes.iter().enumerate() {
+            let Some(at) = next.get_mut(part_of(hash, parts)) else { continue };
+            if let Some(place) = places.get_mut(crate::storage::mask::index(*at)) {
+                *place = narrow(g);
+            }
+            *at = at.saturating_add(1);
+        }
         // Each partition finds its groups by the hashes they came with.
         self.keyed = None;
         let mut made = self.frozen()?;
-        made.parts = places;
+        // Its groups put in that order, so a partition's lie one after
+        // another and the thread that merges them reads each column in
+        // one run, not a group from here and one from there.
+        let width = made.keys.width();
+        let keys = std::mem::replace(&mut made.keys, Keys::new(width));
+        made.keys.extend(&keys, &places);
+        let picked = |words: &[u64]| places.iter().map(|&g| words.get(crate::storage::mask::index(g)).copied().unwrap_or(0)).collect();
+        (made.hashes, made.firsts) = (picked(&made.hashes), picked(&made.firsts));
+        made.states = made.states.iter().map(|sent| sent.gathered(&places)).collect();
+        (made.places, made.starts) = ((0..places.len()).map(narrow).collect(), starts);
         Ok(made)
     }
 
@@ -89,7 +123,15 @@ impl GroupTable {
         self.firsts.shrink_to_fit();
         self.states.iter_mut().for_each(|states| states.truncate(len));
         let states = self.states.into_iter().map(States::sent).collect::<Result<Vec<_>>>()?;
-        Ok(Made { keys: self.keys, hashes: self.hashes, firsts: self.firsts, states, parts: Vec::new(), keyed: self.keyed })
+        Ok(Made {
+            keys: self.keys,
+            hashes: self.hashes,
+            firsts: self.firsts,
+            states,
+            places: Vec::new(),
+            starts: Vec::new(),
+            keyed: self.keyed,
+        })
     }
 
     /// The table of the groups of `made`, frozen, of the set functions
@@ -117,10 +159,7 @@ impl GroupTable {
     ///
     /// As `Accumulator::merge`; a sum past 128 bits.
     pub(in crate::exec) fn absorb(&mut self, made: &Made, part: usize) -> Result<()> {
-        for &i in made.parts.get(part).map_or(&[][..], Vec::as_slice) {
-            self.absorb_one(made, crate::storage::mask::index(i))?;
-        }
-        Ok(())
+        self.absorb_places(made, made.places_of(part))
     }
 
     /// Merges every group of `made`, frozen whole, into its own, in their
@@ -130,24 +169,84 @@ impl GroupTable {
     ///
     /// As `absorb`.
     pub(in crate::exec) fn absorb_whole(&mut self, made: &Made) -> Result<()> {
-        (0..made.hashes.len()).try_for_each(|i| self.absorb_one(made, i))
+        let places: Vec<u32> = (0..made.hashes.len()).map(narrow).collect();
+        self.absorb_places(made, &places)
     }
 
-    /// Merges group `i` of `made` into its own.
-    fn absorb_one(&mut self, made: &Made, i: usize) -> Result<()> {
-        let (Some(&hash), Some(&first)) = (made.hashes.get(i), made.firsts.get(i)) else { return Ok(()) };
-        let key = Key::Group(&made.keys, i);
-        let g = match self.find(hash, key) {
-            Some(g) => g,
-            None => self.make(hash, key, first),
-        };
-        let g = crate::storage::mask::index(g);
-        if let Some(held) = self.firsts.get_mut(g) {
-            *held = (*held).min(first);
+    /// Room for `more` groups more, their keys in lanes as `like`'s, so
+    /// merging a wave's morsels grows no vector a group at a time.
+    pub(in crate::exec) fn reserve(&mut self, like: &Made, more: usize) {
+        self.keys.reserve(&like.keys, more);
+        self.hashes.reserve(more);
+        self.firsts.reserve(more);
+        self.states.iter_mut().for_each(|states| states.reserve(more));
+    }
+
+    /// \[DESIGN\] (RULES.md D1110) Merges the groups at `places` of
+    /// `made` into its own, a column at a time: each looked up by its key
+    /// and hash; those new, no two of one key as they are one table's,
+    /// appended lane by lane and placed; then each set function's states
+    /// merged in one loop.
+    fn absorb_places(&mut self, made: &Made, places: &[u32]) -> Result<()> {
+        let base = self.hashes.len();
+        let (mut groups, mut fresh) = std::mem::take(&mut self.merging);
+        groups.clear();
+        fresh.clear();
+        for &i in places {
+            let at = crate::storage::mask::index(i);
+            let found = self.find(made.hashes.get(at).copied().unwrap_or(0), Key::Group(&made.keys, at));
+            groups.push(found.unwrap_or_else(|| narrow(base.saturating_add(fresh.len()))));
+            if found.is_none() {
+                fresh.push(i);
+            }
+        }
+        self.make_all(made, &fresh);
+        for (&g, &i) in groups.iter().zip(places) {
+            let first = made.firsts.get(crate::storage::mask::index(i)).copied().unwrap_or(u64::MAX);
+            if let Some(held) = self.firsts.get_mut(crate::storage::mask::index(g)) {
+                *held = (*held).min(first);
+            }
         }
         for ((states, agg), sent) in self.states.iter_mut().zip(&self.aggs).zip(&made.states) {
-            states.merge((g, agg), (sent, i))?;
+            states.merge_all(agg, &groups, (sent, places))?;
         }
+        self.merging = (groups, fresh);
         Ok(())
     }
+
+    /// Makes the groups at `fresh` of `made`, none of them its own yet,
+    /// fed nothing, in that order: their keys, hashes and first rows
+    /// appended, then each placed. A table placed by keyed hashes makes
+    /// them one by one (RULES.md D357).
+    fn make_all(&mut self, made: &Made, fresh: &[u32]) {
+        let of = |i: u32| {
+            let at = crate::storage::mask::index(i);
+            (at, made.hashes.get(at).copied().unwrap_or(0), made.firsts.get(at).copied().unwrap_or(u64::MAX))
+        };
+        if self.keyed.is_some() {
+            for (at, hash, first) in fresh.iter().map(|&i| of(i)) {
+                self.make(hash, Key::Group(&made.keys, at), first);
+            }
+            return;
+        }
+        let from = self.hashes.len();
+        self.keys.extend(&made.keys, fresh);
+        self.hashes.extend(fresh.iter().map(|&i| of(i).1));
+        self.firsts.extend(fresh.iter().map(|&i| of(i).2));
+        self.states.iter_mut().for_each(|states| states.grow_by(fresh.len()));
+        for g in from..self.hashes.len() {
+            let hash = self.hashes.get(g).copied().unwrap_or(0);
+            if self.slots.place(hash, narrow(g), &self.hashes) > MAX_PROBE {
+                // Every group, those not yet placed too, placed by its
+                // keyed hash.
+                self.rekeyed();
+                break;
+            }
+        }
+    }
 }
+
+// Unit tests: partitions merged a column at a time hold what merging
+// group by group holds (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

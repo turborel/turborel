@@ -14,10 +14,20 @@
 //! finds the writer's entry. Bits are never cleared: a rewrite makes a new
 //! group, whose bits are marked as it is published. A table opened marks
 //! its groups' bits from one scan of the tree over their ranges.
+//!
+//! A group is in the directory before its mark has read the tree, so a
+//! reader may take it with bits yet to be set. Such a bit is that of a row
+//! written just before the group was published, or of a row of its range
+//! it did not freeze, whose commit was not yet stamped on its entry as the
+//! freeze read it. Its bits are settled only once the mark is done
+//! (RULES.md D1100). Until then a reader takes every bit as set, and reads
+//! the tree over the group's range whole, as it did before there were
+//! bits. It reads that the bits are settled before it reads any of them,
+//! so the bits it trusts hold every mark made by then.
 
 use std::ops::Bound;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::Entry;
 use crate::engine::rows::{RowTable, key, row_id};
@@ -42,17 +52,21 @@ pub(in crate::engine::rows) struct ShadowBits {
     shift: u32,
     /// The bits, none until one is set.
     words: OnceLock<Box<[AtomicU64]>>,
+    /// Whether the entries the tree held as the group was put in the
+    /// directory are marked. Until they are, every bit is taken as set.
+    settled: AtomicBool,
 }
 
 impl ShadowBits {
-    /// The bits of a group of row ids `first` to `last`, none set.
+    /// The bits of a group of row ids `first` to `last`, none set, and
+    /// not settled.
     pub(super) fn new(first: RowId, last: RowId) -> ShadowBits {
         let span = last.saturating_sub(first).saturating_add(1);
         let mut shift = 0;
         while span.checked_shr(shift).unwrap_or(0) > MOST_BITS {
             shift = shift.saturating_add(1);
         }
-        ShadowBits { first, last, shift, words: OnceLock::new() }
+        ShadowBits { first, last, shift, words: OnceLock::new(), settled: AtomicBool::new(false) }
     }
 
     /// The bit of row `id`, its word and its place in it.
@@ -75,20 +89,40 @@ impl ShadowBits {
         }
     }
 
-    /// Whether the tree may have an entry for row `id`.
-    pub(in crate::engine::rows) fn may_hold(&self, id: RowId) -> bool {
-        let Some(words) = self.words.get() else { return false };
-        self.place(id).is_some_and(|(word, bit)| words.get(word).is_some_and(|w| w.load(Ordering::SeqCst) & bit != 0))
+    /// Notes that the entries the tree held as the group was put in the
+    /// directory are marked, so its bits are trusted from now on.
+    pub(super) fn settle(&self) {
+        self.settled.store(true, Ordering::SeqCst);
     }
 
-    /// Whether no bit is set.
+    /// Whether its bits are trusted. Read before any bit is, so the bits
+    /// read after hold every mark made before it was settled.
+    fn settled(&self) -> bool {
+        self.settled.load(Ordering::SeqCst)
+    }
+
+    /// Whether the tree may have an entry for row `id`, as it may for any
+    /// row of its range until its bits are settled.
+    pub(in crate::engine::rows) fn may_hold(&self, id: RowId) -> bool {
+        let Some((word, bit)) = self.place(id) else { return false };
+        if !self.settled() {
+            return true;
+        }
+        self.words.get().is_some_and(|words| words.get(word).is_some_and(|w| w.load(Ordering::SeqCst) & bit != 0))
+    }
+
+    /// Whether no bit is set, and its bits are settled.
     pub(in crate::engine::rows) fn none(&self) -> bool {
-        self.words.get().is_none_or(|words| words.iter().all(|w| w.load(Ordering::SeqCst) == 0))
+        self.settled() && self.words.get().is_none_or(|words| words.iter().all(|w| w.load(Ordering::SeqCst) == 0))
     }
 
     /// The ranges of row ids, first and last, of the set bits, in order;
-    /// the group's range whole if they are more than `MOST_RANGES`.
+    /// the group's range whole if they are more than `MOST_RANGES`, or if
+    /// its bits are not settled.
     pub(in crate::engine::rows) fn ranges(&self) -> Vec<(RowId, RowId)> {
+        if !self.settled() {
+            return vec![(self.first, self.last)];
+        }
         let Some(words) = self.words.get() else { return Vec::new() };
         let mut ranges: Vec<(RowId, RowId)> = Vec::new();
         for (n, word) in words.iter().enumerate() {
@@ -147,7 +181,8 @@ impl RowTable {
 
     /// Marks the bits of `entry`, a group just put in the directory, of
     /// every entry the tree holds in its range but those of `frozen`, the
-    /// rows it froze as they were, in order, to be taken out.
+    /// rows it froze as they were, in order, to be taken out; its bits are
+    /// then settled.
     pub(super) fn mark_published(&self, entry: &Entry, frozen: &[(RowId, Vec<u8>)]) -> Result<()> {
         let (low, high) = (key(entry.summary.first), key(entry.summary.last));
         for found in self.tree.scan(Bound::Included(&low[..]), Bound::Included(&high[..]), Direction::Forward) {
@@ -158,11 +193,13 @@ impl RowTable {
                 entry.shadow.mark(id);
             }
         }
+        entry.shadow.settle();
         Ok(())
     }
 
     /// Marks the bits of every group of the directory just loaded, of each
-    /// entry the tree holds in a group's range, in one scan over them.
+    /// entry the tree holds in a group's range, in one scan over them;
+    /// their bits are then settled.
     pub(super) fn mark_opened(&self) -> Result<()> {
         let directory = self.frozen.directory()?;
         let (Some(first), Some(last)) = (directory.groups.first(), directory.groups.last()) else { return Ok(()) };
@@ -173,6 +210,7 @@ impl RowTable {
                 entry.shadow.mark(id);
             }
         }
+        directory.groups.iter().for_each(|entry| entry.shadow.settle());
         Ok(())
     }
 }
@@ -189,6 +227,7 @@ mod tests {
     #[test]
     fn marks_and_ranges() {
         let bits = ShadowBits::new(100, 199);
+        bits.settle();
         assert!(bits.none(), "none set");
         assert_eq!(bits.ranges(), Vec::new());
         for id in [105, 106, 107, 150, 199, 99, 200] {
@@ -204,6 +243,7 @@ mod tests {
     #[test]
     fn wide_ranges_take_blocks() {
         let bits = ShadowBits::new(0, (1 << 20) - 1);
+        bits.settle();
         bits.mark(40);
         assert!(bits.may_hold(32) && bits.may_hold(47) && !bits.may_hold(48), "a bit of 16 ids");
         assert_eq!(bits.ranges(), vec![(32, 47)]);
@@ -214,9 +254,32 @@ mod tests {
     #[test]
     fn many_ranges_read_whole() {
         let bits = ShadowBits::new(0, 9999);
+        bits.settle();
         for id in (0..200).map(|n| n * 10) {
             bits.mark(id);
         }
         assert_eq!(bits.ranges(), vec![(0, 9999)]);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1100, shadow bits not settled. Until
+    /// the entries the tree held as the group was published are marked,
+    /// every row of its range is taken as one the tree may hold, its range
+    /// is read whole, and its bits are not said to be none. Once settled,
+    /// only the rows marked are, whether marked before it or after.
+    #[test]
+    fn bits_not_settled_are_all_taken_as_set() {
+        let bits = ShadowBits::new(100, 199);
+        bits.mark(120);
+        assert!(bits.may_hold(100) && bits.may_hold(199) && !bits.may_hold(99) && !bits.may_hold(200), "its range, no more");
+        assert!(!bits.none(), "not known to be none");
+        assert_eq!(bits.ranges(), vec![(100, 199)]);
+        bits.settle();
+        bits.mark(150);
+        assert!(bits.may_hold(120) && bits.may_hold(150) && !bits.may_hold(100));
+        assert_eq!(bits.ranges(), vec![(120, 120), (150, 150)]);
+        let untouched = ShadowBits::new(0, 9);
+        assert!(!untouched.none() && untouched.may_hold(3), "before it is settled");
+        untouched.settle();
+        assert!(untouched.none() && !untouched.may_hold(3) && untouched.ranges().is_empty(), "once it is");
     }
 }

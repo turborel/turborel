@@ -269,6 +269,12 @@ pub(crate) struct Transactions {
     /// Of those, the ones the last checkpoint taken holds: those after it
     /// count toward the next (CHECKPOINT.AFTER_CHANGES).
     checkpointed: AtomicU64,
+    /// The bytes of records written to the log since the database was
+    /// opened; those the checkpoint being taken holds, noted as it
+    /// captures; and those the last taken holds (RULES.md D1137).
+    pub(crate) logged_bytes: Alone<AtomicU64>,
+    capturing_bytes: AtomicU64,
+    checkpointed_bytes: AtomicU64,
     /// Index builds under way, which a checkpoint waits for: it records
     /// only indexes ready to be read (`Database::create_index`).
     builds: Mutex<usize>,
@@ -363,6 +369,9 @@ impl Default for Transactions {
             logged: Alone(AtomicU64::new(0)),
             pending: Pending::default(),
             checkpointed: AtomicU64::new(0),
+            logged_bytes: Alone(AtomicU64::new(0)),
+            capturing_bytes: AtomicU64::new(0),
+            checkpointed_bytes: AtomicU64::new(0),
             builds: Mutex::new(0),
             built: Condvar::new(),
             stopped: Mutex::new(None),
@@ -420,9 +429,25 @@ impl Transactions {
         self.logged.load(Ordering::Relaxed).saturating_sub(self.checkpointed.load(Ordering::Relaxed))
     }
 
-    /// Notes a checkpoint taken, holding the first `logged` row changes.
+    /// The bytes of records written to the log since the last checkpoint
+    /// taken (RULES.md D1137).
+    pub(crate) fn bytes_since_checkpoint(&self) -> u64 {
+        self.logged_bytes.load(Ordering::Relaxed).saturating_sub(self.checkpointed_bytes.load(Ordering::Relaxed))
+    }
+
+    /// The row changes logged so far, as a checkpoint captures what it
+    /// holds, the bytes logged so far noted with them: one checkpoint is
+    /// taken at a time.
+    pub(crate) fn captured(&self) -> u64 {
+        self.capturing_bytes.store(self.logged_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.logged.load(Ordering::Relaxed)
+    }
+
+    /// Notes a checkpoint taken, holding the first `logged` row changes,
+    /// and the bytes noted as it captured them.
     pub(crate) fn checkpointed(&self, logged: u64) {
         self.checkpointed.fetch_max(logged, Ordering::Relaxed);
+        self.checkpointed_bytes.fetch_max(self.capturing_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 
     /// How many transactions are open.

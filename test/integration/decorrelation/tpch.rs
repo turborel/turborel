@@ -162,7 +162,9 @@ fn a_join_beside_a_correlated_subquery_stays_a_join() {
         // A product is left only of D's rows with the one row that says L has any.
         let lines: Vec<&str> = physical.lines().collect();
         let products = lines.iter().enumerate().filter(|(_, l)| l.contains("Cartesian product"));
-        let guarded = products.clone().all(|(i, _)| lines.get(i + 2).is_some_and(|l| l.trim() == "Distinct"));
+        // The one row is either operand, as a DISTINCT of a constant is estimated at one row (D1082).
+        let distinct = |at: usize| lines.get(at).is_some_and(|l| l.trim() == "Distinct");
+        let guarded = products.clone().all(|(i, _)| distinct(i + 1) || distinct(i + 2));
         assert!(joined && guarded && products.count() == if by_domain { 2 } else { 0 }, "{plan}");
         assert_eq!(physical.contains("TRAILING_SPACES"), by_domain, "{plan}");
         let (on, off) = both(&db, &s, q);

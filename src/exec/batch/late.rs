@@ -122,7 +122,7 @@ impl Deferred {
     /// Of an inner hash join's left operand, `width` columns wide, `keys`
     /// the join's: its columns the join's rows leave unread, but its keys,
     /// rows dropped, as a join keeps the rows that match alone.
-    pub(super) fn left_of(&self, keys: &[JoinKey], width: usize) -> Deferred {
+    pub(in crate::exec) fn left_of(&self, keys: &[JoinKey], width: usize) -> Deferred {
         let read: Vec<usize> = keys.iter().map(|k| k.left).collect();
         let unread: Vec<usize> = self.unread.iter().copied().filter(|&c| c < width).collect();
         Deferred { reduced: true, unread: without(&unread, &read), bound: None, told: Vec::new() }

@@ -3,7 +3,7 @@
 The command-line client, the client library programs connect with, and
 the library a program embeds the database by.
 
-[The documentation set](../README.md)
+[Turborel Documentation](../README.md)
 
 ## Contents
 

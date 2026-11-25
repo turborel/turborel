@@ -60,7 +60,7 @@ impl Estimates<'_> {
     /// The distinct combinations of `input`'s columns `columns`, and the
     /// rows of the one table that has them all, if one does.
     fn combinations(&self, input: &LogicalPlan, columns: &[usize]) -> (f64, Option<f64>) {
-        let product = columns.iter().map(|&c| self.distinct(input, c).max(1.0_f64)).product::<f64>();
+        let product = columns.iter().map(|&c| self.grouped_distinct(input, c, 0).max(1.0_f64)).product::<f64>();
         let Some((table, places)) = one_table(Over::One(input), columns) else { return (product, None) };
         let mut keys: Vec<usize> = places.iter().map(|&(_, place)| place).collect();
         keys.sort_unstable();

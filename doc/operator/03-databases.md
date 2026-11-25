@@ -193,11 +193,15 @@ at most once a minute
 
 ## Open files
 
-A database holds at most FILES.MAX_OPEN of its files open at once, 1024
+A database holds at most FILES.MAX_OPEN of its files open at once, 512
 by default, 0 for no limit, so a server stays within what the system
-allows a process. Past it, the file used least recently is closed, and
-opened again as it is next used; while every open file is being read or
-written, the next waits for one. A file with writes not yet on disk is
+allows a process, with room for its connections. Past it, the file used
+least recently is closed, and opened again as it is next used; while
+every open file is being read or written, the next waits for one. A file
+the system will not open because the process has no descriptor left is
+opened the same way, after one of the database's files gives its
+descriptor up, so a limit lower than FILES.MAX_OPEN slows the work but
+does not fail it. A file with writes not yet on disk is
 closed only after those without, and its writes are synced first: if
 that sync fails, the file is kept open, the failure is told as a
 `failed` event, and the file's next sync fails with it, so the
