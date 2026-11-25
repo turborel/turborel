@@ -76,7 +76,9 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         // A top-N's first rows, few, made batches (D380).
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }).then(|| layout(input, db)).flatten(),
         // Rows made row by row, gathered (RULES.md D600).
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => told::gathered_layout(plan, db),
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } | Plan::Distinct { .. } => {
+            told::gathered_layout(plan, db)
+        }
         Plan::Append { .. } => {
             let mut held = None;
             for operand in appended(plan) {
@@ -95,7 +97,6 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         | Plan::RangeJoin(_)
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -105,6 +106,9 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => None,
+        // A subplan computed once gives its rows gathered, as its plan
+        // lays them out (RULES.md D1129).
+        Plan::Shared(s) => layout(&s.input, db),
         // A pipeline run in parallel, by batch (`parallel/batches.rs`).
         Plan::Parallel(p) => parallel_layout(&p.input, db),
     }
@@ -179,7 +183,7 @@ fn windowed_layout(window: &Window<Plan>, db: &State) -> Option<(Vec<usize>, usi
 /// an index scan reads it row by row, as its order or its stop asks.
 pub(super) fn untold(plan: &Plan) -> bool {
     match plan {
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => false,
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } | Plan::Distinct { .. } => false,
         Plan::Filter { input, .. } | Plan::Project { input, .. } | Plan::Sort { input, .. } | Plan::Limit { input, .. } => untold(input),
         Plan::Counted(c) => untold(&c.input),
         // A held leaf's batches are its own (RULES.md D668).
@@ -195,7 +199,6 @@ pub(super) fn untold(plan: &Plan) -> bool {
         | Plan::Nearest(_)
         | Plan::RangeJoin(_)
         | Plan::MergeAppend { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -205,7 +208,8 @@ pub(super) fn untold(plan: &Plan) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => true,
+        | Plan::Transition { .. }
+        | Plan::Shared(_) => true,
     }
 }
 
@@ -232,7 +236,9 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         Plan::Append { .. } => appended(plan).into_iter().all(|operand| reads(operand, db, joined)),
         Plan::Product { left, right, .. } | Plan::OuterJoin { left, right, .. } => reads(left, db, joined) && reads(right, db, joined),
         Plan::HashJoin { left, right, .. } => reads(left, db, true) && reads(right, db, true),
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => joined && told::reads(plan, db),
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } | Plan::Distinct { .. } => {
+            joined && told::reads(plan, db)
+        }
         Plan::SemiJoin(s) => reads(&s.left, db, true) && reads(&s.right, db, true),
         // Its right's rows are held as the row path holds them.
         Plan::MarkJoin(m) => reads(&m.left, db, joined),
@@ -241,7 +247,6 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         | Plan::RangeJoin(_)
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -250,7 +255,8 @@ pub(super) fn reads(plan: &Plan, db: &State, joined: bool) -> bool {
         | Plan::Polymorphic(..)
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
-        | Plan::Transition { .. } => false,
+        | Plan::Transition { .. }
+        | Plan::Shared(_) => false,
         // A grouping that takes filters is read by batch by a join that
         // tells it them, as it is run alone (RULES.md D1063).
         Plan::Parallel(p) => {
@@ -365,11 +371,10 @@ fn made_of(plan: &Plan) -> Batched {
         Plan::IndexScan { .. } => told::index_batches,
         Plan::IndexJoin { .. } => told::index_join_batches,
         Plan::MergeJoin(_) => told::merge_batches,
-        Plan::Aggregate { .. } => told::grouped_batches,
+        Plan::Aggregate { .. } | Plan::Distinct { .. } => told::grouped_batches,
         Plan::Nearest(_)
         | Plan::RangeJoin(_)
         | Plan::MergeAppend { .. }
-        | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::Values { .. }
         | Plan::System { .. }
@@ -379,6 +384,7 @@ fn made_of(plan: &Plan) -> Batched {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => none,
+        Plan::Shared(_) => told::shared_batches,
         Plan::Parallel(..) => super::parted::batches,
         Plan::Sort { .. } => sorted_batches,
         Plan::Limit { .. } => topped_batches,
@@ -468,8 +474,10 @@ fn scan_batches(scan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Resul
 fn filter_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
     let Plan::Filter { cond, input, .. } = plan else { return Err(crate::exec::broken("a filter is not one")) };
     let below = deferred.filtered(&cond).with_told(deferred.filters().to_vec());
-    let (inner, columns) = told(*input, &cond, (db, tx), &below)?;
-    Ok(filtered(inner, (Judging::of(&cond, &columns), Runner::new(db, tx))))
+    // A grouping its input and its subqueries compute alike, read once (RULES.md D1129).
+    let (input, runner) = crate::exec::shared::readied(&cond, *input, db, tx);
+    let (inner, columns) = told(input, &cond, (db, tx), &below)?;
+    Ok(filtered(inner, (Judging::of(&cond, &columns), runner)))
 }
 
 /// The batches of `inner`, the input of a filter of `cond`, its scans'

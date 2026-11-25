@@ -31,6 +31,7 @@ impl Plan {
             Plan::MergeAppend { inputs, .. } => inputs.iter_mut().for_each(each),
             Plan::Parallel(p) => each(&mut p.input),
             Plan::Counted(c) => each(&mut c.input),
+            Plan::Shared(s) => each(&mut s.input),
             Plan::Transfer(t) => t.input_mut().into_iter().for_each(each),
             Plan::MergeJoin(m) => {
                 each(&mut m.left);

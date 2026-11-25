@@ -106,14 +106,15 @@ impl Pipeline {
     ///
     /// As building an operand fails.
     pub(super) fn of(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Pipeline>> {
-        Pipeline::told(plan, (db, tx), limit, Vec::new())
+        Pipeline::told(plan, (db, tx), limit, &[])
     }
 
     /// \[DESIGN\] (RULES.md D1063) As `of`, `told` the runtime filters of
-    /// the stream's columns a join above the part tells it, as a grouping
-    /// run in parallel is told those of its grouping columns. Their ranges
-    /// go down to the scans as the pipeline's own joins' do, and a step
-    /// at the pipeline's end judges them of each morsel's batches: no
+    /// the stream's columns a join above the part tells it
+    /// (`Told::given_above`), as a grouping run in parallel is told those
+    /// of its grouping columns. Their ranges go down to the scans as the
+    /// pipeline's own joins' do, and a step right after each scan they
+    /// reach judges them whole of each morsel's batches (`above`): no
     /// probe of their join follows in the morsel to drop the rows, so
     /// judging them there spares what reads the pipeline every row they
     /// drop.
@@ -121,10 +122,10 @@ impl Pipeline {
     /// # Errors
     ///
     /// As building an operand fails.
-    pub(super) fn told(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit, told: Vec<Told>) -> Result<Held<Pipeline>> {
+    pub(super) fn told(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit, told: &[Told]) -> Result<Held<Pipeline>> {
         let rows = db.settings.count(EXECUTOR_MORSEL_ROWS).max(1);
         let mut branches = Vec::new();
-        if !branched(plan, (db, tx, rows), (limit, &told), &mut branches)? || !stepped(&mut branches, 0, judged(told)) {
+        if !branched(plan, (db, tx, rows), (limit, told), &mut branches)? {
             return Ok(Held::GaveWay);
         }
         let batched = super::batched::by_batch(&branches, db);
@@ -184,7 +185,8 @@ fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Li
     let first = out.len();
     let mut after = Vec::new();
     if let Plan::SeqScan { table, columns, .. } = plan {
-        return Ok(scan_branch(db, (table, columns), (tx, rows), (None, &below), out) && stepped(out, first, judged(here)));
+        let steps = judged(above(&below).chain(here).collect());
+        return Ok(scan_branch(db, (table, columns), (tx, rows), (None, &below), out) && stepped(out, first, steps));
     }
     if let Plan::IndexScan { .. } = plan {
         return index_branch(plan, (db, tx, rows), told, out);
@@ -193,7 +195,7 @@ fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Li
         && let Plan::SeqScan { table, columns, .. } = input.bare()
     {
         let (scanned, unscanned) = taken(input, &below, db);
-        after.extend(judged(unscanned.into_iter().chain(here).collect()));
+        after.extend(judged(above(&scanned).chain(unscanned).chain(here).collect()));
         let split = scan_branch(db, (table, columns), (tx, rows), (Some(cond), &scanned), out);
         return Ok(split && counted_scan(input, out) && stepped(out, first, after));
     }
@@ -252,6 +254,13 @@ fn counted_scan(input: &Plan, out: &mut [Branch]) -> bool {
         branch.steps.insert(0, Step::Count(Arc::clone(&c.count)));
     }
     true
+}
+
+/// \[DESIGN\] (RULES.md D1063) Of `told`, filters a scan is told, those
+/// a join above the part told it, which a step judges right after the
+/// scan.
+fn above(told: &[Told]) -> impl Iterator<Item = Told> {
+    told.iter().filter(|t| t.above).cloned()
 }
 
 /// The step judging `told`, runtime filters stopped at an operator, if

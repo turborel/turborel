@@ -54,7 +54,7 @@ use crate::error::{Result, Warnings};
 use crate::fulltext::rank::Statistics;
 use crate::logical::{Decorrelated, Invocation, LogicalPlan, Subquery};
 use crate::optimizer::RuleContext;
-use crate::physical::{JoinKey, PhysicalPlanner};
+use crate::physical::{JoinKey, PhysicalPlanner, Plan};
 use crate::spill::heap_bytes;
 use crate::storage::Row;
 use crate::sync::lock_builtin;
@@ -362,6 +362,8 @@ pub struct Runner {
     stop: OnceCell<Option<Arc<Stop>>>,
     /// The patterns of its LIKEs not of constants, each split once.
     patterns: RefCell<LikePatterns>,
+    /// The plans made ahead of its subqueries with no outer reference (RULES.md D1129).
+    ready: RefCell<HashMap<u64, Plan>>,
     /// The ranking statistics of each index asked for, each taken once
     /// (RULES.md D87).
     ranked: RefCell<HashMap<String, Option<Arc<dyn Statistics>>>>,
@@ -386,6 +388,7 @@ impl Runner {
             seen,
             stop: OnceCell::new(),
             patterns: RefCell::default(),
+            ready: RefCell::default(),
             ranked: RefCell::default(),
         }
     }
@@ -423,7 +426,7 @@ impl Runner {
             Some(how) => {
                 // Its key columns follow its own, each equal to an outer slot's value.
                 let keys = (0..how.slots.len()).map(|n| JoinKey { left: n, right: how.width.saturating_add(n), nulls: false }).collect();
-                let rows = self.run(how.plan.clone());
+                let rows = self.run_once(how.plan.clone(), true);
                 let Right::Held(rows) = Built::of(rows, keys, (&mut Work::of(&self.db, self.tx), Full::Table))? else {
                     return Err(broken("a subquery's rows were partitioned"));
                 };
@@ -506,7 +509,7 @@ impl Subqueries for Runner {
             // By its plan kept as a point read, if it is one (RULES.md D900).
             None => match self.pointed(subquery, outer, limit)? {
                 Some(read) => read,
-                None => self.gathered(self.per_run(subquery, outer), limit)?,
+                None => self.gathered(self.per_run(subquery, outer, limit), limit)?,
             },
         };
         // Kept while what is kept fits the work area; past that, run again

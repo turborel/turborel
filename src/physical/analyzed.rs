@@ -266,6 +266,7 @@ pub(crate) fn operators(plan: Plan, depth: usize, out: &mut Vec<Operator>) -> us
         | Plan::Recursive { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Unnest(_)
         | Plan::Window { .. }
         | Plan::Recognize { .. }

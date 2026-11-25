@@ -413,3 +413,64 @@ fn the_fence_refuses_changes_once_the_lock_is_taken_or_closed() {
     assert_eq!(closing.remove(Path::new("/a")).unwrap_err().code, Code::Api, "(false, true): closed");
     assert!(closing.exists(Path::new("/a")).unwrap(), "not removed");
 }
+
+/// A file system in memory whose process holds at most `.2` descriptors,
+/// those the registry `.1` counts open: as the system does once a process
+/// has none left, it refuses an open past them (SQLCODE -918).
+struct Scarce(MemoryFileSystem, Arc<Registry>, usize);
+
+impl FileSystem for Scarce {
+    fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
+        if self.1.open.load(Ordering::Acquire) > self.2 {
+            return Err(crate::disk::io::not_opened(path, &std::io::Error::from_raw_os_error(if cfg!(windows) { 4 } else { 24 })));
+        }
+        self.0.open(path, mode)
+    }
+    fn remove(&self, path: &Path) -> Result<()> {
+        self.0.remove(path)
+    }
+    fn exists(&self, path: &Path) -> Result<bool> {
+        self.0.exists(path)
+    }
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        self.0.create_dir_all(path)
+    }
+    fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+        self.0.read_dir(path)
+    }
+    fn sync_dir(&self, path: &Path) -> Result<()> {
+        self.0.sync_dir(path)
+    }
+    fn lock(&self, path: &Path) -> Result<FileLock> {
+        self.0.lock(path)
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1136: a process with fewer descriptors
+/// than FILES.MAX_OPEN lets be open still opens every file it needs, as a
+/// file of the database's not in use gives its descriptor up for each,
+/// what was written in each kept; with no file of its own to close, the
+/// open fails with SQLCODE -918; another failure to open is returned as
+/// it was, SQLCODE -915.
+#[test]
+fn a_process_out_of_descriptors_closes_a_file_of_its_own() {
+    let registry = Arc::new(Registry::default());
+    let fs = FileManager::over(Arc::new(Scarce(MemoryFileSystem::new(), Arc::clone(&registry), 2)), Arc::clone(&registry));
+    let files: Vec<Box<dyn DiskFile>> = (0..5_u8).map(|n| fs.open(Path::new(&format!("/{n}")), OpenMode::CreateNew).unwrap()).collect();
+    assert!(registry.open.load(Ordering::Acquire) <= 2, "no more open than the process may hold");
+    for (n, file) in (0_u8..).zip(&files) {
+        file.write_all_at(&[n], 0).unwrap();
+    }
+    for (n, file) in (0_u8..).zip(&files) {
+        let mut back = [0_u8; 1];
+        file.read_exact_at(&mut back, 0).unwrap();
+        assert_eq!(back, [n]);
+    }
+    drop(files);
+    let none = Arc::new(Registry::default());
+    let bare = FileManager::over(Arc::new(Scarce(MemoryFileSystem::new(), Arc::clone(&none), 0)), Arc::clone(&none));
+    assert_eq!(bare.open(Path::new("/a"), OpenMode::CreateNew).map(|_| ()).unwrap_err().code, Code::Resources);
+    assert_eq!(none.open.load(Ordering::Acquire), 0, "its place given back");
+    let other = crate::disk::io::not_opened(Path::new("/a"), &std::io::Error::from_raw_os_error(2));
+    assert_eq!(other.code, Code::Io, "not found is no want of descriptors");
+}

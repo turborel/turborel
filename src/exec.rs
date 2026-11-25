@@ -45,6 +45,7 @@ mod read;
 mod recursive;
 mod scan;
 mod set;
+mod shared;
 mod sort;
 mod subquery;
 mod table;
@@ -77,6 +78,7 @@ pub use eval::{Heard, eval, eval_cond, quantified, warn};
 pub use held::{HeldIter, HeldRows, Holdable};
 pub use join::{DEFAULT_PARTITION_DEPTH, DEFAULT_PARTITIONS};
 pub use recursive::{DEFAULT_MAX_ITERATIONS, WorkRows};
+pub use shared::SharedRows;
 pub use sort::compare_rows;
 pub use transition::TransitionRows;
 
@@ -156,6 +158,8 @@ fn opened(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         Plan::WorkTable { .. } => recursive::work_table,
         // [ISO/IEC 9075-2:2023 §15.21 GR5a] the state change's rows, as given.
         Plan::Transition { .. } => transition::transition,
+        // [DESIGN] computed by its first reader, read by each (RULES.md D1129).
+        Plan::Shared(_) => shared::shared,
         // [ISO/IEC 9075-2:2023 §7.6 SR8] each row of its input with its collections' elements.
         // [ISO/IEC 9075-2:2023 §7.11] or a JSON table's rows of each.
         Plan::Unnest(u) => {
@@ -216,6 +220,7 @@ fn joined_plan(plan: Plan, db: &Db, tx: TxId) -> RowIter {
         | Plan::Polymorphic(..)
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => failed(broken("a join is not one")),
@@ -267,8 +272,10 @@ fn system_rows(read: &SystemRead, db: &Db) -> RowIter {
 #[inline(never)]
 fn filtered(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Filter { cond, input, .. } = plan else { return failed(broken("a filter is not one")) };
-    let rows = scan::filtered_input(*input, &cond, db, tx);
-    filter(cond, rows, Runner::new(db, tx))
+    // A grouping its input and its subqueries compute alike, read once (RULES.md D1129).
+    let (input, runner) = shared::readied(&cond, *input, db, tx);
+    let rows = scan::filtered_input(input, &cond, db, tx);
+    filter(cond, rows, runner)
 }
 
 /// [X3.135-1986 §5.22, §5.8] The groups of the aggregation `plan`.

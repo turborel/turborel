@@ -55,6 +55,13 @@ impl Slots {
         slots
     }
 
+    /// Empty slots for `groups` groups, none of them placed again as
+    /// they come.
+    pub(super) fn with_room(groups: usize) -> Slots {
+        let wanted = groups.saturating_add(1).saturating_mul(2).max(LEAST_SLOTS).next_power_of_two();
+        Slots { slots: vec![EMPTY; wanted], mask: u64::try_from(wanted).unwrap_or(u64::MAX).saturating_sub(1) }
+    }
+
     /// The bytes it holds.
     pub(super) fn bytes(&self) -> usize {
         self.slots.capacity().saturating_mul(size_of::<u64>())

@@ -491,3 +491,49 @@ fn projections_of_expressions_stream_as_row_by_row() {
     let stops = "SELECT COUNT(*) FROM R WHERE K < 3 AND EXISTS (SELECT * FROM (SELECT 10 / (X.K - 5) FROM C X UNION ALL SELECT Y.K FROM C Y) AS V (Q))";
     assert_eq!(both_ways(&a, stops), (vec!["5".to_owned()], vec!["5".to_owned()]));
 }
+
+/// Verifies: [DESIGN] RULES.md D1161: grouped by texts the column store
+/// gives as codes of its dictionaries, groups are what the row store's
+/// texts make, at EXECUTOR.DEGREE 1 and in parallel: by two such columns,
+/// nulls a group of their own, a text and the same with trailing spaces
+/// one group; by three, past a work area of 64 KiB, the groups held and
+/// those written alike; and by a coded column beside one of integers,
+/// which is grouped as before.
+#[test]
+fn texts_coded_group_by_their_codes_as_the_texts_group() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE R (K INTEGER PRIMARY KEY, F VARCHAR(4), L VARCHAR(4), M VARCHAR(4), N INTEGER)
+           CREATE TABLE C (K INTEGER PRIMARY KEY, F VARCHAR(4), L VARCHAR(4), M VARCHAR(4), N INTEGER)
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    let flags = ["'A'", "'R'", "'N'", "'A  '", "NULL"];
+    for table in ["R", "C"] {
+        for first in (0..6000_i64).step_by(500) {
+            let row = |k: i64| {
+                let (f, l) = (flags[usize::try_from(k % 5).unwrap()], if k % 7 == 0 { "NULL".to_owned() } else { format!("'{}'", k % 3) });
+                format!("({k}, {f}, {l}, 'm{}', {})", k % 97, k % 10)
+            };
+            a.run(&format!("INSERT INTO {table} VALUES {}", (first..first + 500).map(row).collect::<Vec<_>>().join(", "))).unwrap();
+        }
+        a.commit().unwrap();
+        db.maintain().unwrap();
+    }
+    let queries = [
+        "SELECT F, L, COUNT(*), SUM(N) FROM {t} GROUP BY F, L",
+        "SELECT F, L, M, COUNT(*), MIN(K) FROM {t} GROUP BY F, L, M",
+        "SELECT F, N, COUNT(*) FROM {t} GROUP BY F, N",
+    ];
+    for setting in ["SET EXECUTOR.DEGREE = 1", "SET MEMORY.WORK_BYTES = 65536", "SET EXECUTOR.DEGREE = 4"] {
+        exec(&a, setting).unwrap();
+        for q in queries {
+            let columns = sorted(&a, &q.replace("{t}", "C"));
+            assert_eq!(columns, sorted(&a, &q.replace("{t}", "R")), "{setting}: {q}");
+        }
+    }
+    assert_eq!(sorted(&a, &queries[0].replace("{t}", "C")).len(), 4 * 4, "A, R, N and null, by 0, 1, 2 and null");
+}

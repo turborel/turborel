@@ -195,3 +195,36 @@ fn a_small_tables_conjunction_is_counted_on_its_sample() {
     // S of 1 and 9: 2 of its 40 values.
     assert!(within(few, 40.0, 1.2), "{few}\n{plan}");
 }
+
+/// Verifies: [DESIGN] RULES.md D1130, LIKE: of names of words drawn from
+/// a list, a pattern of one word and `%` is estimated by the share of
+/// the sampled names that begin with it, near the rows it keeps, of
+/// either engine, where the histogram's buckets placed it at an
+/// equality's few rows.
+#[test]
+fn a_prefix_the_sample_holds_enough_of_is_estimated_by_its_share() {
+    // Of the words that begin the parts' names of the decision support benchmark.
+    let words: Vec<&str> = concat!(
+        "almond antique aquamarine azure beige bisque black blanched blue blush brown burlywood burnished ",
+        "chartreuse chiffon chocolate coral cornflower cornsilk cream cyan dark deep dim dodger drab ",
+        "firebrick floral forest frosted gainsboro ghost goldenrod green grey honeydew hot indian ivory ",
+        "khaki lace lavender lawn lemon light lime linen magenta maroon medium metallic midnight mint misty ",
+        "moccasin navajo navy olive orange orchid pale papaya peach peru pink plum powder puff purple red ",
+        "rose rosy royal saddle salmon sandy seashell sienna sky slate smoke snow spring steel tan thistle ",
+        "tomato turquoise violet wheat white yellow",
+    )
+    .split(' ')
+    .collect();
+    let word = |n: usize| n.checked_rem(words.len()).and_then(|k| words.get(k)).copied().unwrap_or("none");
+    let first = |i: usize| word(i.wrapping_mul(7_919).wrapping_shr(2));
+    let names: Vec<String> = (0..20_000_usize).map(|i| format!("({i}, '{} {} {i}')", first(i), word(i))).collect();
+    for using in ["", " USING columnstore"] {
+        let schema = format!("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE P (ID INTEGER, NAME VARCHAR(55)){using}");
+        let db = database(&schema, &[("P", names.clone())]);
+        db.maintain().unwrap();
+        let s = db.session("APP");
+        let truth = names.iter().filter(|n| n.contains(", 'forest ")).count();
+        let (forest, plan) = estimated(&s, "SELECT * FROM P WHERE NAME LIKE 'forest%'");
+        assert!(within(forest, f64::from(u32::try_from(truth).unwrap()), 2.0), "{using}: {forest} for {truth}\n{plan}");
+    }
+}

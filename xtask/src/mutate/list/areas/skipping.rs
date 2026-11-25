@@ -8,6 +8,7 @@ use super::super::{Mutation, Package};
 
 /// The shadow bits' and the delta zones' unit tests.
 const BITS: &str = "engine::rows::frozen::shadowed::shadow_bits_mark_writes_and_keep_scans_the_same";
+const PUBLISHED: &str = "engine::rows::frozen::tests::published::a_group_read_before_its_bits_are_marked_misses_no_row";
 const DELTA: &str = "engine::rows::frozen::shadowed::delta_zones_skip_the_tree_rows_no_condition_matches";
 /// Imprints' unit tests.
 const KEPT: &str = "engine::columns::imprints::tests::imprints_never_leave_out_a_matching_row";
@@ -22,7 +23,7 @@ const SCANS: &str = "engine::columns::judged::sketched::tests::scans_by_sketches
 const SPARSE: &str = "engine::columns::judged::sketched::tests::few_rows_asked_for_are_compared_without_the_sketch";
 
 /// Mechanisms whose removal must fail the skipping's requirements.
-pub const SKIPPING: [Mutation; 20] = [
+pub const SKIPPING: [Mutation; 21] = [
     Mutation {
         name: "shadow-bits-writer",
         package: Package::Core,
@@ -42,6 +43,16 @@ pub const SKIPPING: [Mutation; 20] = [
         replacement: "            let _ = m;",
         integration: &[],
         unit: &[BITS],
+    },
+    Mutation {
+        name: "shadow-bits-settled",
+        package: Package::Core,
+        breaks: "a scan trusts a group's shadow bits before they are marked, so a row the mark has yet to find is missed",
+        file: "src/engine/rows/frozen/shadow_bits.rs",
+        original: "        if !self.settled() {\n            return vec![(self.first, self.last)];\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &[PUBLISHED],
     },
     Mutation {
         name: "delta-zones",

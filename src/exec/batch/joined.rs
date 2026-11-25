@@ -82,6 +82,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => None,
@@ -172,6 +173,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => return columns,
@@ -245,6 +247,7 @@ fn joined(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => no_join,
@@ -395,7 +398,8 @@ pub(super) fn ordered(plan: &Plan) -> bool {
 /// join's too. A plan
 /// that gives no batches is taken to be, so its order is kept, as are an
 /// index scan's and an index or merge join's, which a stream gathers
-/// (`told.rs`). A grouping by hash gives its groups in none.
+/// (`told.rs`). A grouping by hash gives its groups in none, and so
+/// does a DISTINCT by hash.
 fn in_order(plan: &Plan) -> bool {
     match plan {
         Plan::SeqScan { order, .. } => !order.is_empty(),
@@ -407,7 +411,8 @@ fn in_order(plan: &Plan) -> bool {
         // keeps, as they come (RULES.md D540, D1070).
         Plan::SemiJoin(s) => in_order(&s.left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
-        Plan::Aggregate { streamed, .. } => *streamed,
+        // A DISTINCT by hash is a grouping by every column (RULES.md D1066).
+        Plan::Aggregate { streamed, .. } | Plan::Distinct { streamed, .. } => *streamed,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
@@ -420,7 +425,6 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Sort { .. }
         | Plan::MergeAppend { .. }
         | Plan::Limit { .. }
-        | Plan::Distinct { .. }
         | Plan::Recursive { .. }
         | Plan::Unnest(..)
         | Plan::Window { .. }
@@ -428,6 +432,7 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => true,
+        Plan::Shared(s) => in_order(&s.input),
         // A pipeline run in parallel gives its batches in its morsels'
         // order (`parallel/batches.rs`), as its plan alone would; a
         // grouping by hash run in parallel gives its groups in none, as

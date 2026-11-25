@@ -250,8 +250,13 @@ impl Runner {
     /// The rows of a run of `subquery` for `outer`, by the plan it keeps,
     /// filled, or planned with them; with no outer values, its only run,
     /// and with EXECUTOR.KEEP_SUBQUERY_PLANS OFF, planned with them.
-    pub(super) fn per_run(&self, subquery: &Subquery, outer: &[Value]) -> RowIter {
-        if outer.is_empty() || !self.db.settings.is_on(KEEP_SUBQUERY_PLANS) {
+    pub(super) fn per_run(&self, subquery: &Subquery, outer: &[Value], limit: Option<usize>) -> RowIter {
+        if outer.is_empty() {
+            let ahead = self.ready.borrow_mut().remove(&subquery.id());
+            let Some(plan) = ahead else { return self.run_once(subquery.bound(outer), limit.is_none()) };
+            return execute(crate::physical::parallel_run(&self.db, plan, limit.is_none()), &self.db, self.tx);
+        }
+        if !self.db.settings.is_on(KEEP_SUBQUERY_PLANS) {
             return self.run(subquery.bound(outer));
         }
         let at = subquery.id();
@@ -268,6 +273,34 @@ impl Runner {
         }
         self.seen.borrow_mut().entry(at).or_default().planned = now;
         execute(plan, &self.db, self.tx)
+    }
+
+    /// \[DESIGN\] (RULES.md D1128) The rows of `plan`, that of a subquery
+    /// run once for its statement, one with no outer reference or one
+    /// decorrelated: optimized and planned as `run` plans it, then its
+    /// parts marked to run in parallel and its chains given predicate
+    /// transfer, as a statement's are (`db/compiled.rs`), if `all` its
+    /// rows are read or it reads its input whole before its first row
+    /// (`physical::parallel_run`). The statement's thread runs it, as no
+    /// part's worker evaluates a subquery (`physical/parallel.rs`).
+    pub(super) fn run_once(&self, plan: LogicalPlan, all: bool) -> RowIter {
+        let (optimized, _) = self.db.optimizer.optimize(plan, &RuleContext { db: &self.db });
+        let planned = PhysicalPlanner::new(&self.db).plan(&optimized);
+        execute(crate::physical::parallel_run(&self.db, planned, all), &self.db, self.tx)
+    }
+
+    /// \[DESIGN\] (RULES.md D1129) The physical plan of `subquery`, one
+    /// with no outer reference, made ahead of its run as `run_once` makes
+    /// it, its parts not yet marked: what the filter holding it looks
+    /// through for the groupings its input computes too (`exec/shared.rs`).
+    pub(in crate::exec) fn planned_ahead(&self, subquery: &Subquery) -> Plan {
+        let (optimized, _) = self.db.optimizer.optimize(subquery.bound(&[]), &RuleContext { db: &self.db });
+        PhysicalPlanner::new(&self.db).plan(&optimized)
+    }
+
+    /// Keeps `plan`, made ahead of the subquery `id`, for its run.
+    pub(in crate::exec) fn ready(&self, id: u64, plan: Plan) {
+        self.ready.borrow_mut().insert(id, plan);
     }
 
     /// The physical plan of `subquery` for `outer`, by what `was` keeps of

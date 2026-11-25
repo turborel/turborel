@@ -145,6 +145,26 @@ pub(crate) fn parallel(db: &State, mut plan: Plan) -> Plan {
     plan
 }
 
+/// \[DESIGN\] (RULES.md D1128) `plan`, that of a subquery run once for
+/// its statement, with its parts marked as `parallel` marks a statement's
+/// and its chains given predicate transfer (`physical/transfer.rs`), if
+/// the run reads every row of it: `all` of them are asked for, or it
+/// reads its input whole before it gives its first row, so no row is
+/// read that a run stopping at its first rows would not read.
+pub(crate) fn parallel_run(db: &State, plan: Plan, all: bool) -> Plan {
+    if all || whole_first(&plan, 0) { super::transferred(db, parallel(db, plan)) } else { plan }
+}
+
+/// Whether `plan` reads its input whole before it gives its first row: a
+/// grouping or DISTINCT not streamed, or a sort, under projections and
+/// filters.
+fn whole_first(plan: &Plan, depth: usize) -> bool {
+    if let Plan::Project { input, .. } | Plan::Filter { input, .. } = plan {
+        return depth < MAX_DEPTH && whole_first(input, depth.saturating_add(1));
+    }
+    matches!(plan, Plan::Aggregate { streamed: false, .. } | Plan::Distinct { streamed: false, .. } | Plan::Sort { .. })
+}
+
 /// Marks the parts of `plan`, `depth` below the root.
 fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
     // A bare COUNT(*) its table's storage counts, faster than any split,
@@ -367,6 +387,38 @@ fn calm_cond(c: &Cond) -> bool {
 mod tests {
     use super::*;
     use crate::value::{Decimal, Value};
+
+    /// Verifies: [DESIGN] RULES.md D1128: a plan reads its input whole
+    /// before its first row if it is a grouping or DISTINCT not streamed,
+    /// or a sort, under any projections and filters; a streamed grouping
+    /// or DISTINCT, or a projection of rows as they come, does not, so a
+    /// run that stops at its first rows keeps it as it is.
+    #[test]
+    fn a_plan_reads_whole_first_under_a_grouping_a_distinct_or_a_sort() {
+        let values = || Box::new(Plan::Values { rows: Vec::new(), detail: String::new() });
+        let distinct = |streamed: bool| Plan::Distinct { input: values(), est: 0.0_f64, streamed };
+        let project = |input: Plan| Plan::Project { exprs: Vec::new(), detail: String::new(), input: Box::new(input) };
+        let filter = |input: Plan| {
+            let cond = Cond::Const(crate::logical::Truth::True);
+            Plan::Filter { cond, detail: String::new(), est: 0.0_f64, of_read: false, input: Box::new(input) }
+        };
+        let aggregate = |streamed: bool| {
+            let (groups, collations, aggs, seeds) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+            Plan::Aggregate { groups, collations, aggs, seeds, detail: String::new(), input: values(), est: 0.0_f64, streamed }
+        };
+        assert!(whole_first(&distinct(false), 0));
+        assert!(!whole_first(&distinct(true), 0), "streamed, it gives rows as it reads them");
+        assert!(whole_first(&aggregate(false), 0));
+        assert!(!whole_first(&aggregate(true), 0), "streamed, it gives groups as it reads them");
+        assert!(whole_first(&Plan::Sort { keys: Vec::new(), detail: String::new(), input: values(), most: None }, 0));
+        assert!(whole_first(&project(filter(distinct(false))), 0), "under a projection and a filter");
+        assert!(!whole_first(&project(*values()), 0), "a projection of rows as they come");
+        assert!(!whole_first(&project(distinct(false)), MAX_DEPTH), "past the depth walked, none is found");
+        // A run that stops at its first rows keeps such a plan as it is.
+        let db = crate::db::Database::new();
+        let state = db.snapshot().unwrap();
+        assert!(matches!(parallel_run(&state, project(*values()), false), Plan::Project { .. }));
+    }
 
     /// Verifies: [DESIGN] RULES.md D405, D682: once a database starts, the
     /// system's threads are kept, and EXECUTOR.WORKERS of 0 is planned by

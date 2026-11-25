@@ -314,3 +314,37 @@ fn null_truth_values_read_unknown_whatever_their_bit() {
     let program = Program::of(Expr::Truth(Box::new(value())), vec![0]);
     assert_eq!(program.kept(&batch, None, (&NoSubqueries, &Portable)), Some(vec![1]));
 }
+
+/// Verifies: [X3.135-1986 §5.13 GR2, §5.11 GR2, GR5] (RULES.md D1126): IN
+/// a list of strings, of a vector of strings, plain or of a dictionary of
+/// fewer entries than rows or of more, gives by its text what a row's
+/// evaluation gives of each value: true of a string equal to one of the
+/// list but for trailing spaces, unknown of a null and, of a list holding
+/// a null, of a string not found, else false. A list holding a number is
+/// judged of the values.
+#[test]
+fn in_a_list_of_strings_is_judged_of_a_vector_s_text() {
+    let words = ["ab", "ab  ", "", "zz", "a", "null", "B "];
+    let plain =
+        Texts::new(words.concat(), vec![2, 6, 6, 8, 9, 9, 11], Some(Mask::from_bools(&[false, false, false, false, false, true, false])));
+    let entries = Arc::new(Texts::new("abzzq".into(), vec![2, 4, 5], None));
+    let coded = |codes: Vec<u32>| Texts::coded(crate::storage::Coded { codes, entries: Arc::clone(&entries) }, None);
+    let text = |s: &str| Value::Char(s.into());
+    let lists = [
+        vec![text("ab"), text("B")],
+        vec![text("zz "), Value::Null],
+        vec![text("")],
+        (0_u8..9).map(|n| text(&format!("w{n}"))).chain([text("a ")]).collect(),
+        vec![text("ab"), exact(1, 0)],
+    ];
+    for texts in [plain, coded(vec![0, 1, 1, 0, 2]), coded(vec![1])] {
+        let rows = texts.len();
+        let batch = Batch { columns: vec![Column::Texts(texts.clone())], rows };
+        for list in &lists {
+            let e = Expr::Truth(Box::new(Cond::In(Expr::Column(0), Arc::new(InSet::of(list.clone())))));
+            let wanted: Vec<Value> =
+                (0..rows).map(|n| eval(&e, &vec![texts.get(n).map_or(Value::Null, text)], &NoSubqueries).unwrap()).collect();
+            assert_eq!(of(e, &batch), Some(shown(&wanted)), "{list:?} of {texts:?}");
+        }
+    }
+}
