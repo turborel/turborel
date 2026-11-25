@@ -680,6 +680,7 @@ verification approach DO-178C expects (§8).
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
 | D1065 | An uncorrelated NOT IN or ALL that is a conjunct is an antijoin |
 | D1066 | A DISTINCT by hash under a join is read by batch as the grouping by every column it is |
+| D1067 | An IN list of a computed expression is judged by its set from two constants on, the expression computed once |
 | D1070 | A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows |
 | D1071 | A hashed semi join of streams read row by row is made of its batches |
 | D1072 | A join reads a grouping by batch whatever its set functions, and a grouping run in parallel too |
@@ -18566,6 +18567,27 @@ filter drops would give a distinct row the join keeps no row of. Its
 rows come in no order the plan relies on, as a grouping's by hash, so a
 join's left operand takes them as they come. A DISTINCT whose input
 comes in order, compared row by row (D550), is read as before.
+#### D1067. An IN list of a computed expression is judged by its set from two constants on, the expression computed once
+
+An `<in predicate>` of constants is bound as an OR of equalities, and an
+OR of eight or more of one column is judged by a set (D31). Of fewer the
+OR stays, as comparing a column with each constant costs no more than
+finding its bucket. Of an expression that is no column the OR stayed
+whatever its length. An OR evaluates every operand (D15), so
+`SUBSTRING(C FROM 1 FOR 2) IN ('13', '31', '23', '29', '30', '18', '17')`
+computed the substring seven times for each row, each a string made and
+dropped.
+
+Such an OR is now judged by its set from two constants on
+(`logical/sets.rs`). The set computes the expression once and compares
+its value with each constant, or finds its bucket of eight or more. The
+count needs no measurement, as one computation is less than two of the
+same. The expression is of columns and constants by deterministic
+functions, arithmetic and casts alone, and the same in every equality,
+function for function and constant for constant. It then has one value
+for a row and raises one error, however often it is computed, so the
+condition's value and its error are those of the OR.
+
 #### D1070. A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows
 
 The planner builds the left operand of a semi join or an antijoin when

@@ -16,7 +16,7 @@ const RAISING: &str = "rewrites::hoisting::hoisted_parts_raise_as_the_product_wo
 const KEPT: &str = "rewrites::elimination::joins_that_could_change_rows_are_kept";
 
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 16] = [
+pub const REWRITES: [Mutation; 17] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -176,5 +176,15 @@ pub const REWRITES: [Mutation; 16] = [
         replacement: "let no_right_nulls = kind.keeps_left() && rejected(offset, middle);",
         integration: &["outer_rejection::a_comparison_of_both_operands_makes_an_outer_join_inner_7_5"],
         unit: &[],
+    },
+    Mutation {
+        name: "computed-in-list-of-two-expressions",
+        package: Package::Core,
+        breaks: "an OR of equalities is made a set only of one computed expression, not of two that differ (D1067)",
+        file: "src/logical/sets.rs",
+        original: "        return same(e, other, 0).then_some((e, list));",
+        replacement: "        return (same(e, other, 0) || !list.is_empty()).then_some((e, list));",
+        integration: &[],
+        unit: &["logical::sets::tests::a_list_of_a_computed_expression_is_a_set"],
     },
 ];
