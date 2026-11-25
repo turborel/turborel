@@ -11,7 +11,7 @@
 //! one of the list is null [§5.11 GR2]; else false.
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::{Cond, Expr, Truth, in_list};
@@ -34,9 +34,12 @@ pub struct InSet {
     nulls: bool,
     /// Of a set, the places in `values` of each bucket's constants.
     buckets: Option<HashMap<Bucket, Vec<usize>>>,
-    /// Of a set of character strings alone, each without its trailing
-    /// spaces, as two strings are equal if they are equal so.
-    texts: Option<HashSet<String>>,
+    /// Of constants that are character strings alone, nulls aside, each
+    /// without its trailing spaces, as two strings are equal if they are
+    /// equal so: of a list of any length, as a vector of strings is
+    /// judged by them, no value made of each (RULES.md D1126), in order
+    /// and each once, so a string is looked for by halving them (D1131).
+    texts: Option<Vec<String>>,
 }
 
 impl InSet {
@@ -73,8 +76,12 @@ impl InSet {
             | Value::Extension(_)
             | Value::Xml(_) => None,
         };
-        let texts =
-            long.then(|| values.iter().map(strings).collect::<Option<Vec<_>>>()).flatten().map(|t| t.into_iter().flatten().collect());
+        let texts = values.iter().map(strings).collect::<Option<Vec<_>>>().map(|t| {
+            let mut texts: Vec<String> = t.into_iter().flatten().collect();
+            texts.sort_unstable();
+            texts.dedup();
+            texts
+        });
         InSet { values, nulls, buckets, texts }
     }
 
@@ -120,17 +127,19 @@ impl InSet {
         Ok(self.decided(false))
     }
 
-    /// Whether it is a set of character strings alone, nulls aside.
+    /// Whether its constants are character strings alone, nulls aside.
     pub fn of_strings(&self) -> bool {
         self.texts.is_some()
     }
 
     /// [X3.135-1986 §5.13 GR2, §5.11 GR5] The string `s` IN the constants,
-    /// if they are a set of strings: looked for without its trailing
-    /// spaces.
+    /// if they are strings alone: looked for without its trailing spaces.
     pub fn text_truth(&self, s: &str) -> Option<Truth> {
         let texts = self.texts.as_ref()?;
-        Some(self.decided(texts.contains(s.trim_end_matches(' '))))
+        let unpadded = s.trim_end_matches(' ');
+        // Unpadded once as the set is made, in order: a string is compared
+        // with as many constants as halving them takes, not hashed.
+        Some(self.decided(texts.binary_search_by(|c| c.as_str().cmp(unpadded)).is_ok()))
     }
 
     /// The truth of IN of a value not null, `found` among the constants or

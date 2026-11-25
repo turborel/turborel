@@ -5,7 +5,8 @@
 //! unseen one's share ignored, a partial sample's bound taken as of a
 //! large table's, a LIKE's rest not counted on the sample, strings not
 //! placed within a bucket, conjuncts multiplied, a LIKE's prefix ignored, an index's
-//! range share lost and an index's joint distinct keys ignored.
+//! range share lost, an index's joint distinct keys ignored, and a LIKE's
+//! prefix not counted on the sample (D1130).
 
 use super::super::{Mutation, Package};
 
@@ -23,7 +24,7 @@ const RARE: &str = "physical::estimate::tests::rare_equalities_are_estimated_by_
 const NARROW: &str = "statistics_estimates::narrow_prefixes_and_single_character_wildcards_are_estimated";
 
 /// Mechanisms of the statistics whose removal must fail their tests.
-pub const STATISTICS: [Mutation; 13] = [
+pub const STATISTICS: [Mutation; 14] = [
     Mutation {
         name: "statistics-common-ignored",
         package: Package::Core,
@@ -155,6 +156,16 @@ pub const STATISTICS: [Mutation; 13] = [
         original: ".or_else(|| self.bounds.get(lower).zip(self.bounds.get(upper)).and_then(|(l, h)| string_within(l, h, value)))",
         replacement: ".or_else(|| self.bounds.get(lower).zip(self.bounds.get(upper)).and_then(|(l, h)| string_within(l, h, value)).and(None))",
         integration: &[NARROW],
+        unit: &[],
+    },
+    Mutation {
+        name: "statistics-like-prefix-unsampled",
+        package: Package::Core,
+        breaks: "a LIKE of a prefix and % is estimated by the share of the sampled strings with the prefix (D1130)",
+        file: "src/physical/estimate/like.rs",
+        original: "    let range = sampled_prefix(c, column, &prefix, known).unwrap_or_else(|| {",
+        replacement: "    let range = None::<f64>.unwrap_or_else(|| {",
+        integration: &["statistics_estimates::a_prefix_the_sample_holds_enough_of_is_estimated_by_its_share"],
         unit: &[],
     },
 ];

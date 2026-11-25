@@ -126,6 +126,75 @@ fn raising_expressions_raise_as_rows_do() {
     }
 }
 
+/// Verifies: [ISO/IEC 9075:1992 §6.7 GR1; X3.135-1986 §5.13 GR2] RULES.md
+/// D1126: SUBSTRING of a constant start and length, and IN a list of
+/// strings of it, give by batch what they give a row at a time, of either
+/// engine: starts before, in and past the string, a length of 0, a list
+/// with a null and with a string padded, NOT of it, and a grouping by the
+/// substring. A negative length, a constant or a column's, raises by
+/// batch the error a row at a time raises.
+#[test]
+fn substrings_and_lists_of_them_give_by_batch_what_rows_give() {
+    let (_db, a) = tables();
+    for table in ["R", "C"] {
+        for query in [
+            "SELECT K, SUBSTRING(S FROM 1 FOR 2), SUBSTRING(S FROM 2), SUBSTRING(S FROM 0 FOR 3), SUBSTRING(S FROM 3 FOR 0) FROM {t} WHERE K < 300",
+            "SELECT K, SUBSTRING(S FROM 9), SUBSTRING(S FROM -2 FOR 4), SUBSTRING(CAST(S AS CHAR(6)) FROM 3 FOR 9) FROM {t} WHERE K < 300",
+            "SELECT COUNT(*), SUM(N) FROM {t} WHERE SUBSTRING(S FROM 1 FOR 2) IN ('ab', 'Cd')",
+            "SELECT COUNT(*) FROM {t} WHERE SUBSTRING(S FROM 1 FOR 2) IN ('ab', 'x1', NULL)",
+            "SELECT COUNT(*) FROM {t} WHERE NOT (SUBSTRING(S FROM 1 FOR 1) IN ('a', 'x ', NULL))",
+            "SELECT COUNT(*) FROM {t} WHERE NOT (SUBSTRING(S FROM 1 FOR 1) IN ('a', 'x '))",
+            "SELECT SUBSTRING(S FROM 1 FOR 2), COUNT(*), SUM(E) FROM {t} GROUP BY SUBSTRING(S FROM 1 FOR 2)",
+            "SELECT K, SUBSTRING(S FROM 2 FOR N) FROM {t} WHERE K < 300",
+            "SELECT K, SUBSTRING(S FROM 1 FOR -1) FROM {t} WHERE K < 300",
+            "SELECT COUNT(*) FROM {t} WHERE SUBSTRING(S FROM 1 FOR -1) IN ('a', 'b')",
+        ] {
+            let sql = query.replace("{t}", table);
+            let (batched, by_rows) = both(&a, &sql);
+            assert_eq!(batched, by_rows, "{sql}");
+        }
+    }
+    let counted = rows(&a, "SELECT COUNT(*) FROM C WHERE SUBSTRING(S FROM 1 FOR 2) IN ('ab', 'Cd')").unwrap();
+    assert_ne!(counted, ["0"], "some rows are kept");
+}
+
+/// Verifies: [ISO/IEC 9075:1992 §7.11 GR1; X3.135-1986 §5.18] RULES.md
+/// D1127, D15: a filter holding a scalar subquery with no outer reference
+/// gives by batch, the subquery run once and its value a constant, the
+/// rows it gives a row at a time, of either engine: under a comparison,
+/// arithmetic, NOT, OR and IS DISTINCT FROM, and of a subquery of no row,
+/// a null. A subquery of two rows raises its error by batch as a row at a
+/// time; after the error of an operand before it of the first row; and
+/// not at all where no row is judged, or under a CASE no row takes.
+#[test]
+fn a_filter_s_subquery_of_no_outer_reference_is_run_once_as_rows_run_it() {
+    let (_db, a) = tables();
+    for table in ["R", "C"] {
+        for query in [
+            "SELECT COUNT(*), SUM(E) FROM {t} WHERE E > (SELECT AVG(E) FROM {t} WHERE N > 0) AND SUBSTRING(S FROM 1 FOR 2) IN ('ab', 'Cd')",
+            "SELECT COUNT(*) FROM {t} WHERE N > (SELECT MIN(N) FROM {t}) + 5 OR -N = (SELECT MAX(K) FROM {t} WHERE K < 0)",
+            "SELECT COUNT(*) FROM {t} WHERE NOT (N > -(SELECT MAX(N) FROM {t}) / 2)",
+            "SELECT COUNT(*) FROM {t} WHERE N IS DISTINCT FROM (SELECT MAX(N) FROM {t})",
+            "SELECT COUNT(*) FROM {t} WHERE (SELECT MAX(K) FROM {t} WHERE K < 0) IS NULL AND K < 10",
+            "SELECT K FROM {t} WHERE N > (SELECT N FROM {t} WHERE K < 3)",
+            "SELECT K FROM {t} WHERE 10 / (K - K) > 0 AND N > (SELECT N FROM {t} WHERE K < 3)",
+            "SELECT K FROM {t} WHERE K < -5 AND N > (SELECT N FROM {t} WHERE K < 3)",
+            "SELECT K FROM (SELECT K, N FROM {t} WHERE K < -5) AS Q WHERE N + K > (SELECT N FROM {t} WHERE K < 3)",
+            "SELECT COUNT(*) FROM {t} WHERE CASE WHEN K < 0 THEN (SELECT N FROM {t} WHERE K < 3) ELSE 1 END = 1",
+        ] {
+            let sql = query.replace("{t}", table);
+            let (batched, by_rows) = both(&a, &sql);
+            assert_eq!(batched, by_rows, "{sql}");
+        }
+    }
+    let counted = rows(&a, "SELECT COUNT(*) FROM C WHERE NOT (N > -(SELECT MAX(N) FROM C) / 2)").unwrap();
+    assert_ne!(counted, ["0"], "some rows are kept");
+    assert_eq!(rows(&a, "SELECT K FROM C WHERE N > (SELECT N FROM C WHERE K < 3)"), Err(Code::Cardinality), "two rows raise");
+    // Whichever row is judged first divides by 0 before it runs the subquery.
+    let before = "SELECT K FROM C WHERE 10 / (K - K) > 0 AND N > (SELECT N FROM C WHERE K < 3)";
+    assert_eq!(rows(&a, before), Err(Code::Data), "the operand before the subquery raises first");
+}
+
 /// The rows of `sql`, sorted, or its error: read by batches where it can
 /// be, and a row at a time.
 fn both(a: &Session, sql: &str) -> (Result<Vec<String>, Code>, Result<Vec<String>, Code>) {

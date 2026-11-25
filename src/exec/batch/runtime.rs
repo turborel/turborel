@@ -118,6 +118,7 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Transfer(_) => None,
         // A grouping run in parallel that takes filters, as it does run
         // alone (RULES.md D1063).
@@ -172,6 +173,7 @@ fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::SemiJoin(_)
         | Plan::MarkJoin(_)
@@ -325,6 +327,7 @@ fn below(plan: &Plan) -> Option<&Plan> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_) => None,
     }

@@ -260,6 +260,7 @@ fn annotate(plan: &mut Plan, note: &str) {
         | Plan::Recursive { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }
