@@ -89,6 +89,7 @@ mod booleans;
 mod btree_layout;
 mod buffer;
 mod buffer_claims;
+mod bulk_durable;
 mod bulk_groups;
 mod bulk_insert;
 mod bulk_load;

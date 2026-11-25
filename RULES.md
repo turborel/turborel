@@ -718,6 +718,7 @@ verification approach DO-178C expects (§8).
 | D1140 | A value out of line of an entry a freeze takes out is freed only once no read may still fetch it |
 | D1141 | A log record as long as the buffer reaches its segment after the bytes the buffer holds |
 | D1142 | Loads into a column store table at once each write their own groups, no lock taken alone |
+| D1143 | A clean close keeps the groups of every load committed, settled or not |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -19538,6 +19539,26 @@ takes the lock alone, since others' readers would miss its entries
 recovered as before. A row another transaction writes through the tree
 meanwhile lies between groups and is read as any row of the tree. The
 freeze takes rows past the last group only, so it stays in the tree.
+
+#### D1143. A clean close keeps the groups of every load committed, settled or not
+
+A group a load writes (D533) is stamped with its transaction, and keeps
+that stamp after the commit until the maintenance thread finds the
+commit before every snapshot. A directory stored meanwhile names the
+transaction as open, and opened again the table holds such a group
+apart for recovery to keep or drop. A database closed cleanly is
+reopened with no recovery, so nothing kept those groups, and a load's
+rows since its groups last settled were lost. A load whose groups had
+settled lost only its last batch, the group written after the last
+commit the maintenance thread saw.
+
+Reopened after a clean close to serve, each table now keeps every group
+held apart as committed (`db/recovery.rs`, `settle_closed_loads`). A
+clean close is taken with no transaction open, and a load rolled back
+takes its groups out of the directory, so each group stored is of a load
+that committed. A crash still leaves recovery to judge each group by
+the transactions it redoes, as before. A replica opened to follow keeps
+its groups apart, its loads being the primary's.
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
