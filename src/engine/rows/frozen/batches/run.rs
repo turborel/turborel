@@ -66,13 +66,13 @@ impl Batched {
         }
         // Those held would pass a batch with these: given first.
         let full = !self.pending.is_empty() && self.pending.len().saturating_add(kept.len()) > BATCH_ROWS;
-        let ready = full.then(|| self.pending.take());
+        let filled = full.then(|| self.pending.take());
         self.pending.add(&kept, (judged.kept.as_slice(), judged.decoded.as_slice()));
         // The columns judging decoded are read no more: their vectors
         // hold the next run's (RULES.md D1095).
         self.prepared.give(judged.decoded);
-        if let Some(ready) = ready {
-            return self.held_batch(&group, ready).map(Some);
+        if let Some(filled) = filled {
+            return self.held_batch(&group, filled).map(Some);
         }
         if self.pending.len() < KEPT_ROWS {
             return Ok(None);
