@@ -1,14 +1,15 @@
 //! The mutations of a long load kept within the process's limits
-//! (RULES.md R-TEST-9, D1136 to D1141): a file opened with no descriptor
+//! (RULES.md R-TEST-9, D1136 to D1142): a file opened with no descriptor
 //! left, a checkpoint due by the log's bytes, a load's given rows held
 //! unspilled, a checkpoint's captures written to disk (D1139), a
-//! value out of line freed only once no read may fetch it (D1140), and a
-//! long log record written after what the log's buffer holds (D1141).
+//! value out of line freed only once no read may fetch it (D1140), a
+//! long log record written after what the log's buffer holds (D1141), and
+//! loads at once each writing their own groups (D1142).
 
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 8] = [
+pub const LOAD_LIMITS: [Mutation; 10] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -88,5 +89,25 @@ pub const LOAD_LIMITS: [Mutation; 8] = [
         replacement: "            if false {",
         integration: &[],
         unit: &["log::file::buffered::tests::a_long_record_goes_to_the_file_after_what_is_held"],
+    },
+    Mutation {
+        name: "groups-loads-together",
+        package: Package::Core,
+        breaks: "a load into groups takes the table's lock alone, so a second load waits for the first to end",
+        file: "src/db/write/bulk/load.rs",
+        original: "    if !together.indexes.iter().any(Indexed::loads) {",
+        replacement: "    if false {",
+        integration: &["bulk_groups::loads_at_once_each_write_their_own_groups"],
+        unit: &[],
+    },
+    Mutation {
+        name: "groups-ids-apart",
+        package: Package::Core,
+        breaks: "a group's row ids are counted on from one id, so they run into ids given to other rows",
+        file: "src/engine/rows/frozen/stamped.rs",
+        original: "        let first = self.next_ids(rows.len())?;",
+        replacement: "        let first = self.next_id()?;",
+        integration: &["bulk_groups::loads_at_once_each_write_their_own_groups"],
+        unit: &[],
     },
 ];

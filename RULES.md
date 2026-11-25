@@ -711,6 +711,7 @@ verification approach DO-178C expects (§8).
 | D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
 | D1140 | A value out of line of an entry a freeze takes out is freed only once no read may still fetch it |
 | D1141 | A log record as long as the buffer reaches its segment after the bytes the buffer holds |
+| D1142 | Loads into a column store table at once each write their own groups, no lock taken alone |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 
@@ -12854,8 +12855,8 @@ the other's, its pages being fuller.
 A column store table's rows go to its tree and are frozen into groups
 once committed before every snapshot (D31). A load so wrote each row
 twice, and read it back between. So a load (D532) into a column store
-table that holds no row past its last group as it begins, under the
-table's lock held alone, writes each batch straight as a group, sorted,
+table that holds no row past its last group as it begins writes each
+batch straight as a group, sorted,
 with its filters and sketches, as a freeze writes one
 (`engine/rows/frozen/stamped.rs`). Its rows are logged as any others
 (D530). A batch is of COLUMNSTORE.GROUP_ROWS rows, of an INSERT, or a
@@ -19342,6 +19343,27 @@ it is all zeros, which may still go to the file alone
 (`log/file/buffered.rs`). The file then never holds a record past bytes
 held, so a failure of the process loses only the log's tail, which
 recovery cuts as it cuts a torn end.
+
+#### D1142. Loads into a column store table at once each write their own groups, no lock taken alone
+
+A load into groups (D533) took the table's lock alone, and the table
+noted one transaction as its loader. A second load at once waited for
+the lock, or, if it began while the first was noted, wrote its rows
+through the tree. The first load's next batch then found rows past the
+last group and went to the tree as well. A client importing with six
+streams so wrote nearly every row through the tree, and the freeze then
+had them all to do.
+
+The table now notes every transaction loading it, and each writes its
+own groups (`frozen/stamped.rs`). A group takes its row ids as one run
+(`RowTable::next_ids`), so the groups of loads at once never share a
+range. A load that holds back no index takes no lock beyond its
+insert's (`db/write/bulk/load.rs`). A load that holds back an index still
+takes the lock alone, since others' readers would miss its entries
+(D532). Each group is stamped with its transaction, undone with it and
+recovered as before. A row another transaction writes through the tree
+meanwhile lies between groups and is read as any row of the tree. The
+freeze takes rows past the last group only, so it stays in the tree.
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 

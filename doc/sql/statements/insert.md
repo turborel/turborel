@@ -85,7 +85,8 @@ trigger, a foreign key or an assertion over it builds no index so.
 Such an INSERT into a table of the column store that holds no row yet
 to be frozen, and sets COLUMNSTORE.LOAD to GROUPS, is a load too, and
 writes its rows straight into frozen groups, which other transactions
-see once it commits.
+see once it commits. If it builds no index, it takes no lock alone, so
+several such loads at once each write their own groups.
 
 ## RULES
 
