@@ -691,6 +691,7 @@ verification approach DO-178C expects (§8).
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
 | D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
+| D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
 
 ### The project
 
@@ -18812,6 +18813,31 @@ so a database written before this decision opens as it is and has its
 statistics saved at its next checkpoint. A build from before this
 decision refuses a meta page of the new length as not a table's of its
 format (SQLCODE -916), and does not misread it. Formats stay 1.
+
+#### D1094. A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it
+
+A scan opened each chunk once for all its runs (D352) by copying the
+chunk's bytes out of the buffer pool into a buffer of its own, since
+the page was not held between runs. On a scan of a few narrow columns
+that copy was the largest cost after decoding, a page copied for every
+page decoded.
+
+A chunk whose page passed through no encoding is now read where it
+lies. What D352 keeps of a chunk, its table of symbols and its
+dictionary's entries, is still made once and kept. Its bytes are not.
+Each run finds the page in the pool again, holds it while it decodes
+its rows of it, and lets it go (`engine/columns/prepared.rs`). Finding
+a page the pool holds is a hash and a latch (D502), which costs less
+than copying the page, and a run of a vector of rows touches a chunk
+once or twice. A group's pages are not written again while a reader
+holds the group, and a run never reads a second page while it holds
+one, so the page is held for one decode and by nothing that waits.
+
+A chunk whose page its table's encodings open is read as before, its
+opened bytes kept for its runs, as opening it once is what D352 saves.
+Which a page is is known as it is read, page by page, so a table whose
+encodings changed reads each page as it was written. No format
+changes.
 
 ## 2. Project layout
 
