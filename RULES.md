@@ -729,7 +729,6 @@ verification approach DO-178C expects (§8).
 | D1145 | A load sorts its group's rows by reference, none copied |
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
-| D1152 | A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates |
 | D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
 | D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
@@ -19829,24 +19828,6 @@ those before an error first, then the error. A LEFT join's probe (D1076)
 is made so too, a row no built row matches paired with nulls, and a key
 of one column of integers is paired in its units (D1083), of a direct
 table taken up at its place among its key's rows.
-
-#### D1152. A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates
-
-A column whose table has no statistics is taken as a key, of its rows'
-distinct values (D302). A class of equalities keeps one row in as many
-as each of its columns but the least distinct has values, so a column
-of 1.5 million rows equated with a key of 25 was counted as 1.5
-million values. The customers and suppliers of one nation, joined
-through the nations, were estimated at the rows of the suppliers where
-each customer meets 4,000 of them, and a plan made before the first
-statistics joined them first, 6 billion rows.
-
-The columns a class equates hold values of one domain, so each joined
-row of a column matches a value of the column of the fewest. Each
-column of a class whose distinct values neither statistics count nor a
-key proves is now counted of no more than the least of those that are
-(`physical/cardinality/composite.rs`), for the estimates and the
-enumeration alike. A class with no column so known is left as it was.
 
 #### D1153. A stream's morsels ahead of its reader hold no more rows than they scan
 
