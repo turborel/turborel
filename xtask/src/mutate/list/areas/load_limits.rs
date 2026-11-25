@@ -1,15 +1,16 @@
 //! The mutations of a long load kept within the process's limits
-//! (RULES.md R-TEST-9, D1136 to D1142): a file opened with no descriptor
+//! (RULES.md R-TEST-9, D1136 to D1143): a file opened with no descriptor
 //! left, a checkpoint due by the log's bytes, a load's given rows held
 //! unspilled, a checkpoint's captures written to disk (D1139), a
 //! value out of line freed only once no read may fetch it (D1140), a
 //! long log record written after what the log's buffer holds (D1141), and
-//! loads at once each writing their own groups (D1142).
+//! loads at once each writing their own groups (D1142), and a clean
+//! close keeping the groups of loads committed (D1143).
 
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 10] = [
+pub const LOAD_LIMITS: [Mutation; 11] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -108,6 +109,16 @@ pub const LOAD_LIMITS: [Mutation; 10] = [
         original: "        let first = self.next_ids(rows.len())?;",
         replacement: "        let first = self.next_id()?;",
         integration: &["bulk_groups::loads_at_once_each_write_their_own_groups"],
+        unit: &[],
+    },
+    Mutation {
+        name: "groups-kept-closed",
+        package: Package::Core,
+        breaks: "a database closed cleanly reopens holding apart the groups of loads stored before they settled, their rows lost",
+        file: "src/db/files.rs",
+        original: "            self.settle_closed_loads(mode)?;",
+        replacement: "",
+        integration: &["bulk_durable::a_loads_committed_rows_outlive_the_end_of_the_database"],
         unit: &[],
     },
 ];
