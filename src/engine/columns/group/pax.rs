@@ -26,7 +26,7 @@ pub(super) fn write_pax<S: Seal>(
 ) -> Result<Vec<Vec<Zone>>> {
     let values: Vec<Vec<Value>> =
         (0..types.len()).map(|c| rows.iter().map(|r| r.get(c).cloned().unwrap_or(Value::Null)).collect()).collect();
-    let fields = values.iter().zip(types).map(|(v, t)| Fields::of(t, v.iter().cloned())).collect::<Result<Vec<_>>>()?;
+    let fields = values.iter().zip(types).map(|(v, t)| Fields::of(t, v.iter())).collect::<Result<Vec<_>>>()?;
     let columns: Vec<(&Fields, &DataType)> = fields.iter().zip(types).collect();
     let mut zones: Vec<Vec<Zone>> = vec![Vec::new(); types.len()];
     let mut from = 0_usize;

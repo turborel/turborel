@@ -1,16 +1,17 @@
 //! The mutations of a long load kept within the process's limits
-//! (RULES.md R-TEST-9, D1136 to D1143): a file opened with no descriptor
+//! (RULES.md R-TEST-9, D1136 to D1144): a file opened with no descriptor
 //! left, a checkpoint due by the log's bytes, a load's given rows held
 //! unspilled, a checkpoint's captures written to disk (D1139), a
 //! value out of line freed only once no read may fetch it (D1140), a
 //! long log record written after what the log's buffer holds (D1141), and
 //! loads at once each writing their own groups (D1142), and a clean
-//! close keeping the groups of loads committed (D1143).
+//! close keeping the groups of loads committed (D1143), and each chunk
+//! of a column sized once (D1144).
 
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 11] = [
+pub const LOAD_LIMITS: [Mutation; 12] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -120,5 +121,15 @@ pub const LOAD_LIMITS: [Mutation; 11] = [
         replacement: "",
         integration: &["bulk_durable::a_loads_committed_rows_outlive_the_end_of_the_database"],
         unit: &[],
+    },
+    Mutation {
+        name: "chunks-sized-once",
+        package: Package::Core,
+        breaks: "a chunk sized once takes one value more than fit, in the plan of those that fit",
+        file: "src/engine/columns.rs",
+        original: "                return if n == 0 { (1, None) } else { (n, fits) };",
+        replacement: "                return if n == 0 { (1, None) } else { (n.saturating_add(1), fits) };",
+        integration: &[],
+        unit: &["engine::columns::tests::chunks_sized_once_are_the_chunks_sized_twice"],
     },
 ];

@@ -722,6 +722,7 @@ verification approach DO-178C expects (§8).
 | D1141 | A log record as long as the buffer reaches its segment after the bytes the buffer holds |
 | D1142 | Loads into a column store table at once each write their own groups, no lock taken alone |
 | D1143 | A clean close keeps the groups of every load committed, settled or not |
+| D1144 | A chunk of a column is sized once, in the plan found as its values were fitted |
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 | D1152 | A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates |
@@ -19661,6 +19662,24 @@ takes its groups out of the directory, so each group stored is of a load
 that committed. A crash still leaves recovery to judge each group by
 the transactions it redoes, as before. A replica opened to follow keeps
 its groups apart, its loads being the primary's.
+
+#### D1144. A chunk of a column is sized once, in the plan found as its values were fitted
+
+A group's column was cut into chunks one at a time (D31). Each chunk's
+values were added to a sizer until the next passed the page, the sizer
+asked after every value which encoding took fewest bytes. A new sizer
+then took the same values again to choose that encoding for the chunk.
+The width the column's values share was found again over the whole
+column for each chunk, and each value was copied twice before it was
+written. A load of wide rows spent most of its time there.
+
+The plan found as the last value that fits was added is the plan a
+sizer of those values chooses, so it is kept and the chunk is written
+in it (`Fields::chunks`). The width is found once, as the fields are
+made. The sizer weighs each encoding as it finds it, keeping the first
+of the fewest bytes as before, with no list made, and keeps its
+dictionary's entries by XXH3. The fields are made of the values as they
+are, not of copies. Each chunk is the same, byte for byte.
 
 #### D1150. A morsel's rows are made as they are read and charged to the part's grant as they are gathered
 
