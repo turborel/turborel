@@ -84,7 +84,7 @@ pub const READS: [Mutation; 32] = [
         file: "src/storage/batch/runs.rs",
         original: "            if asked && keeps(self.units.get(start).copied().unwrap_or(0)) {",
         replacement: "            if asked && !keeps(self.units.get(start).copied().unwrap_or(0)) {",
-        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
+        integration: &["batches::runs::columns_of_runs_answer_as_row_by_row"],
         unit: &["exec::batch::judge::tests::integers_judged_once_a_run_keep_what_each_keeps"],
     },
     Mutation {
@@ -94,7 +94,7 @@ pub const READS: [Mutation; 32] = [
         file: "src/functions/ints.rs",
         original: "Some((total.checked_add(i128::from(u).checked_mul(n)?)?, any || n > 0))",
         replacement: "Some((total.checked_add(i128::from(u))?, any || n > 0))",
-        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
+        integration: &["batches::runs::columns_of_runs_answer_as_row_by_row"],
         unit: &["functions::tests::set_functions_fed_runs_total_as_each"],
     },
     Mutation {
@@ -104,7 +104,7 @@ pub const READS: [Mutation; 32] = [
         file: "src/engine/columns/runs.rs",
         original: "            ends.push(base.checked_add(end.checked_sub(from)?)?);",
         replacement: "            ends.push(base.checked_add(end.checked_sub(from)?)?.saturating_sub(usize::from(end < to)));",
-        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
+        integration: &["batches::runs::columns_of_runs_answer_as_row_by_row"],
         unit: &["engine::columns::tests::chunks_of_runs_say_where_each_ends"],
     },
     Mutation {
@@ -134,7 +134,7 @@ pub const READS: [Mutation; 32] = [
         file: "src/exec/batch/groups.rs",
         original: "    ints.runs()?;",
         replacement: "    ints.run_lengths()?;",
-        integration: &["batches::columns_of_runs_answer_as_row_by_row"],
+        integration: &["batches::runs::columns_of_runs_answer_as_row_by_row"],
         unit: &[],
     },
     Mutation {
