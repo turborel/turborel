@@ -1,6 +1,7 @@
 //! The mutations of a morsel's memory (RULES.md R-TEST-9, D1150, D1151,
 //! D1153, D1154): a morsel charged to its part's grant as it is gathered, one
-//! past it read again as it is given, its rows made as they are read, a
+//! past it read on from where its thread left it, never read again, its
+//! rows made as they are read, a
 //! probe's pairs made a batch at a time, a stream's rows ahead of its
 //! reader held to what its morsels scan, and a probe of streams stopped
 //! at a batch of pairs made (D1154).
@@ -11,7 +12,7 @@ use super::super::{Mutation, Package};
 const PAST: &str = "fan_out::a_join_past_its_grant_answers_as_alone";
 
 /// Mechanisms whose removal must fail the requirements of a morsel's memory.
-pub const MORSEL_MEMORY: [Mutation; 7] = [
+pub const MORSEL_MEMORY: [Mutation; 8] = [
     Mutation {
         name: "morsel-charge-unbounded",
         package: Package::Core,
@@ -25,12 +26,22 @@ pub const MORSEL_MEMORY: [Mutation; 7] = [
     Mutation {
         name: "morsel-past-dropped",
         package: Package::Core,
-        breaks: "a stream drops the rows of a morsel past its grant, not reading it again",
+        breaks: "a stream drops the rows of a morsel past its grant its thread did not gather",
         file: "src/exec/parallel/charged.rs",
-        original: "            Taken::Past => Now::Alone((self.alone)(n)?),",
-        replacement: "            Taken::Past => Now::Whole(Vec::new().into_iter()),",
+        original: "            Gathered::Past(items, rest) => Now::Alone(Box::new(items.into_iter().map(Ok).chain(rest))),",
+        replacement: "            Gathered::Past(items, _rest) => Now::Alone(Box::new(items.into_iter().map(Ok))),",
         integration: &[PAST],
         unit: &[],
+    },
+    Mutation {
+        name: "morsel-past-read-lost",
+        package: Package::Core,
+        breaks: "the reader of a morsel past its grant is handed none of the rest of its thread's read",
+        file: "src/exec/parallel/charged.rs",
+        original: "    Ok((items, charged.inner))",
+        replacement: "    Ok((items, { charged.inner.by_ref().for_each(drop); charged.inner }))",
+        integration: &[],
+        unit: &["exec::parallel::charged::tests::a_morsel_past_its_grant_is_given_up"],
     },
     Mutation {
         name: "morsel-row-wrong-match",
