@@ -8,7 +8,8 @@
 //! columns carried late across a pipeline's probe; of D1082, a grouping
 //! by an expression bounded by the columns it reads, and only by a
 //! deterministic one; of D1083, a null probing row paired with none, and
-//! keys of scales apart or of matching nulls paired as values.
+//! keys of scales apart or of matching nulls paired as values, and a
+//! row's matches in the order built.
 
 use super::super::{Mutation, Package};
 
@@ -32,7 +33,17 @@ const PAIRED: &str = "src/exec/batch/joined/shared/paired.rs";
 /// The test of keys that are not paired in their units.
 const AS_VALUES: &str = "exec::batch::joined::shared::paired::tests::keys_of_scales_apart_or_matching_nulls_pair_as_values";
 
-pub const JOIN_BUILD: [Mutation; 13] = [
+pub const JOIN_BUILD: [Mutation; 14] = [
+    Mutation {
+        name: "probe-units-reversed",
+        package: Package::Core,
+        breaks: "a key paired in its units gives a row's matches in the order they were built (D1083)",
+        file: PAIRED,
+        original: "                for &p in self.table.rows_of(key) {",
+        replacement: "                for &p in self.table.rows_of(key).iter().rev() {",
+        integration: &[],
+        unit: &["exec::batch::joined::shared::paired::tests::a_key_of_integers_paired_in_its_units_pairs_as_values_do"],
+    },
     Mutation {
         name: "probe-units-null-pairs",
         package: Package::Core,
