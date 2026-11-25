@@ -138,28 +138,24 @@ pub struct RowTable {
     gathered: Gathered,
     /// The store's durable position (`TableFiles`).
     durable: Arc<AtomicU64>,
-    /// Set when the table is dropped: its pages are freed when it goes
-    /// (`rows/discard.rs`).
+    /// Set when the table is dropped: its pages are freed when it goes (`rows/discard.rs`).
     discarded: AtomicBool,
     /// How its rows are sealed (`rows/sealing.rs`), its zone maps too.
     sealing: Arc<Sealing>,
-    /// The kernels its frozen groups are decoded and judged on (RULES.md
-    /// D570): its store's as it was opened.
+    /// The kernels its frozen groups are decoded and judged on (RULES.md D570): its store's as it was opened.
     kernels: Arc<dyn crate::kernels::Kernels>,
     /// Its frozen row groups, of the column store (`rows/frozen.rs`).
     frozen: Frozen,
     /// Held shared while it freezes rows (`TableFiles::freezes`).
     freezes: Arc<RwLock<()>>,
-    /// Its zone maps, of the row store (`rows/zones.rs`), saved at each
-    /// checkpoint.
+    /// Its zone maps, of the row store (`rows/zones.rs`), saved at each checkpoint.
     zones: Arc<Zones>,
     /// Its store's headers of frozen row groups held (`TableFiles::headers`).
     headers: Arc<cache::HeaderCache>,
     /// The bytes of its file the system's cache is taken to hold beyond the
     /// pool (`TableFiles::system_cache`).
     system_cache: Arc<AtomicU64>,
-    /// Its large objects (`rows/lobs.rs`), shared with the values read
-    /// from it.
+    /// Its large objects (`rows/lobs.rs`), shared with the values read from it.
     lobs: Arc<LobSpace>,
 }
 
@@ -343,10 +339,14 @@ impl TableStorage for RowTable {
             .then(|| self.scan_ordered_batches_of(tx, (columns, order), conditions.cloned()))
     }
 
-    /// Of a table that freezes no row, from its zones where settled
-    /// (`rows/count.rs`).
+    /// From its zones where settled, or of one that holds groups from their directory (`rows/count.rs`).
     fn count(self: Arc<Self>, tx: TxId) -> Option<crate::storage::Counts> {
-        self.count_of(tx)
+        Some(self.count_of(tx))
+    }
+
+    /// Of one that holds groups, each group no entry shadows whole (`rows/frozen/summarized.rs`).
+    fn summarized(self: Arc<Self>, tx: TxId, columns: &[usize]) -> Option<crate::storage::Pieces> {
+        self.summarized_of(tx, columns)
     }
 
     fn row_count(&self) -> usize {

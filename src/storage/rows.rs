@@ -4,6 +4,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use super::Batch;
 use crate::disk::buffer::Stamp;
 use crate::error::{Code, Result, SqlError};
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
@@ -145,6 +146,28 @@ pub type Rows = Box<dyn Iterator<Item = Result<(RowId, Row)>> + Send>;
 /// \[DESIGN\] Counts of a table's rows, which sum to how many there are
 /// (`TableStorage::count`), read as they are pulled.
 pub type Counts = Box<dyn Iterator<Item = Result<u64>> + Send>;
+
+/// \[DESIGN\] (RULES.md D1181) A part of a table's rows as
+/// `TableStorage::summarized` gives it: rows whole, of which only how many
+/// there are is given and, of each column asked for, its nulls and its
+/// least and greatest values that are not null, as the column's type
+/// compares them; or a batch of rows of those columns.
+pub enum Piece {
+    /// Rows given whole.
+    Whole {
+        /// How many there are.
+        rows: u64,
+        /// Of each column asked for, its nulls and its least and greatest
+        /// values, if any is not null.
+        columns: Vec<(u64, Option<(Value, Value)>)>,
+    },
+    /// Rows given as a batch.
+    Batch(Batch),
+}
+
+/// \[DESIGN\] The parts of a table's rows `TableStorage::summarized` gives,
+/// read as they are pulled.
+pub type Pieces = Box<dyn Iterator<Item = Result<Piece>> + Send>;
 
 /// Makes row `id` of `table` hold `row`, or be absent, through `get`,
 /// `update`, `restore` and `delete` outside any transaction, as the

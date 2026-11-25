@@ -79,7 +79,7 @@ fn a_count_is_the_scans_for_every_reader() {
 
 /// Verifies: [DESIGN] RULES.md D351, D31: a table opened has every zone
 /// unsettled, so its rows are counted by reading them, then from its
-/// zones once settled; a table that freezes rows gives no count.
+/// zones once settled; a table that freezes rows is counted too.
 #[test]
 fn a_count_of_a_table_opened_reads_until_settled() {
     let files = files();
@@ -96,7 +96,7 @@ fn a_count_of_a_table_opened_reads_until_settled() {
     assert_eq!((table.zones.settled().0, counted(&table, NO_TRANSACTION)), (3_000, 3_000));
     let columns = TableOptions { columns: Some(Columns::default()), ..TableOptions::default() };
     let frozen = Arc::new(RowTable::create(&files, &TYPES, columns).unwrap());
-    assert!(frozen.count(NO_TRANSACTION).is_none(), "a table that freezes rows is scanned");
+    assert_eq!(counted(&frozen, NO_TRANSACTION), 0, "a table that freezes rows counted from its directory (D1180)");
 }
 
 /// Verifies: [DESIGN] RULES.md D351, D29, serializable reads: a count read

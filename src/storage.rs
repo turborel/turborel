@@ -39,6 +39,7 @@ pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodin
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
 pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of, sized_row};
+pub use rows::{Piece, Pieces};
 pub use split::Split;
 
 use std::sync::Arc;
@@ -232,6 +233,11 @@ pub trait TableStorage: Send + Sync {
     fn count(self: Arc<Self>, _tx: TxId) -> Option<Counts> {
         None
     }
+    /// \[DESIGN\] (RULES.md D1181) The rows `scan_batches` gives `tx` of `columns` with no conditions, rows it holds whole as their
+    /// summaries (`Piece::Whole`), the rest by batch, read once asked for, the read noted as the scan's. Default none.
+    fn summarized(self: Arc<Self>, _tx: TxId, _columns: &[usize]) -> Option<Pieces> {
+        None
+    }
     /// \[DESIGN\] Whether it keeps its rows by column, so a serial scan by
     /// batch outruns workers making rows (RULES.md D291). Default: false.
     fn keeps_columns(&self) -> bool {
@@ -239,16 +245,13 @@ pub trait TableStorage: Send + Sync {
     }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
-    /// \[DESIGN\] The bytes it takes, without a pass over its rows
-    /// (TABLE_STATISTICS, RULES.md D522). Default: not known.
+    /// \[DESIGN\] The bytes it takes, without a pass over its rows (TABLE_STATISTICS, RULES.md D522). Default: not known.
     fn sizes(&self) -> Option<TableSizes> {
         None
     }
-    /// `tx` is about to read, by `get`, the rows an index chose by
-    /// `condition`: its result depends on every row the condition matches,
-    /// which an engine checking serializability must count as read, rows
-    /// added or changed to match meanwhile too (phantoms). Default:
-    /// nothing, for an engine whose isolation is the coordinator's.
+    /// `tx` is about to read, by `get`, the rows an index chose by `condition`: its result depends on every row the condition
+    /// matches, which an engine checking serializability must count as read, rows added or changed to match meanwhile too
+    /// (phantoms). Default: nothing, for an engine whose isolation is the coordinator's.
     ///
     /// # Errors
     ///
@@ -256,9 +259,8 @@ pub trait TableStorage: Send + Sync {
     fn read_by_condition(&self, _tx: TxId, _condition: &Condition) -> Result<()> {
         Ok(())
     }
-    /// \[DESIGN\] As `read_by_condition`, of the rows a spatial index chose
-    /// by their envelopes (RULES.md D134). Default: a read of the whole
-    /// table, never narrower than the region.
+    /// \[DESIGN\] As `read_by_condition`, of the rows a spatial index chose by their envelopes (RULES.md D134). Default: a read
+    /// of the whole table, never narrower than the region.
     ///
     /// # Errors
     ///
@@ -266,11 +268,9 @@ pub trait TableStorage: Send + Sync {
     fn read_by_region(&self, tx: TxId, _region: &Region) -> Result<()> {
         self.read_by_condition(tx, &Condition { columns: Vec::new(), probe: crate::index::Probe::All })
     }
-    /// The newest state of row `id` and any change to it not yet committed,
-    /// whichever transaction made them, for checking UNIQUE
-    /// [X3.135-1986 §6.4 GR2] against rows `tx` may not see. Default: the
-    /// row as `tx` sees it, for an engine whose isolation is the
-    /// coordinator's, where no other transaction's change is pending.
+    /// The newest state of row `id` and any change to it not yet committed, whichever transaction made them, for checking
+    /// UNIQUE [X3.135-1986 §6.4 GR2] against rows `tx` may not see. Default: the row as `tx` sees it, for an engine whose
+    /// isolation is the coordinator's, where no other transaction's change is pending.
     ///
     /// # Errors
     ///
