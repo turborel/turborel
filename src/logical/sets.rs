@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use super::{Cond, Expr, Truth, in_list};
 use crate::error::Result;
-use crate::value::{Bucket, Value, any_lob, bucket, compare, compare_checked};
+use crate::value::{Bucket, CompOp, Value, any_lob, bucket, compare, compare_checked};
 
 /// \[DESIGN\] The fewest constants of an IN list judged by a set: of a
 /// shorter one, comparing the value with each costs no more than finding
@@ -157,6 +157,11 @@ pub fn judged_by_sets(cond: Cond) -> Cond {
     {
         return Cond::In(Expr::Column(column), Arc::new(InSet::of(values)));
     }
+    if let Cond::Or(..) = cond
+        && let Some((computed, values)) = computed_list(&cond, 0)
+    {
+        return Cond::In(computed.clone(), Arc::new(InSet::of(values)));
+    }
     match cond {
         Cond::Or(a, b) => Cond::Or(Box::new(judged_by_sets(*a)), Box::new(judged_by_sets(*b))),
         Cond::And(a, b) => Cond::And(Box::new(judged_by_sets(*a)), Box::new(judged_by_sets(*b))),
@@ -176,13 +181,82 @@ pub fn judged_by_sets(cond: Cond) -> Cond {
     }
 }
 
+/// \[DESIGN\] (RULES.md D1067) The expression and constants of `cond` if it
+/// is an OR of equalities of one computed expression with constants, as
+/// the binder writes an `<in predicate>` of an expression that is no
+/// column, `SUBSTRING(C FROM 1 FOR 2) IN ('13', '31')`. The OR computes
+/// the expression once for each constant, as it evaluates every operand
+/// (RULES.md D15), and the set computes it once, so a list of two is
+/// already judged by its set. The expression is deterministic and reads
+/// no subquery, so it has one value and raises one error however often
+/// it is computed. Past `MAX_JUDGED_DEPTH` none is found (RULES.md
+/// R-CF-6).
+fn computed_list(cond: &Cond, depth: usize) -> Option<(&Expr, Vec<Value>)> {
+    if depth > super::MAX_JUDGED_DEPTH {
+        return None;
+    }
+    if let Cond::Or(a, b) = cond {
+        let (e, mut list) = computed_list(a, depth.saturating_add(1))?;
+        let (other, more) = computed_list(b, depth.saturating_add(1))?;
+        list.extend(more);
+        return same(e, other, 0).then_some((e, list));
+    }
+    let Cond::Compare(a, CompOp::Eq, b) = cond else { return None };
+    let ((computed, Expr::Const(value)) | (Expr::Const(value), computed)) = (a, b) else { return None };
+    recomputable(computed, 0).then(|| (computed, vec![value.clone()]))
+}
+
+/// Whether `e` is computed of columns and constants by deterministic
+/// functions, arithmetic and casts alone, and is no column or constant
+/// itself.
+fn recomputable(e: &Expr, depth: usize) -> bool {
+    let own = match e {
+        Expr::Call(f, _) => f.0.deterministic(),
+        Expr::Neg(_) | Expr::Arith(..) | Expr::Cast(..) => true,
+        Expr::Column(_) | Expr::Const(_) => depth > 0,
+        Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Domain(..)
+        | Expr::SortKey(..)
+        | Expr::Subquery(..)
+        | Expr::Truth(_)
+        | Expr::Warned(..)
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => false,
+    };
+    let mut parts = depth <= super::MAX_JUDGED_DEPTH;
+    e.for_each_child(&mut |child| parts = parts && recomputable(child, depth.saturating_add(1)));
+    own && parts
+}
+
+/// Whether `a` and `b`, each `recomputable`, are the same expression: the
+/// same operator or function of the same parts, a constant as it is
+/// written.
+fn same(a: &Expr, b: &Expr, depth: usize) -> bool {
+    let own = match (a, b) {
+        (Expr::Column(x), Expr::Column(y)) => x == y,
+        (Expr::Const(x), Expr::Const(y)) => format!("{x:?}") == format!("{y:?}"),
+        (Expr::Call(f, _), Expr::Call(g, _)) => Arc::ptr_eq(&f.0, &g.0),
+        (Expr::Neg(_), Expr::Neg(_)) => true,
+        (Expr::Arith(_, x, _), Expr::Arith(_, y, _)) => x == y,
+        (Expr::Cast(_, x), Expr::Cast(_, y)) => x == y,
+        _ => false,
+    };
+    let (mut of_a, mut of_b) = (Vec::new(), Vec::new());
+    a.for_each_child(&mut |child| of_a.push(child));
+    b.for_each_child(&mut |child| of_b.push(child));
+    let deeper = depth.saturating_add(1);
+    own && depth <= super::MAX_JUDGED_DEPTH && of_a.len() == of_b.len() && of_a.iter().zip(&of_b).all(|(x, y)| same(x, y, deeper))
+}
+
 // Unit tests: what a set finds, and which ORs become one (RULES.md
 // R-TEST-1, R-TEST-8).
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::logical::{or_all, render_cond};
-    use crate::value::{CompOp, Decimal};
+    use crate::value::{ArithOp, Decimal};
 
     fn int(n: i128) -> Value {
         Value::Exact(Decimal::new(n, 0))
@@ -259,5 +333,25 @@ mod tests {
         let moved = crate::logical::map_cond_columns(set, &|c| c.saturating_add(1));
         assert!(render_cond(&moved, &names).starts_with("B IN (0, 1"));
         assert!(!moved.can_raise() && moved.subqueries().is_empty());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1067, D15: an OR of two equalities or
+    /// more of one computed expression with constants, either way round,
+    /// is judged by their set, the expression computed once; one of two
+    /// expressions, and a short one of a column, stay the OR they are.
+    #[test]
+    fn a_list_of_a_computed_expression_is_a_set() {
+        let names = ["A".to_string(), "B".to_string()];
+        let plus = |c: usize| Expr::Arith(Box::new(Expr::Column(c)), ArithOp::Add, Box::new(Expr::Const(int(1))));
+        let is = |e: Expr, v: i128| Cond::Compare(e, CompOp::Eq, Expr::Const(int(v)));
+        let or = |a: Cond, b: Cond| Cond::Or(Box::new(a), Box::new(b));
+        let made = judged_by_sets(or(is(plus(0), 3), is(plus(0), 5)));
+        assert!(matches!(made, Cond::In(..)) && render_cond(&made, &names).ends_with("IN (3, 5)"), "{}", render_cond(&made, &names));
+        let turned = or(Cond::Compare(Expr::Const(int(3)), CompOp::Eq, plus(0)), or(is(plus(0), 5), is(plus(0), 7)));
+        assert!(matches!(judged_by_sets(turned), Cond::In(..)));
+        assert!(matches!(judged_by_sets(or(is(plus(0), 3), is(plus(1), 5))), Cond::Or(..)), "two expressions");
+        let other = Expr::Arith(Box::new(Expr::Column(0)), ArithOp::Add, Box::new(Expr::Const(int(2))));
+        assert!(matches!(judged_by_sets(or(is(plus(0), 3), is(other, 5))), Cond::Or(..)), "another constant in it");
+        assert!(matches!(judged_by_sets(in_list_of(&[int(1), int(2)])), Cond::Or(..)), "a column's short list");
     }
 }

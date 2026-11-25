@@ -61,6 +61,11 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
         let width = m.widths.0.saturating_add(m.widths.1);
         return Some(((0..width).collect(), width));
     }
+    // A DISTINCT by hash is the grouping of its rows by every column
+    // (`batch::distinct_grouping`, RULES.md D1066).
+    if let Plan::Distinct { streamed: false, .. } = plan {
+        return super::distinct_groupable(plan, db).map(|width| ((0..width).collect(), width));
+    }
     let Plan::Aggregate { groups, aggs, streamed: false, .. } = plan else { return None };
     let width = groups.len().saturating_add(aggs.len());
     filterable(plan, db).then(|| ((0..width).collect(), width))
@@ -110,7 +115,7 @@ pub(super) fn reads(plan: &Plan, db: &State) -> bool {
     if layout(plan, db).is_none() {
         return false;
     }
-    if let Plan::IndexJoin { left: input, .. } | Plan::Aggregate { input, .. } = plan {
+    if let Plan::IndexJoin { left: input, .. } | Plan::Aggregate { input, .. } | Plan::Distinct { input, .. } = plan {
         return stream::reads(input, db, true);
     }
     if let Plan::MergeJoin(m) = plan {
@@ -194,6 +199,7 @@ pub(super) fn merge_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferr
 ///
 /// As its input's; SQLCODE -910 of a plan not of such a grouping.
 pub(super) fn grouped_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
+    let plan = grouping_of(plan, db);
     // One that takes no filter gives its rows, gathered (RULES.md D1072).
     if layout(&plan, db).is_none() {
         let (columns, _) = grouping_layout(&plan).ok_or_else(|| broken("a grouping that gives no batches"))?;
@@ -217,6 +223,15 @@ pub(super) fn grouped_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Defe
         runtime::applied_warning(whole, below, (&input_columns, args), (db, tx))
     };
     Ok(gathered(super::groups::grouped_all(&read, &aggs, (db, tx), batches)?, &columns))
+}
+
+/// \[DESIGN\] (RULES.md D1066) `plan`, a DISTINCT by hash made the
+/// grouping of its rows by every column it is; any other plan as it is.
+pub(super) fn grouping_of(plan: Plan, db: &State) -> Plan {
+    match super::distinct_groupable(&plan, db).filter(|_| matches!(plan, Plan::Distinct { streamed: false, .. })) {
+        Some(width) => super::distinct_grouping(plan, width),
+        None => plan,
+    }
 }
 
 /// What reads an operand's rows: of its batches, its scans told `told`;

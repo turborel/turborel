@@ -26,7 +26,7 @@
 //! * what has no count, the defaults of `cardinality.rs`.
 
 use super::joins::{columns_of, is_chain};
-use super::lineage::{Over, one_table, origin};
+use super::lineage::{Over, computed_of, one_table, origin};
 use super::{Card, Estimates, FUNCTION_ROWS, MAX_ESTIMATE_DEPTH, RECURSIVE_ROWS, UNKNOWN_ROWS, UNNEST_FANOUT, at_least_one};
 use crate::functions::{ARRAY, MULTISET};
 use crate::logical::{Cond, Expr, Limit, LogicalPlan, OuterJoin, SetOp, map_cond_columns, split_and};
@@ -133,6 +133,18 @@ impl Estimates<'_> {
         let Some(found) = origin(plan, column) else { return self.rows(plan).max(1.0_f64) };
         let counted = self.statistics(found.table).and_then(|s| s.distinct(found.column));
         counted.or_else(|| self.table_rows(found.table)).unwrap_or(UNKNOWN_ROWS)
+    }
+
+    /// \[DESIGN\] (RULES.md D1082) The distinct values a grouping counts of
+    /// `plan`'s column `column`: as `distinct` gives them, but of a
+    /// deterministic expression no more than the combinations of the
+    /// columns it is computed of, `depth` expressions deep; past
+    /// `MAX_ESTIMATE_DEPTH`, `plan`'s rows.
+    pub(super) fn grouped_distinct(&self, plan: &LogicalPlan, column: usize, depth: usize) -> f64 {
+        let whole = self.distinct(plan, column);
+        let Some((input, read)) = computed_of(plan, column).filter(|_| depth < MAX_ESTIMATE_DEPTH) else { return whole };
+        let of = |&c: &usize| self.grouped_distinct(input, c, depth.saturating_add(1)).max(1.0_f64);
+        read.iter().map(of).product::<f64>().min(whole)
     }
 
     /// The card of an outer join of `kind` on `cond` of `left` and `right`.

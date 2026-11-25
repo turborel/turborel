@@ -41,7 +41,10 @@ where
     F: Fn(Batches) -> Result<()> + Send + Sync + 'static,
 {
     let limit = Limit::of(db);
-    let Held::Kept(pipeline) = Pipeline::told(plan, (db, tx), &limit, told.to_vec())? else { return Ok(Held::GaveWay) };
+    // No probe of the join that told them follows in a morsel, so each
+    // morsel judges them whole right after its scans (RULES.md D1063).
+    let above: Vec<Told> = told.iter().cloned().map(Told::given_above).collect();
+    let Held::Kept(pipeline) = Pipeline::told(plan, (db, tx), &limit, &above)? else { return Ok(Held::GaveWay) };
     if pipeline.batched.as_ref().is_none_or(|by| (&by.layout, by.width) != (&layout.0, layout.1)) {
         return Ok(Held::GaveWay);
     }

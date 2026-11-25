@@ -244,6 +244,22 @@ impl Side {
         Ok(())
     }
 
+    /// Appends `content`, a run of whole granules from `first` that a
+    /// checkpoint captured, as one block: newer than its other blocks, so
+    /// the granules' content is that block's, never written over, as a
+    /// capture is put once (RULES.md D1139).
+    pub(super) fn append_captured(&mut self, at: &At, first: u64, content: Vec<u8>) -> Result<()> {
+        let count = u64::try_from(content.len().checked_div(GRANULE).unwrap_or_default()).unwrap_or_default();
+        let block = self.append_encoded(at, &encode(&Op::Granule(first, content)))?;
+        let spot = Spot { block, first, count };
+        for number in first..first.saturating_add(count) {
+            self.held.remove(&number);
+            self.stale.remove(&number);
+            self.granules.insert(number, spot);
+        }
+        Ok(())
+    }
+
     /// The spot of the run of `count` granules from `first`, if each of
     /// them is still in that run's block.
     pub(super) fn same_run(&self, first: u64, count: u64) -> Option<Spot> {

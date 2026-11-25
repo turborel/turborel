@@ -6,10 +6,13 @@
 //! in a join's table (`batch/joined/shared.rs`), which every morsel of
 //! the probing pipeline then reads at once, as no thread writes it again.
 //! Leis et al.,
-//! "Morsel-Driven Parallelism" (2014), §4.2, build one table of every row;
-//! the table is put together by the statement's thread, a pass over the
-//! hashes, so no insertion is atomic, a thing the core cannot make without
-//! `unsafe` (RULES.md R-SAFE-1).
+//! "Morsel-Driven Parallelism" (2014), §4.2, build one table of every row.
+//! An operand read by its morsels, of more rows than one holds, is put
+//! together by those threads too (`parallel/build.rs`, RULES.md D1080):
+//! its table in parts of the hashes' high bits, each part made by one
+//! thread of its own rows, so no insertion is atomic, a thing the core
+//! cannot make without `unsafe` (RULES.md R-SAFE-1). Any other is put
+//! together by the statement's thread, a pass over the hashes.
 //!
 //! A row with a null key is left out, as none matches it [X3.135-1986
 //! §5.11 GR2], but of a key on which a null matches a null [ISO/IEC
@@ -112,7 +115,7 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit
     let parts = vec![batch_of(&rows, width)];
     let shared =
         SharedTable::of(parts, ((0..width).collect(), width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
-    Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
+    Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared.on(crate::db::kernels::chosen(db))) })))
 }
 
 /// \[DESIGN\] (RULES.md D1050) The operand `right` of a hash join on
@@ -147,7 +150,7 @@ fn batch_built(
         parts.push(part);
     }
     let shared = SharedTable::of(parts, (columns, width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
-    Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
+    Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared.on(crate::db::kernels::chosen(db))) })))
 }
 
 /// Whether `plan` is a pipeline its morsels read (`pipeline::branched`):
@@ -242,8 +245,9 @@ fn parallel_built(
     });
     // A morsel of no rows may hold no vectors.
     parts.retain(|b| b.rows > 0);
-    let shared = SharedTable::of(parts, (columns, width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
-    Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
+    // Put together by the threads that read it (RULES.md D1080).
+    let shared = super::build::shared(parts, (columns, width), keys, super::build::Crew { db, tx, degree })?;
+    Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared.on(crate::db::kernels::chosen(db))) })))
 }
 
 // Unit tests: a key's partition, and an operand built by batch (RULES.md
