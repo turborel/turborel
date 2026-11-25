@@ -275,6 +275,14 @@ average, and how closely rows near in the table lie near in space, which
 price a search of an `rtree` index against a scan
 ([Spatial Data](../sql/10-spatial.md#the-rtree-index-method)).
 
+A table's statistics are saved with its pages at each checkpoint, and a
+close takes one, so a database opened again plans by the statistics it
+was closed with and reads no sample first. They hold a sample of the
+table's rows, so they are sealed as the table's rows are
+([Encryption](07-encryption.md)), and go with the table when it is dropped or
+truncated. A table with none saved, such as one no plan had read yet,
+gathers its first as the first plan that reads it asks.
+
 Each thread started or stopped is told to the diagnostics, `thread`, as
 is each failure of its work. The threads are named for their work:
 `turborel-checkpoint`, `turborel-maintenance`, `turborel-log-sync`,

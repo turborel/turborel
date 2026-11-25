@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 13] = [
+pub const RANGE_READS: [Mutation; 14] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -141,5 +141,15 @@ pub const RANGE_READS: [Mutation; 13] = [
         replacement: "            self.held.take(0, (n, r));\n            return (place, None);",
         integration: &["batches::texts_coded_group_by_their_codes_as_the_texts_group"],
         unit: &[],
+    },
+    Mutation {
+        name: "late-kept-one-place",
+        package: Package::Core,
+        breaks: "a late column of rows kept in order gives every row the first value decoded (D1162)",
+        file: "src/storage/batch/late.rs",
+        original: "                next = next.saturating_add(1);",
+        replacement: "                next = next.saturating_add(0);",
+        integration: &[],
+        unit: &["storage::batch::late::tests::rows_kept_in_order_are_decoded_of_their_places_alone"],
     },
 ];

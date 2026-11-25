@@ -322,8 +322,8 @@ pub trait TableStorage: Send + Sync {
     fn scan_share(&self, _conditions: &Conjunction) -> f64 {
         1.0_f64
     }
-    /// Cost of one `get` by row id. Default: a random read in a row store.
-    fn fetch_cost(&self) -> f64 {
+    /// Cost of one `get` by row id of `columns` of its columns (RULES.md D1097). Default: a random read in a row store, whatever is read.
+    fn fetch_cost(&self, _columns: usize) -> f64 {
         DEFAULT_FETCH_COST
     }
     /// Cost more of a page the buffer pool missed than of one it holds, of

@@ -1,11 +1,12 @@
 //! The mutations of sampled statistics (RULES.md R-TEST-9): a large table
 //! sampled, a sample's distinct values scaled, and a sample's least and
-//! greatest values not taken as bounds.
+//! greatest values not taken as bounds; and of statistics kept with a
+//! table's pages (RULES.md D1093).
 
 use super::{Mutation, Package};
 
 /// The mutations of sampled statistics, in the order they run.
-pub const STATS: [Mutation; 8] = [
+pub const STATS: [Mutation; 16] = [
     Mutation {
         name: "stats-large-read-whole",
         package: Package::Core,
@@ -88,5 +89,85 @@ pub const STATS: [Mutation; 8] = [
         replacement: "        return 0;",
         integration: &[],
         unit: &["engine::columns::cache::tests::a_bound_changed_takes_effect_at_once"],
+    },
+    Mutation {
+        name: "stats-kept-not-read",
+        package: Package::Core,
+        breaks: "statistics kept: a table opened reads none of those saved, and gathers them again as its first plan asks",
+        file: "src/engine/rows/table.rs",
+        original: "        table.gathered.restore(named.statistics, u64::try_from(live).unwrap_or(u64::MAX));",
+        replacement: "",
+        integration: &["statistics_kept::a_database_opened_has_the_statistics_it_was_closed_with"],
+        unit: &["engine::rows::stats::saved::tests::statistics_saved_are_a_table_openeds"],
+    },
+    Mutation {
+        name: "stats-kept-changes-forgotten",
+        package: Package::Core,
+        breaks: "statistics kept: a table opened counts no change since their pass, however many rows it has more",
+        file: "src/engine/rows/stats.rs",
+        original: "        self.changes.store(live.abs_diff(stats.rows), Ordering::Relaxed);",
+        replacement: "        self.changes.store(0, Ordering::Relaxed);",
+        integration: &[],
+        unit: &["engine::rows::stats::saved::tests::rows_written_after_the_pass_are_a_table_openeds_changes"],
+    },
+    Mutation {
+        name: "stats-kept-not-sealed",
+        package: Package::Core,
+        breaks: "statistics kept: a sealed table's are saved as they are, its sampled rows readable in the file",
+        file: "src/engine/rows/stats/saved.rs",
+        original: ".and_then(|content| sealing.value(context, &content, &mut stored));",
+        replacement: ".map(|content| stored.extend_from_slice(&content));",
+        integration: &["statistics_kept::an_encrypted_tables_statistics_are_sealed"],
+        unit: &["engine::rows::stats::saved::tests::a_sealed_tables_statistics_are_sealed"],
+    },
+    Mutation {
+        name: "stats-kept-page-not-freed",
+        package: Package::Core,
+        breaks: "statistics kept: a dropped table's statistics page stays in the file",
+        file: "src/engine/rows/discard.rs",
+        original: "        self.gathered.free_page()?;",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::rows::stats::saved::tests::a_dropped_tables_statistics_page_is_freed"],
+    },
+    Mutation {
+        name: "stats-kept-earlier-meta-refused",
+        package: Package::Core,
+        breaks: "statistics kept: a table whose meta page names no statistics page, written before they were kept, does not open",
+        file: "src/engine/rows/meta.rs",
+        original: "        (Some(TABLE_FORMAT), META_LEN | META_LEN_BEFORE) => {}",
+        replacement: "        (Some(TABLE_FORMAT), META_LEN) => {}",
+        integration: &[],
+        unit: &["engine::rows::stats::saved::tests::a_meta_page_of_no_statistics_word_opens_with_none"],
+    },
+    Mutation {
+        name: "chunk-in-place-always",
+        package: Package::Core,
+        breaks: "a chunk read in place: the bytes of a chunk its encodings open are not kept, and are opened again by every run",
+        file: "src/engine/columns/group.rs",
+        original: "        let in_place = matches!(opened, Cow::Borrowed(_));",
+        replacement: "        let in_place = true;",
+        integration: &[],
+        unit: &["engine::columns::prepared::tests::a_chunk_stored_as_it_is_is_read_in_the_pool"],
+    },
+    Mutation {
+        name: "chunk-in-place-copied",
+        package: Package::Core,
+        breaks: "a chunk read in place: the bytes of a chunk stored as it is are copied out of the pool to be read",
+        file: "src/engine/columns/prepared.rs",
+        original: "        if !in_place {",
+        replacement: "        if true {",
+        integration: &[],
+        unit: &["engine::columns::prepared::tests::a_chunk_stored_as_it_is_is_read_in_the_pool"],
+    },
+    Mutation {
+        name: "frozen-fetch-columns-unpriced",
+        package: Package::Core,
+        breaks: "a frozen fetch is priced as of four columns, whatever it reads",
+        file: "src/engine/rows/frozen.rs",
+        original: "FROZEN_FETCH_COLUMN * crate::storage::cost_of(columns);",
+        replacement: "FROZEN_FETCH_COLUMN * 4.0_f64;",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::fetched::a_frozen_fetch_is_priced_by_its_columns"],
     },
 ];

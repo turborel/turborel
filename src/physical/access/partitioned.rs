@@ -73,7 +73,8 @@ impl PhysicalPlanner<'_> {
         let known = Known { stats: None, cost: &cost };
         let leaves: Vec<_> = db.catalog.partitioning().leaves(read.table).iter().filter_map(|l| db.storage_of(l).ok()).cloned().collect();
         let rows = leaves.iter().map(|s| s.row_count()).fold(0, usize::saturating_add);
-        let (fetch, miss) = leaves.first().map_or((crate::storage::DEFAULT_FETCH_COST, 0.0_f64), |s| (s.fetch_cost(), s.miss_cost()));
+        let (fetch, miss) =
+            leaves.first().map_or((crate::storage::DEFAULT_FETCH_COST, 0.0_f64), |s| (s.fetch_cost(read.needed.len()), s.miss_cost()));
         let (compared, _) = comparisons(conds, known, self.values);
         let usable = |ix: &&crate::catalog::IndexDesc| is_global_index(&ix.name) && !db.building.contains(&ix.name);
         db.catalog.indexes(read.table).into_iter().filter(usable).find_map(|ix| {

@@ -693,9 +693,13 @@ verification approach DO-178C expects (§8).
 | D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
+| D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
+| D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
+| D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
+| D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
@@ -707,12 +711,14 @@ verification approach DO-178C expects (§8).
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
 | D1129 | A grouping that a filter's input and a subquery of its condition compute alike is computed once |
 | D1130 | A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them |
+| D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
 | D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
+| D1162 | A late column of rows kept in order is decoded of their places, none searched for |
 
 ### The project
 
@@ -18889,6 +18895,27 @@ texts, of integers of scales apart, which match when rescaled, and a
 key whose nulls match. The pairs, and their order, are the same of
 either.
 
+#### D1084. Integers known as runs are judged by walking their runs and the rows asked of together
+
+A column store's scan and a filter judge a conjunct of integers known as
+runs once a run (D31, D360). Each judgment made the list of every row
+asked of first, even of all of a run's rows, then found each run's rows
+in it by a binary search, and gave the rows kept one at a time. A key
+of a fact table read in its order, as an order's number in its lines,
+is runs of a few rows each. A join's runtime filter tells its scan the
+key's least and greatest built values (D600), so every row of such a
+key was judged that way, and the judging took more of a query than the
+probe did.
+
+Now the runs and the rows asked of are walked together, both ascending
+(`storage/batch/runs.rs`). Each run is met once and each row once. No
+list of every row is made when all are asked of, since a kept run is
+given on as the span of its places. A run that holds no row asked of
+is not judged. The rows kept, and their order, are what judging each
+row gives. A comparison of integers known as runs is still judged once
+a run, not by the kernel over every row: measured on TPC-H, the kernel
+was the slower of the two.
+
 ### Column store reads
 
 #### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
@@ -18964,6 +18991,96 @@ runs of row ids chosen, passes over a group none of them lies in with
 its header unread, and of a group whose rows are every id of its range
 in order reckons a run's places from its ids
 (`engine/rows/frozen/sampled.rs`).
+
+#### D1093. A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first
+
+A table's statistics were kept in memory alone, so a database opened
+had none, and the first plan of each table read a sample of it before
+it could be made (D1092). A server started therefore paid a pass of
+every table its first statements named, and what a pass had learned of
+a column growing with insertion (D381) was lost at each start.
+
+The row store now saves them. A table's meta page names a page of its
+own for them, of any length, written at the checkpoint after each pass
+that gathered them (`engine/rows/stats/saved.rs`), and read as the
+table is opened. It holds every number the pass found, and each value,
+a bound, a histogram's bound, a common value or a sampled row's, as a
+record of the table's own format (`engine/rows/stats/image.rs`), so
+nothing new describes a value. A table opened with statistics saved
+plans by them at once and makes no first pass. The rows it holds more
+or fewer than they found count as changes since, so a table that
+changed much after its last pass is due as it would have been. A table
+with none saved gathers its first as D1092 says. An index's count of
+its keys was already kept, with its locator (D35).
+
+The page holds a sample of the table's rows, so it follows the table's
+protections. It is sealed by the table's encodings (D30, D48), its
+page number the context, with a bit of its own, and passes through
+the file's encodings as every page does. Statistics that cannot be
+sealed, their encodings not registered, are saved empty. The page is
+freed with the table's other pages when the table is dropped, and a
+table truncated is a new table with no such page.
+
+Statistics are advice, so no failure of them fails a table. A page
+that is empty, that cannot be opened, or that is not what was saved is
+read as no statistics, and the table gathers them again.
+
+The meta page gains one word, the statistics page. A meta page written
+before, which ends at the large objects' tree, is read as naming none,
+so a database written before this decision opens as it is and has its
+statistics saved at its next checkpoint. A build from before this
+decision refuses a meta page of the new length as not a table's of its
+format (SQLCODE -916), and does not misread it. Formats stay 1.
+
+#### D1094. A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it
+
+A scan opened each chunk once for all its runs (D352) by copying the
+chunk's bytes out of the buffer pool into a buffer of its own, since
+the page was not held between runs. On a scan of a few narrow columns
+that copy was the largest cost after decoding, a page copied for every
+page decoded.
+
+A chunk whose page passed through no encoding is now read where it
+lies. What D352 keeps of a chunk, its table of symbols and its
+dictionary's entries, is still made once and kept. Its bytes are not.
+Each run finds the page in the pool again, holds it while it decodes
+its rows of it, and lets it go (`engine/columns/prepared.rs`). Finding
+a page the pool holds is a hash and a latch, which costs less
+than copying the page, and a run of a vector of rows touches a chunk
+once or twice. A group's pages are not written again while a reader
+holds the group, and a run never reads a second page while it holds
+one, so the page is held for one decode and by nothing that waits.
+
+A chunk whose page its table's encodings open is read as before, its
+opened bytes kept for its runs, as opening it once is what D352 saves.
+Which a page is is known as it is read, page by page, so a table whose
+encodings changed reads each page as it was written. No format
+changes.
+
+#### D1097. A fetch of a frozen row is priced by the number of columns it reads
+
+The planner priced a fetch of a frozen row as one of four columns
+(D1091), whatever it read. A frozen row read by its id reads one chunk
+of each column asked for, each on a page of its own, so a fetch of one
+column costs less than a fetch of the tree's row and one of every
+column of a wide table several times more. One figure could not be
+right for both, and a join that fetched one column of a frozen table
+was priced as if it read four.
+
+`TableStorage::fetch_cost` is now given the number of columns read,
+and every planner's and executor's caller passes the columns its plan
+reads. A frozen row costs `FROZEN_FETCH` to find its group and place
+and `FROZEN_FETCH_COLUMN` for each column read, against a fetch of the
+tree's row costing 1 (`engine/rows/frozen.rs`). The two are the line
+through the cases of `bench/fetch.rs` that read one and four columns of
+a frozen table by scattered ids, against its case of the tree's row
+read by scattered ids. Its cases of eight and of all seventeen columns
+lie near that line, the seventeen, wide texts among them, a little
+above it, so a column's cost is taken as one whatever its type. A
+table whose rows are
+in its tree reads them whole, and its fetch costs the same whatever is
+read. So does that of an engine that does not keep its columns apart,
+the default.
 
 #### D1100. A group's shadow bits are trusted only once the entries the tree held as it was published are marked
 
@@ -19285,6 +19402,25 @@ conjunction the sample can tell is given (D382). Of fewer, the range is
 estimated as before. A pattern with more than `%` after its prefix takes
 this share times what the sample says the rest keeps of it, as before.
 
+#### D1131. A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them
+
+A chunk of the column store holds its strings as octets, and a batch
+holds them as text (D361). Of a chunk of varying fields, each field read
+was judged UTF-8 by itself before it was copied into the batch's text.
+The octets from the start of the first field read to the end of the last
+are now judged once, and each field is a slice of them
+(`engine/columns/encoded.rs`). Strings that are each UTF-8 are UTF-8
+together, and a field that begins or ends within a character gives no
+text as before, so the batch is the one each judgment gave.
+
+IN a list of strings judged of a vector's text (D1126) compared a
+string of a short list with each constant, each made unpadded again for
+each row, and hashed it for a longer one. The constants are now unpadded
+once as the set is made, sorted and each kept once
+(`logical/sets.rs`), and a string is looked for by halving them, which
+compares it with as many as that takes. A string is found if it equals
+one without trailing spaces [X3.135-1986 §5.11 GR5], as before.
+
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 
 A load of a wide table failed past a few million rows with "too many
@@ -19410,6 +19546,22 @@ A grouping on one thread groups so too (`exec/batch/groups.rs`). Its
 memo holds only groups it holds, as a row of a group written past the
 work area is found by its key, and it forgets them as the work area is
 split and the groups held after the split are moved.
+
+#### D1162. A late column of rows kept in order is decoded of their places, none searched for
+
+A late column (D361) resolved of the rows a filter kept listed their
+places, sorted them if they were not in order, took out those given
+twice, and then searched the places decoded for each row's, to gather
+the values to the rows. Of a column no join gathered, the rows a filter
+keeps are ascending, each once, and so are their places, so the search
+found the `k`th row's value at the `k`th place every time. Of a scan of
+a large table filtered by a comparison of two of its columns, that
+search was the most of the samples outside the join.
+
+Such a column is now resolved of its rows' places as they come, and the
+`k`th row kept takes the `k`th value decoded (`storage/batch/late.rs`).
+Rows given out of order or more than once, and a column a join
+gathered, are resolved as before.
 
 ## 2. Project layout
 

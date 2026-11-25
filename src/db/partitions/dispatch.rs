@@ -83,8 +83,8 @@ impl TableStorage for Dispatched {
     fn newest_writer(&self, tx: TxId, id: RowId) -> Result<(Option<TxId>, Timestamp)> {
         self.leaf(id).map_or(Ok((None, 0)), |(s, row)| s.newest_writer(tx, row))
     }
-    fn fetch_cost(&self) -> f64 {
-        self.leaves.values().next().map_or(DEFAULT_FETCH_COST, |s| s.fetch_cost())
+    fn fetch_cost(&self, columns: usize) -> f64 {
+        self.leaves.values().next().map_or(DEFAULT_FETCH_COST, |s| s.fetch_cost(columns))
     }
 }
 

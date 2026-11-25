@@ -401,6 +401,9 @@ impl Body<'_> {
             // Of VARCHAR texts alone (`columns.rs`), never padded.
             return pad.is_none().then(|| coded.texts((from, to), (text, ends), null)).flatten();
         }
+        if let Body::Varying { offsets, values } = self {
+            return varying_texts((offsets, values), (from, to), (text, ends), (null, pad));
+        }
         for n in from..to {
             if !null(n) {
                 padded(text, std::str::from_utf8(self.field(n)?).ok()?, pad);
@@ -495,6 +498,31 @@ impl Body<'_> {
             Body::Fixed { .. } | Body::Frame { .. } | Body::Runs(_) | Body::Alp(_) | Body::Fsst(_) => None,
         }
     }
+}
+
+/// \[DESIGN\] (RULES.md D1131) As `Body::texts`, of varying fields of
+/// `values` that `offsets` place: the octets from the first's start to
+/// the last's end judged UTF-8 once, each field then a slice of them,
+/// none if they are not UTF-8 or a field does not begin and end on a
+/// character. Fields that are each UTF-8 are UTF-8 together, so this
+/// gives what judging each would.
+fn varying_texts(
+    (offsets, values): (&[u8], &[u8]),
+    (from, to): (usize, usize),
+    (text, ends): (&mut String, &mut Vec<usize>),
+    (null, pad): (impl Fn(usize) -> bool, Option<usize>),
+) -> Option<()> {
+    let Some(last) = to.checked_sub(1).filter(|&last| last >= from) else { return Some(()) };
+    let (start, end) = (between(offsets, from)?.0, between(offsets, last)?.1);
+    let span = std::str::from_utf8(values.get(start..end)?).ok()?;
+    for n in from..to {
+        if !null(n) {
+            let (a, b) = between(offsets, n)?;
+            padded(text, span.get(a.checked_sub(start)?..b.checked_sub(start)?)?, pad);
+        }
+        ends.push(text.len());
+    }
+    Some(())
 }
 
 /// Where the `e`th of the fields `offsets` gives begins and ends.
