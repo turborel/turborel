@@ -330,7 +330,8 @@ pub(super) fn whole_rows(rows: RowIter, (limit, ahead): (&Limit, &Ahead)) -> Res
 ///
 /// As reading a batch fails.
 pub(super) fn held_batches(batches: Batches, limit: &Limit) -> Result<Gathered<Kept>> {
-    gathered(batches_charged(batches, &Tally::of(limit)))
+    let tally = Tally::of(limit);
+    Ok(gathered(gather_batches(batches, &tally)?, &tally))
 }
 
 /// The batches of `batches`, a stream's morsel's, gathered within `limit`
