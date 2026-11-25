@@ -25,13 +25,6 @@
 //! the next one's, so a scan allocates them about once a column, not once
 //! a chunk. The codes of the group's sketches a scan reads are kept here
 //! too, with what each code says of each conjunct, until the next group.
-//!
-//! The vectors of the columns a scan decoded to judge a run, and gathered
-//! the rows kept of, are kept here too once it has done with them
-//! (`give`), and hold the next run's (`words`), so a scan that keeps few
-//! rows of each run allocates a vector a judged column, not one a run
-//! (RULES.md D1095). A run gives back no more vectors than it took or
-//! made, so those kept are never more than a run decodes.
 
 use std::collections::VecDeque;
 
@@ -40,7 +33,7 @@ use super::fsst::Symbols;
 use super::group::{Pages, Seal, Zone};
 use super::{Chunk, padding};
 use crate::error::Result;
-use crate::storage::{Column, Mask};
+use crate::storage::Mask;
 use crate::value::DataType;
 
 /// \[DESIGN\] The most chunks of a column held: a run of 2,048 rows spans
@@ -79,12 +72,6 @@ pub struct Prepared {
     spare: Vec<Vec<u8>>,
     /// What is read and made of the group's sketches (`sketch.rs`).
     pub(super) sketches: super::sketch::Held,
-    /// The vectors of columns decoded and done with, to hold the next.
-    words: Vec<Vec<i64>>,
-    /// How many vectors decoded were held by one given back, as a test
-    /// counts them.
-    #[cfg(test)]
-    pub(in crate::engine) reused: usize,
     /// How many chunks were opened, as a test counts them.
     #[cfg(test)]
     pub(super) opened: usize,
@@ -99,32 +86,6 @@ impl Prepared {
             spare.extend(kept.drain(..).map(|h| h.bytes));
         }
         spare.truncate(KEPT);
-    }
-
-    /// Takes `columns`, decoded of a run and read no more, to hold the
-    /// runs' after: the vector of each of integers or datetimes, the
-    /// kinds `words` holds.
-    pub fn give(&mut self, columns: Vec<(usize, Column)>) {
-        for (_, column) in columns {
-            match column {
-                Column::Ints(ints) => self.words.push(ints.units),
-                Column::Datetimes(datetimes) => self.words.push(datetimes.utc),
-                Column::Values(_) | Column::Texts(_) | Column::Floats(_) | Column::Bools(_) | Column::Nulls(_) | Column::Late(_) => {}
-            }
-        }
-    }
-
-    /// An empty vector with room for `count` words: one given back, if
-    /// any is held, else a new one.
-    pub(super) fn words(&mut self, count: usize) -> Vec<i64> {
-        let Some(mut words) = self.words.pop() else { return Vec::with_capacity(count) };
-        #[cfg(test)]
-        {
-            self.reused = self.reused.saturating_add(1);
-        }
-        words.clear();
-        words.reserve(count);
-        words
     }
 
     /// What `read` makes of the chunk `zone` of column `column` of type

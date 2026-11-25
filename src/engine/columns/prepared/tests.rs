@@ -192,27 +192,3 @@ fn a_chunk_stored_as_it_is_is_read_in_the_pool() {
         assert!(!kept(&opened).is_empty() && kept(&opened).iter().all(|&held| held == (false, false)), "opened once and kept");
     }
 }
-
-/// Verifies: [DESIGN] RULES.md D1095, vectors given back: the vector of
-/// a column of integers, and of one of datetimes, a scan has done with
-/// holds the next it decodes, emptied, its room kept; a column of another
-/// kind gives none; with none held a new one is made. MC/DC of the vector
-/// taken: one held (reused) against none (made).
-#[test]
-fn a_vector_given_back_holds_the_next_decoded() {
-    use crate::storage::{Datetimes, Ints};
-    use crate::value::datetime::Moment;
-    let mut prepared = Prepared::default();
-    assert!(prepared.words(5).capacity() >= 5 && prepared.reused == 0, "none held: made");
-    let mut units = Vec::with_capacity(300);
-    units.extend([7_i64, 8, 9]);
-    let texts = Texts::new("ab".to_owned(), vec![1, 2], None);
-    let datetimes = Datetimes::new(Vec::with_capacity(400), None, (Moment::Date, false, 0), None);
-    prepared.give(vec![(0, Column::Ints(Ints::new(units, 0, None))), (1, Column::Texts(texts)), (2, Column::Datetimes(datetimes))]);
-    let (first, second) = (prepared.words(10), prepared.words(10));
-    assert!(first.is_empty() && second.is_empty(), "emptied");
-    assert_eq!((first.capacity() >= 400, second.capacity() >= 300, prepared.reused), (true, true, 2), "their room kept");
-    assert!(prepared.words(10).capacity() < 300 && prepared.reused == 2, "the texts gave none");
-    prepared.give(vec![(0, Column::Ints(Ints::new(Vec::with_capacity(4), 0, None)))]);
-    assert!(prepared.words(50).capacity() >= 50 && prepared.reused == 3, "room made for the run");
-}

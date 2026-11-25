@@ -68,32 +68,3 @@ fn a_split_judges_its_zones_once_for_every_morsel() {
     assert!(morsels > 9, "{morsels} morsels");
     assert_eq!(given, 9000 - 7 * 1024, "the same rows by many morsels");
 }
-
-/// Verifies: [DESIGN] RULES.md D1095 a scan that keeps few rows of each
-/// run gives the vectors it decoded to judge a run back once it holds the
-/// rows kept, and the next run is decoded into them: of two groups each
-/// keeping a few rows, the second's judged column is held by the first's
-/// vector, and the rows given are those the condition keeps.
-#[test]
-fn a_selective_scan_decodes_each_run_into_the_vectors_of_the_last() {
-    use crate::engine::rows::frozen::Batched;
-    use crate::storage::Conjunct;
-    let (_, files) = files();
-    let (table, _) = table(&files, 0, 4096);
-    ended(&table, 1);
-    let bound =
-        |op, n| Conjunct::Condition(Condition { columns: vec![0], probe: Probe::Compare { op, value: Value::Exact(Decimal::new(n, 0)) } });
-    let few = Conjunction(vec![bound(CompOp::Ge, 2040), bound(CompOp::Lt, 2060)]);
-    let reader = table.reader(NO_TRANSACTION).unwrap();
-    let directory = table.directory_for(reader).unwrap();
-    assert_eq!(directory.groups.len(), 2, "two groups frozen");
-    let mut scan = Batched::new(Arc::clone(&table), (reader, directory), vec![0, 1], Some(few));
-    let mut keys = Vec::new();
-    for batch in &mut scan {
-        let batch = batch.unwrap();
-        keys.extend((0..batch.rows).map(|r| batch.cell(0, r).to_value().to_string()));
-    }
-    keys.sort();
-    assert_eq!(keys, (2040..2060).map(|n| n.to_string()).collect::<Vec<_>>());
-    assert_eq!(scan.reused(), 1, "the second group's column in the first's vector");
-}

@@ -6,7 +6,7 @@
 //! and not again at the rows it kept.
 
 use crate::storage::mask::index;
-use crate::storage::{BATCH_ROWS, Column, Floats, Ints, Mask};
+use crate::storage::{Column, Floats, Ints, Mask};
 
 /// \[DESIGN\] The places of the rows kept and not yet given, and the
 /// columns judging their runs decoded, of those rows.
@@ -45,12 +45,6 @@ impl Pending {
             return;
         }
         let first = self.places.is_empty();
-        if first {
-            // Room for a batch at once: a scan holds no more (`run.rs`),
-            // and a vector that grew as each run was added was copied as
-            // often as it doubled (RULES.md D1095).
-            self.places.reserve(BATCH_ROWS);
-        }
         for (c, column) in decoded {
             if let Some((_, pile)) = self.piles.iter_mut().find(|(p, _)| p == c) {
                 pile.add(column, rows);
@@ -81,8 +75,8 @@ impl Pile {
     /// An empty pile of the kind of `column`.
     fn of(column: &Column) -> Pile {
         match column {
-            Column::Ints(ints) => Pile::Ints(Ints::new(Vec::with_capacity(BATCH_ROWS), ints.scale, None)),
-            Column::Floats(_) => Pile::Floats(Floats::new(Vec::with_capacity(BATCH_ROWS), None)),
+            Column::Ints(ints) => Pile::Ints(Ints::new(Vec::new(), ints.scale, None)),
+            Column::Floats(_) => Pile::Floats(Floats::new(Vec::new(), None)),
             Column::Values(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Nulls(_) | Column::Late(_) => {
                 Pile::Off
             }

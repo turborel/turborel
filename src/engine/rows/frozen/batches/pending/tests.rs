@@ -37,16 +37,3 @@ fn judged_columns_are_held_of_the_rows_kept() {
     assert_eq!(format!("{:?}", made.values()), format!("{want:?}"), "each row's value, nulls kept");
     assert!(pending.is_empty(), "taken");
 }
-
-/// Verifies: [DESIGN] RULES.md D1095, room for a batch: the places held
-/// and each judged column held have room for a batch of rows from the
-/// first run added, so neither is copied as runs are added after.
-#[test]
-fn what_is_held_has_room_for_a_batch_from_the_first_run() {
-    let mut pending = Pending::default();
-    pending.add(&[100, 102], (&[0, 2], &[(1, ints(&[10, 11, 12, 13], &[]))]));
-    let (places, held) = pending.take();
-    assert!(places.capacity() >= BATCH_ROWS, "{} places", places.capacity());
-    let [(_, Column::Ints(made))] = held.as_slice() else { panic!("one column of integers held: {held:?}") };
-    assert!(made.units.capacity() >= BATCH_ROWS, "{} units", made.units.capacity());
-}

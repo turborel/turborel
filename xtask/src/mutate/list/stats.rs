@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of sampled statistics, in the order they run.
-pub const STATS: [Mutation; 19] = [
+pub const STATS: [Mutation; 16] = [
     Mutation {
         name: "stats-large-read-whole",
         package: Package::Core,
@@ -159,36 +159,6 @@ pub const STATS: [Mutation; 19] = [
         replacement: "        if true {",
         integration: &[],
         unit: &["engine::columns::prepared::tests::a_chunk_stored_as_it_is_is_read_in_the_pool"],
-    },
-    Mutation {
-        name: "scan-vectors-not-given-back",
-        package: Package::Core,
-        breaks: "vectors given back: a scan keeps none of the vectors it judged a run by, and allocates each run's anew",
-        file: "src/engine/rows/frozen/batches/run.rs",
-        original: "        self.prepared.give(judged.decoded);",
-        replacement: "",
-        integration: &[],
-        unit: &["engine::rows::frozen::tests::morsels::a_selective_scan_decodes_each_run_into_the_vectors_of_the_last"],
-    },
-    Mutation {
-        name: "scan-held-no-room",
-        package: Package::Core,
-        breaks: "room for a batch: a judged column held grows as each run is added, copied as often as it doubles",
-        file: "src/engine/rows/frozen/batches/pending.rs",
-        original: "Pile::Ints(Ints::new(Vec::with_capacity(BATCH_ROWS), ints.scale, None))",
-        replacement: "Pile::Ints(Ints::new(Vec::new(), ints.scale, None))",
-        integration: &[],
-        unit: &["engine::rows::frozen::batches::pending::tests::what_is_held_has_room_for_a_batch_from_the_first_run"],
-    },
-    Mutation {
-        name: "ahead-held-pages-locked",
-        package: Package::Core,
-        breaks: "a request of pages held: the queue's lock is taken though every page asked for is in the pool",
-        file: "src/disk/buffer/pool/ahead.rs",
-        original: "        let held = pages.iter().take_while(|&&id| self.mapped(Key { file, id })).count();",
-        replacement: "        let held = 0_usize;",
-        integration: &[],
-        unit: &["disk::buffer::pool::ahead::tests::a_request_of_pages_held_takes_no_lock"],
     },
     Mutation {
         name: "frozen-fetch-columns-unpriced",

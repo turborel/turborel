@@ -64,28 +64,18 @@ impl Batched {
             once.add(&kept, (&judged.kept, &judged.decoded));
             return self.held_batch(&group, once.take()).map(Some);
         }
-        // Those held would pass a batch with these: given first.
-        let full = !self.pending.is_empty() && self.pending.len().saturating_add(kept.len()) > BATCH_ROWS;
-        let ready = full.then(|| self.pending.take());
-        self.pending.add(&kept, (judged.kept.as_slice(), judged.decoded.as_slice()));
-        // The columns judging decoded are read no more: their vectors
-        // hold the next run's (RULES.md D1095).
-        self.prepared.give(judged.decoded);
-        if let Some(ready) = ready {
+        let these = (judged.kept.as_slice(), judged.decoded.as_slice());
+        if !self.pending.is_empty() && self.pending.len().saturating_add(kept.len()) > BATCH_ROWS {
+            let ready = self.pending.take();
+            self.pending.add(&kept, these);
             return self.held_batch(&group, ready).map(Some);
         }
+        self.pending.add(&kept, these);
         if self.pending.len() < KEPT_ROWS {
             return Ok(None);
         }
         let ready = self.pending.take();
         self.held_batch(&group, ready).map(Some)
-    }
-
-    /// How many vectors it decoded were held by one a run before gave
-    /// back, as a test counts them.
-    #[cfg(test)]
-    pub(in crate::engine::rows) fn reused(&self) -> usize {
-        self.prepared.reused
     }
 
     /// The batch of the rows kept of the group's runs and not yet given,

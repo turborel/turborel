@@ -99,31 +99,3 @@ fn a_scan_in_order_asks_a_window_ahead() {
     pool.ahead_of(&mut ahead, file, ids[13]);
     assert_eq!(pool.counts().read_ahead, 13);
 }
-
-/// Verifies: [DESIGN] RULES.md D1096, a request of pages the pool holds:
-/// one whose pages are all in the pool takes them all and never takes the
-/// queue's lock, each found by its hint; one whose first pages are in
-/// the pool passes those over, and takes the lock once for the rest,
-/// which are queued. MC/DC of the lock taken: every page held (not
-/// taken) against one not held (taken).
-#[test]
-fn a_request_of_pages_held_takes_no_lock() {
-    let (pool, file, ids) = cold(12, 32);
-    let pool = Arc::new(pool);
-    let reader = AheadReader::new();
-    reader.serve(&pool);
-    pool.set_read_ahead(4);
-    for &id in &ids[..6] {
-        drop(pool.read(file, id).unwrap());
-    }
-    let locked = || pool.queued.locked.load(Ordering::Relaxed);
-    let mut ahead = Ahead::default();
-    assert!(ids[..6].iter().all(|&id| pool.mapped(Key { file, id })) && !pool.mapped(Key { file, id: ids[6] }));
-    assert_eq!(pool.ahead_pages(&mut ahead, file, &ids[..6]), 6, "all taken");
-    assert_eq!(locked(), 0, "none wanted: no lock");
-    assert_eq!(pool.ahead_pages(&mut ahead, file, &ids[3..9]), 6, "3 in the pool, then 3 of a window of 4");
-    assert_eq!(locked(), 1, "the lock, for those not held");
-    assert_eq!(reader.read_queued(), 3);
-    assert_eq!(pool.ahead_pages(&mut ahead, file, &ids[..9]), 9, "read since: held");
-    assert_eq!(locked(), 1);
-}

@@ -12,13 +12,6 @@
 //! `READ_AHEAD_SHARE`th of its frames, so a scan never takes the pool from
 //! the pages others use, nor queues more than the job can read.
 //!
-//! A scan of pages the pool holds asks for many and wants none, and many
-//! such scans go on at once, so asking must cost them nothing they share
-//! (RULES.md D1096): whether a page is in the pool is read of its hint,
-//! with no lock, before its shard's map is asked, and the pages in the
-//! pool before the first that is not are passed over before the queue's
-//! lock is taken, which a request of pages all held never takes.
-//!
 //! Pages in the pool already are left as they are, and it never fails a
 //! read: a frame it cannot have, or a page it cannot take whole, it leaves
 //! to the read that wants it, and a read of the file that fails reads
@@ -51,10 +44,6 @@ pub const READ_AHEAD_PAGES: usize = 32;
 pub(in crate::disk::buffer) struct Queued {
     reader: RwLock<Option<Weak<AheadReader>>>,
     state: Mutex<Requests>,
-    /// How many times a scan asking took the queue's lock, as a test
-    /// counts them.
-    #[cfg(test)]
-    locked: std::sync::atomic::AtomicUsize,
 }
 
 /// The requests queued, and the pages of those being read.
@@ -150,15 +139,6 @@ impl BufferPool {
         if window == 0 || Undoing::active() {
             return pages.len();
         }
-        // Those in the pool before the first that is not want nothing.
-        let held = pages.iter().take_while(|&&id| self.mapped(Key { file, id })).count();
-        let Some(rest) = pages.get(held..).filter(|rest| !rest.is_empty()) else { return pages.len() };
-        held.saturating_add(self.ask_rest(ahead, file, rest, (window, passed)))
-    }
-
-    /// `ask`'s work of `pages`, the first of them not in the pool, within
-    /// a window of `window` pages.
-    fn ask_rest(&self, ahead: &mut Ahead, file: FileId, pages: &[u64], (window, passed): (usize, u64)) -> usize {
         let Some(reader) = self.queued.reader() else {
             let (used, mut wanted) = self.wanted(file, pages, window);
             wanted.sort_unstable();
@@ -167,8 +147,6 @@ impl BufferPool {
         };
         let (used, queued) = {
             let mut state = lock_builtin(&self.queued.state);
-            #[cfg(test)]
-            self.queued.locked.fetch_add(1, Ordering::Relaxed);
             let room = window.saturating_sub(state.in_flight(ahead, passed));
             let (used, wanted) = self.wanted(file, pages, room);
             let queued = !wanted.is_empty();
@@ -275,12 +253,9 @@ impl BufferPool {
         self.read_ahead_pages.store(pages, Ordering::Relaxed);
     }
 
-    /// Whether `key` is mapped to a frame: as its hint says, read with
-    /// no lock, if the frame hinted holds it; else as its shard's map
-    /// says.
+    /// Whether `key` is mapped to a frame.
     fn mapped(&self, key: Key) -> bool {
-        let hinted = self.hints.frame_of(key).and_then(|index| self.frames.get(index));
-        hinted.is_some_and(|frame| frame.key() == Some(key)) || self.shared_map(key).is_ok_and(|map| map.contains_key(&key))
+        self.shared_map(key).is_ok_and(|map| map.contains_key(&key))
     }
 
     /// Frames claimed, and emptied, for those of pages `ids` of `file`
