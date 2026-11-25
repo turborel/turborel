@@ -26,11 +26,11 @@ use turborel::kernels::portable::bloom::{self, BLOCK_WORDS};
 const FIELD: u64 = 9;
 
 /// How far a hash is turned to give the bits its block is picked by.
-const BLOCK_SHIFT: i32 = 36;
+const BLOCK_SHIFT: u32 = 36;
 
 /// How far the product of those bits and the count of blocks is turned
 /// to give the block: the 28 bits they are.
-const SCALED: i32 = 28;
+const SCALED: u32 = 28;
 
 /// Bits a key sets in its block.
 const PROBES: usize = 4;
@@ -47,7 +47,7 @@ fn tail(words: &[u64], hashes: &[u64], from: usize, out: &mut Vec<u32>) {
 /// bits scales a hash's bits to it as `block_of` does; of more, which no
 /// filter made has, the portable probe judges the hashes.
 fn blocks_of(words: &[u64]) -> Option<u64> {
-    let blocks = words.len() / BLOCK_WORDS;
+    let blocks = words.as_chunks::<BLOCK_WORDS>().0.len();
     u32::try_from(blocks).ok().filter(|&b| b > 0).map(u64::from)
 }
 
@@ -78,21 +78,21 @@ fn kept(out: &mut Vec<u32>, n: usize, keep: usize) {
 pub(super) fn probe_avx2(words: &[u64], hashes: &[u64], out: &mut Vec<u32>) {
     let Some(blocks) = blocks_of(words) else { return bloom::bloom_probe(words, hashes, out) };
     out.reserve(hashes.len());
-    let whole = hashes.len() / 4 * 4;
+    let (quads, rest) = hashes.as_chunks::<4>();
     // SAFETY: an `Isa` of AVX2 is made only where the processor has it
     // (`x86::isa`), and only such a one calls this.
-    unsafe { quads_avx2(words, blocks, hashes.get(..whole).unwrap_or_default(), out) };
-    tail(words, hashes, whole, out);
+    unsafe { quads_avx2(words, blocks, quads, out) };
+    tail(words, hashes, hashes.len().saturating_sub(rest.len()), out);
 }
 
 /// `Kernels::bloom_probe` on AVX-512.
 pub(super) fn probe_avx512(words: &[u64], hashes: &[u64], out: &mut Vec<u32>) {
     let Some(blocks) = blocks_of(words) else { return bloom::bloom_probe(words, hashes, out) };
     out.reserve(hashes.len());
-    let whole = hashes.len() / 8 * 8;
+    let (octets, rest) = hashes.as_chunks::<8>();
     // SAFETY: as `probe_avx2`'s, of AVX-512.
-    unsafe { octets_avx512(words, blocks, hashes.get(..whole).unwrap_or_default(), out) };
-    tail(words, hashes, whole, out);
+    unsafe { octets_avx512(words, blocks, octets, out) };
+    tail(words, hashes, hashes.len().saturating_sub(rest.len()), out);
 }
 
 /// Each 64-bit lane `w`, on AVX2.
@@ -105,28 +105,29 @@ fn splat256(w: u64) -> __m256i {
 /// word, of `count` blocks, on AVX2: `block_of`'s scaling, times 8.
 #[target_feature(enable = "avx2")]
 fn base_avx2(h: __m256i, count: __m256i) -> __m256i {
-    _mm256_slli_epi64::<3>(_mm256_srli_epi64::<SCALED>(_mm256_mul_epu32(_mm256_srli_epi64::<BLOCK_SHIFT>(h), count)))
+    let scaled = _mm256_mul_epu32(_mm256_srli_epi64::<{ BLOCK_SHIFT.cast_signed() }>(h), count);
+    _mm256_slli_epi64::<3>(_mm256_srli_epi64::<{ SCALED.cast_signed() }>(scaled))
 }
 
-/// The places of the hashes of `hashes`, four a step, that the filter of
+/// The places of the hashes of `quads`, four a step, that the filter of
 /// `words`, of `blocks` blocks, may hold, appended to `out`.
 #[target_feature(enable = "avx2")]
-fn quads_avx2(words: &[u64], blocks: u64, hashes: &[u64], out: &mut Vec<u32>) {
+fn quads_avx2(words: &[u64], blocks: u64, quads: &[[u64; 4]], out: &mut Vec<u32>) {
     let (count, field, low, one) = (splat256(blocks), splat256((1 << FIELD) - 1), splat256(63), splat256(1));
     let (mut at, mut bits) = ([[0_u64; 4]; PROBES], [[0_u64; 4]; PROBES]);
-    for (q, quad) in hashes.chunks_exact(4).enumerate() {
+    for (q, quad) in quads.iter().enumerate() {
         // SAFETY: `quad` is 32 bytes, and an unaligned load reads exactly them.
         let h = unsafe { _mm256_loadu_si256(quad.as_ptr().cast()) };
         let base = base_avx2(h, count);
-        for (n, (at, bits)) in at.iter_mut().zip(bits.iter_mut()).enumerate() {
+        for (n, (word_at, bit_of)) in at.iter_mut().zip(bits.iter_mut()).enumerate() {
             let f = _mm256_and_si256(_mm256_srlv_epi64(h, splat256(shift_of(n))), field);
             let word = _mm256_add_epi64(base, _mm256_srli_epi64::<6>(f));
-            // SAFETY: `at` and `bits` are 32 bytes each, and an unaligned
-            // store writes exactly them.
-            unsafe {
-                _mm256_storeu_si256(at.as_mut_ptr().cast(), word);
-                _mm256_storeu_si256(bits.as_mut_ptr().cast(), _mm256_sllv_epi64(one, _mm256_and_si256(f, low)));
-            }
+            let bit = _mm256_sllv_epi64(one, _mm256_and_si256(f, low));
+            // SAFETY: `word_at` is 32 bytes, and an unaligned store writes
+            // exactly them.
+            unsafe { _mm256_storeu_si256(word_at.as_mut_ptr().cast(), word) };
+            // SAFETY: as of `word_at`, of `bit_of`.
+            unsafe { _mm256_storeu_si256(bit_of.as_mut_ptr().cast(), bit) };
         }
         for lane in 0..4 {
             let pick = |of: &[[u64; 4]; PROBES]| of.map(|v| v.get(lane).copied().unwrap_or(0));
@@ -141,25 +142,33 @@ fn splat512(w: u64) -> __m512i {
     _mm512_set1_epi64(w.cast_signed())
 }
 
-/// The places of the hashes of `hashes`, eight a step, that the filter
+/// Of each hash of `h`, the place among the words of its block's first
+/// word, of `count` blocks, on AVX-512: `block_of`'s scaling, times 8.
+#[target_feature(enable = "avx512f")]
+fn base_avx512(h: __m512i, count: __m512i) -> __m512i {
+    let scaled = _mm512_mul_epu32(_mm512_srli_epi64::<BLOCK_SHIFT>(h), count);
+    _mm512_slli_epi64::<3>(_mm512_srli_epi64::<SCALED>(scaled))
+}
+
+/// The places of the hashes of `octets`, eight a step, that the filter
 /// of `words`, of `blocks` blocks, may hold, appended to `out`.
 #[target_feature(enable = "avx512f")]
-fn octets_avx512(words: &[u64], blocks: u64, hashes: &[u64], out: &mut Vec<u32>) {
+fn octets_avx512(words: &[u64], blocks: u64, octets: &[[u64; 8]], out: &mut Vec<u32>) {
     let (count, field, low, one) = (splat512(blocks), splat512((1 << FIELD) - 1), splat512(63), splat512(1));
     let (mut at, mut bits) = ([[0_u64; 8]; PROBES], [[0_u64; 8]; PROBES]);
-    for (o, octet) in hashes.chunks_exact(8).enumerate() {
+    for (o, octet) in octets.iter().enumerate() {
         // SAFETY: `octet` is 64 bytes, and an unaligned load reads exactly them.
         let h = unsafe { _mm512_loadu_si512(octet.as_ptr().cast()) };
-        let base = _mm512_slli_epi64::<3>(_mm512_srli_epi64::<SCALED>(_mm512_mul_epu32(_mm512_srli_epi64::<BLOCK_SHIFT>(h), count)));
-        for (n, (at, bits)) in at.iter_mut().zip(bits.iter_mut()).enumerate() {
+        let base = base_avx512(h, count);
+        for (n, (word_at, bit_of)) in at.iter_mut().zip(bits.iter_mut()).enumerate() {
             let f = _mm512_and_si512(_mm512_srlv_epi64(h, splat512(shift_of(n))), field);
             let word = _mm512_add_epi64(base, _mm512_srli_epi64::<6>(f));
-            // SAFETY: `at` and `bits` are 64 bytes each, and an unaligned
-            // store writes exactly them.
-            unsafe {
-                _mm512_storeu_si512(at.as_mut_ptr().cast(), word);
-                _mm512_storeu_si512(bits.as_mut_ptr().cast(), _mm512_sllv_epi64(one, _mm512_and_si512(f, low)));
-            }
+            let bit = _mm512_sllv_epi64(one, _mm512_and_si512(f, low));
+            // SAFETY: `word_at` is 64 bytes, and an unaligned store writes
+            // exactly them.
+            unsafe { _mm512_storeu_si512(word_at.as_mut_ptr().cast(), word) };
+            // SAFETY: as of `word_at`, of `bit_of`.
+            unsafe { _mm512_storeu_si512(bit_of.as_mut_ptr().cast(), bit) };
         }
         for lane in 0..8 {
             let pick = |of: &[[u64; 8]; PROBES]| of.map(|v| v.get(lane).copied().unwrap_or(0));

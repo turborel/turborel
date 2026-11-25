@@ -36,6 +36,7 @@ mod runs;
 pub mod scan;
 pub mod sketch;
 
+pub(crate) use encoded::kind_name;
 pub(crate) use packed::unpack_words;
 
 use crate::error::{Code, Result, SqlError};

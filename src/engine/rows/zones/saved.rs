@@ -13,10 +13,19 @@
 //! opened is read as empty: its zones are then not known, and are summed
 //! up after the table opens, as are those of row ids no segment holds.
 //!
+//! A zone settled visible to every reader is saved so (`VISIBLE`, RULES.md
+//! D1163), and opens settled visible: every row of it was committed at or
+//! before the horizon of the save, none a deletion, no version left to
+//! collect, and every reader after the table opens sees what was
+//! committed before. So a table opened, even one of a load, has nothing
+//! to settle again of a zone its last checkpoint saw settled, and its
+//! rows are not read again at each start. A zone saved otherwise opens
+//! unsettled. A row recovery writes unsettles its zone, as a write does.
+//!
 //! ```text
 //! directory page:  each segment's page u64, in order
 //! segment page:    columns kept u32 | zones u32 | each zone: rows u32 |
-//!                  flags u8 (KNOWN, STALE) | each column's null u8 |
+//!                  flags u8 (KNOWN, STALE, VISIBLE) | each column's null u8 |
 //!                  least values, record | greatest values, record
 //! record:          length u32 | the record of the columns kept
 //!                  (`record.rs`), NULL where a column holds no value
@@ -48,6 +57,8 @@ const ZONED: u64 = 1 << 62;
 const KNOWN: u8 = 1;
 /// A zone's flag: it may be wider than its rows.
 const STALE: u8 = 2;
+/// A zone's flag: it was settled visible to every reader.
+const VISIBLE: u8 = 4;
 /// Bytes of a page number in the directory.
 const WORD: usize = 8;
 
@@ -149,17 +160,21 @@ impl Zones {
             content.put_u32(u32::try_from(self.kept.len()).unwrap_or(u32::MAX));
             content.put_u32(u32::try_from(zones.len()).unwrap_or(u32::MAX));
             for slot in zones {
-                self.put_zone(&lock_builtin(&slot.zone), &mut content)?;
+                let zone = lock_builtin(&slot.zone);
+                // Read under the zone's lock, which a write takes to clear it.
+                let visible = !zone.unsettled && slot.visible.load(AtomicOrdering::Acquire);
+                self.put_zone(&zone, visible, &mut content)?;
             }
             changed.push((segment, content));
         }
         Ok(changed)
     }
 
-    /// Appends `zone` to `out`.
-    fn put_zone(&self, zone: &Zone, out: &mut Vec<u8>) -> Result<()> {
+    /// Appends `zone` to `out`, settled `visible` to every reader or not.
+    fn put_zone(&self, zone: &Zone, visible: bool, out: &mut Vec<u8>) -> Result<()> {
         out.put_u32(zone.rows);
-        out.put_u8(if zone.known { KNOWN } else { 0 } | if zone.stale() { STALE } else { 0 });
+        let flags = [(zone.known, KNOWN), (zone.stale(), STALE), (visible, VISIBLE)];
+        out.put_u8(flags.iter().filter(|(set, _)| *set).fold(0, |all, (_, flag)| all | flag));
         // A zone that held no row has no bounds nor nulls made.
         (0..self.kept.len()).for_each(|c| out.put_u8(u8::from(zone.nulls.get(c).copied().unwrap_or(false))));
         for end in [true, false] {
@@ -190,7 +205,9 @@ impl Zones {
             let bounds = least.into_iter().zip(greatest).map(|(l, g)| (!l.is_null()).then_some((l, g))).collect();
             let known = flags & KNOWN != 0;
             let loose = if flags & STALE != 0 || !known { ALL } else { 0 };
-            zones.push(Zone { bounds, nulls, rows, changes: 0, loose, known, ..Zone::default() });
+            // Settled visible only of one known and not stale.
+            let unsettled = flags & VISIBLE == 0 || loose != 0;
+            zones.push(Zone { bounds, nulls, rows, changes: 0, loose, known, unsettled, ..Zone::default() });
         }
         reader.finish()?;
         Ok(zones)
@@ -199,7 +216,7 @@ impl Zones {
     /// Reads the zones saved, of a table opened whose rows' ids are below
     /// `below`: those of ids no segment holds not known until summed up;
     /// of a table that keeps no column, a zone of each block of them. Each
-    /// unsettled, its visibility kept in memory alone. A table cold whose
+    /// unsettled but one saved settled visible. A table cold whose
     /// last checkpoint saved no zone stays cold, and none is made
     /// (`zones/cold.rs`).
     ///
@@ -227,10 +244,8 @@ impl Zones {
         self.begin_warm();
         let count = usize::try_from(below.div_ceil(ZONE_ROWS)).unwrap_or(usize::MAX).max(loaded.len());
         loaded.resize_with(count, || Zone::empty(false));
-        for zone in &mut loaded {
-            zone.unsettled = true;
-        }
         let stale = loaded.iter().filter(|z| z.stale()).count();
+        let unsettled = loaded.iter().filter(|z| z.unsettled).count();
         let _growing = lock_builtin(&self.growing);
         // The zones only grow (`zones/grown.rs`): read into a table's that
         // holds none yet, as it opens.
@@ -238,15 +253,20 @@ impl Zones {
             return Err(SqlError::new(Code::Api, "[DESIGN] a table's zones are read once, as it opens"));
         }
         self.unknown_below.store(below, AtomicOrdering::Release);
-        // Each not visible, and no segment changed since it was saved.
-        let held = loaded.into_iter().all(|zone| self.slots.push(|slot| *lock_builtin(&slot.zone) = zone));
+        // Visible as saved, and no segment changed since it was saved.
+        let held = loaded.into_iter().all(|zone| {
+            self.slots.push(|slot| {
+                slot.visible.store(!zone.unsettled, AtomicOrdering::Release);
+                *lock_builtin(&slot.zone) = zone;
+            })
+        });
         let segments = count.div_ceil(SEGMENT_ZONES);
         let flagged = (0..segments).all(|_| self.dirty.push(|_| {}));
         if !held || !flagged {
             return Err(SqlError::new(Code::Unsupported, "[DESIGN] a table has more blocks of row ids than its zones hold"));
         }
         self.stale.store(stale, AtomicOrdering::Release);
-        self.unsettled.store(count, AtomicOrdering::Release);
+        self.unsettled.store(unsettled, AtomicOrdering::Release);
         Ok(())
     }
 

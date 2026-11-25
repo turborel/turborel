@@ -1,12 +1,13 @@
 //! The mutations of the join estimates from keys and bounds and of the
 //! join method chosen by regret (RULES.md R-TEST-9, D384-D386): the pairs'
 //! correction dropped, the bound's clamp dropped, a table changed since
-//! its pass bounded as it was, and the margin ignored.
+//! its pass bounded as it was, the margin ignored, and a guessed column
+//! left past its class's known ones (D1152).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail their tests.
-pub const JOIN_ESTIMATES: [Mutation; 4] = [
+pub const JOIN_ESTIMATES: [Mutation; 5] = [
     Mutation {
         name: "join-estimates-correction-dropped",
         package: Package::Core,
@@ -49,5 +50,15 @@ pub const JOIN_ESTIMATES: [Mutation; 4] = [
         replacement: "rows.min(upper).max(rows)",
         integration: &["robust_joins::the_margin_hands_a_risky_index_join_to_the_hash_join"],
         unit: &["physical::robust::tests::a_margin_of_one_trusts_the_estimate"],
+    },
+    Mutation {
+        name: "join-estimates-guess-unbounded",
+        package: Package::Core,
+        breaks: "a column without statistics equated with a key of few values is counted of its table's rows",
+        file: "src/physical/cardinality/composite.rs",
+        original: "Member { distinct: m.distinct.min(least), ..*m }",
+        replacement: "Member { distinct: m.distinct, ..*m }",
+        integration: &[],
+        unit: &["physical::cardinality::keyed_tests::a_guessed_column_is_bounded_by_its_class_key"],
     },
 ];

@@ -31,12 +31,15 @@
 mod batched;
 mod batches;
 mod build;
+mod charged;
 mod each;
 mod grouped;
 mod indexed;
+mod looped;
 mod partitioned;
 mod pipeline;
 mod probe;
+mod rows;
 mod run;
 mod sorted;
 
@@ -44,8 +47,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(super) use self::batches::streamed_batches;
+use self::charged::{Ahead, Alone, Flow, whole_rows};
 pub(super) use self::each::each_morsel;
 pub(super) use self::grouped::grouped_told;
+pub(super) use self::looped::{loop_degree, looped};
 use self::pipeline::Pipeline;
 pub(super) use self::probe::pipelined;
 pub(super) use self::run::Morsels;
@@ -54,7 +59,7 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::physical::{Parallel, Plan};
-use crate::settings::{MEMORY_WORK_BYTES, work_bytes};
+use crate::settings::{EXECUTOR_MORSEL_ROWS, MEMORY_WORK_BYTES, work_bytes};
 use crate::spill::Grant;
 use crate::storage::Row;
 use crate::txn::{Stop, TxId};
@@ -66,10 +71,13 @@ pub(in crate::exec) enum Held<T> {
 }
 
 /// \[DESIGN\] The bytes a part holds, charged to one work grant of the
-/// statement's (RULES.md D38, D298), shared by the threads charging it.
+/// statement's (RULES.md D38, D298), shared by the threads charging it:
+/// a copy charges the same grant, so each thread reading a morsel holds
+/// one (`parallel/charged.rs`).
+#[derive(Clone)]
 struct Limit {
     most: usize,
-    held: AtomicUsize,
+    held: Arc<AtomicUsize>,
     grant: Arc<Grant>,
 }
 
@@ -77,7 +85,7 @@ impl Limit {
     /// A work grant of `db`'s budget, of up to MEMORY.WORK_BYTES.
     fn of(db: &State) -> Limit {
         let grant = db.work.grant(work_bytes(db.settings.get(MEMORY_WORK_BYTES)));
-        Limit { most: grant.bytes(), held: AtomicUsize::new(0), grant }
+        Limit { most: grant.bytes(), held: Arc::new(AtomicUsize::new(0)), grant }
     }
 
     /// Its bytes.
@@ -156,14 +164,19 @@ pub(super) fn parallel(plan: Plan, db: &Db, tx: TxId) -> RowIter {
 }
 
 /// The rows of the stream `plan`, its morsels taken by up to `degree`
-/// threads, given in order.
+/// threads, given in order: each morsel's gathered within the part's
+/// grant, or read by the reader as it is given if it outgrows it
+/// (`parallel/charged.rs`, RULES.md D1150).
 fn streamed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
-    let limit = Limit::of(db);
+    let (limit, ahead) = (Limit::of(db), Ahead::of(degree, db.settings.count(EXECUTOR_MORSEL_ROWS)));
     let Held::Kept(pipeline) = Pipeline::of(plan, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
-    let (pipeline, db_for) = (Arc::new(pipeline), db.clone());
-    let count = pipeline.count();
-    let work = Box::new(move |m: usize| pipeline.morsel_rows(m, (&db_for, tx), &Runner::new(&db_for, tx)));
-    Ok(Held::Kept(Box::new(Streamed::of(db, tx, Morsels::start(db, tx, (count, degree), work)))))
+    let (pipeline, db_for, within) = (Arc::new(pipeline), db.clone(), (limit.clone(), ahead.clone()));
+    let (count, read, db_alone) = (pipeline.count(), Arc::clone(&pipeline), db.clone());
+    let work =
+        Box::new(move |m: usize| whole_rows(pipeline.morsel_rows(m, (&db_for, tx), Runner::new(&db_for, tx))?, (&within.0, &within.1)));
+    let alone: Alone<Row> = Box::new(move |m| read.morsel_rows(m, (&db_alone, tx), Runner::new(&db_alone, tx)));
+    let morsels = Morsels::start(db, tx, (count, degree), work);
+    Ok(Held::Kept(Box::new(Flow::of_rows(morsels, alone, (&limit, &ahead), db.tx.stop_of(tx)))))
 }
 
 /// Rows given a morsel's at a time, in order, the statement's

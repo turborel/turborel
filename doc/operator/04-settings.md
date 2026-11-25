@@ -234,7 +234,10 @@ merged on the statement's thread at once. A query of DISTINCT set
 functions, computed by two groupings, runs both in one part: the first
 grouping's groups are split among the threads by the query's grouping
 columns alone, so each thread makes the second grouping's groups of its
-own, and EXPLAIN shows both groupings under one `Parallel`. A scan or sort of a column
+own, and EXPLAIN shows both groupings under one `Parallel`. An index
+nested-loop join over a part, as of a correlated EXISTS, probes its
+index on the part's threads, each taking a sixteenth of a morsel's rows
+of its left operand at a time. A scan or sort of a column
 store table stays on it too while EXECUTOR.BATCHES is on, since its
 scan by batch is faster alone; a join, window functions, a grouping or
 DISTINCT over one still run in parallel, a grouping a batch at a time
@@ -252,7 +255,15 @@ An operator holds its rows in memory up to a grant of the memory
 budget, half of MEMORY.BUDGET_BYTES left free as it starts, at most
 MEMORY.WORK_BYTES, then spills. Grants shrink as more statements run at
 once, and never together pass the budget. A part run in parallel holds
-one grant for all its threads. One of 4 MiB or less is held unreserved,
+one grant for all its threads, and the rows a thread gathers of a
+morsel count against it until they are read. A morsel a join makes too
+many rows of, as one whose keys each match thousands of rows, is read
+again by the operator above the part as its rows are made, a sort or a
+window's partitions spilling them, a hash join's build giving way to
+the join run alone, so the part keeps to its grant however many rows
+its joins make. The rows of a part that streams its result, waiting for
+a client to take them, are held to those of two morsels a thread, of
+EXECUTOR.MORSEL_ROWS each, whatever the grant. One of 4 MiB or less is held unreserved,
 as a session that sets MEMORY.WORK_BYTES below 4 MiB asks.
 
 ```sql

@@ -11,13 +11,12 @@
 //! key.
 //!
 //! Any other key, of several columns, of texts, of scales apart, or one
-//! whose nulls match, is paired as before (`shared.rs`), hashed a column
-//! at a time and compared a pair at a time (`table/join/equal.rs`). The
-//! pairs are the same, in the same order, of either.
+//! whose nulls match, is paired as before, hashed a column at a time and
+//! compared a pair at a time (`table/join/equal.rs`). The pairs are the
+//! same, in the same order, of either, and either is made a batch at a
+//! time (`probing.rs`, RULES.md D1151).
 
-use super::{SharedTable, pick, probes};
-use crate::error::Result;
-use crate::exec::table::KeyHashes;
+use super::SharedTable;
 use crate::storage::{Batch, Column, Ints};
 
 impl SharedTable {
@@ -30,45 +29,6 @@ impl SharedTable {
             return None;
         };
         (probe.scale == built.scale).then_some((probe, built))
-    }
-
-    /// Gives `found` each pair of a row of `batch` at `given`, its key the
-    /// vector `probe` at `left`, and a built row whose key, of `built`,
-    /// has its units, in order: as picks, the batch's row first.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if a value nests deeper than a type may.
-    pub(super) fn paired_units(
-        &self,
-        (probe, built): (&Ints, &Ints),
-        (batch, given, left): (&Batch, &[usize], &[usize]),
-        mut found: impl FnMut(u32, u32),
-    ) -> Result<()> {
-        if self.table.is_direct() && probe.scale == 0 {
-            for &r in given {
-                let Some(&key) = probe.units.get(r).filter(|_| !probe.is_null(r)) else { continue };
-                for &p in self.table.rows_of(key) {
-                    found(pick(r), p);
-                }
-            }
-            return Ok(());
-        }
-        let mut hashes = KeyHashes::default();
-        hashes.of_batch((batch, Some(given)), (left, &self.nulls), self.hashing())?;
-        // Of a table past the caches, the probes its key's Bloom filter
-        // may hold alone (RULES.md D1087).
-        let screened = self.screened(&hashes.hashes);
-        for n in probes(screened.as_deref(), given.len()) {
-            let (Some(&r), Some(&h), Some(false)) = (given.get(n), hashes.hashes.get(n), hashes.misses.get(n).copied()) else { continue };
-            let Some(key) = probe.units.get(r) else { continue };
-            for p in self.table.candidates(h) {
-                if built.units.get(p) == Some(key) {
-                    found(pick(r), pick(p));
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -101,7 +61,8 @@ mod tests {
     /// values as text.
     fn probed(table: &SharedTable, probe: &Batch) -> Vec<String> {
         let mut rows = Vec::new();
-        for kept in table.probed((probe, None), (&[0], None)) {
+        for kept in SharedTable::probing(table, (Batch { columns: probe.columns.clone(), rows: probe.rows }, None), (vec![0], None), false)
+        {
             let (joined, _) = kept.unwrap();
             assert!(joined.rows <= BATCH_ROWS);
             rows.extend((0..joined.rows).map(|r| format!("{:?}", (0..4).map(|c| joined.cell(c, r).to_value()).collect::<Vec<_>>())));

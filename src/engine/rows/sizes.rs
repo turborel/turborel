@@ -1,42 +1,101 @@
-//! \[DESIGN\] The bytes a row table takes, as TABLE_STATISTICS shows them
-//! (`TableStorage::sizes`, RULES.md D522). Its frozen groups' pages are
-//! counted (`rows/frozen.rs`), each group's from its header, held or read;
-//! the rows of its tree, which shares its pages with the store's other
-//! tables and indexes, are estimated as their number times the mean width
-//! its statistics last measured, none if they never did.
+//! \[DESIGN\] The bytes a row table takes, as TABLE_STATISTICS and
+//! COLUMN_STORAGE show them (`TableStorage::sizes`, RULES.md D522, D1165).
+//! Its frozen groups' pages are counted (`rows/frozen.rs`), each group's
+//! from its header, held or read, and so are its tree's
+//! (`BLinkTree::pages`), its nodes above the leaves read; the pages of its
+//! long values, its zones and its statistics are not.
+//!
+//! Of each column, if asked, the chunks of each encoding, each chunk's
+//! kind and bytes read from the chunk itself (`columns/encoded.rs`), so
+//! every group shows them, whichever build wrote it: the rows they hold,
+//! their bytes and the bytes of the pages they take; and of the rows of
+//! its tree their number, no bytes: a tree keeps each row whole, so no
+//! column of it takes bytes of its own, and the tree's are the table's.
+//!
+//! Every sum is checked. One past what a count holds (`BIGINT`) is none,
+//! never a bound reached and shown as bytes.
+
+use std::collections::BTreeMap;
 
 use super::RowTable;
-use crate::stats::Statistics;
-use crate::storage::{TableSizes, TableStorage};
+use crate::engine::columns::group::{Pages, Zone};
+use crate::engine::columns::kind_name;
+use crate::engine::rows::sealing::Sealing;
+use crate::error::Result;
+use crate::storage::{ColumnSizes, TableSizes, TableStorage};
 
 impl RowTable {
-    /// Its bytes: those of its frozen groups' pages, and those of the rows
-    /// of its tree, estimated; none if a group cannot be read, or the rows
-    /// of its tree have no width measured.
-    pub(super) fn measured(&self) -> Option<TableSizes> {
+    /// Its bytes, and its columns' if `by_column`; none if a group, a chunk
+    /// or a node of its tree cannot be read, or its bytes pass a count's.
+    pub(super) fn measured(&self, by_column: bool) -> Option<TableSizes> {
+        let pages = self.group_pages().ok()?;
         let directory = self.frozen.directory().ok()?;
         let (_, page) = self.pool.page_count(self.file).ok()?;
         let page = u64::try_from(page).ok()?;
         let mut frozen = 0_u64;
+        let mut held: BTreeMap<(usize, Option<&'static str>), ColumnSizes> = BTreeMap::new();
         for entry in &directory.groups {
-            let pages = u64::try_from(self.group_of(entry).ok()?.pages().len()).ok()?;
-            frozen = frozen.saturating_add(pages.saturating_mul(page));
+            let group = self.group_of(entry).ok()?;
+            frozen = within(frozen.checked_add(u64::try_from(group.pages().len()).ok()?.checked_mul(page)?))?;
+            for (column, zones) in group.columns.iter().enumerate().filter(|_| by_column) {
+                for zone in zones {
+                    add(&mut held, (column, zone), (&pages, page)).ok()?;
+                }
+            }
         }
-        let live = u64::try_from(self.row_count()).ok()?;
-        let in_tree = live.saturating_sub(directory.rows());
-        if in_tree == 0 {
-            return Some(TableSizes { bytes: frozen, estimated: false });
+        if !by_column {
+            return Some(TableSizes {
+                bytes: within(frozen.checked_add(self.tree.pages().ok()?.checked_mul(page)?))?,
+                ..TableSizes::default()
+            });
         }
-        // The last pass's, read as no plan reads them, so showing sizes
-        // makes no pass wanted (RULES.md D473).
-        let width = self.gathered.get()?.width(&[])?;
-        Some(TableSizes { bytes: frozen.saturating_add(estimate(in_tree, width)), estimated: true })
+        let bytes = within(frozen.checked_add(self.tree.pages().ok()?.checked_mul(page)?))?;
+        let in_tree = u64::try_from(self.row_count()).ok()?.saturating_sub(directory.rows());
+        let mut columns: Vec<ColumnSizes> = held.into_values().collect();
+        if in_tree > 0 {
+            for column in 0..self.format.columns() {
+                columns.push(ColumnSizes { column, encoding: Some("ROW"), chunks: None, rows: in_tree, bytes: None, page_bytes: None });
+            }
+            columns.sort_by_key(|c| c.column);
+        }
+        Some(TableSizes { bytes, estimated: false, columns })
     }
 }
 
-/// `rows` rows of `width` bytes each, rounded up.
-fn estimate(rows: u64, width: f64) -> u64 {
-    let rows = f64::from(u32::try_from(rows).unwrap_or(u32::MAX));
-    let bytes = crate::physical::parallel_rows((rows * width.max(0.0_f64)).ceil());
-    u64::try_from(bytes).unwrap_or(u64::MAX)
+/// Adds `zone`, a chunk of the column at `column`, to what `columns` holds
+/// of its encoding, its kind and bytes read from `pages`, a chunk on a page
+/// of its own taking the `page` bytes.
+///
+/// # Errors
+///
+/// As `Pages::with_run`.
+fn add(
+    columns: &mut BTreeMap<(usize, Option<&'static str>), ColumnSizes>,
+    (column, zone): (usize, &Zone),
+    (pages, page): (&Pages<'_, Sealing>, u64),
+) -> Result<()> {
+    let (kind, bytes) = pages.with_run(&zone.run, |chunk| Ok((chunk.first().copied(), chunk.len())))?;
+    let encoding = kind.and_then(kind_name);
+    let sizes = columns.entry((column, encoding)).or_insert(ColumnSizes {
+        column,
+        encoding,
+        chunks: Some(0),
+        rows: 0,
+        bytes: Some(0),
+        page_bytes: Some(0),
+    });
+    sizes.chunks = sizes.chunks.map(|n| n.saturating_add(1));
+    sizes.rows = sizes.rows.saturating_add(u64::from(zone.run.rows));
+    sizes.bytes = sizes.bytes.and_then(|n| within(n.checked_add(u64::try_from(bytes).ok()?)));
+    let taken = if zone.run.len == 0 { page } else { u64::from(zone.run.len) };
+    sizes.page_bytes = sizes.page_bytes.and_then(|n| within(n.checked_add(taken)));
+    Ok(())
 }
+
+/// `n`, if a count (`BIGINT`) holds it.
+fn within(n: Option<u64>) -> Option<u64> {
+    n.filter(|n| i64::try_from(*n).is_ok())
+}
+
+#[cfg(test)]
+mod tests;

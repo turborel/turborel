@@ -147,7 +147,10 @@ fn expr_raises(e: &Expr, judge: &Judge<'_>, depth: usize) -> bool {
         // `Expr::can_raise` says.
         Expr::Domain(..) | Expr::NextValue(_) | Expr::Invoked(_) | Expr::Warned(..) => true,
         Expr::Subquery(s, _) => parts || (judge.subquery)(s, true),
-        Expr::Call(f, _) => parts || (!f.0.raise_free() && (!f.0.index_predicate() || !f.0.deterministic())),
+        Expr::Call(f, args) => {
+            let free = f.0.raise_free() || crate::functions::substring_raise_free(f.0.name(), args, types);
+            parts || (!free && (!f.0.index_predicate() || !f.0.deterministic()))
+        }
         Expr::Truth(c) => cond_raises(c, judge, deeper),
         Expr::Case(whens, _) => parts || whens.iter().any(|(c, _)| cond_raises(c, judge, deeper)),
         Expr::Column(_) | Expr::Const(_) | Expr::Outer(..) | Expr::Dynamic(_) | Expr::Neg(_) | Expr::SortKey(..) => parts,

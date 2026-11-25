@@ -57,7 +57,7 @@ const BITS_PER_KEY: usize = 8;
 /// \[DESIGN\] (RULES.md D600) The most distinct keys a filter holds as a
 /// set: a row's found by halving in a dozen steps, about a Bloom
 /// filter's hash and read.
-pub(in crate::exec) const KEYSET_MAX: usize = 4_096;
+const KEYSET_MAX: usize = 4_096;
 
 /// \[DESIGN\] (RULES.md D600) The most spans of more keys a scan is told:
 /// enough to skip what lies in their widest gaps, few enough that a zone

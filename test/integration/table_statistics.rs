@@ -43,26 +43,27 @@ fn uses(db: &Database) -> Vec<String> {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1]; [DESIGN] RULES.md
-/// D522: a table's rows and engine; a row store's bytes not known before
-/// its statistics are gathered, then its rows times their width,
-/// estimated; an empty table none, counted; when a transaction that wrote
+/// D522, D1165: a table's rows and engine; a row store's bytes, its
+/// tree's pages counted, before its statistics are gathered and after; an
+/// empty table's none but its tree's root and meta page; when a transaction that wrote
 /// it last committed, unchanged by one rolled back, and none for a table
 /// never written.
 #[test]
 fn a_tables_rows_bytes_and_last_change_are_shown() {
     let (db, clock) = owned();
     let owner = db.session("OWNER");
-    let sql = "SELECT TABLE_NAME, ENGINE_NAME, ROW_COUNT, BYTES, BYTES_ESTIMATED, LAST_CHANGED IS NULL, LAST_COMPACTED \
+    let sql = "SELECT TABLE_NAME, ENGINE_NAME, ROW_COUNT, BYTES > 0, BYTES_ESTIMATED, LAST_CHANGED IS NULL, LAST_COMPACTED \
                FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_SCHEMA = 'X' ORDER BY TABLE_NAME";
-    assert_eq!(rows(&owner, sql).unwrap(), ["T,rowstore,1000,NULL,NULL,FALSE,NULL", "U,rowstore,10,NULL,NULL,FALSE,NULL"], "no width yet");
+    let counted = ["T,rowstore,1000,TRUE,NO,FALSE,NULL", "U,rowstore,10,TRUE,NO,FALSE,NULL"];
+    assert_eq!(rows(&owner, sql).unwrap(), counted, "its tree's pages, before its statistics are gathered");
     db.schema("CREATE SCHEMA AUTHORIZATION E CREATE TABLE EMPTY (K INTEGER)").unwrap();
     let empty =
-        "SELECT ROW_COUNT, BYTES, BYTES_ESTIMATED, LAST_CHANGED FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_NAME = 'EMPTY'";
-    assert_eq!(rows(&owner, empty).unwrap(), ["0,0,NO,NULL"], "nothing held, never written");
+        "SELECT ROW_COUNT, BYTES > 0, BYTES_ESTIMATED, LAST_CHANGED FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_NAME = 'EMPTY'";
+    assert_eq!(rows(&owner, empty).unwrap(), ["0,TRUE,NO,NULL"], "no row held, its tree's root kept, never written");
     let x = db.session("X");
     db.analyze("X.T").unwrap();
     let bytes = "SELECT ROW_COUNT, BYTES > 1000, BYTES_ESTIMATED FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_NAME = 'T'";
-    assert_eq!(rows(&owner, bytes).unwrap(), ["1000,TRUE,YES"], "estimated from the width gathered");
+    assert_eq!(rows(&owner, bytes).unwrap(), ["1000,TRUE,NO"], "counted, statistics gathered or not");
     let changed = "SELECT LAST_CHANGED FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_NAME = 'T'";
     let first = rows(&owner, changed).unwrap();
     assert_eq!(first, ["2024-02-29 12:34:56.789012+00:00"], "written and committed");

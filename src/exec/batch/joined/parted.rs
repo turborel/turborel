@@ -134,7 +134,7 @@ impl Parted {
         let read = batch.rows;
         let places: Vec<usize> = self.keys.0.iter().map(|k| k.left).collect();
         if read > 0 {
-            for kept in table.probed((&batch, None), (&places, Some(left_columns))) {
+            for kept in SharedTable::probing(&*table, (batch, None), (places, Some(left_columns.clone())), false) {
                 self.ready.push_back(kept?.0);
             }
         }

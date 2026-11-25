@@ -44,6 +44,7 @@ use crate::db::State;
 use crate::index::Probe;
 use crate::logical::{AggCall, Cond, Expr, OuterJoin, SetOp};
 use crate::settings::{EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS};
+use crate::value::Value;
 
 /// \[DESIGN\] How deep a plan is walked for its parts (RULES.md R-CF-6):
 /// deeper than any plan the binder makes nests.
@@ -138,7 +139,7 @@ impl<'a> Asked<'a> {
 /// (RULES.md D550).
 pub(super) fn runs_parallel(db: &State, plan: &Plan) -> bool {
     let asked = Asked::of(db);
-    let Some(rows) = rooted(plan).filter(|_| asked.most > 1) else { return false };
+    let Some(rows) = rooted(plan, Some(db)).filter(|_| asked.most > 1) else { return false };
     !asked.kept_whole(plan, rows) && asked.degree(plan, rows) > 1
 }
 
@@ -178,7 +179,7 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
     if depth >= MAX_DEPTH || crate::exec::storage_counted(plan, asked.db).is_some() {
         return;
     }
-    let rooted = rooted(plan);
+    let rooted = rooted(plan, Some(asked.db));
     if rooted.is_some_and(|rows| asked.kept_whole(plan, rows)) {
         return;
     }
@@ -188,7 +189,7 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
         // A limit of few rows over a stream reads too few for workers to
         // share, unless a filter leaves out rows it would read.
         if let Plan::Limit { input, .. } = plan
-            && stream(input).is_some()
+            && stream_in(input, Some(asked.db)).is_some()
             && !filtered(input)
         {
             return outside(asked, input, deeper);
@@ -196,7 +197,10 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
         if let Plan::SemiJoin(s) = plan
             && s.method == SemiMethod::BuildLeft
         {
-            walk(asked, &mut s.left, deeper);
+            // Its left is held as a hash join's built operand is
+            // (`exec/batch/joined/semi/marked.rs`), by batch whatever its
+            // store (RULES.md D1132).
+            built(asked, &mut s.left, deeper);
             return built(asked, &mut s.right, deeper);
         }
         return plan.each_input(&mut |input| walk(asked, input, deeper));
@@ -238,7 +242,7 @@ fn outside(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
 /// no row made of them, so the reason a scan by batch of such a table
 /// stays serial (RULES.md D291) does not hold of it.
 fn built(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
-    let degree = stream(plan).filter(|_| depth < MAX_DEPTH).map_or(1, |rows| asked.by_rows(rows));
+    let degree = stream_in(plan, Some(asked.db)).filter(|_| depth < MAX_DEPTH).map_or(1, |rows| asked.by_rows(rows));
     if degree < 2 {
         return walk(asked, plan, depth);
     }
@@ -279,43 +283,51 @@ pub(crate) fn first_level(plan: &Plan) -> Option<&Plan> {
     (within && uncollated && whole && mergeable(parts)).then_some(first)
 }
 
-/// The rows a part rooted at `plan` reads, if it is one.
-fn rooted(plan: &Plan) -> Option<usize> {
+/// The rows a part rooted at `plan` reads, if it is one, its filters'
+/// subqueries judged of `db`'s tables if given (`stream_in`).
+fn rooted(plan: &Plan, db: Option<&State>) -> Option<usize> {
     if let Some(first) = first_level(plan) {
-        return rooted(first);
+        return rooted(first, db);
     }
     // A streamed grouping or DISTINCT reads its input in order, a group
     // at a time, which no morsel's table of groups does (RULES.md D550).
     if let Plan::Aggregate { aggs, input, streamed: false, .. } = plan {
-        return mergeable(aggs).then(|| stream(input)).flatten();
+        return mergeable(aggs).then(|| stream_in(input, db)).flatten();
     }
     if let Plan::Distinct { input, streamed: false, .. } = plan {
-        return stream(input);
+        return stream_in(input, db);
     }
     // A HAVING condition over a grouping that is a part is judged of each
     // group by the part's threads (RULES.md D1073).
     if let Plan::Filter { cond, input, .. } = plan
         && matches!(**input, Plan::Aggregate { streamed: false, .. })
     {
-        return (calm_cond(cond) && !cond.can_raise()).then(|| rooted(input)).flatten();
+        return (calm_cond(cond) && !cond.can_raise()).then(|| rooted(input, db)).flatten();
     }
     if let Plan::Sort { input, most, .. } = plan {
-        return most.is_none_or(|m| !m.ties).then(|| stream(input)).flatten();
+        return most.is_none_or(|m| !m.ties).then(|| stream_in(input, db)).flatten();
     }
     if let Plan::Window { window, .. } = plan {
         let Plan::Sort { input, most: None, .. } = &window.input else { return None };
         let calm_calls = window.exprs().all(calm) && window.conds().all(calm_cond);
-        return (calm_calls && !window.partition.is_empty()).then(|| stream(input)).flatten();
+        return (calm_calls && !window.partition.is_empty()).then(|| stream_in(input, db)).flatten();
     }
     if let Plan::SetOp { op: SetOp::Except | SetOp::Intersect, left, right, .. } = plan {
-        return Some(stream(left)?.saturating_add(stream(right)?));
+        return Some(stream_in(left, db)?.saturating_add(stream_in(right, db)?));
     }
-    stream(plan)
+    stream_in(plan, db)
 }
 
 /// The rows the stream `plan` reads, if it is one: a pipeline, its rows
 /// in their order, morsel by morsel.
 pub(crate) fn stream(plan: &Plan) -> Option<usize> {
+    stream_in(plan, None)
+}
+
+/// As `stream`, a filter whose scalar subqueries are bound before the
+/// part's morsels start taken as a step of it, if `db` is given to judge
+/// them of (`bound_calm`).
+fn stream_in(plan: &Plan, db: Option<&State>) -> Option<usize> {
     if let Plan::SeqScan { order, located, rows, .. } = plan {
         return (order.is_empty() && !located).then_some(*rows);
     }
@@ -323,26 +335,27 @@ pub(crate) fn stream(plan: &Plan) -> Option<usize> {
         return (!matches!(probe, Probe::Xml(_) | Probe::Predicate { .. })).then(|| rows_of(*est));
     }
     if let Plan::Filter { cond, input, .. } = plan {
-        return calm_cond(cond).then(|| stream(input)).flatten();
+        let calm = calm_cond(cond) || db.is_some_and(|db| bound_calm(cond, db));
+        return calm.then(|| stream_in(input, db)).flatten();
     }
     if let Plan::Project { exprs, input, .. } = plan {
-        return exprs.iter().all(calm).then(|| stream(input)).flatten();
+        return exprs.iter().all(calm).then(|| stream_in(input, db)).flatten();
     }
     if let Plan::HashJoin { left, .. } = plan {
-        return stream(left);
+        return stream_in(left, db);
     }
     // A LEFT join's probe on its keys alone is a step of its left's
     // pipeline (RULES.md D1076).
     if let Plan::OuterJoin { kind: OuterJoin::Left, left, keys, cond: None, own: None, .. } = plan {
-        return (!keys.is_empty()).then(|| stream(left)).flatten();
+        return (!keys.is_empty()).then(|| stream_in(left, db)).flatten();
     }
     // A hashed semi join's or antijoin's probe is a step of its left's
     // pipeline (RULES.md D1075).
     if let Plan::SemiJoin(s) = plan {
-        return (s.method == SemiMethod::Hash && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream(&s.left)).flatten();
+        return (s.method == SemiMethod::Hash && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream_in(&s.left, db)).flatten();
     }
     let Plan::Append { left, right, .. } = plan else { return None };
-    Some(stream(left)?.saturating_add(stream(right)?))
+    Some(stream_in(left, db)?.saturating_add(stream_in(right, db)?))
 }
 
 /// \[DESIGN\] Whether the part `plan` reads a table kept by column with
@@ -407,10 +420,27 @@ fn calm(e: &Expr) -> bool {
 }
 
 /// Whether a worker evaluates `c` alone, as `calm` says of expressions.
-fn calm_cond(c: &Cond) -> bool {
+pub(crate) fn calm_cond(c: &Cond) -> bool {
     let mut all = c.subqueries().is_empty();
     c.for_each_expr(&mut |e| all = all && calm(e));
     all
+}
+
+/// \[DESIGN\] (RULES.md D1132) Whether a worker evaluates `c` alone once
+/// its scalar subqueries that read nothing of its rows, and that every
+/// row it judges runs, are made constants on the statement's thread
+/// before the part's morsels start (`exec/parallel/pipeline.rs`): each
+/// such subquery raises no error and no warning, as `quiet` judges it of
+/// `db`'s tables, so running it there is seen by nothing but its value,
+/// and with them made constants `c` is calm.
+fn bound_calm(c: &Cond, db: &State) -> bool {
+    let mut quiet = true;
+    let mut placed = |e: Expr| {
+        let silent = if let Expr::Subquery(s, _) = &e { crate::optimizer::unnesting::quiet(s, db) } else { false };
+        quiet = quiet && silent;
+        Ok(if silent { Expr::Const(Value::Null) } else { e })
+    };
+    crate::exec::bound_by(c, &mut placed).is_ok_and(|bound| quiet && calm_cond(&bound))
 }
 
 #[cfg(test)]
@@ -450,6 +480,19 @@ mod tests {
         let db = crate::db::Database::new();
         let state = db.snapshot().unwrap();
         assert!(matches!(parallel_run(&state, project(*values()), false), Plan::Project { .. }));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1166: an estimate past what a `u32`
+    /// holds is its own ceiling as a count, the most a count holds only
+    /// of one reaching it, never of any past 2^32.
+    #[test]
+    fn an_estimate_past_a_u32_is_counted_as_itself() {
+        assert_eq!(rows_of(4_294_967_295.5_f64), 4_294_967_296);
+        assert_eq!(rows_of(5.0e9_f64), 5_000_000_000);
+        assert_eq!(rows_of(1.0e18_f64), 1_000_000_000_000_000_000);
+        assert_eq!(rows_of(1.0e19_f64), usize::MAX >> 1_u32);
+        assert_eq!(rows_of(f64::INFINITY), usize::MAX >> 1_u32);
+        assert_eq!(rows_of(f64::NAN), 1);
     }
 
     /// An aggregation by `groups` of `input`, computing `aggs`, of
