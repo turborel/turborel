@@ -466,6 +466,21 @@ impl Keys {
         }
     }
 
+    /// \[DESIGN\] (RULES.md D1134) Of keys of one integer column, none
+    /// null at `places`, the least and greatest of them there and their
+    /// scale; none of other keys or of no place.
+    pub(super) fn span(&self, places: &[u32]) -> Option<(i64, i64, u32)> {
+        let [lane] = self.lanes.as_slice() else { return None };
+        let Data::Ints { units, scale } = &lane.data else { return None };
+        let mut span: Option<(i64, i64)> = None;
+        for &i in places {
+            let at = crate::storage::mask::index(i);
+            let unit = units.get(at).copied().filter(|_| !lane.is_null(at))?;
+            span = Some(span.map_or((unit, unit), |(least, most)| (least.min(unit), most.max(unit))));
+        }
+        span.map(|(least, most)| (least, most, *scale))
+    }
+
     /// Group `g`'s grouping values.
     pub(in crate::exec) fn values(&self, g: usize) -> Row {
         self.lanes.iter().map(|lane| lane.value(g)).collect()

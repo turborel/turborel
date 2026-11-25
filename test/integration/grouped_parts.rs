@@ -63,12 +63,13 @@ fn filtered_part(shown: &str) -> bool {
         .any(|pair| pair.first().is_some_and(|l| l.starts_with("Parallel")) && pair.get(1).is_some_and(|l| l.starts_with("Filter")))
 }
 
-/// Verifies: [X3.135-1986 §5.23 GR1] (RULES.md D1073) a HAVING condition
+/// Verifies: [X3.135-1986 §5.23 GR1] (RULES.md D1073, D1135) a HAVING condition
 /// that cannot raise over a grouping run in parallel is a part with it,
 /// as EXPLAIN shows, and keeps the groups it keeps run alone, in their
 /// order: of some groups, of none, of every group, of a null sum, which
 /// is not true of it, and of a grouping by no column, of one group even
-/// of no rows.
+/// of no rows; and of one set function compared with a constant, judged
+/// of its value alone.
 #[test]
 fn a_having_condition_is_judged_by_its_part() {
     let (_db, a) = tables();
@@ -82,6 +83,10 @@ fn a_having_condition_is_judged_by_its_part() {
             "SELECT COUNT(*), SUM(N) FROM {t} HAVING COUNT(*) > 10",
             "SELECT COUNT(*) FROM {t} WHERE N < 0 HAVING COUNT(*) = 0",
             "SELECT COUNT(*) FROM {t} WHERE N < 0 HAVING COUNT(*) > 0",
+            "SELECT G, SUM(N) FROM {t} GROUP BY G HAVING SUM(N) > 700",
+            "SELECT G, SUM(N) FROM {t} GROUP BY G HAVING 700 >= SUM(N)",
+            "SELECT G, K, SUM(N) FROM {t} WHERE K < 900 GROUP BY G, K HAVING SUM(N) <> 7",
+            "SELECT G, MAX(N) FROM {t} GROUP BY G HAVING MAX(N) = 99",
         ] {
             let sql = shape.replace("{t}", table);
             let (alone, together, shown) = both(&a, &sql);

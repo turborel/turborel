@@ -715,6 +715,8 @@ verification approach DO-178C expects (§8).
 | D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
 | D1132 | A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels |
 | D1133 | A count over another grouping's groups crosses its partitions, each partition's counts merged by the statement's thread |
+| D1134 | A morsel's groups whose keys lie past those merged before are made without looking for them |
+| D1135 | A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
@@ -19529,6 +19531,37 @@ by the order its partitions are merged in, so a grouping of one stays
 above the part. A projection that fails in a partition gives the part
 way to the serial plan, which meets the rows in their order and raises
 what it raises (D15).
+
+#### D1134. A morsel's groups whose keys lie past those merged before are made without looking for them
+
+A grouping run in parallel merges each partition's groups of the
+morsels in their order, and looked each group up in the partition's
+table before making it. A grouping by one integer column of a table
+kept in the order of that column, as TPC-H Q18 groups lines by their
+order, gives morsels whose keys lie past those of the morsels before
+them, so each lookup misses.
+
+A partition's table merged of morsels alone now keeps the least and
+greatest of its keys and how many groups they span
+(`exec/table/made.rs`). A morsel's groups of a partition whose keys,
+none null and of the same scale, lie wholly below or above that span
+are made at once, in their order, as the lookups would have made them.
+A morsel whose keys reach into the span, as one whose first key is an
+order split across two morsels, is merged as before, and the span then
+takes in its keys too. A group made any other way, or the table cut
+short, forgets the span, so it is never trusted past what it saw.
+
+#### D1135. A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone
+
+A HAVING condition judged by a grouping's part (D1073) finished every
+group's row, its keys and each set function's value, and judged the
+condition of it. A condition that compares the grouping's one set
+function with a constant, as `HAVING SUM(L_QUANTITY) > 300`, needs only
+that value. Such a condition is now judged of the value as it is
+finished, by the comparison the condition makes, and the row is made
+only of a group kept (`GroupTable::finished_above`). Every group's
+value is still finished, so a set function that raises as it finishes
+raises as it did.
 
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 

@@ -153,3 +153,35 @@ fn groups_kept_are_finished_alone() {
     assert_eq!(kept.iter().map(|g| format!("{g:?}")).collect::<Vec<_>>(), expected);
     assert!(table.finished_if(|_| crate::error::fail(crate::error::Code::Corrupt, "[DESIGN] refused")).is_err());
 }
+
+/// Verifies: [DESIGN] (RULES.md D1134) morsels of keys of one integer
+/// column, each past those before it, merged whole, each make their
+/// groups unlooked for, and a morsel whose keys reach into those merged
+/// before, by one key at its edge or among them, is looked for as any: every key held once, its count of the
+/// morsels that held it; the span the table keeps is of its groups.
+#[test]
+fn morsels_apart_are_merged_unlooked_for_and_others_found() {
+    let key = |n: i128| vec![exact(n)];
+    let ranges = [(0, 1000), (1000, 2000), (1500, 2500), (3000, 3500), (3499, 3600), (10, 20), (-50, 0)];
+    let mut table = GroupTable::new(1, &calls(), &Seed::fixed(0x5EED), usize::MAX);
+    for (at, (from, to)) in (0_u64..).zip(ranges) {
+        let keys: Vec<Vec<Value>> = (from..to).map(key).collect();
+        table.absorb_whole(&morsel(&keys, (at.saturating_mul(10_000), 1, 0)).frozen().unwrap()).unwrap();
+    }
+    assert_eq!(table.len(), 3150, "each key once");
+    let counts: Vec<(i128, i128)> = table
+        .finished()
+        .unwrap()
+        .iter()
+        .map(|(_, row)| match (row.first(), row.get(1)) {
+            (Some(Value::Exact(k)), Some(Value::Exact(c))) => (k.units, c.units),
+            _ => panic!("a key and a count"),
+        })
+        .collect();
+    assert!(
+        counts.iter().all(|&(k, c)| c == if (1500..2000).contains(&k) || (10..20).contains(&k) || k == 3499 { 2 } else { 1 }),
+        "{counts:?}"
+    );
+    let span = table.span.unwrap();
+    assert_eq!((span.least, span.most, span.groups), (-50, 3599, 3150));
+}
