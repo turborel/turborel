@@ -34,6 +34,7 @@ mod build;
 mod charged;
 mod each;
 mod grouped;
+mod held;
 mod indexed;
 mod looped;
 mod partitioned;
@@ -50,6 +51,7 @@ pub(super) use self::batches::streamed_batches;
 use self::charged::{Ahead, Alone, Flow, whole_rows};
 pub(super) use self::each::each_morsel;
 pub(super) use self::grouped::grouped_told;
+pub(super) use self::held::{Left, held_left};
 pub(super) use self::looped::{loop_degree, looped};
 use self::pipeline::Pipeline;
 pub(super) use self::probe::pipelined;
@@ -85,6 +87,11 @@ impl Limit {
     /// A work grant of `db`'s budget, of up to MEMORY.WORK_BYTES.
     fn of(db: &State) -> Limit {
         let grant = db.work.grant(work_bytes(db.settings.get(MEMORY_WORK_BYTES)));
+        Limit { most: grant.bytes(), held: Arc::new(AtomicUsize::new(0)), grant }
+    }
+
+    /// The grant `grant`, an operator's work area's, charged anew.
+    fn of_grant(grant: Arc<Grant>) -> Limit {
         Limit { most: grant.bytes(), held: Arc::new(AtomicUsize::new(0)), grant }
     }
 

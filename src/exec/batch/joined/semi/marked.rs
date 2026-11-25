@@ -39,13 +39,17 @@ use super::super::{gathered, in_order, left_late_batches};
 use super::Parts;
 use super::pairing::Pairing;
 use crate::error::Result;
-use crate::exec::parallel::{Held, each_morsel, pipelined};
+use crate::exec::batch::SharedTable;
+use crate::exec::parallel::{Held, Left, each_morsel, held_left, pipelined};
 use crate::exec::table::{Hashing, JoinTable, KEYSET_MAX, KeyHashes, RuntimeFilter, Seed, keys_equal};
 use crate::exec::work::Work;
 use crate::exec::{Db, Runner, broken, execute};
 use crate::physical::{JoinKey, Plan, SemiJoin, SemiMethod};
 use crate::storage::{BATCH_ROWS, Batch, Column, Row};
 use crate::txn::TxId;
+
+/// The columns of a left operand's batches and the keys it is joined on.
+type Keyed<'a> = (&'a [usize], &'a [JoinKey]);
 
 /// What a semi join that builds its left gives: its batches, or, its
 /// left past the work area, what the join that builds its right is made
@@ -63,7 +67,7 @@ pub(super) fn builds_left(s: &SemiJoin) -> bool {
 /// A left operand held: its rows as one batch, their table by key, and
 /// of each whether a right row matched it.
 struct HeldLeft {
-    batch: Batch,
+    batch: Arc<Batch>,
     /// The place in `batch` of each key's left column.
     places: Vec<usize>,
     /// Of each key, whether a null matches a null.
@@ -105,7 +109,7 @@ pub(super) fn batches(s: SemiJoin, (left_columns, deferred): (&[usize], &Deferre
     let places = keys.iter().map(|k| place(k.left, left_columns)).collect::<Result<Vec<usize>>>()?;
     let nulls: Vec<bool> = keys.iter().map(|k| k.nulls).collect();
     let told = deferred.filters().to_vec();
-    let held = match read_left(left, (places, nulls, left_columns.len()), (told, work.limit()), (db, tx))? {
+    let held = match read_left(left, (places, nulls, (left_columns, &keys)), (told, &work), (db, tx))? {
         LeftRead::Held(held) => held,
         LeftRead::Rest(batches) => return Ok(Read::GaveWay(Box::new((anti, right, keys, cond, widths)), batches)),
     };
@@ -123,16 +127,34 @@ pub(super) fn batches(s: SemiJoin, (left_columns, deferred): (&[usize], &Deferre
     Ok(Read::Marked(Box::new(given)))
 }
 
-/// The left operand `left` read and held, its key columns at `places` of
-/// its batches of `width` vectors, a null matching a null as `nulls` says
-/// of each, its scans told `told`, while it holds no more than `limit`
-/// bytes; past them, its batches, those read first.
+/// The left operand `left` read and held, its key columns of `keys` at
+/// `places` of its batches of the vectors of `columns`, a null matching a
+/// null as `nulls` says of each, its scans told `told`, while it holds no
+/// more than `work`'s bytes; past them, its batches, those read first. A
+/// pipeline run in parallel is held by the threads that read it, if it
+/// does not give way (`parallel/held.rs`, RULES.md D1115).
 fn read_left(
     left: Plan,
-    (places, nulls, width): (Vec<usize>, Vec<bool>, usize),
-    (told, limit): (Vec<Told>, usize),
+    (places, nulls, (columns, keys)): (Vec<usize>, Vec<bool>, Keyed<'_>),
+    (told, work): (Vec<Told>, &Work),
     (db, tx): (&Db, TxId),
 ) -> Result<LeftRead> {
+    let (width, limit) = (columns.len(), work.limit());
+    if let Plan::Parallel(p) = &left
+        && pipelined(&p.input)
+        && !in_order(&left)
+    {
+        // Hashed on each key's left column, as the table's built side.
+        let built: Vec<JoinKey> = keys.iter().map(|k| JoinKey { left: k.right, right: k.left, nulls: k.nulls }).collect();
+        let layout = stream::layout(&p.input, db).unwrap_or_default();
+        if layout.0 == columns {
+            match held_left(&p.input, (db, tx), (p.degree, &told, &layout), (&built, work.grant()))? {
+                Held::Kept(Left::Held(table)) => return Ok(LeftRead::Held(Box::new(HeldLeft::of_table(*table)))),
+                Held::Kept(Left::Rest(batches)) => return Ok(LeftRead::Rest(batches)),
+                Held::GaveWay => {}
+            }
+        }
+    }
     let mut batches = left_late_batches(left, (db, tx), &Deferred::default().with_told(told))?;
     let (mut parts, mut bytes) = (Vec::new(), 0_usize);
     for kept in batches.by_ref() {
@@ -178,7 +200,15 @@ impl HeldLeft {
             JoinTable::of(&built.hashes, &built.misses)
         };
         let marks = (0..batch.rows).map(|_| AtomicBool::new(false)).collect();
-        Ok(HeldLeft { batch, places, nulls, table, seed, keyed, marks })
+        Ok(HeldLeft { batch: Arc::new(batch), places, nulls, table, seed, keyed, marks })
+    }
+
+    /// The rows of `table`, a left operand put in its table by the threads
+    /// that read it (RULES.md D1115), none marked.
+    fn of_table(table: SharedTable) -> HeldLeft {
+        let (frame, table) = table.into_held();
+        let marks = (0..frame.right.rows).map(|_| AtomicBool::new(false)).collect();
+        HeldLeft { batch: frame.right, places: frame.places, nulls: frame.nulls, table, seed: frame.seed, keyed: frame.keyed, marks }
     }
 
     /// The runtime filters of its keys, each told of the right column of
@@ -201,7 +231,7 @@ impl HeldLeft {
                 continue;
             }
             let mut hashes = KeyHashes::default();
-            hashes.of_batch((&self.batch, None), (&[at], &[nulls]), how)?;
+            hashes.of_batch((&*self.batch, None), (&[at], &[nulls]), how)?;
             if let Some(filter) = RuntimeFilter::of_built(&self.batch, (at, nulls), &hashes, how) {
                 told.push(Told::of(Arc::new(filter), key.right));
             }
@@ -240,10 +270,10 @@ impl Marking {
     fn row(&self, (batch, r): (&Batch, usize), h: u64, (scratch, runner): (&mut Row, &Runner)) -> Result<()> {
         let held = &*self.held;
         for p in held.table.candidates(h) {
-            if held.marked(p) || !keys_equal((batch, &self.right, r), (&held.batch, &held.places, p), &held.nulls)? {
+            if held.marked(p) || !keys_equal((batch, &self.right, r), (&*held.batch, &held.places, p), &held.nulls)? {
                 continue;
             }
-            if self.pairing.keeps((&held.batch, p), (batch, r), (scratch, runner))?
+            if self.pairing.keeps((&*held.batch, p), (batch, r), (scratch, runner))?
                 && let Some(mark) = held.marks.get(p)
             {
                 mark.store(true, Ordering::Relaxed);

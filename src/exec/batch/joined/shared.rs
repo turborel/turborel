@@ -176,6 +176,14 @@ impl SharedTable {
         }
     }
 
+    /// \[DESIGN\] (RULES.md D1115) Its rows, their columns and keys as it
+    /// was framed, and their table, for a semi join that marks the rows
+    /// it holds (`semi/marked.rs`).
+    pub(in crate::exec) fn into_held(self) -> (Frame, JoinTable) {
+        let SharedTable { right, columns, width, places, nulls, table, seed, keyed, .. } = self;
+        (Frame { right, columns, width, places, nulls, seed, keyed }, table)
+    }
+
     /// \[DESIGN\] (RULES.md D1083) It, its pairs' integers gathered on
     /// `kernels`, the statement's.
     #[must_use]
