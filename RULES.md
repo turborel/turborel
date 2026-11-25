@@ -718,6 +718,9 @@ verification approach DO-178C expects (§8).
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
 | D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
+| D1140 | A value out of line of an entry a freeze takes out is freed only once no read may still fetch it |
+| D1141 | A log record as long as the buffer reaches its segment after the bytes the buffer holds |
+| D1142 | Loads into a column store table at once each write their own groups, no lock taken alone |
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 | D1152 | A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates |
@@ -12869,8 +12872,8 @@ the other's, its pages being fuller.
 A column store table's rows go to its tree and are frozen into groups
 once committed before every snapshot (D31). A load so wrote each row
 twice, and read it back between. So a load (D532) into a column store
-table that holds no row past its last group as it begins, under the
-table's lock held alone, writes each batch straight as a group, sorted,
+table that holds no row past its last group as it begins writes each
+batch straight as a group, sorted,
 with its filters and sketches, as a freeze writes one
 (`engine/rows/frozen/stamped.rs`). Its rows are logged as any others
 (D530). A batch is of COLUMNSTORE.GROUP_ROWS rows, of an INSERT, or a
@@ -19574,6 +19577,68 @@ capture lost does (D590). The checkpoint's memory
 is then the copies writers and frees make while it walks, and the walk
 writes each capture to disk as it goes.
 
+#### D1140. A value out of line of an entry a freeze takes out is freed only once no read may still fetch it
+
+A freeze takes the tree's entries of the rows it froze out once no
+reader holds a directory from before their group (D31), and it freed
+each entry's values kept out of line at once. A read does not fetch
+such a value under the leaf's latch (D869). It copies the entry out and
+fetches the value after. A scan that took the new directory before the
+group's shadow bits were settled reads the tree over the group's range
+whole (D1100), and a read by row id reads the tree before any group,
+holding no directory at all. Either could copy an entry, the freeze
+then take it out and free its value's page, and the read fetch a page
+freed, or one a later row had taken. A scan by batch after a large load
+then failed with a page not allocated.
+
+The pages of the values of the entries taken out are now held, with the
+directory that stood as they were taken out, and freed once no reader
+holds it (`free_unread`, `rows/frozen/freeze.rs`), in the order they
+were held. The directory is then put again as another of the same
+groups (`Directory::again`), so a read that begins after, which cannot
+find the entries, holds up no free. A scan holds its directory as it is
+made. A read by row id, and the newest version UNIQUE reads, take the
+directory first and hold it until the values are fetched
+(`Frozen::pinned`). A table that has never frozen rows takes nothing,
+so its reads still share no word.
+
+#### D1141. A log record as long as the buffer reaches its segment after the bytes the buffer holds
+
+A segment's file is written through a buffer (D921), and a write as long
+as the buffer went to the file at once, leaving what the buffer held.
+That suits the zeros written ahead (D796), but a record so long went to
+the file past bytes the buffer still held. Under LOG.DURABILITY NONE
+nothing syncs the buffer, so a new segment's header could stay held while
+megabytes of long records reached the file behind it. A server killed for
+memory in a load into a column store left such a segment, its header
+zeros, and the database could not be opened again.
+
+A write as long as the buffer now has what is held written first, unless
+it is all zeros, which may still go to the file alone
+(`log/file/buffered.rs`). The file then never holds a record past bytes
+held, so a failure of the process loses only the log's tail, which
+recovery cuts as it cuts a torn end.
+
+#### D1142. Loads into a column store table at once each write their own groups, no lock taken alone
+
+A load into groups (D533) took the table's lock alone, and the table
+noted one transaction as its loader. A second load at once waited for
+the lock, or, if it began while the first was noted, wrote its rows
+through the tree. The first load's next batch then found rows past the
+last group and went to the tree as well. A client importing with six
+streams so wrote nearly every row through the tree, and the freeze then
+had them all to do.
+
+The table now notes every transaction loading it, and each writes its
+own groups (`frozen/stamped.rs`). A group takes its row ids as one run
+(`RowTable::next_ids`), so the groups of loads at once never share a
+range. A load that holds back no index takes no lock beyond its
+insert's (`db/write/bulk/load.rs`). A load that holds back an index still
+takes the lock alone, since others' readers would miss its entries
+(D532). Each group is stamped with its transaction, undone with it and
+recovered as before. A row another transaction writes through the tree
+meanwhile lies between groups and is read as any row of the tree. The
+freeze takes rows past the last group only, so it stays in the tree.
 #### D1150. A morsel's rows are made as they are read and charged to the part's grant as they are gathered
 
 A morsel's rows were taken through its pipeline's steps and gathered
