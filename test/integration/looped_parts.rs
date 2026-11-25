@@ -92,10 +92,9 @@ fn index_joins_over_a_part_give_their_rows_in_order() {
 #[test]
 fn an_index_join_over_a_part_raises_as_alone() {
     let (_db, a) = tables();
-    for sql in ["SELECT L.K, L.X, D.V FROM (SELECT K, 10 / (K - 15000) AS X FROM R WHERE N < 30) AS L JOIN D ON D.K = L.K"] {
-        let (alone, together, shown) = both(&a, sql);
-        assert!(looped(&shown), "{sql}\n{shown}");
-        assert!(alone.is_err(), "{sql}: {alone:?}");
-        assert_eq!(alone, together, "{sql}");
-    }
+    let sql = "SELECT L.K, L.X, D.V FROM (SELECT K, 10 / (K - 15000) AS X FROM R WHERE N < 30) AS L JOIN D ON D.K = L.K";
+    let (alone, together, shown) = both(&a, sql);
+    assert!(looped(&shown), "{shown}");
+    assert!(alone.is_err(), "{alone:?}");
+    assert_eq!(alone, together, "{shown}");
 }
