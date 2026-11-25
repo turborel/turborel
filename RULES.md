@@ -705,6 +705,7 @@ verification approach DO-178C expects (§8).
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
 | D1129 | A grouping that a filter's input and a subquery of its condition compute alike is computed once |
 | D1130 | A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them |
+| D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
@@ -19222,6 +19223,25 @@ is the whole table (`physical/estimate/like.rs`). That is the share a
 conjunction the sample can tell is given (D382). Of fewer, the range is
 estimated as before. A pattern with more than `%` after its prefix takes
 this share times what the sample says the rest keeps of it, as before.
+
+#### D1131. A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them
+
+A chunk of the column store holds its strings as octets, and a batch
+holds them as text (D361). Of a chunk of varying fields, each field read
+was judged UTF-8 by itself before it was copied into the batch's text.
+The octets from the start of the first field read to the end of the last
+are now judged once, and each field is a slice of them
+(`engine/columns/encoded.rs`). Strings that are each UTF-8 are UTF-8
+together, and a field that begins or ends within a character gives no
+text as before, so the batch is the one each judgment gave.
+
+IN a list of strings judged of a vector's text (D1126) compared a
+string of a short list with each constant, each made unpadded again for
+each row, and hashed it for a longer one. The constants are now unpadded
+once as the set is made, sorted and each kept once
+(`logical/sets.rs`), and a string is looked for by halving them, which
+compares it with as many as that takes. A string is found if it equals
+one without trailing spaces [X3.135-1986 §5.11 GR5], as before.
 
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 

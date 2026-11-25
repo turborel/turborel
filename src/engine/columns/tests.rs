@@ -194,12 +194,13 @@ fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Optio
     Some((made, read))
 }
 
-/// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §8.7 GR7b], a chunk's
-/// texts: every encoding of strings gives, of a range of its positions,
-/// the values read one at a time give, nulls as nulls: of varying fields,
-/// some not ASCII, some empty, some with a trailing space; a dictionary; a
-/// constant; of VARCHAR as written, of CHARACTER padded to its length. Of
-/// integers it gives none, nor past its end.
+/// Verifies: [DESIGN] RULES.md D31, D1131 [X3.135-1986 §8.7 GR7b], a
+/// chunk's texts: every encoding of strings gives, of a range of its
+/// positions, the values read one at a time give, nulls as nulls: of
+/// varying fields, some not ASCII, some empty, some with a trailing space,
+/// judged UTF-8 once for the range; a dictionary; a constant; of VARCHAR
+/// as written, of CHARACTER padded to its length. Of an empty range it
+/// gives no text; of integers none, nor past its end.
 #[test]
 fn chunks_give_their_texts() {
     let varying: Vec<Value> = (0..30_u32)
@@ -225,6 +226,7 @@ fn chunks_give_their_texts() {
             assert_eq!(part.0, part.1, "{kind} of {t:?}, a part");
         }
     }
+    assert_eq!(texts_of(&CHAR, &varying, (5, 5)).unwrap().0, Vec::<String>::new(), "an empty range");
     let padded = texts_of(&CHAR, &few, (1, 2)).unwrap();
     assert_eq!(padded.0, [format!("grün{}", " ".repeat(16))], "padded by characters, not bytes");
     let numbers: Vec<Value> = (0_i128..10_i128).map(int).collect();
