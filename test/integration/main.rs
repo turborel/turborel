@@ -253,6 +253,7 @@ mod log;
 mod log_buffer;
 mod log_durability;
 mod log_sync;
+mod looped_parts;
 mod manifest_settings;
 mod marked_semi;
 mod memory;
