@@ -543,3 +543,12 @@ pub(super) fn kind_of(plan: Plan) -> u8 {
         Plan::Fsst => FSST,
     }
 }
+
+/// \[DESIGN\] The name of the encoding of `kind`, a chunk's first byte, as
+/// INFORMATION_SCHEMA.COLUMN_STORAGE shows it (RULES.md D1165); none of a
+/// kind no encoding has.
+pub(crate) fn kind_name(kind: u8) -> Option<&'static str> {
+    let names = [(FIXED, "FIXED"), (VARYING, "VARYING"), (CONSTANT, "CONSTANT"), (FRAME, "FRAME")];
+    let more = [(DICTIONARY, "DICTIONARY"), (RUNS, "RUNS"), (ALP, "ALP"), (FSST, "FSST")];
+    names.into_iter().chain(more).find(|&(k, _)| k == kind).map(|(_, name)| name)
+}

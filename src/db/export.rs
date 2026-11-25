@@ -3,7 +3,8 @@
 //! records the checkpoint is recovered with. Every file in its directory
 //! is of a kind the file manager knows (`files/classes.rs`); of those, the
 //! durable ones but the log's and the catalog's, which their own stores
-//! carry, are listed, each with its length and owner, as the last
+//! carry, and the mark of running, which the image recorded not clean
+//! carries (RULES.md D1164), are listed, each with its length and owner, as the last
 //! checkpoint left them: the checkpoints' turn is held while they are
 //! read, by the export for its life (`Database::export`), so none changes
 //! the data file meanwhile; held shared, so several replicas fetch at
@@ -157,10 +158,14 @@ impl Database {
             records: Vec::new(),
         };
         export.listed = manifest(&files)?;
-        export.image = files
+        let last = files
             .catalog
             .last()
             .ok_or_else(|| api("[DESIGN] RULES.md D57: a database exports its last checkpoint, and none was recorded"))?;
+        // A copy of a database running: no clean close it may reopen from
+        // unrecovered, whether or not it is marked running (RULES.md D1164).
+        let image = Image::decode(&last, &self.snapshot()?.types)?;
+        export.image = Image { clean: false, ..image }.encode();
         export.records = self.recovery_records(&export.image)?;
         let length = u64::try_from(export.records.len()).unwrap_or(u64::MAX);
         export.listed.push(ExportedFile { path: PathBuf::new(), within: PathBuf::from(RECORDS_FILE), length, owner: FileOwner::Database });
@@ -222,8 +227,9 @@ fn manifest(files: &DatabaseFiles) -> Result<Vec<ExportedFile>> {
                 path.display()
             )));
         };
-        // Carried by the log's records and the catalog's image.
-        let carried = matches!(kind, FileKind::Log | FileKind::Catalog);
+        // Carried by the log's records and the catalog's image, the mark
+        // of running by the image recorded not clean.
+        let carried = matches!(kind, FileKind::Log | FileKind::Catalog | FileKind::Opened);
         if class == FileClass::Durable && !carried {
             let length = fs.open(&path, OpenMode::ReadOnly)?.size()?;
             listed.push(ExportedFile { length, owner: kind.owner(within), within: within.to_path_buf(), path });

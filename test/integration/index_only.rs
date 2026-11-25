@@ -283,9 +283,11 @@ fn open(dir: &Path, flags: &Arc<Flags>) -> Database {
 }
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §4.28]; [DESIGN] RULES.md
-/// D25, D34: a database opened reads every zone's rows until maintenance
-/// settles them, whether it stopped without closing or closed, or closed
-/// owing index entries, which opening it again recovers.
+/// D25, D34, D1163: a database opened reads every zone's rows until
+/// maintenance settles them, whether it stopped without closing or closed
+/// owing index entries, which opening it again recovers, a zone written
+/// after it was settled among them; closed with its zones settled, it
+/// opens with them settled, its rows read from the index alone.
 #[test]
 fn zones_are_read_after_opening_until_settled() {
     let scratch = Scratch::new("index-only");
@@ -301,7 +303,8 @@ fn zones_are_read_after_opening_until_settled() {
         flags.fail.store(false, Ordering::SeqCst);
         let db = open(&dir, &flags);
         let s = db.session("X");
-        assert!(row_one(&s, &flags).is_empty(), "round {round}: read until settled");
+        let read = row_one(&s, &flags);
+        assert_eq!(read.is_empty(), round != 1, "round {round}: read until settled, unless saved settled");
         settle(&db);
         assert_eq!(row_one(&s, &flags), ["1,1001"], "round {round}: settled");
         same_as_read(&s, "SELECT K, V FROM T WHERE K < 40");

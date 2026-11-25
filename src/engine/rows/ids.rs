@@ -125,6 +125,17 @@ impl RowTable {
         })
     }
 
+    /// The first of `count` new row ids one after another, apart from the
+    /// blocks threads take (RULES.md D1142).
+    pub(super) fn next_ids(&self, count: usize) -> Result<RowId> {
+        let count = u64::try_from(count).unwrap_or(u64::MAX);
+        let start = self.next.fetch_add(count, Ordering::SeqCst);
+        let last = start.checked_add(count.saturating_sub(1)).filter(|&last| last < RowId::MAX);
+        let last = last.ok_or_else(|| SqlError::new(Code::Unsupported, "[DESIGN] the table has given every row id"))?;
+        self.reserve_past(last)?;
+        Ok(start)
+    }
+
     /// Makes the meta page record `id` as possibly given.
     pub(super) fn reserve_past(&self, id: RowId) -> Result<()> {
         if id < self.reserved.load(Ordering::Acquire) {

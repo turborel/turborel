@@ -594,4 +594,5 @@ fn groups_are_written_again_when_their_layout_changes() {
 mod fetched;
 mod morsels;
 mod published;
+mod retired;
 mod thawed;

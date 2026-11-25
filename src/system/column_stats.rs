@@ -95,7 +95,7 @@ fn array(values: impl Iterator<Item = Value>) -> Value {
 /// column privilege, SELECT, INSERT, UPDATE or REFERENCES on it [ISO/IEC
 /// 9075-2:2023 §4.42.2], SELECT on the table being SELECT on each of its
 /// columns.
-fn on_column(held: &Actions, column: usize) -> bool {
+pub(super) fn on_column(held: &Actions, column: usize) -> bool {
     held.select || held.insert.contains(&column) || held.update.contains(&column) || held.references.contains(&column)
 }
 

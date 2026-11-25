@@ -38,6 +38,7 @@ mod collation_usage;
 mod collations;
 mod collection;
 mod column_statistics;
+mod column_storage;
 mod commit_restore;
 mod commit_visibility;
 mod common;
@@ -46,6 +47,7 @@ mod compiled_procedures;
 mod compiled_tpcc;
 mod compiled_writes;
 mod composite_columns;
+mod computed_keys;
 mod concepts;
 /// The fixtures over a database and the suites every log passes, written
 /// once in `support/` for the tests of the replicated log too (RULES.md
@@ -368,6 +370,7 @@ mod row_waits;
 mod rows;
 mod rowstore;
 mod rule_settings;
+mod running_mark;
 mod savepoints;
 mod schema_statements;
 mod schema_transactions;

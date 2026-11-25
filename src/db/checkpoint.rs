@@ -67,8 +67,11 @@
 //! and syncs its checkpoint record before step 1, and records the image as
 //! clean, unless index entries collection could not take back are still
 //! owed: they are logged as a checkpoint logs them, and the image is not
-//! clean, so opening the database recovers it (`txn/owed.rs`). Every call
-//! after is refused. Then, before its directory's lock
+//! clean, so opening the database recovers it (`txn/owed.rs`). A close of
+//! a database reopened clean that logged nothing since logs no checkpoint
+//! record, and an image as the last recorded, of a checkpoint or a close,
+//! is not recorded again (RULES.md D1164): a start that changed nothing
+//! leaves the catalog as it was. Every call after is refused. Then, before its directory's lock
 //! is given up, its spill files are removed and every file's descriptor
 //! closed, none opened after (RULES.md D56); a file left is told as an
 //! event.
@@ -216,12 +219,23 @@ impl Database {
             // Index entries still owed, the close is not clean: they are
             // logged, so opening the database recovers it, taking them back.
             let clean = st.owing().is_none();
-            let (image, counted) = st.capture_checkpoint(clean)?;
+            // [DESIGN] RULES.md D1164: nothing logged since a clean close,
+            // no checkpoint record is logged, the image's position stands.
+            let ended = files.catalog.last().and_then(|last| Image::clean_through(&last));
+            let as_left = st.log.as_ref().is_some_and(|log| ended == Some(log.end()));
+            let ending = match (clean, as_left) {
+                (false, _) => Ending::NotClean,
+                (true, false) => Ending::Clean,
+                (true, true) => Ending::CleanAsLeft,
+            };
+            let (image, counted) = st.capture_checkpoint(ending)?;
             if !clean {
                 st.log_stale(&st.hold_stale(), image.through)?;
             }
             st.counted_if(st.complete_checkpoint(&files, image), counted)
         })?;
+        // [DESIGN] RULES.md D1164: its image durable, it ran no more.
+        files.ended()?;
         self.mark_closed();
         self.close_every_file(&current);
         // Another may open it now.
@@ -303,6 +317,18 @@ pub(super) fn checkpointed(db: &Database) -> Result<Option<Duration>> {
     Ok(None)
 }
 
+/// How a checkpoint's image ends the database's run (`capture_checkpoint`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Ending {
+    /// Not clean: a checkpoint taken, or a close owing index entries.
+    NotClean,
+    /// A clean close, after its checkpoint record.
+    Clean,
+    /// A clean close of a log as the last clean close left it, which logs
+    /// no checkpoint record (RULES.md D1164).
+    CleanAsLeft,
+}
+
 impl State {
     /// The first table that owes index entries collection could not take
     /// back, if one does (`txn/owed.rs`).
@@ -316,15 +342,17 @@ impl State {
     /// and the image but for the tables' locators; and the row changes
     /// logged through L, which, once the checkpoint is taken, no longer
     /// count toward the next (CHECKPOINT.AFTER_CHANGES, `counted_if`). A
-    /// close logs and syncs its checkpoint record first, so L is the log's
-    /// end after it.
-    fn capture_checkpoint(&self, clean: bool) -> Result<(Image, u64)> {
+    /// clean close logs and syncs its checkpoint record first, so L is the
+    /// log's end after it; one of a log as a clean close left it logs none,
+    /// so L is where that close's image names (RULES.md D1164).
+    fn capture_checkpoint(&self, ending: Ending) -> Result<(Image, u64)> {
+        let clean = ending != Ending::NotClean;
         let log = self.log.clone().ok_or_else(|| api("[DESIGN] a database opened from its files has a log"))?;
         self.checkpoint_refused()?;
         // [DESIGN] RULES.md D470: the records open transactions hold go
         // before L, as the changes the image holds were made before it.
         self.tx.write_held()?;
-        if clean {
+        if ending == Ending::Clean {
             let at = log.append(&Record { tx: NO_TRANSACTION, change: Change::Checkpoint }.encode())?;
             self.tx.sync(&*log, at)?;
         }
@@ -510,7 +538,13 @@ impl State {
         }
         image.tables =
             self.storage.iter().map(|(name, storage)| (QualifiedName::clone(name), self.generation_of(name), storage.locator())).collect();
-        files.catalog.record(&image.encode(), self.compact_after())?;
+        // [DESIGN] RULES.md D1164: an image as the last recorded is not
+        // recorded again, so a start that changed nothing leaves its
+        // catalog as it was; one in other formats is, to move it on.
+        let recorded = files.catalog.formats_behind() == 0 && files.catalog.last().is_some_and(|last| image.recorded_in(&last));
+        if !recorded {
+            files.catalog.record(&image.encode(), self.compact_after())?;
+        }
         Ok(image)
     }
 }

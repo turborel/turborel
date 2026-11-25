@@ -20,7 +20,7 @@ use crate::logical::{Cond, Expr, MAX_JUDGED_DEPTH};
 use crate::storage::Row;
 
 /// What makes a constant of a subquery found.
-type Bind<'a> = &'a mut dyn FnMut(Expr) -> Result<Expr>;
+pub(crate) type Bind<'a> = &'a mut dyn FnMut(Expr) -> Result<Expr>;
 
 /// Whether `cond` holds a subquery `bound` makes a constant.
 pub(super) fn binds(cond: &Cond) -> bool {
@@ -41,6 +41,18 @@ pub(super) fn binds(cond: &Cond) -> bool {
 pub(super) fn bound(cond: &Cond, runner: &Runner) -> Result<Cond> {
     let none = Row::new();
     walked(cond.clone(), &mut |e| eval(&e, &none, runner).map(Expr::Const), 0)
+}
+
+/// \[DESIGN\] (RULES.md D1132) `cond` with each scalar subquery of no
+/// outer reference that every row judged runs made what `bind` gives of
+/// it, as `bound` makes them constants: a part's filter bound before its
+/// morsels start, and the planner's judgment of which it may bind.
+///
+/// # Errors
+///
+/// What `bind` gives.
+pub(crate) fn bound_by(cond: &Cond, bind: Bind<'_>) -> Result<Cond> {
+    walked(cond.clone(), bind, 0)
 }
 
 /// `cond`, `depth` below its filter's, with `bind` of each subquery every

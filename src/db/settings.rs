@@ -107,12 +107,21 @@ impl State {
                 return Err(SqlError::new(Code::Api, format!("[DESIGN] {canonical}: nothing is registered under the name {given}")));
             }
         }
+        let was = self.set_value_of(&canonical);
         self.settings.set(&canonical, value.as_ref())?;
         // A node's value is the node's alone: never logged (RULES.md D57).
-        if definition_is_node || !logged {
+        // [DESIGN] RULES.md D1164: nor a value as it was, as the settings
+        // a database is started with are given again at each start.
+        if definition_is_node || !logged || self.set_value_of(&canonical) == was {
             return Ok(());
         }
         self.log_definition(None, Change::Setting { name: canonical, value })
+    }
+
+    /// The value the database's setting `canonical` is set to, as a
+    /// literal; none if it has its default.
+    fn set_value_of(&self, canonical: &str) -> Option<String> {
+        self.settings.database_values().into_iter().find(|(name, _)| name == canonical).map(|(_, value)| value.to_literal())
     }
 
     /// Declares the setting of each optimizer rule that has none yet,
