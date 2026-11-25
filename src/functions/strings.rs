@@ -494,6 +494,45 @@ fn octets_within(c: &str, from: usize, to: usize) -> String {
     c.char_indices().filter(|(at, ch)| *at >= from && at.saturating_add(ch.len_utf8()) <= to).map(|(_, ch)| ch).collect()
 }
 
+/// \[DESIGN\] (RULES.md D1132) Whether a call of the function `name` of
+/// `args` raises nothing, `types` giving the declared types of the
+/// columns it reads: SUBSTRING of a column of a character string type, in
+/// any units, of a constant start, and of no length or a constant one not
+/// negative, as only a substring of negative length raises [§6.7 GR1d].
+pub(crate) fn substring_raise_free(name: &str, args: &[crate::logical::Expr], types: crate::logical::Types<'_>) -> bool {
+    use crate::logical::Expr;
+    let names =
+        [named(kw::SUBSTRING, None), named(kw::SUBSTRING, Some(CharUnits::Characters)), named(kw::SUBSTRING, Some(CharUnits::Octets))];
+    let whole = |e: &Expr, least: i128| match e {
+        Expr::Const(Value::Exact(d)) => d.scale == 0 && d.units >= least,
+        Expr::Const(v) => v.is_null(),
+        Expr::Column(_)
+        | Expr::Neg(_)
+        | Expr::Arith(..)
+        | Expr::Call(..)
+        | Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Cast(..)
+        | Expr::Domain(..)
+        | Expr::SortKey(..)
+        | Expr::Subquery(..)
+        | Expr::Truth(_)
+        | Expr::Warned(..)
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => false,
+    };
+    let string = |e: &Expr| {
+        if let Expr::Column(c) = e { matches!(types(*c), Some(DataType::Character { .. } | DataType::Varying { .. })) } else { false }
+    };
+    let shaped = match args {
+        [c, from] => string(c) && whole(from, i128::MIN),
+        [c, from, length] => string(c) && whole(from, i128::MIN) && whole(length, 0),
+        _ => false,
+    };
+    names.contains(&name) && shaped
+}
+
 /// [§6.7] `<fold>`: UPPER or LOWER, of the simple Latin letters \[GR2c\];
 /// of the string's type \[SR3a\], a character large object's too [ISO/IEC
 /// 9075-2:2023 §6.33 SR9].

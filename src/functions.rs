@@ -120,6 +120,7 @@ pub use regex::{
 pub use registry::Registry;
 pub(crate) use registry::Standard;
 pub use scn::{SCN_TO_TIMESTAMP, TIMESTAMP_TO_SCN};
+pub(crate) use strings::substring_raise_free;
 pub use strings::{CONCATENATION, OVERLAY, PLACING, using};
 pub use trim::{BTRIM, LPAD, LTRIM, RPAD, RTRIM, TRIMS_AND_PADS, Trim, source_of, trim_named};
 pub use truths::EVERY;

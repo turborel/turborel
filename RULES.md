@@ -713,6 +713,7 @@ verification approach DO-178C expects (§8).
 | D1129 | A grouping that a filter's input and a subquery of its condition compute alike is computed once |
 | D1130 | A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them |
 | D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
+| D1132 | A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
@@ -19452,6 +19453,49 @@ once as the set is made, sorted and each kept once
 (`logical/sets.rs`), and a string is looked for by halving them, which
 compares it with as many as that takes. A string is found if it equals
 one without trailing spaces [X3.135-1986 §5.11 GR5], as before.
+
+#### D1132. A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels
+
+A filter holding a subquery stayed on the statement's thread, as a
+worker runs no subquery, so the part below it was its scan alone and the
+filter judged every row it gave by itself. A scalar subquery that reads
+nothing of the filter's rows has one value for the statement [ISO/IEC
+9075:1992 §7.11 GR1], and of those a filter's first row runs (D1127) it
+is now judged whether running it is seen by anything but its value
+(`optimizer/unnesting/quiet.rs`). It raises no error if it gives one
+row at most and the typed judgment of D1060 finds nothing in its plan
+that raises, of the declared types of the columns it reads. It raises
+no warning if its plan holds no subquery, invocation or carried
+warning, no parameter, no window and no join but a product, and each set function
+takes no argument or a column that holds no null, so no null is
+eliminated [ISO/IEC 9075:1992 §6.5 GR1b]: one declared so, or one a
+filter below the set function compares or judges IS NOT NULL, which
+keeps no row of a null there.
+
+A filter whose every subquery is such a one, and that is calm with them
+made constants, is a step of the part below it (`physical/parallel.rs`).
+As the part's pipeline is made, on the statement's thread before any
+morsel starts, each is run and made its constant
+(`exec/parallel/pipeline.rs`), and the workers judge the filter of each
+morsel. A filter that judges no row ran no subquery before, and runs
+one now, which nothing sees. The rows are those the filter kept, and a
+subquery the judgment cannot clear leaves its filter as it was, so the
+errors and warnings are the serial run's (D15).
+
+SUBSTRING of a column of a character string type, of a constant start
+and of no length or a constant one not negative, is now judged to raise
+nothing (`functions/strings.rs`), as only a substring of negative length
+raises [ISO/IEC 9075:1992 §6.7 GR1d]. A comparison with a quiet
+subquery, which reads no parameter, is not made a semi join (D773): run
+once and compared as a constant it costs no join, and the filter
+holding it runs in the part below it. One compared with a column an
+index of its table holds, or one that reads a parameter, as a
+transaction's bound of keys does, is joined as before, so the index may
+be probed from its row (`optimizer/unnesting/scalar.rs`).
+
+The left of a semi join that builds its left is now marked as a hash
+join's built operand is: it is held by batch whatever its store, so a
+table kept by column is read in parallel there too.
 
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 
