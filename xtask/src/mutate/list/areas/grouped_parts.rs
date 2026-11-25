@@ -8,7 +8,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 14] = [
+pub const GROUPED_PARTS: [Mutation; 13] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -120,26 +120,6 @@ pub const GROUPED_PARTS: [Mutation; 14] = [
         unit: &[],
     },
     Mutation {
-        name: "span-edge-apart",
-        package: Package::Core,
-        breaks: "a morsel whose least key is the greatest merged before is taken as apart, so that key is made a second group (RULES.md D1134)",
-        file: "src/exec/table/made.rs",
-        original: "own.is_some_and(|s| most < s.least || least > s.most)",
-        replacement: "own.is_some_and(|s| most <= s.least || least >= s.most)",
-        integration: &[],
-        unit: &["exec::table::made::tests::morsels_apart_are_merged_unlooked_for_and_others_found"],
-    },
-    Mutation {
-        name: "span-merged-forgets-own",
-        package: Package::Core,
-        breaks: "a table's span after a merge is the morsel's alone, so a later morsel of keys merged earlier is taken as apart (RULES.md D1134)",
-        file: "src/exec/table/made.rs",
-        original: "Some(super::Reach { least: own.least.min(least), most: own.most.max(most), scale, groups })",
-        replacement: "Some(super::Reach { least: own.least.max(least), most: own.most.max(most), scale, groups })",
-        integration: &[],
-        unit: &["exec::table::made::tests::morsels_apart_are_merged_unlooked_for_and_others_found"],
-    },
-    Mutation {
         name: "having-bound-unflipped",
         package: Package::Core,
         breaks: "a HAVING condition of a constant compared with the set function is judged the other way round (RULES.md D1135)",
@@ -148,5 +128,15 @@ pub const GROUPED_PARTS: [Mutation; 14] = [
         replacement: "return one.then_some((*op, v));",
         integration: &["grouped_parts::a_having_condition_is_judged_by_its_part"],
         unit: &[],
+    },
+    Mutation {
+        name: "having-bounded-by-rows",
+        package: Package::Core,
+        breaks: "a HAVING condition of one set function and a constant is judged of each group's row, made for it (RULES.md D1135)",
+        file: "src/exec/parallel/grouped.rs",
+        original: "return one.then_some((*op, v));",
+        replacement: "return None;",
+        integration: &[],
+        unit: &["exec::parallel::grouped::tests::a_having_of_one_set_function_and_a_constant_is_judged_of_its_value"],
     },
 ];

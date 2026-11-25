@@ -123,20 +123,6 @@ pub(in crate::exec) struct GroupTable<S: Columns = Vec<States>> {
     /// The groups a merge found or made and the places of those it made,
     /// kept between merges for their room (`made.rs`).
     merging: (Vec<u32>, Vec<u32>),
-    /// \[DESIGN\] (RULES.md D1134) Of a table merged of morsels' groups
-    /// alone, by one integer column, the least and greatest of its keys,
-    /// their scale and how many groups they span (`made.rs`).
-    span: Option<Reach>,
-}
-
-/// The least and greatest keys of a table's groups by one integer
-/// column, their scale, and the groups they span.
-#[derive(Clone, Copy, Debug)]
-pub(in crate::exec) struct Reach {
-    pub(in crate::exec) least: i64,
-    pub(in crate::exec) most: i64,
-    pub(in crate::exec) scale: u32,
-    pub(in crate::exec) groups: usize,
 }
 
 impl GroupTable {
@@ -157,7 +143,6 @@ impl GroupTable {
             limit,
             taken: 0,
             merging: (Vec::new(), Vec::new()),
-            span: None,
         }
     }
 
@@ -197,7 +182,6 @@ impl GroupTable<()> {
             limit: usize::MAX,
             taken: 0,
             merging: (Vec::new(), Vec::new()),
-            span: None,
         }
     }
 }
@@ -245,7 +229,6 @@ impl<S: Columns> GroupTable<S> {
     pub(in crate::exec) fn make(&mut self, hash: u64, key: Key<'_>, first: u64) -> u32 {
         let g = narrow(self.hashes.len());
         let placed = self.placed_by(hash, key);
-        self.span = None;
         self.keys.push(key);
         self.hashes.push(hash);
         self.firsts.push(first);
@@ -329,7 +312,6 @@ impl<S: Columns> GroupTable<S> {
     /// Keeps its first `len` groups, in their order, placed again, the
     /// room of the others given back.
     pub(in crate::exec) fn truncate(&mut self, len: usize) {
-        self.span = None;
         self.keys.truncate(len);
         self.hashes.truncate(len);
         self.hashes.shrink_to_fit();

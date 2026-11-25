@@ -717,7 +717,7 @@ verification approach DO-178C expects (§8).
 | D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
 | D1132 | A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels |
 | D1133 | A count over another grouping's groups crosses its partitions, each partition's counts merged by the statement's thread |
-| D1134 | A morsel's groups whose keys lie past those merged before are made without looking for them |
+| D1134 | A partition looks up every morsel's groups, as its morsels come to it out of their keys' order |
 | D1135 | A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
@@ -19600,24 +19600,23 @@ above the part. A projection that fails in a partition gives the part
 way to the serial plan, which meets the rows in their order and raises
 what it raises (D15).
 
-#### D1134. A morsel's groups whose keys lie past those merged before are made without looking for them
+#### D1134. A partition looks up every morsel's groups, as its morsels come to it out of their keys' order
 
 A grouping run in parallel merges each partition's groups of the
-morsels in their order, and looked each group up in the partition's
-table before making it. A grouping by one integer column of a table
-kept in the order of that column, as TPC-H Q18 groups lines by their
-order, gives morsels whose keys lie past those of the morsels before
-them, so each lookup misses.
+morsels, each group looked up in the partition's table before it is
+made. A grouping by one integer column of a table kept in the order of
+that column, as TPC-H Q18 groups lines by their order, has morsels of
+keys apart from one another, so a morsel's lookups mostly miss. A
+partition's table was made to keep the least and greatest of its keys,
+and a morsel's groups lying wholly below or above them were made with
+no lookup.
 
-A partition's table merged of morsels alone now keeps the least and
-greatest of its keys and how many groups they span
-(`exec/table/made.rs`). A morsel's groups of a partition whose keys,
-none null and of the same scale, lie wholly below or above that span
-are made at once, in their order, as the lookups would have made them.
-A morsel whose keys reach into the span, as one whose first key is an
-order split across two morsels, is merged as before, and the span then
-takes in its keys too. A group made any other way, or the table cut
-short, forgets the span, so it is never trusted past what it saw.
+That cannot work. A partition merges its morsels in the order they
+are handed over, which is the order the threads finish them, not the
+order of their keys. So a morsel mostly lands in a gap between the
+morsels merged before it, inside their least and greatest keys though
+apart from every key there, and one pair of keys cannot see the gaps.
+It was taken out: every morsel's groups are looked up, as before.
 
 #### D1135. A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone
 

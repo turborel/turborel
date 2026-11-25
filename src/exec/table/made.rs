@@ -203,13 +203,7 @@ impl GroupTable {
         let (mut groups, mut fresh) = std::mem::take(&mut self.merging);
         groups.clear();
         fresh.clear();
-        let theirs = made.keys.span(places);
-        let apart = theirs.is_some_and(|t| self.apart(t));
-        if apart {
-            fresh.extend_from_slice(places);
-            groups.extend((0..places.len()).map(|n| narrow(base.saturating_add(n))));
-        }
-        for &i in places.iter().filter(|_| !apart) {
+        for &i in places {
             let at = crate::storage::mask::index(i);
             let found = self.find(made.hashes.get(at).copied().unwrap_or(0), Key::Group(&made.keys, at));
             groups.push(found.unwrap_or_else(|| narrow(base.saturating_add(fresh.len()))));
@@ -218,7 +212,6 @@ impl GroupTable {
             }
         }
         self.make_all(made, &fresh);
-        self.span = theirs.and_then(|t| self.spanned(t, base));
         for (&g, &i) in groups.iter().zip(places) {
             let first = made.firsts.get(crate::storage::mask::index(i)).copied().unwrap_or(u64::MAX);
             if let Some(held) = self.firsts.get_mut(crate::storage::mask::index(g)) {
@@ -230,32 +223,6 @@ impl GroupTable {
         }
         self.merging = (groups, fresh);
         Ok(())
-    }
-
-    /// \[DESIGN\] (RULES.md D1134) Whether keys of the span `theirs`,
-    /// least, greatest and scale, are none of its own: it has no group, or
-    /// the span of its groups lies wholly apart from it. A grouping's
-    /// morsels of a table kept in the order of its key, as an order's
-    /// lines are, each hold keys past those of the morsels before them,
-    /// and are merged in that order, so none of a morsel's groups is
-    /// looked for among those merged before it.
-    fn apart(&self, (least, most, scale): (i64, i64, u32)) -> bool {
-        if self.hashes.is_empty() {
-            return true;
-        }
-        let own = self.span.filter(|s| s.groups == self.hashes.len() && s.scale == scale);
-        own.is_some_and(|s| most < s.least || least > s.most)
-    }
-
-    /// The span of its groups once those of the span `theirs` are merged,
-    /// of `base` groups before them: none if those before had none.
-    fn spanned(&self, (least, most, scale): (i64, i64, u32), base: usize) -> Option<super::Reach> {
-        let groups = self.hashes.len();
-        if base == 0 {
-            return Some(super::Reach { least, most, scale, groups });
-        }
-        let own = self.span.filter(|s| s.groups == base && s.scale == scale)?;
-        Some(super::Reach { least: own.least.min(least), most: own.most.max(most), scale, groups })
     }
 
     /// Makes the groups at `fresh` of `made`, none of them its own yet,

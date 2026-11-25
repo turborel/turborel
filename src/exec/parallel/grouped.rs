@@ -521,3 +521,8 @@ fn finished(states: Vec<Box<dyn Accumulator>>, mut row: Row) -> Result<Row> {
     }
     Ok(row)
 }
+
+// Unit tests: which HAVING conditions a part judges of a value alone
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;
