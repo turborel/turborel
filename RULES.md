@@ -705,6 +705,7 @@ verification approach DO-178C expects (§8).
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
 | D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
 | D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
+| D1114 | An index nested-loop join over a part run in parallel probes its index on the part's threads |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19224,6 +19225,34 @@ groups as its partitions finish them.
 
 A grouping by no column is left as it was, as its one group would be
 one partition's and one thread's.
+
+#### D1114. An index nested-loop join over a part run in parallel probes its index on the part's threads
+
+An index nested-loop join probed its index for each row of its left
+operand on the statement's thread, though that operand held a part run
+in parallel and so many rows. A semi join by an index over an inner one
+over such a part, as of a correlated EXISTS, made every probe and every
+joined row there while the workers waited.
+
+Such a join now probes on the part's threads (`exec/parallel/looped.rs`).
+The statement's thread reads the left operand's rows, a wave of
+morsels at a time, four for each thread, and each morsel is joined by a
+thread through the join and every index join below it of the chain, as
+one thread joins them. A morsel of probes takes a sixteenth of
+EXECUTOR.MORSEL_ROWS of left rows, a probe costing a walk of the index
+and a read of its row: a sweep of 1, 4, 16 and 64 measured 16 the
+fastest. The morsels' rows are given in the order of their numbers, so
+each left row's matches come where they would alone, and the first
+error in that order is the one raised, after the rows before it.
+
+A join takes part if it gives each left row's rows as it reads that
+row, an inner, LEFT, semi or antijoin, and a worker evaluates its
+condition alone, as of a part's pipeline (D291). A FULL join, which
+gives the table's unmatched rows at the end, a spatial join and a probe
+by a function's predicate, which a statement's prepared budget bounds,
+stay on the statement's thread, as does a join over a left operand that
+holds no part. The degree is the greatest of the parts the left operand
+holds.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
