@@ -61,10 +61,13 @@ impl Default for Sampling {
 /// The seed of a sample's random choices.
 pub const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
-/// A count of things as an `f64`; exact up to 2^32, and the most a `u32`
-/// holds past it.
+/// A count of things as an `f64`, exact up to 2^53 and the nearest `f64`
+/// past it, never a bound it stops at (RULES.md D1166). A sum of bytes
+/// past 2^32 divided by its rows is then their mean width.
 pub fn count(n: u64) -> f64 {
-    f64::from(u32::try_from(n).unwrap_or(u32::MAX))
+    let high = u32::try_from(n >> 32_u32).unwrap_or(u32::MAX);
+    let low = u32::try_from(n & u64::from(u32::MAX)).unwrap_or(u32::MAX);
+    f64::from(high) * 4_294_967_296.0_f64 + f64::from(low)
 }
 
 /// A HyperLogLog sketch of the distinct non-null values added to it.

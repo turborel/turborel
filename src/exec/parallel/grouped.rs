@@ -20,9 +20,12 @@
 //! thread, and the statement's thread merges the partitions' orders. A
 //! filter over the grouping that cannot raise, its HAVING condition, is
 //! judged of each partition's groups by the thread that finished them,
-//! so only the groups it keeps are put in order (RULES.md D1073). The
-//! pieces a grouping holds are charged to one
-//! work grant (RULES.md D38, D298); past it, or bound past it as its first
+//! so only the groups it keeps are put in order (RULES.md D1073). Of a
+//! grouping over another whose grouping columns hold its own, the first's
+//! groups are split by those columns alone and each partition's thread
+//! makes the second's groups of its own (`regrouped.rs`, RULES.md D1113).
+//! The pieces a grouping holds are charged to one work grant (RULES.md
+//! D38, D298); past it, or bound past it as its first
 //! morsels show, it gives way to the serial grouping, which spills, its
 //! rows read again in the statement's snapshot.
 
@@ -30,7 +33,10 @@ use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 
+mod regrouped;
 mod waves;
+
+use self::regrouped::Outer;
 
 use super::batched::ByBatch;
 use super::pipeline::Pipeline;
@@ -93,6 +99,9 @@ struct Grouping {
     distinct: bool,
     read: Option<Read>,
     seed: Seed,
+    /// \[DESIGN\] (RULES.md D1113) The grouping over it, of a pair the
+    /// part runs whole, which each partition's thread makes of its groups.
+    outer: Option<Outer>,
 }
 
 impl Grouping {
@@ -117,10 +126,50 @@ impl Grouping {
     /// \[DESIGN\] (RULES.md D1111) The groups of `table`, finished, that
     /// its HAVING condition is true of, or all of none, as `kept` keeps
     /// them: the condition judged of each group's row before the group
-    /// takes a row of its own.
+    /// takes a row of its own; in the order of their first rows. Of a
+    /// pair, the second grouping's groups of them, then those kept
+    /// (`ended`).
     fn kept_of(&self, table: &GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
-        let Some(cond) = &self.having else { return table.finished() };
-        table.finished_if(|row| Ok(eval_cond(cond, row, runner)? == Truth::True))
+        let cond = self.having.as_ref().filter(|_| self.outer.is_none());
+        let mut groups = match cond {
+            Some(cond) => table.finished_if(|row| Ok(eval_cond(cond, row, runner)? == Truth::True))?,
+            None => table.finished()?,
+        };
+        groups.sort_unstable_by_key(|g| g.0);
+        if self.outer.is_none() {
+            return Ok(groups);
+        }
+        self.ended(groups, runner)
+    }
+
+    /// The groups a partition gives of `groups`, its own finished, in the
+    /// order of their first rows: of a pair, the second grouping's of them
+    /// (RULES.md D1113); those its HAVING condition keeps.
+    fn ended(&self, groups: Vec<(u64, Row)>, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+        let groups = match &self.outer {
+            Some(outer) => outer.regrouped(groups, runner)?,
+            None => groups,
+        };
+        self.kept(groups, runner)
+    }
+
+    /// The lanes of its keys its groups are split among the partitions
+    /// by: of a pair, the second grouping's columns (RULES.md D1113); else
+    /// none, each group by its whole key.
+    fn lanes(&self) -> &[usize] {
+        self.outer.as_ref().map_or(&[], Outer::lanes)
+    }
+
+    /// The partition of a group of key `key` and grouping values
+    /// `values`: of a pair, by its values of the second grouping's columns
+    /// alone (RULES.md D1113).
+    fn part(&self, key: &[u8], values: &Row) -> Result<usize> {
+        let lanes = self.lanes();
+        if lanes.is_empty() {
+            return Ok(part_of(key, &self.seed));
+        }
+        let picked = lanes.iter().map(|&g| values.get(g).cloned().ok_or_else(|| broken("a grouping column past its row")));
+        Ok(part_of(&crate::spill::norm_row(&picked.collect::<Result<Row>>()?), &self.seed))
     }
 
     /// The grouping values of `row`.
@@ -159,13 +208,20 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resu
 /// As `grouped`.
 pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: &[Told]) -> Result<Held<RowIter>> {
     let (plan, having) = if let Plan::Filter { cond, input, .. } = plan { (&**input, Some(cond.clone())) } else { (plan, None) };
+    // Of a pair (RULES.md D1113), the part's pipeline is the first
+    // grouping's input, told no filter, as those a join tells it are of
+    // the second's columns.
+    let (plan, outer, told) = match Outer::of(plan) {
+        Some((outer, first)) => (first, Some(outer), &[][..]),
+        None => (plan, None, told),
+    };
     let seed = db.functions.seed().clone();
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
-        (Grouping { spec, having, distinct: false, read: None, seed }, input)
+        (Grouping { spec, having, distinct: false, read: None, seed, outer }, input)
     } else if let Plan::Distinct { input, .. } = plan {
         let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
-        (Grouping { spec, having, distinct: true, read: None, seed }, input)
+        (Grouping { spec, having, distinct: true, read: None, seed, outer }, input)
     } else {
         return Err(broken("not a grouping run in parallel"));
     };
@@ -202,7 +258,7 @@ fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&
     let (merging, db_for) = (Arc::clone(grouping), db.clone());
     let merge = Box::new(move |p: usize| {
         let taken = chunks.get(p).map(|c| std::mem::take(&mut *c.lock().unwrap_or_else(PoisonError::into_inner))).unwrap_or_default();
-        merging.kept(merged(&merging, p, taken)?, &Runner::new(&db_for, tx))
+        merging.ended(merged(&merging, p, taken)?, &Runner::new(&db_for, tx))
     });
     Morsels::start(db, tx, (PARTS, degree), merge).collect::<Result<Vec<_>>>().map(Held::Kept)
 }
@@ -348,7 +404,7 @@ fn morsel_pieces(grouping: &Grouping, (m, rows): (usize, Vec<Row>), runner: &Run
     let mut parts: Vec<Vec<Piece>> = (0..PARTS).map(|_| Vec::new()).collect();
     for (first, key, values, states) in made {
         let states = states.iter().map(|s| written(s.as_ref())).collect();
-        parts.get_mut(part_of(&key, &grouping.seed)).ok_or_else(|| broken("a partition of a grouping is missing"))?.push(Piece {
+        parts.get_mut(grouping.part(&key, &values)?).ok_or_else(|| broken("a partition of a grouping is missing"))?.push(Piece {
             first,
             key,
             values,
@@ -412,7 +468,7 @@ fn merged_pieces(grouping: &Grouping, p: usize, chunks: Chunks) -> Result<Vec<(u
     let mut groups: HashMap<Vec<u8>, Merging> = HashMap::new();
     for (n, seed) in (0_u64..).zip(&grouping.spec.seeds) {
         let key = group_key(&grouping.spec, seed)?;
-        if part_of(&key, &grouping.seed) == p {
+        if grouping.part(&key, seed)? == p {
             groups.entry(key).or_insert_with(|| (n, seed.clone(), fresh(aggs)));
         }
     }

@@ -222,7 +222,8 @@ fn tables_opened_have_statistics() {
 }
 
 /// Verifies: [DESIGN] RULES.md D35, D1092: a table of a database opened
-/// again has no statistics until first asked for, and the plan that first
+/// again that had no statistics gathered has none until first asked for,
+/// and the plan that first
 /// asks gathers them itself, a pass bounded whatever the table holds:
 /// queries planned at once on two threads both plan with them, the one
 /// waiting for the other's pass, so no plan after a start is made without
@@ -238,7 +239,8 @@ fn a_table_opened_gathers_its_statistics_as_a_plan_first_asks() {
     db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();
     db.set_job_policy(JobPolicy::Manual).unwrap();
     db.schema("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (ID INTEGER NOT NULL, GRADE INTEGER, NOTE CHAR(5))").unwrap();
-    add(&db, 1..=200, |i| i % 10);
+    // None gathered before the close, so none is kept (RULES.md D1093).
+    added(&db, 1..=200, |i| i % 10);
     db.close().unwrap();
     let db = Database::new();
     db.open_files(&os(), &dir, &OpenOptions::default()).unwrap();

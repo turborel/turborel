@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 13] = [
+pub const RANGE_READS: [Mutation; 19] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -140,6 +140,66 @@ pub const RANGE_READS: [Mutation; 13] = [
         original: "            self.held.take(g, (n, r));\n            return (place, None);",
         replacement: "            self.held.take(0, (n, r));\n            return (place, None);",
         integration: &["batches::texts_coded_group_by_their_codes_as_the_texts_group"],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-kept-one-place",
+        package: Package::Core,
+        breaks: "a late column of rows kept in order gives every row the first value decoded (D1162)",
+        file: "src/storage/batch/late.rs",
+        original: "                next = next.saturating_add(1);",
+        replacement: "                next = next.saturating_add(0);",
+        integration: &[],
+        unit: &["storage::batch::late::tests::rows_kept_in_order_are_decoded_of_their_places_alone"],
+    },
+    Mutation {
+        name: "tree-pages-first-child",
+        package: Package::Core,
+        breaks: "a tree's pages leave out each level-one node's first child, so a table's bytes are shown short (D1165)",
+        file: "src/engine/tree/pages.rs",
+        original: "                    pages = pages.saturating_add(u64::try_from(node.len()).unwrap_or(u64::MAX).saturating_add(1));",
+        replacement: "                    pages = pages.saturating_add(u64::try_from(node.len()).unwrap_or(u64::MAX));",
+        integration: &[],
+        unit: &["engine::tree::tests::pages::a_trees_pages_are_those_it_frees"],
+    },
+    Mutation {
+        name: "sizes-past-a-count",
+        package: Package::Core,
+        breaks: "a table's bytes summed past what a count holds are shown, a bound reached and not a size (D1165)",
+        file: "src/engine/rows/sizes.rs",
+        original: "    n.filter(|n| i64::try_from(*n).is_ok())",
+        replacement: "    n",
+        integration: &[],
+        unit: &["engine::rows::sizes::tests::a_sum_past_a_count_is_none"],
+    },
+    Mutation {
+        name: "count-past-a-u32",
+        package: Package::Core,
+        breaks: "a count past 2^32 loses its high word, so a table's mean width over 4 GB is shown short to the planner (D1166)",
+        file: "src/stats/parts.rs",
+        original: "    f64::from(high) * 4_294_967_296.0_f64 + f64::from(low)",
+        replacement: "    f64::from(high).min(0.0_f64) * 4_294_967_296.0_f64 + f64::from(low)",
+        integration: &[],
+        unit: &["stats::tests::a_count_past_a_u32_is_itself_and_a_width_past_four_gigabytes_too"],
+    },
+    Mutation {
+        name: "rows-of-cap-a-u32",
+        package: Package::Core,
+        breaks: "an estimate past 2^32 rows is counted as the most a count holds (D1166)",
+        file: "src/spatial/curves/linearize.rs",
+        original: "    let cap = crate::stats::parts::count(u64::try_from(most).unwrap_or(u64::MAX));",
+        replacement: "    let cap = u32::try_from(most).map_or(f64::from(u32::MAX), f64::from);",
+        integration: &[],
+        unit: &["physical::parallel::tests::an_estimate_past_a_u32_is_counted_as_itself"],
+    },
+    Mutation {
+        name: "opened-of-no-kind",
+        package: Package::Core,
+        breaks: "the mark of a database running is of no kind known, so each export, backup and transfer of it is refused (D1164)",
+        file: "src/files/classes.rs",
+        original: "        } else if name == OPENED {",
+        replacement: "        } else if name == TRANSFER {",
+        integration: &["running_mark::a_database_marked_running_is_copied_without_its_mark"],
         unit: &[],
     },
 ];

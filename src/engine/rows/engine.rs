@@ -69,8 +69,8 @@ impl StorageEngine for RowStore {
         Ok(Some(Box::new(RowTable::open_with(&files, (meta, &types), options, self.sealing(desc))?)))
     }
 
-    /// Saves its tables' zone maps and counts of rows
-    /// (`rows/zones/saved.rs`, `rows/counted.rs`); writes back every page and the pager's free list; a file shadowed
+    /// Saves its tables' zone maps, counts of rows and statistics
+    /// (`rows/zones/saved.rs`, `rows/counted.rs`, `rows/stats/saved.rs`); writes back every page and the pager's free list; a file shadowed
     /// (`TableFiles::shadowed`) holds them in memory and seals that batch,
     /// the pages it may capture later owed to it (RULES.md D590), its
     /// commit left to `checkpoint_finish`; one not shadowed is synced now.
@@ -86,8 +86,7 @@ impl StorageEngine for RowStore {
             files.sealed.store(at.0, Ordering::Release);
             return Ok(());
         }
-        files.save_zones()?;
-        files.save_counts()?;
+        saved(&files)?;
         files.pool.sync(files.file, Durability::Full)?;
         files.durable.fetch_max(at.0, Ordering::AcqRel);
         Ok(())
@@ -110,6 +109,14 @@ impl StorageEngine for RowStore {
     }
 }
 
+/// What a checkpoint saves of each table open of `files` before its pages
+/// are captured: its zone maps, its count of rows and its statistics.
+fn saved(files: &TableFiles) -> Result<()> {
+    files.save_zones()?;
+    files.save_counts()?;
+    files.save_statistics()
+}
+
 /// \[DESIGN\] A checkpoint's capture of the shadowed `files`, writers held
 /// (RULES.md D590): what is written now kept in memory, so no I/O; its
 /// pages copied, encoded and written only where they cannot be captured
@@ -126,7 +133,7 @@ fn captured(files: &TableFiles, shadows: &ShadowFileSystem) -> Result<()> {
     earlier.map_or(Ok(()), |capture| ended(files, capture))?;
     shadows.commit_sealed()?;
     shadows.hold()?;
-    let capture = match files.save_zones().and_then(|()| files.save_counts()).and_then(|()| files.pool.capture(files.file)) {
+    let capture = match saved(files).and_then(|()| files.pool.capture(files.file)) {
         Ok(capture) => capture,
         Err(e) => {
             let _ = shadows.release();

@@ -10,10 +10,11 @@
 //! TURBOREL_FETCH names a case to run it alone, and TURBOREL_FETCH_THREADS
 //! a count of threads, for a profile. Then the same table of the column
 //! store, two groups of 65,536 rows, every row frozen and every header
-//! held: one column, and four, read by scattered row ids, and one in key
-//! order, on one thread. A frozen fetch against a fetch of the tree's is
-//! what the planner's `FROZEN_FETCH` prices (`engine/rows/frozen.rs`,
-//! RULES.md D1091). Run with `cargo xtask bench`, on the harness (RULES.md
+//! held: one column, four, eight and all seventeen read by scattered row
+//! ids, and one in key order, on one thread. A frozen fetch of each count
+//! of columns against a fetch of the tree's is what the planner's
+//! `FROZEN_FETCH` and `FROZEN_FETCH_COLUMN` price
+//! (`engine/rows/frozen.rs`, RULES.md D1091, D1097). Run with `cargo xtask bench`, on the harness (RULES.md
 //! R-BENCH-1).
 
 #![allow(
@@ -58,6 +59,10 @@ const READS: u64 = 16;
 const READ: [usize; 1] = [2];
 /// Four columns read: S_QUANTITY, a S_DIST, S_YTD and S_DATA.
 const READ_FOUR: [usize; 4] = [2, 5, 13, 16];
+/// Eight columns read: those four, three more S_DIST and S_ORDER_CNT.
+const READ_EIGHT: [usize; 8] = [2, 3, 5, 7, 9, 13, 14, 16];
+/// Every column read.
+const READ_ALL: [usize; 17] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 /// Rows of the table of the column store: two groups whole, so none is
 /// left in its tree.
 const FROZEN_ROWS: u64 = 2 * 65_536;
@@ -118,10 +123,12 @@ fn main() {
 /// The cases of the table of the column store, on one thread.
 fn frozen(bench: &Bench, only: Option<&str>) {
     let stock = stock(bench, FROZEN_ROWS, true);
-    let cases: [(&str, bool, &[usize]); 3] = [
+    let cases: [(&str, bool, &[usize]); 5] = [
         ("row id, scattered, column store", true, &READ),
         ("row id, in key order, column store", false, &READ),
         ("row id, scattered, four columns, column store", true, &READ_FOUR),
+        ("row id, scattered, eight columns, column store", true, &READ_EIGHT),
+        ("row id, scattered, every column, column store", true, &READ_ALL),
     ];
     for (name, scattered, columns) in cases {
         if only.is_some_and(|o| o != name) {

@@ -401,6 +401,9 @@ impl Body<'_> {
             // Of VARCHAR texts alone (`columns.rs`), never padded.
             return pad.is_none().then(|| coded.texts((from, to), (text, ends), null)).flatten();
         }
+        if let Body::Varying { offsets, values } = self {
+            return varying_texts((offsets, values), (from, to), (text, ends), (null, pad));
+        }
         for n in from..to {
             if !null(n) {
                 padded(text, std::str::from_utf8(self.field(n)?).ok()?, pad);
@@ -497,6 +500,31 @@ impl Body<'_> {
     }
 }
 
+/// \[DESIGN\] (RULES.md D1131) As `Body::texts`, of varying fields of
+/// `values` that `offsets` place: the octets from the first's start to
+/// the last's end judged UTF-8 once, each field then a slice of them,
+/// none if they are not UTF-8 or a field does not begin and end on a
+/// character. Fields that are each UTF-8 are UTF-8 together, so this
+/// gives what judging each would.
+fn varying_texts(
+    (offsets, values): (&[u8], &[u8]),
+    (from, to): (usize, usize),
+    (text, ends): (&mut String, &mut Vec<usize>),
+    (null, pad): (impl Fn(usize) -> bool, Option<usize>),
+) -> Option<()> {
+    let Some(last) = to.checked_sub(1).filter(|&last| last >= from) else { return Some(()) };
+    let (start, end) = (between(offsets, from)?.0, between(offsets, last)?.1);
+    let span = std::str::from_utf8(values.get(start..end)?).ok()?;
+    for n in from..to {
+        if !null(n) {
+            let (a, b) = between(offsets, n)?;
+            padded(text, span.get(a.checked_sub(start)?..b.checked_sub(start)?)?, pad);
+        }
+        ends.push(text.len());
+    }
+    Some(())
+}
+
 /// Where the `e`th of the fields `offsets` gives begins and ends.
 fn between(offsets: &[u8], e: usize) -> Option<(usize, usize)> {
     read_word(offsets, e.checked_mul(WORD)?).ok().zip(read_word(offsets, e.checked_add(1)?.checked_mul(WORD)?).ok())
@@ -514,4 +542,13 @@ pub(super) fn kind_of(plan: Plan) -> u8 {
         Plan::Alp(..) => ALP,
         Plan::Fsst => FSST,
     }
+}
+
+/// \[DESIGN\] The name of the encoding of `kind`, a chunk's first byte, as
+/// INFORMATION_SCHEMA.COLUMN_STORAGE shows it (RULES.md D1165); none of a
+/// kind no encoding has.
+pub(crate) fn kind_name(kind: u8) -> Option<&'static str> {
+    let names = [(FIXED, "FIXED"), (VARYING, "VARYING"), (CONSTANT, "CONSTANT"), (FRAME, "FRAME")];
+    let more = [(DICTIONARY, "DICTIONARY"), (RUNS, "RUNS"), (ALP, "ALP"), (FSST, "FSST")];
+    names.into_iter().chain(more).find(|&(k, _)| k == kind).map(|(_, name)| name)
 }

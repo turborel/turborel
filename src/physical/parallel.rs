@@ -9,7 +9,9 @@
 //! set functions keep states that merge, DISTINCT, a sort, window
 //! functions of a partitioning, and UNION, EXCEPT and INTERSECT; or a
 //! filter that cannot raise over such a grouping, its HAVING condition,
-//! judged of each group by the part's threads (RULES.md D1073). A
+//! judged of each group by the part's threads (RULES.md D1073); or a
+//! grouping over such a grouping by some of its grouping columns, both
+//! made by the part's threads (RULES.md D1113). A
 //! grouping or DISTINCT streamed over rows in its keys' order is no such
 //! part, as its order would be lost among the threads (RULES.md D550).
 //!
@@ -123,7 +125,11 @@ impl<'a> Asked<'a> {
     /// its exchange of groups costs what its threads would gain.
     fn kept_whole(self, plan: &Plan, rows: usize) -> bool {
         let degree = self.most.min(rows.div_ceil(self.morsel));
-        rows >= self.least && exchange::outweighs(self.db, plan, rows, (self.morsel, degree))
+        // Of a grouping over another whose keys hold its own, the pieces
+        // exchanged are the first's (RULES.md D1113).
+        let grouping = if let Plan::Filter { input, .. } = plan { input } else { plan };
+        let exchanged = first_level(grouping).unwrap_or(plan);
+        rows >= self.least && exchange::outweighs(self.db, exchanged, rows, (self.morsel, degree))
     }
 }
 
@@ -252,8 +258,32 @@ fn filtered(plan: &Plan) -> bool {
     matches!(plan, Plan::Filter { .. } | Plan::SemiJoin(_))
 }
 
+/// \[DESIGN\] (RULES.md D1113) The first grouping of `plan`, if `plan`
+/// is a grouping over it, an analyzed plan's count between them or none,
+/// that a part runs whole: the second by some of the first's grouping
+/// columns and no others, neither by a collation nor with groups of empty
+/// grouping sets, the second's set functions none DISTINCT nor an inverse
+/// distribution function and calm, the first's states merging. Its
+/// partitions are then of those columns alone, so each holds every group
+/// of the first that one of the second takes, and its thread makes the
+/// second's groups too, as DISTINCT_AGGREGATES makes such pairs (RULES.md
+/// D340).
+pub(crate) fn first_level(plan: &Plan) -> Option<&Plan> {
+    let Plan::Aggregate { groups, collations, aggs, seeds, input, streamed: false, .. } = plan else { return None };
+    let first = if let Plan::Counted(c) = &**input { &c.input } else { input };
+    let Plan::Aggregate { groups: keys, collations: by, aggs: parts, seeds: seeded, streamed: false, .. } = first else { return None };
+    let within = !groups.is_empty() && groups.iter().all(|&g| g < keys.len());
+    let uncollated = collations.is_empty() && by.is_empty() && seeds.is_empty() && seeded.is_empty();
+    let calm_parts = |a: &AggCall| a.arg.as_ref().is_none_or(calm) && a.filter.as_ref().is_none_or(calm_cond);
+    let whole = aggs.iter().all(|a| !a.distinct && a.distribution.is_none() && calm_parts(a));
+    (within && uncollated && whole && mergeable(parts)).then_some(first)
+}
+
 /// The rows a part rooted at `plan` reads, if it is one.
 fn rooted(plan: &Plan) -> Option<usize> {
+    if let Some(first) = first_level(plan) {
+        return rooted(first);
+    }
     // A streamed grouping or DISTINCT reads its input in order, a group
     // at a time, which no morsel's table of groups does (RULES.md D550).
     if let Plan::Aggregate { aggs, input, streamed: false, .. } = plan {
@@ -385,6 +415,8 @@ fn calm_cond(c: &Cond) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use crate::value::{Decimal, Value};
 
@@ -418,6 +450,68 @@ mod tests {
         let db = crate::db::Database::new();
         let state = db.snapshot().unwrap();
         assert!(matches!(parallel_run(&state, project(*values()), false), Plan::Project { .. }));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1166: an estimate past what a `u32`
+    /// holds is its own ceiling as a count, the most a count holds only
+    /// of one reaching it, never of any past 2^32.
+    #[test]
+    fn an_estimate_past_a_u32_is_counted_as_itself() {
+        assert_eq!(rows_of(4_294_967_295.5_f64), 4_294_967_296);
+        assert_eq!(rows_of(5.0e9_f64), 5_000_000_000);
+        assert_eq!(rows_of(1.0e18_f64), 1_000_000_000_000_000_000);
+        assert_eq!(rows_of(1.0e19_f64), usize::MAX >> 1_u32);
+        assert_eq!(rows_of(f64::INFINITY), usize::MAX >> 1_u32);
+        assert_eq!(rows_of(f64::NAN), 1);
+    }
+
+    /// An aggregation by `groups` of `input`, computing `aggs`, of
+    /// `seeds`, streamed or not.
+    fn grouping(groups: Vec<usize>, (aggs, seeds): (Vec<AggCall>, Vec<Vec<Value>>), input: Plan, streamed: bool) -> Plan {
+        let (collations, detail, input, est) = (Vec::new(), String::new(), Box::new(input), 0.0_f64);
+        Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed }
+    }
+
+    /// COUNT of column 0, DISTINCT or not.
+    fn count(distinct: bool) -> AggCall {
+        let func = crate::functions::Registry::with_set_functions().aggregate("COUNT").unwrap();
+        let result = func.0.result_type(None).unwrap();
+        AggCall { func, arg: Some(Expr::Column(0)), distinct, result, filter: None, distribution: None, label: "COUNT".to_owned() }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1113: a grouping over another is a
+    /// pair a part holds whole if it groups by some of the first's
+    /// grouping columns and no others, an analyzed plan's count between
+    /// them or none; not of no grouping column, of a column past the
+    /// first's grouping columns, of a collation, of groups of empty
+    /// grouping sets of either, of a first streamed, of a DISTINCT set
+    /// function in the second, or of the first's states that do not merge.
+    #[test]
+    fn a_grouping_over_one_holding_its_columns_is_a_pair() {
+        let values = || Plan::Values { rows: Vec::new(), detail: String::new() };
+        let none = || (Vec::new(), Vec::new());
+        let first = |seeds: Vec<Vec<Value>>, streamed: bool| grouping(vec![0, 1], (Vec::new(), seeds), values(), streamed);
+        let pair = |groups: Vec<usize>, aggs: Vec<AggCall>, input: Plan| grouping(groups, (aggs, Vec::new()), input, false);
+        assert!(first_level(&pair(vec![0], vec![count(false)], first(Vec::new(), false))).is_some());
+        assert!(first_level(&pair(vec![1, 0], Vec::new(), first(Vec::new(), false))).is_some(), "of every column, in any order");
+        let count_node = Arc::new(crate::physical::NodeCount::default());
+        let counted = Plan::Counted(Box::new(crate::physical::Counted { count: count_node, input: first(Vec::new(), false) }));
+        assert!(first_level(&pair(vec![0], Vec::new(), counted)).is_some(), "an analyzed plan's count between");
+        assert!(first_level(&pair(Vec::new(), Vec::new(), first(Vec::new(), false))).is_none(), "of no grouping column");
+        assert!(first_level(&pair(vec![2], Vec::new(), first(Vec::new(), false))).is_none(), "of a set function's column");
+        assert!(first_level(&pair(vec![0], Vec::new(), first(vec![vec![Value::Null, Value::Null]], false))).is_none(), "of seeds");
+        assert!(first_level(&grouping(vec![0], (Vec::new(), vec![vec![Value::Null]]), first(Vec::new(), false), false)).is_none());
+        assert!(first_level(&pair(vec![0], Vec::new(), first(Vec::new(), true))).is_none(), "of a first streamed");
+        assert!(first_level(&grouping(vec![0], none(), first(Vec::new(), false), true)).is_none(), "of a second streamed");
+        assert!(first_level(&pair(vec![0], vec![count(true)], first(Vec::new(), false))).is_none(), "of DISTINCT in the second");
+        let unmerged = grouping(vec![0, 1], (vec![count(true)], Vec::new()), values(), false);
+        assert!(first_level(&pair(vec![0], Vec::new(), unmerged)).is_none(), "of the first's states that do not merge");
+        let mut collated = pair(vec![0], Vec::new(), first(Vec::new(), false));
+        if let Plan::Aggregate { collations, .. } = &mut collated {
+            collations.push(None);
+        }
+        assert!(first_level(&collated).is_none(), "of a collation");
+        assert!(first_level(&first(Vec::new(), false)).is_none(), "of a grouping over no grouping");
     }
 
     /// Verifies: [DESIGN] RULES.md D405, D682: once a database starts, the

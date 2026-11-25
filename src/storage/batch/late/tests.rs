@@ -59,3 +59,25 @@ fn late_columns_are_decoded_of_the_rows_kept() {
     assert!(damaged.resolved(None, &crate::kernels::Portable).is_err());
     assert!(damaged.resolved(Some(&[0]), &crate::kernels::Portable).is_ok(), "the damaged place not read");
 }
+
+/// Verifies: [DESIGN] RULES.md D1162: of a column no join gathered, the
+/// rows kept, ascending and each once, are decoded of their places and
+/// each given its own, as the rows of any order are: the first and last
+/// rows, rows past its end left out, and the same rows given out of order,
+/// which take the general path. MC/DC of the rows taken in order: no
+/// picks and rows ascending (taken) against a join's picks, and rows
+/// given twice or out of order.
+#[test]
+fn rows_kept_in_order_are_decoded_of_their_places_alone() {
+    let tens = Arc::new(Tens::default());
+    let source: Arc<dyn LateSource> = Arc::<Tens>::clone(&tens);
+    let late = Late::new(source, 0, vec![1, 4, 6, 8, 9].into());
+    let resolved = |rows: &[u32]| shown(&late.resolved(Some(rows), &crate::kernels::Portable).unwrap());
+    assert_eq!(resolved(&[0, 2, 4, 7]), ["10", "NULL", "60", "NULL", "90"]);
+    assert_eq!(tens.asked.lock().unwrap().pop(), Some(vec![1, 6, 9]), "the places of the rows kept, row 7 past its end");
+    assert_eq!(resolved(&[4, 0, 2]), ["10", "NULL", "60", "NULL", "90"], "out of order, alike");
+    assert_eq!(resolved(&[3, 3]), ["NULL", "NULL", "NULL", "80", "NULL"], "a row given twice");
+    assert_eq!(resolved(&[]), ["NULL", "NULL", "NULL", "NULL", "NULL"]);
+    let joined = late.gathered(&[Some(4), Some(1)]);
+    assert_eq!(shown(&joined.resolved(Some(&[0, 1]), &crate::kernels::Portable).unwrap()), ["90", "40"], "a join's picks");
+}

@@ -38,7 +38,8 @@ pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
 pub(crate) use region::{keyed_envelope, merged};
-pub use rows::{Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder, TableSizes, located, project, row_id_of, sized_row};
+pub use rows::{ColumnSizes, Counts, LobLog, Near, ROW_ID, Row, RowId, Rows, ScanOrder};
+pub use rows::{TableSizes, located, project, row_id_of, sized_row};
 pub use split::Split;
 
 use std::sync::Arc;
@@ -239,9 +240,8 @@ pub trait TableStorage: Send + Sync {
     }
     /// Used by the planner as a statistic.
     fn row_count(&self) -> usize;
-    /// \[DESIGN\] The bytes it takes, without a pass over its rows
-    /// (TABLE_STATISTICS, RULES.md D522). Default: not known.
-    fn sizes(&self) -> Option<TableSizes> {
+    /// \[DESIGN\] Its bytes, its `columns`' if asked (TABLE_STATISTICS, COLUMN_STORAGE, D522, D1165). Default: none.
+    fn sizes(&self, _columns: bool) -> Option<TableSizes> {
         None
     }
     /// `tx` is about to read, by `get`, the rows an index chose by
@@ -322,8 +322,8 @@ pub trait TableStorage: Send + Sync {
     fn scan_share(&self, _conditions: &Conjunction) -> f64 {
         1.0_f64
     }
-    /// Cost of one `get` by row id. Default: a random read in a row store.
-    fn fetch_cost(&self) -> f64 {
+    /// Cost of one `get` by row id of `columns` of its columns (RULES.md D1097). Default: a random read in a row store, whatever is read.
+    fn fetch_cost(&self, _columns: usize) -> f64 {
         DEFAULT_FETCH_COST
     }
     /// Cost more of a page the buffer pool missed than of one it holds, of
