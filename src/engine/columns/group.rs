@@ -447,9 +447,11 @@ impl Group {
     /// As `Pages::get`; SQLCODE -916 if its chunk is malformed.
     pub fn value<S: Seal>(&self, pages: &Pages<'_, S>, (column, t): (usize, &DataType), position: u32) -> Result<Value> {
         let zones = self.columns.get(column).ok_or_else(|| corrupt("a column is missing"))?;
+        // Its chunks are in the order of their rows, so the one holding
+        // the row is found by halving (RULES.md D1091).
         let zone = zones
-            .iter()
-            .find(|z| position >= z.run.first && position < z.run.first.saturating_add(z.run.rows))
+            .get(zones.partition_point(|z| z.run.first.saturating_add(z.run.rows) <= position))
+            .filter(|z| position >= z.run.first)
             .ok_or_else(|| corrupt("a row is in no chunk"))?;
         let at = usize::try_from(position.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         pages.with_run(&zone.run, |bytes| Chunk::parse(bytes)?.value(at, t))

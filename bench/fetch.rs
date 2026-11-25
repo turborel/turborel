@@ -8,7 +8,12 @@
 //! COMMITTED) and are (SERIALIZABLE). On one thread and on eight. Each
 //! case's rate is also noted as nanoseconds a fetch on each thread.
 //! TURBOREL_FETCH names a case to run it alone, and TURBOREL_FETCH_THREADS
-//! a count of threads, for a profile. Run with `cargo xtask bench`, on the harness (RULES.md
+//! a count of threads, for a profile. Then the same table of the column
+//! store, two groups of 65,536 rows, every row frozen and every header
+//! held: one column, and four, read by scattered row ids, and one in key
+//! order, on one thread. A frozen fetch against a fetch of the tree's is
+//! what the planner's `FROZEN_FETCH` prices (`engine/rows/frozen.rs`,
+//! RULES.md D1091). Run with `cargo xtask bench`, on the harness (RULES.md
 //! R-BENCH-1).
 
 #![allow(
@@ -51,6 +56,11 @@ const PASSES: u64 = 4;
 const READS: u64 = 16;
 /// The column read: S_QUANTITY, an integer.
 const READ: [usize; 1] = [2];
+/// Four columns read: S_QUANTITY, a S_DIST, S_YTD and S_DATA.
+const READ_FOUR: [usize; 4] = [2, 5, 13, 16];
+/// Rows of the table of the column store: two groups whole, so none is
+/// left in its tree.
+const FROZEN_ROWS: u64 = 2 * 65_536;
 const INTEGER: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Numeric };
 
 /// How a case's reads are made.
@@ -68,6 +78,8 @@ struct Stock {
     table: Arc<dyn TableStorage>,
     index: Arc<dyn Index>,
     ids: Vec<RowId>,
+    /// How many rows it holds.
+    rows: u64,
     /// The next transaction's number.
     next: AtomicU64,
 }
@@ -75,7 +87,7 @@ struct Stock {
 fn main() {
     let bench = Bench::new("fetch");
     let only = std::env::var("TURBOREL_FETCH").ok();
-    let stock = stock(&bench);
+    let stock = stock(&bench, ROWS, false);
     let one = std::env::var("TURBOREL_FETCH_THREADS").ok().and_then(|t| t.parse::<usize>().ok());
     for threads in THREADS.into_iter().filter(|&t| one.is_none_or(|one| one == t)) {
         let cases: [(&str, bool, bool, How); 6] = [
@@ -92,12 +104,35 @@ fn main() {
             }
             let total = threads as u64 * ROWS * PASSES;
             bench.measure(Case::new(name, "fetches").threads(threads), || {
-                on_threads(threads, |t| stock.read(t, (scattered, probed), how));
+                on_threads(threads, |t| stock.read(t, (scattered, probed), how, &READ));
                 total
             });
             if let Some(rate) = bench.rate(name, threads) {
                 harness::note(&format!("{name}, {threads} threads: {:.0} ns a fetch", threads as f64 * 1e9_f64 / rate));
             }
+        }
+    }
+    frozen(&bench, only.as_deref());
+}
+
+/// The cases of the table of the column store, on one thread.
+fn frozen(bench: &Bench, only: Option<&str>) {
+    let stock = stock(bench, FROZEN_ROWS, true);
+    let cases: [(&str, bool, &[usize]); 3] = [
+        ("row id, scattered, column store", true, &READ),
+        ("row id, in key order, column store", false, &READ),
+        ("row id, scattered, four columns, column store", true, &READ_FOUR),
+    ];
+    for (name, scattered, columns) in cases {
+        if only.is_some_and(|o| o != name) {
+            continue;
+        }
+        bench.measure(Case::new(name, "fetches"), || {
+            stock.read(0, (scattered, false), How::Bare, columns);
+            FROZEN_ROWS * PASSES
+        });
+        if let Some(rate) = bench.rate(name, 1) {
+            harness::note(&format!("{name}: {:.0} ns a fetch", 1e9_f64 / rate));
         }
     }
 }
@@ -107,33 +142,33 @@ impl Stock {
     /// or in key order, by its id or behind a probe of the index. Not
     /// inlined, so a profile names it.
     #[inline(never)]
-    fn read(&self, t: usize, (scattered, probed): (bool, bool), how: How) {
+    fn read(&self, t: usize, (scattered, probed): (bool, bool), how: How, columns: &[usize]) {
         let (mut near, mut out, mut bytes) = (Near::default(), Row::new(), Vec::new());
         let by = self.index.key_probe().unwrap();
         let (_table, _index) = (self.table.pin(), self.index.pin());
         let mut tx = NO_TRANSACTION;
-        for n in 0..ROWS * PASSES {
+        for n in 0..self.rows * PASSES {
             if let How::In { checked } = how
                 && n % READS == 0
             {
                 self.end(tx);
                 tx = self.begin(checked);
             }
-            let at = if scattered { scatter(n + t as u64 * 1009, ROWS) } else { n % ROWS };
+            let at = if scattered { scatter(n + t as u64 * 1009, self.rows) } else { n % self.rows };
             out.clear();
             let found = if probed {
                 assert!(by.whole_key(&[number(1), number(at)], &mut bytes));
                 let mut found = false;
                 by.entries_of(&bytes, &mut |entry| {
-                    found = self.table.get_listed(tx, entry.row, &READ, (&mut near, &mut out))?;
+                    found = self.table.get_listed(tx, entry.row, columns, (&mut near, &mut out))?;
                     Ok(false)
                 })
                 .unwrap();
                 found
             } else {
-                self.table.get_listed(tx, self.ids[at as usize], &READ, (&mut near, &mut out)).unwrap()
+                self.table.get_listed(tx, self.ids[at as usize], columns, (&mut near, &mut out)).unwrap()
             };
-            assert!(found && out.len() == 1);
+            assert!(found && out.len() == columns.len());
         }
         self.end(tx);
     }
@@ -174,13 +209,15 @@ fn row(n: u64) -> Row {
     row
 }
 
-/// The table loaded, each row's index entry written after it by the
-/// thread that wrote the row, as a statement does, so the entry carries
-/// the row's leaf as its hint.
-fn stock(bench: &Bench) -> Stock {
+/// The table loaded with `rows` rows, each row's index entry written
+/// after it by the thread that wrote the row, as a statement does, so the
+/// entry carries the row's leaf as its hint; of the column store if
+/// `frozen`, its rows then frozen into groups.
+fn stock(bench: &Bench, rows: u64, frozen: bool) -> Stock {
     let pool = Arc::new(BufferPool::new(FRAMES, Box::new(Arc::new(Weighted::new(FRAMES, Arc::new(Table::default()))))).unwrap());
-    let file = pool.add_pager(Arc::new(bench.pager("fetch")));
-    let store = RowStore::new(TableFiles::new(Arc::clone(&pool), file, Arc::new(MemoryLog::new())), TableOptions::default());
+    let file = pool.add_pager(Arc::new(bench.pager(if frozen { "fetch-frozen" } else { "fetch" })));
+    let files = TableFiles::new(Arc::clone(&pool), file, Arc::new(MemoryLog::new()));
+    let store = if frozen { RowStore::columns(files, TableOptions::default()) } else { RowStore::new(files, TableOptions::default()) };
     let mut columns = vec![("S_I_ID".to_owned(), INTEGER), ("S_W_ID".to_owned(), INTEGER), ("S_QUANTITY".to_owned(), INTEGER)];
     columns.extend((1..=10_u32).map(|d| (format!("S_DIST_{d:02}"), DataType::character(24))));
     columns.extend(["S_YTD", "S_ORDER_CNT", "S_REMOTE_CNT"].map(|name| (name.to_owned(), INTEGER)));
@@ -209,12 +246,15 @@ fn stock(bench: &Bench) -> Stock {
     };
     let table: Arc<dyn TableStorage> = store.create_table(&desc).unwrap().into();
     let index: Arc<dyn Index> = Arc::from(BTreeMethod::new(pool, file).create(&[INTEGER, INTEGER]).unwrap());
-    let ids = (0..ROWS)
+    let ids = (0..rows)
         .map(|n| {
             let id = table.insert(NO_TRANSACTION, row(n)).unwrap();
             index.insert(key(n), id).unwrap();
             id
         })
         .collect();
-    Stock { _store: store, table, index, ids, next: AtomicU64::new(1 << 40) }
+    // Every row was written outside a transaction, so committed before
+    // every snapshot, and frozen as its group is due.
+    while frozen && table.maintain(1, true).unwrap() {}
+    Stock { _store: store, table, index, ids, rows, next: AtomicU64::new(1 << 40) }
 }

@@ -678,6 +678,9 @@ verification approach DO-178C expects (§8).
 | D1062 | A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null |
 | D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
+| D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
+| D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
+| D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
 
 ### The project
 
@@ -18515,6 +18518,82 @@ judged of every row. A conjunct of no subquery, or of an uncorrelated
 one, stays below, where it is cheap and may be told to a scan. Beside an
 antijoin every conjunct stays below, as an antijoin often keeps most of
 its rows and the conjunct may keep few.
+
+### Column store reads
+
+#### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
+
+The headers of frozen row groups were held in one map behind one mutex,
+ordered by when each was last read (D31). Every read of a header held
+took the mutex and moved the header in an ordered tree, so the scans of
+a parallel query, a group each, met on it once a group. Its bound was
+16 MiB whatever the database's memory. A header of a table of sixteen
+columns takes about 180 KiB, so the cache held some ninety of the 915
+groups of a table of sixty million rows. A scan of the table then read
+and parsed every header again on every query, and a join that fetched
+rows by id from groups all over the table parsed a header for most of
+its fetches.
+
+A header held is now kept in a slot of its group's entry of the
+directory. A read of it takes the slot's own lock shared and looks
+nothing up, so readers of different groups share no word. The cache
+keeps the bytes and a queue of the headers in the order they were put.
+When it must give one up it takes the first of the queue, but passes
+over once each header read since it was last passed over, so the
+headers read lately stay. The order is no longer exactly by last read,
+which cost the shared ordered tree.
+
+COLUMNSTORE.HEADER_CACHE_BYTES is -1 by default, which bounds the cache
+at a 64th of MEMORY.BUDGET_BYTES. That is the share the old 16 MiB was
+of the default budget of 1 GiB, so a database of the default settings
+holds what it held, and one given more memory holds the headers of as
+much more data. A value of 0 or more is the bound in bytes as before.
+What the cache holds is still reserved of the budget (D38).
+
+#### D1091. A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured
+
+A read of a frozen row by its id found the chunk of each column by
+looking at the column's chunks one after another, made a row of the
+table's width for a read of a few listed columns, and listed every
+column's place for each read. It now finds the chunk by halving, as a
+column's chunks are in the order of their rows, and a read of listed
+columns appends their values alone (`TableStorage::get_listed`, D862).
+
+The planner priced a frozen fetch a tenth more than a fetch of the
+tree's, a figure never measured. `bench/fetch.rs` now reads the same
+table from the tree and from two groups of the column store with every
+header held. FROZEN_FETCH is set from its case of four columns read by
+scattered ids against the tree's case of scattered ids, as a join or an
+index scan fetches a few columns, each a page of its own
+(`engine/rows/frozen.rs`). A fetch of one column costs less than that,
+and one of every column more.
+
+#### D1092. A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample
+
+A table opened has no statistics, and they were left to the maintenance
+thread once a plan had asked for them (D35, D473). The first plans
+after a start were therefore made without them, on the fixed
+selectivities. A grouping of a table of sixty million rows was planned
+as a sort and a streamed grouping on one thread, and ran for minutes
+where the plan made with statistics runs for a second, and joins
+planned so were worse.
+
+The plan that first asks for the statistics of a table opened now
+gathers them itself, and plans asking meanwhile wait for that pass, so
+it is made once and no plan is made without them. The pass is bounded
+whatever the table holds, as a table of more than twice the sample's
+rows is sampled (D31). If it fails, the statistics are due for the
+maintenance thread as before. A table made in this run, and every later
+pass, are as they were, so D473 still keeps a table no plan reads from
+being gathered.
+
+For the bound to hold of the column store a sampled pass had to cost
+its sample. It read the header of every group and listed and hashed
+every row id of every group to find those sampled. It now takes the
+runs of row ids chosen, passes over a group none of them lies in with
+its header unread, and of a group whose rows are every id of its range
+in order reckons a run's places from its ids
+(`engine/rows/frozen/sampled.rs`).
 
 ## 2. Project layout
 

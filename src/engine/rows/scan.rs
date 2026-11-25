@@ -15,7 +15,6 @@ use crate::engine::tree::{BLinkTree, Direction, Scan, Visit, Visited, scan_of};
 use crate::error::Result;
 use crate::storage::{Batches, Conjunction, Near, Ramp, Row, RowId, Rows, ScanOrder, batches_of};
 use crate::txn::TxId;
-use crate::value::Value;
 
 /// A table's tree, reached through the table, so a scan that owns the
 /// table owns the tree it reads.
@@ -162,9 +161,8 @@ impl RowTable {
             Shown::Later => false,
         };
         if frozen || !self.tree.get_near(&key(id), near)? {
-            let Some(row) = self.frozen_seen(id, Some(columns), reader)? else { return Ok(false) };
-            out.extend(columns.iter().map(|&c| row.get(c).cloned().unwrap_or(Value::Null)));
-            return Ok(true);
+            // Its values alone, no row of the table's width made (RULES.md D1091).
+            return self.frozen_listed((id, columns), reader, out);
         }
         let Some(record) = self.visible_in(&near.bytes, reader)? else {
             let gone = self.deletion_of(&near.bytes);
