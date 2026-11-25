@@ -127,6 +127,8 @@ impl Plan {
             Plan::Recursive { member, fixpoint } => writeln!(out, "{pad}Recursive member {member} ({})", fixpoint.word()),
             Plan::WorkTable { member, .. } => writeln!(out, "{pad}WorkTable of member {member}"),
             Plan::Transition { .. } => writeln!(out, "{pad}Transition table"),
+            // Made as a plan runs, never planned: shown as its subplan.
+            Plan::Shared(s) => return s.input.write(out, depth),
             Plan::Unnest(u) => write_unnest(u, out, &pad),
             Plan::Window { detail, .. } | Plan::Recognize { detail, .. } | Plan::MergeAppend { detail, .. } => {
                 writeln!(out, "{pad}{detail}")
@@ -149,6 +151,7 @@ impl Plan {
             | Plan::System { .. }
             | Plan::WorkTable { .. }
             | Plan::Transition { .. }
+            | Plan::Shared(_)
             | Plan::Counted(_) => {}
             Plan::Recursive { fixpoint, .. } => {
                 let (first, second, rest) = fixpoint.plans();

@@ -82,6 +82,7 @@ pub(super) fn operands(plan: &Plan) -> Option<(&Plan, &Plan)> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => None,
@@ -172,6 +173,7 @@ fn read(plan: &Plan, width: usize) -> Vec<usize> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => return columns,
@@ -245,6 +247,7 @@ fn joined(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => no_join,
@@ -429,6 +432,7 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => true,
+        Plan::Shared(s) => in_order(&s.input),
         // A pipeline run in parallel gives its batches in its morsels'
         // order (`parallel/batches.rs`), as its plan alone would; a
         // grouping by hash run in parallel gives its groups in none, as

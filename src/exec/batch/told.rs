@@ -108,6 +108,19 @@ pub(super) fn part_batches(part: Parallel, (db, tx): (&Db, TxId)) -> Result<Batc
     Ok(gathered(execute(Plan::Parallel(Box::new(part)), db, tx), &columns))
 }
 
+/// \[DESIGN\] (RULES.md D1129) The batches of `plan`, a subplan computed
+/// once for its statement: its rows, read from where they are held or
+/// made by this reader (`exec/shared.rs`), gathered. It is told no
+/// filter, as every reader is given all its rows.
+///
+/// # Errors
+///
+/// SQLCODE -910 of a plan whose batches hold no layout.
+pub(super) fn shared_batches(plan: Plan, (db, tx): (&Db, TxId), _deferred: &Deferred) -> Result<Batches> {
+    let (columns, _) = stream::layout(&plan, db).ok_or_else(|| broken("a shared subplan that gives no batches"))?;
+    Ok(gathered(execute(plan, db, tx), &columns))
+}
+
 /// Whether `plan`, an operator run row by row whose rows a stream
 /// gathers, reads by batch as an operand of an inner hash join: an index
 /// scan does, and the others if their operands do (`stream::reads`).

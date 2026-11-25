@@ -55,6 +55,7 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         | Plan::Recursive { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Unnest(_)
         | Plan::Window { .. }
         | Plan::Polymorphic(..)

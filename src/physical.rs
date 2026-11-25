@@ -51,7 +51,7 @@ mod ordered;
 mod parallel;
 pub use parallel::Parallel;
 mod plannings;
-pub(crate) use parallel::{parallel, rows_of as parallel_rows, system_threads, workers_of};
+pub(crate) use parallel::{parallel, parallel_run, rows_of as parallel_rows, system_threads, workers_of};
 pub use plannings::plannings;
 mod probe;
 mod project;
@@ -62,8 +62,10 @@ mod raising;
 mod recognized;
 mod robust;
 mod semi;
+mod shared;
 pub use mark::{MarkJoin, MarkMethod};
 pub use semi::{SemiJoin, SemiMethod};
+pub use shared::Shared;
 mod shown;
 mod transfer;
 pub use transfer::{Phase, Step, Transfer};
@@ -457,6 +459,8 @@ pub enum Plan {
     /// \[DESIGN\] Predicate transfer over a chain of joins, or a leaf of
     /// one it read (`physical/transfer.rs`, RULES.md D665).
     Transfer(Box<Transfer>),
+    /// \[DESIGN\] A subplan read in several places, computed once (RULES.md D1129).
+    Shared(Box<Shared>),
 }
 
 /// \[DESIGN\] Chooses a physical plan for a logical one, using the state's

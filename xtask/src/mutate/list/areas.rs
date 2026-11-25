@@ -63,6 +63,7 @@ mod row_path;
 mod server_lines;
 mod set_types;
 mod shared_lines;
+mod shared_work;
 mod skipping;
 mod sorts;
 mod statistics;
@@ -228,7 +229,7 @@ fn second() -> [&'static [Mutation]; 48] {
 /// taken back by a scan and scans priced by sampled zones, key plans, a
 /// B-link tree probe's path, a commit's stamps in place, the fixed costs cut from a write, a row's fetch by its id
 /// and EXPLAIN of a data change.
-fn planner() -> [&'static [Mutation]; 13] {
+fn planner() -> [&'static [Mutation]; 14] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
@@ -243,6 +244,7 @@ fn planner() -> [&'static [Mutation]; 13] {
         &write_costs::WRITE_COSTS,
         &fetch_path::FETCH_PATH,
         &explain_unrun::EXPLAIN_UNRUN,
+        &shared_work::SHARED_WORK,
     ]
 }
 

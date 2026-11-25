@@ -16,7 +16,7 @@ use crate::catalog::{KeyShape, QualifiedName};
 use crate::engine::key::{decode_key, encode_columns};
 use crate::error::Result;
 use crate::index::{Key, KeyProjection, Probe};
-use crate::logical::{Truth, pushed_conjuncts};
+use crate::logical::{Cond, Truth, pushed_conjuncts};
 use crate::noted::{self, Noted, Notes};
 use crate::physical::{Decided, Plan};
 use crate::storage::{Conjunction, Near, Row, RowId, TableStorage, row_id_of};
@@ -245,12 +245,7 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
                 Some(condition) => told_entries(*input, &condition, db, tx)?,
                 None => table_entries(*input, db, tx)?,
             };
-            let runner = Runner::new(db, tx);
-            Ok(Box::new(rows.filter_map(move |read| match read.and_then(|(id, row)| Ok((eval_cond(&cond, &row, &runner)?, id, row))) {
-                Ok((Truth::True, id, row)) => Some(Ok((id, row))),
-                Ok((Truth::False | Truth::Unknown, ..)) => None,
-                Err(e) => Some(Err(e)),
-            })))
+            Ok(Box::new(judged(rows, cond, Runner::new(db, tx))))
         }
         // The index scans of an OR's ranges, none overlapping
         // (`physical/access.rs`): each row once.
@@ -281,9 +276,20 @@ fn entries_in(plan: Plan, db: &Db, tx: TxId) -> Result<Entries> {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)) => Err(broken(&format!("not a table access: {other:?}"))),
     }
+}
+
+/// The entries of `rows` that `cond` is true of, its subqueries run by
+/// `runner`.
+fn judged(rows: Entries, cond: Cond, runner: Runner) -> impl Iterator<Item = Result<(RowId, Row)>> {
+    rows.filter_map(move |read| match read.and_then(|(id, row)| Ok((eval_cond(&cond, &row, &runner)?, id, row))) {
+        Ok((Truth::True, id, row)) => Some(Ok((id, row))),
+        Ok((Truth::False | Truth::Unknown, ..)) => None,
+        Err(e) => Some(Err(e)),
+    })
 }
 
 /// Whether `plan` is a table access whose entries `table_entries` reads
@@ -320,6 +326,7 @@ pub fn is_table_access(plan: &Plan) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_) => false,
     }

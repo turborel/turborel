@@ -94,6 +94,7 @@ fn passing(plan: &Plan) -> Option<&Plan> {
         | Plan::Recursive { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Unnest(..)
         | Plan::Window { .. }
         | Plan::Recognize { .. }

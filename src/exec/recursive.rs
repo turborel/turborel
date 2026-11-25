@@ -202,7 +202,8 @@ fn give(plan: &mut Plan, work: &[WorkRows]) {
         | Plan::IndexScan { .. }
         | Plan::System { .. }
         | Plan::Values { .. }
-        | Plan::Transition { .. } => {}
+        | Plan::Transition { .. }
+        | Plan::Shared(_) => {}
         Plan::Filter { input, .. }
         | Plan::IndexJoin { left: input, .. }
         | Plan::Aggregate { input, .. }

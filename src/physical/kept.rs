@@ -197,6 +197,7 @@ pub(crate) fn keepable(plan: &Plan, st: &State) -> bool {
         | Plan::Recognize { .. }
         | Plan::WorkTable { .. }
         | Plan::Transition { .. }
+        | Plan::Shared(_)
         | Plan::Parallel(..)
         | Plan::Transfer(_)
         | Plan::Counted(_) => false,
