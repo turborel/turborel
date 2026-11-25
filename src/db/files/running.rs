@@ -23,8 +23,7 @@ use crate::db::stores::CatalogStore;
 use crate::disk::io::{Durability, FileSystem, OpenMode};
 use crate::error::Result;
 
-/// The file a database reopened clean keeps while it runs.
-pub(in crate::db) const OPENED: &str = "opened";
+pub(in crate::db) use crate::files::OPENED;
 
 /// `image`, the last recorded in `dir`, as not clean if the database ran
 /// from it and stopped without closing.

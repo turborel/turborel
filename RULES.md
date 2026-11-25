@@ -731,6 +731,8 @@ verification approach DO-178C expects (§8).
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
 | D1163 | A zone settled visible to every reader is saved so, and opens settled |
 | D1164 | A start that changes nothing records no catalog image |
+| D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
+| D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
 
 ### The project
 
@@ -19851,6 +19853,56 @@ The settings a database is started with, as a server's configuration
 gives them, are set again at each start, and each was logged, so the log
 moved on and the close recorded an image. A setting set to the value it
 already has is no longer logged (`db/settings.rs`).
+
+The mark is a kind of file the database knows (`FileKind::Opened`,
+`files/classes.rs`), so an export of a running database is not refused.
+No copy carries it. An export, and the backup and the state transfer
+taken from it, records its image not clean, so the database restored or
+installed from it recovers as from any copy of one running
+(`db/export.rs`). A database following that installs an export takes
+out the mark of the state it replaces (`standby/import.rs`).
+
+#### D1165. What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted
+
+TABLE_STATISTICS showed a table's bytes as its frozen groups' pages plus
+its tree's rows times their mean width, so a table never analyzed, of
+either store, showed none. Nothing showed what a column takes, or how
+its chunks were encoded, so a table taking ten times the bytes it might
+could not be told apart by column.
+
+A tree's bytes are now its pages, counted (`BLinkTree::pages`). Its
+nodes above the leaves are read, each level by its right links, and its
+leaves counted as the level above names them, none read. The view
+INFORMATION_SCHEMA.COLUMN_STORAGE (`system/column_storage.rs`) has a row
+of each column and each way its values are kept. Of a column store's
+groups, it is the chunks of one encoding, with their count, rows, bytes
+encoded and the bytes of the pages they take. Each chunk's kind and
+length are read from the chunk itself (`rows/sizes.rs`), so groups any
+build wrote show them, and no group's format changes; reading the view
+reads every group's pages. Of a tree's rows, of either store, it is ROW.
+TABLE_STATISTICS reads no chunk
+(`TableStorage::sizes`, asked without the columns).
+
+A tree keeps each row whole, so of its rows COLUMN_STORAGE shows their
+number and no bytes; the tree's bytes are the table's. Every sum of
+bytes is checked. A size past what a column of counts holds (`BIGINT`)
+is the null value, never a bound reached and shown.
+
+#### D1166. A count past 2^32 is itself, as an estimate and as a sum of bytes
+
+A count of things as an `f64` (`stats::parts::count`) stopped at the most
+a `u32` holds, and the ceiling of an estimate as a count
+(`linearize::count`, `parallel::rows_of`) took that same bound as its
+cap. A table's bytes past 4 GB were then 4 GB, so its mean width, its
+bytes over its rows, was short by as many times, and the planner priced
+its sorts and hashes (`cost/spill.rs`) as if far smaller. An estimate of
+more than 2^32 rows or bytes was counted as the most a count holds, and
+a table's bytes so estimated were shown as that bound plus its frozen
+pages.
+
+A count is now exact to 2^53 and the nearest `f64` past it, its high and
+low words each converted. The ceiling of an estimate is the most a
+count holds only of one reaching it.
 
 ## 2. Project layout
 

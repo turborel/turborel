@@ -76,6 +76,10 @@ pub enum FileKind {
     Undo,
     /// A spill file.
     Spill,
+    /// The mark of a database reopened clean and running (RULES.md
+    /// D1164), carried by an export's image recorded not clean, never
+    /// copied: a copy is not the database running.
+    Opened,
     /// \[EXTENSION\] A file of a state transfer being fetched by a
     /// replica, staged in `transfer/` until it is installed (RULES.md
     /// D57).
@@ -106,6 +110,8 @@ impl FileKind {
             FileKind::Data
         } else if name.starts_with("data.shadow") {
             FileKind::Shadow
+        } else if name == OPENED {
+            FileKind::Opened
         } else if name.starts_with("catalog.") {
             FileKind::Catalog
         } else if dir == "log" {
@@ -130,6 +136,7 @@ impl FileKind {
             FileKind::Log => "LOG",
             FileKind::Undo => "UNDO",
             FileKind::Spill => "SPILL",
+            FileKind::Opened => "OPENED",
             FileKind::Transfer => "TRANSFER",
             FileKind::Plugin => "PLUGIN",
             FileKind::Server => "SERVER",
@@ -141,7 +148,7 @@ impl FileKind {
     /// the database's: a server's, or one it does not lay out.
     pub fn class(self) -> Option<FileClass> {
         match self {
-            FileKind::Data | FileKind::Catalog | FileKind::Log | FileKind::Plugin => Some(FileClass::Durable),
+            FileKind::Data | FileKind::Catalog | FileKind::Log | FileKind::Plugin | FileKind::Opened => Some(FileClass::Durable),
             FileKind::Shadow => Some(FileClass::DurableAtCommit),
             FileKind::Undo => Some(FileClass::Unsynced),
             FileKind::Spill | FileKind::Transfer => Some(FileClass::Scratch),
@@ -153,7 +160,7 @@ impl FileKind {
     /// plug-in its directory is named for.
     pub fn owner(self, path: &Path) -> FileOwner {
         match self {
-            FileKind::Data | FileKind::Catalog | FileKind::Undo | FileKind::Transfer => FileOwner::Database,
+            FileKind::Data | FileKind::Catalog | FileKind::Undo | FileKind::Transfer | FileKind::Opened => FileOwner::Database,
             FileKind::Shadow => plugin_of(path).map_or(FileOwner::Database, FileOwner::Plugin),
             FileKind::Log => FileOwner::Log,
             FileKind::Spill => FileOwner::Spill,
@@ -163,6 +170,10 @@ impl FileKind {
         }
     }
 }
+
+/// \[DESIGN\] The file a database reopened clean keeps in its directory
+/// while it runs (RULES.md D1164, `db/files/running.rs`).
+pub const OPENED: &str = "opened";
 
 /// \[EXTENSION\] The directory, in a database's, where a replica stages a
 /// state transfer it fetches (RULES.md D57); cleared as the database opens.
@@ -195,6 +206,7 @@ mod tests {
             ("db/data", FileKind::Data, durable, FileOwner::Database),
             ("db/data.shadow1", FileKind::Shadow, Some(FileClass::DurableAtCommit), FileOwner::Database),
             ("db/catalog.0", FileKind::Catalog, durable, FileOwner::Database),
+            ("db/opened", FileKind::Opened, durable, FileOwner::Database),
             ("db/log/segment-0000000001.log", FileKind::Log, durable, FileOwner::Log),
             ("db/undo/segment-0000000001.log", FileKind::Undo, Some(FileClass::Unsynced), FileOwner::Database),
             ("db/tmp/turborel-1-2-3.spill", FileKind::Spill, Some(FileClass::Scratch), FileOwner::Spill),
