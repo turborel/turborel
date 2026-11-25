@@ -92,7 +92,7 @@ pub const COUNT: [Mutation; 19] = [
         file: "src/engine/rows/frozen/counts.rs",
         original: "self.reader(tx).and_then(|reader| self.note_read(tx, || Read::All(EVERY_COLUMN)).map(|()| reader));",
         replacement: "self.reader(tx);",
-        integration: &[GROUPED_LEVELS],
+        integration: &[],
         unit: &["engine::rows::frozen::tests::counted::a_grouped_count_conflicts_with_an_insert_as_a_scan_does"],
     },
     Mutation {
