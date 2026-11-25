@@ -230,7 +230,11 @@ groups, as the optimizer estimates them, that each morsel holds
 nearly as many groups as rows runs on several only when enough threads
 share its work. Its morsels' groups are merged a few morsels at a time,
 so it holds about what its groups hold, and a morsel of few groups is
-merged on the statement's thread at once. A scan or sort of a column
+merged on the statement's thread at once. A query of DISTINCT set
+functions, computed by two groupings, runs both in one part: the first
+grouping's groups are split among the threads by the query's grouping
+columns alone, so each thread makes the second grouping's groups of its
+own, and EXPLAIN shows both groupings under one `Parallel`. A scan or sort of a column
 store table stays on it too while EXECUTOR.BATCHES is on, since its
 scan by batch is faster alone; a join, window functions, a grouping or
 DISTINCT over one still run in parallel, a grouping a batch at a time

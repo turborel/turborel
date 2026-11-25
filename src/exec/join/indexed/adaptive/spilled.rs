@@ -55,7 +55,7 @@ pub(super) fn chosen(mut join: IndexJoin, held: Held, mut columns: Vec<usize>, d
     let Some(binding) = held.rows.first().and_then(|row| Binding::of(&join, row.len())) else { return Ok(held.resume(join)) };
     let mut work = Work::of(db, join.table.tx);
     let Ok(run) = work.run() else { return Ok(held.resume(join)) };
-    let each = probe_cost(&join, &held.rows, db)?;
+    let each = probe_cost(&join, (&held.rows, columns.len()), db)?;
     let mut outer = Outer { run, count: 0, bytes: 0, hull: None };
     let (rows, overflow, reservation) = held.into_parts();
     for row in rows.into_iter().chain(overflow) {
@@ -79,15 +79,16 @@ pub(super) fn chosen(mut join: IndexJoin, held: Held, mut columns: Vec<usize>, d
     Ok(Box::new(join))
 }
 
-/// The mean cost of a probe of the rows held, as `cheaper` prices them;
-/// none if the index cannot estimate one.
-fn probe_cost(join: &IndexJoin, rows: &[Row], db: &State) -> Result<Option<f64>> {
+/// The mean cost of a probe of the rows held, each match fetched of
+/// `read` columns, as `cheaper` prices them; none if the index cannot
+/// estimate one.
+fn probe_cost(join: &IndexJoin, (rows, read): (&[Row], usize), db: &State) -> Result<Option<f64>> {
     let (model, table) = (db.cost(), cost_of(join.table.storage.row_count()));
     let mut total = 0.0_f64;
     for row in rows {
         let Some(probe) = join.probe.bind(row, join.table.ix.columns.len())? else { continue };
         let Some(matches) = join.table.index.estimate(&probe) else { return Ok(None) };
-        total += model.index_descent * (table + 1.0_f64).log2() + cost_of(matches) * join.table.storage.fetch_cost();
+        total += model.index_descent * (table + 1.0_f64).log2() + cost_of(matches) * join.table.storage.fetch_cost(read);
     }
     Ok(Some(total / cost_of(rows.len().max(1))))
 }

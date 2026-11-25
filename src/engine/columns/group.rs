@@ -144,8 +144,17 @@ impl<S: Seal> Pages<'_, S> {
     ///
     /// The pool's; the encodings'; `read`'s.
     pub fn with<T>(&self, page: PageId, read: impl FnOnce(&[u8]) -> Result<T>) -> Result<T> {
+        self.with_told(page, |content, _| read(content))
+    }
+
+    /// As `with`, `read` told whether the content is read in the pool,
+    /// the page having passed through no encoding: it is then read again
+    /// as cheaply, with no copy to keep.
+    fn with_told<T>(&self, page: PageId, read: impl FnOnce(&[u8], bool) -> Result<T>) -> Result<T> {
         let stored = self.pool.read(self.file, page.0)?;
-        read(&self.sealing.open(page.0, &stored)?)
+        let opened = self.sealing.open(page.0, &stored)?;
+        let in_place = matches!(opened, Cow::Borrowed(_));
+        read(&opened, in_place)
     }
 
     /// What `read` makes of the bytes of `run` (`Run::at`), as `with`.
@@ -154,11 +163,23 @@ impl<S: Seal> Pages<'_, S> {
     ///
     /// As `with`; SQLCODE -916 if the run is past its page's end.
     pub fn with_run<T>(&self, run: &Run, read: impl FnOnce(&[u8]) -> Result<T>) -> Result<T> {
+        self.with_run_told(run, |bytes, _| read(bytes))
+    }
+
+    /// As `with_run`, `read` told whether the bytes are read in the pool
+    /// (`with_told`).
+    ///
+    /// # Errors
+    ///
+    /// As `with_run`.
+    pub fn with_run_told<T>(&self, run: &Run, read: impl FnOnce(&[u8], bool) -> Result<T>) -> Result<T> {
         if run.len == 0 {
-            return self.with(run.page, read);
+            return self.with_told(run.page, read);
         }
         let (at, len) = (usize::try_from(run.at).unwrap_or(usize::MAX), usize::try_from(run.len).unwrap_or(usize::MAX));
-        self.with(run.page, |bytes| read(bytes.get(at..at.saturating_add(len)).ok_or_else(|| corrupt("a chunk is past its page's end"))?))
+        self.with_told(run.page, |bytes, in_place| {
+            read(bytes.get(at..at.saturating_add(len)).ok_or_else(|| corrupt("a chunk is past its page's end"))?, in_place)
+        })
     }
 
     /// Frees `pages`; one that cannot be is left.

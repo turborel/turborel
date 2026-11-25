@@ -371,8 +371,8 @@ impl TableStorage for RowTable {
 
     /// 8.6 of a table the buffer pool holds, more as it holds less of it, shared with the other tables and indexes of its file,
     /// to 72, to 5900 as the system's cache holds none of the rest; more by the share of the rows frozen (`rows/frozen.rs`).
-    fn fetch_cost(&self) -> f64 {
-        self.frozen_fetch_cost()
+    fn fetch_cost(&self, columns: usize) -> f64 {
+        self.frozen_fetch_cost(columns)
     }
 
     /// 63.4 while its file's pages past the pool fit the system's cache, more as they do not, to 5891.4 (`rows/frozen.rs`).
@@ -380,7 +380,7 @@ impl TableStorage for RowTable {
         self.page_missed_cost()
     }
 
-    /// A table opened has none until first asked for them, the plan asking gathering them itself (`rows/stats.rs`, RULES.md D1092).
+    /// A table opened has those a checkpoint saved, else none until the plan first asking gathers them (RULES.md D1092, D1093).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         self.statistics_asked()
     }

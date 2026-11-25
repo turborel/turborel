@@ -697,10 +697,14 @@ verification approach DO-178C expects (§8).
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
+| D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
+| D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
+| D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
 | D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
+| D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -18992,6 +18996,96 @@ its header unread, and of a group whose rows are every id of its range
 in order reckons a run's places from its ids
 (`engine/rows/frozen/sampled.rs`).
 
+#### D1093. A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first
+
+A table's statistics were kept in memory alone, so a database opened
+had none, and the first plan of each table read a sample of it before
+it could be made (D1092). A server started therefore paid a pass of
+every table its first statements named, and what a pass had learned of
+a column growing with insertion (D381) was lost at each start.
+
+The row store now saves them. A table's meta page names a page of its
+own for them, of any length, written at the checkpoint after each pass
+that gathered them (`engine/rows/stats/saved.rs`), and read as the
+table is opened. It holds every number the pass found, and each value,
+a bound, a histogram's bound, a common value or a sampled row's, as a
+record of the table's own format (`engine/rows/stats/image.rs`), so
+nothing new describes a value. A table opened with statistics saved
+plans by them at once and makes no first pass. The rows it holds more
+or fewer than they found count as changes since, so a table that
+changed much after its last pass is due as it would have been. A table
+with none saved gathers its first as D1092 says. An index's count of
+its keys was already kept, with its locator (D35).
+
+The page holds a sample of the table's rows, so it follows the table's
+protections. It is sealed by the table's encodings (D30, D48), its
+page number the context, with a bit of its own, and passes through
+the file's encodings as every page does. Statistics that cannot be
+sealed, their encodings not registered, are saved empty. The page is
+freed with the table's other pages when the table is dropped, and a
+table truncated is a new table with no such page.
+
+Statistics are advice, so no failure of them fails a table. A page
+that is empty, that cannot be opened, or that is not what was saved is
+read as no statistics, and the table gathers them again.
+
+The meta page gains one word, the statistics page. A meta page written
+before, which ends at the large objects' tree, is read as naming none,
+so a database written before this decision opens as it is and has its
+statistics saved at its next checkpoint. A build from before this
+decision refuses a meta page of the new length as not a table's of its
+format (SQLCODE -916), and does not misread it. Formats stay 1.
+
+#### D1094. A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it
+
+A scan opened each chunk once for all its runs (D352) by copying the
+chunk's bytes out of the buffer pool into a buffer of its own, since
+the page was not held between runs. On a scan of a few narrow columns
+that copy was the largest cost after decoding, a page copied for every
+page decoded.
+
+A chunk whose page passed through no encoding is now read where it
+lies. What D352 keeps of a chunk, its table of symbols and its
+dictionary's entries, is still made once and kept. Its bytes are not.
+Each run finds the page in the pool again, holds it while it decodes
+its rows of it, and lets it go (`engine/columns/prepared.rs`). Finding
+a page the pool holds is a hash and a latch, which costs less
+than copying the page, and a run of a vector of rows touches a chunk
+once or twice. A group's pages are not written again while a reader
+holds the group, and a run never reads a second page while it holds
+one, so the page is held for one decode and by nothing that waits.
+
+A chunk whose page its table's encodings open is read as before, its
+opened bytes kept for its runs, as opening it once is what D352 saves.
+Which a page is is known as it is read, page by page, so a table whose
+encodings changed reads each page as it was written. No format
+changes.
+
+#### D1097. A fetch of a frozen row is priced by the number of columns it reads
+
+The planner priced a fetch of a frozen row as one of four columns
+(D1091), whatever it read. A frozen row read by its id reads one chunk
+of each column asked for, each on a page of its own, so a fetch of one
+column costs less than a fetch of the tree's row and one of every
+column of a wide table several times more. One figure could not be
+right for both, and a join that fetched one column of a frozen table
+was priced as if it read four.
+
+`TableStorage::fetch_cost` is now given the number of columns read,
+and every planner's and executor's caller passes the columns its plan
+reads. A frozen row costs `FROZEN_FETCH` to find its group and place
+and `FROZEN_FETCH_COLUMN` for each column read, against a fetch of the
+tree's row costing 1 (`engine/rows/frozen.rs`). The two are the line
+through the cases of `bench/fetch.rs` that read one and four columns of
+a frozen table by scattered ids, against its case of the tree's row
+read by scattered ids. Its cases of eight and of all seventeen columns
+lie near that line, the seventeen, wide texts among them, a little
+above it, so a column's cost is taken as one whatever its type. A
+table whose rows are
+in its tree reads them whole, and its fetch costs the same whatever is
+read. So does that of an engine that does not keep its columns apart,
+the default.
+
 #### D1100. A group's shadow bits are trusted only once the entries the tree held as it was published are marked
 
 A group is put in the directory first, and the entries the tree holds in
@@ -19100,6 +19194,39 @@ above every row beyond one a left row. So the rule rewrites only where
 the right operand's estimated rows less its estimated keys outnumber
 the left operand's rows. Without statistics a column's distinct values
 are taken as its table's rows (D370), so the rule then leaves the plan.
+
+#### D1113. A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both
+
+DISTINCT_AGGREGATES (D340) makes a query of DISTINCT set functions two
+groupings, the first by the grouping columns and each argument, the
+second by the grouping columns alone. Only the first was a part run in
+parallel (D293). Its groups, as many as the query's rows nearly, were
+merged in order on the statement's thread, which then grouped them
+again a row at a time while the workers waited.
+
+A grouping over another is now one part when the second groups by some
+of the first's grouping columns and no others, neither by a collation
+nor with groups of empty grouping sets, its set functions none DISTINCT
+nor an inverse distribution function and each evaluated by a worker
+alone, and the first's states merge (`physical::first_level`). The
+first's groups are split among the partitions by the hash of their
+values of the second's columns alone (`GroupTable::made`), the same of
+a value in every morsel, so each partition holds every group of the
+first that a group of the second takes. The thread finishing a
+partition orders its groups by their first rows and groups them again
+(`exec/parallel/grouped/regrouped.rs`), each set function taking its
+values in that order, as the serial plan feeds them. A group of the
+second is numbered by its first group of the first, so the statement's
+thread merges only the second's groups, in the order the plan run alone
+gives them. A HAVING condition over the pair is judged of the second's
+groups by the same thread. A join's runtime filters (D1063) are of the
+second's columns, so the part's pipeline is told none. The results,
+their order and the warnings are as before. EXPLAIN shows both
+groupings under one `Parallel`, and EXPLAIN ANALYZE counts the first's
+groups as its partitions finish them.
+
+A grouping by no column is left as it was, as its one group would be
+one partition's and one thread's.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
