@@ -680,6 +680,7 @@ verification approach DO-178C expects (§8).
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
 | D1080 | A hash join's operand read by its morsels is joined, hashed, placed in its table and summed up in its filters by those threads, the table in parts of the hashes' high bits |
 | D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
+| D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 
 ### The project
 
@@ -18585,6 +18586,38 @@ pairs (`Late::gathered`), and are decoded at the pipeline's end of the
 rows every join kept (`morsel_kept`). The built operand's columns are
 held as vectors as before. A column a later filter, projection or
 probe reads is decoded at the scan as before.
+
+#### D1082. A grouping by a deterministic expression has no more groups than the columns it reads take values together
+
+The distinct values of a column are counted by its table's statistics,
+found through the nodes that pass columns on (D370). A column that is
+an expression of a projection has no table, so it was counted as one
+value for every row of the plan. A grouping by such a key, as by the
+year of a date or by a sum of two columns, was then estimated at as
+many groups as rows. With that many groups a sort of the rows and a
+streamed grouping costs less than a hashed one (D550), so a grouping of
+millions of joined rows into a few hundred groups was planned as a
+sort of every row, and its hash table would have been sized for a
+group a row.
+
+Now a grouping or DISTINCT counts an expression that is deterministic
+and changes nothing (`expr_pure`, D1041) by the columns it reads
+(`cardinality/lineage.rs`, `computed_of`, `grouped_distinct`). It is a function of them, so
+it takes at most as many values as they take together: the product of
+their distinct values, and no more than the plan's rows. An expression
+that reads no column takes one value. The bound goes through
+expressions of expressions, to the depth estimates walk (D370). An
+expression that is not deterministic may give a value of its own for
+every row and is counted as before.
+
+The bound is not tight. A year takes far fewer values than its date
+does. It is still the plan's rows or fewer, which is what it was, so no
+estimate of groups grows by it.
+
+The distinct values a join's equality is estimated by are counted as
+before, an expression's as its plan's rows. Join orders rest on those
+counts, and what bounding them would do to the orders chosen was not
+measured, so the bound is the grouping's alone.
 
 ## 2. Project layout
 

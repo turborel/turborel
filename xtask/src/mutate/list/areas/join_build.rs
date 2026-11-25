@@ -5,7 +5,9 @@
 //! each vector of the batch joined of its own column, the runtime
 //! filters made beside the table, and an operand of a morsel's rows left
 //! to the statement's thread; of D1081, the probing table's unread
-//! columns carried late across a pipeline's probe.
+//! columns carried late across a pipeline's probe; of D1082, a grouping
+//! by an expression bounded by the columns it reads, and only by a
+//! deterministic one.
 
 use super::super::{Mutation, Package};
 
@@ -23,7 +25,27 @@ const BUILT: &str = "exec::parallel::build::tests::a_table_built_by_many_threads
 
 /// Mechanisms whose removal must fail the requirements of a join's
 /// operand built by many threads.
-pub const JOIN_BUILD: [Mutation; 8] = [
+pub const JOIN_BUILD: [Mutation; 10] = [
+    Mutation {
+        name: "estimate-expression-unbounded",
+        package: Package::Core,
+        breaks: "a grouping counts of an expression at most the combinations of the columns it reads (D1082)",
+        file: "src/physical/cardinality/nodes.rs",
+        original: "        read.iter().map(of).product::<f64>().min(whole)",
+        replacement: "        read.iter().map(of).product::<f64>().max(whole)",
+        integration: &[],
+        unit: &["physical::cardinality::tests::a_grouping_by_an_expression_is_bounded_by_its_columns"],
+    },
+    Mutation {
+        name: "estimate-expression-drawn",
+        package: Package::Core,
+        breaks: "an expression that is not deterministic is bounded by no column (D1082)",
+        file: "src/physical/cardinality/lineage.rs",
+        original: "            return expr_pure(e).then_some((&**input, read));",
+        replacement: "            return Some((&**input, read));",
+        integration: &[],
+        unit: &["physical::cardinality::tests::an_expression_not_deterministic_is_not_bounded"],
+    },
     Mutation {
         name: "join-probe-unlate",
         package: Package::Core,
