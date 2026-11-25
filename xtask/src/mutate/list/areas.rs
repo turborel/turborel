@@ -47,6 +47,7 @@ mod join_estimates;
 mod join_table;
 mod joins;
 mod late;
+mod load_limits;
 mod monitoring;
 mod oltp;
 mod orders;
@@ -91,7 +92,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 33] {
+pub fn core() -> [&'static [Mutation]; 34] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -126,6 +127,7 @@ pub fn core() -> [&'static [Mutation]; 33] {
         &range_reads::RANGE_READS,
         &review_fixes::REVIEW_FIXES,
         &checkpoint_cost::CHECKPOINT_COST,
+        &load_limits::LOAD_LIMITS,
     ]
 }
 

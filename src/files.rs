@@ -37,10 +37,10 @@ use crate::disk::io::{DiskFile, Durability, FileLock, FileSystem, Holding, OpenM
 use crate::error::{Code, Result, SqlError};
 use crate::sync::Signal;
 
-/// \[DESIGN\] The default of FILES.MAX_OPEN: well under the 1024 most
-/// systems allow a process by default, for the connections and the rest
-/// a server holds besides.
-pub const DEFAULT_MAX_OPEN: usize = 1024;
+/// \[DESIGN\] The default of FILES.MAX_OPEN: half the 1024 most systems
+/// allow a process by default, the other half left for the connections
+/// and the rest a server holds besides (RULES.md D1136).
+pub const DEFAULT_MAX_OPEN: usize = 512;
 
 /// \[DESIGN\] How long a file waiting for a descriptor sleeps before it
 /// looks again, if no file done with one wakes it first.
@@ -290,8 +290,10 @@ impl Handle {
         if let Err(e) = self.registry.refused(&self.path) {
             return (Err(e), Vec::new());
         }
-        let failed = self.registry.admit(id);
-        match self.fs.open(&self.path, self.reopen) {
+        let mut failed = self.registry.admit(id);
+        let (opened, closed) = self.registry.opened(id, || self.fs.open(&self.path, self.reopen));
+        failed.extend(closed);
+        match opened {
             Ok(file) => {
                 *write = Some(file);
                 self.registry.reopened(std::time::Instant::now());
@@ -489,7 +491,9 @@ impl FileSystem for FileManager {
         let id = self.registry.next.fetch_add(1, Ordering::Relaxed);
         let failed = self.registry.admit(id);
         self.registry.tell_each(&failed);
-        let file = self.inner.open(path, mode).inspect_err(|_| {
+        let (file, closed) = self.registry.opened(id, || self.inner.open(path, mode));
+        self.registry.tell_each(&closed);
+        let file = file.inspect_err(|_| {
             self.registry.open.fetch_sub(1, Ordering::AcqRel);
         })?;
         let reopen = match mode {
@@ -529,8 +533,11 @@ impl FileSystem for FileManager {
     fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
         self.inner.read_dir(path)
     }
+    /// Opening the directory takes a descriptor too (`spent.rs`).
     fn sync_dir(&self, path: &Path) -> Result<()> {
-        self.inner.sync_dir(path)
+        let (synced, closed) = self.registry.opened(spent::NO_FILE, || self.inner.sync_dir(path));
+        self.registry.tell_each(&closed);
+        synced
     }
     fn lock(&self, path: &Path) -> Result<FileLock> {
         let lock = self.inner.lock(path)?;
@@ -543,6 +550,7 @@ mod classes;
 mod fence;
 mod noted;
 pub mod plugins;
+mod spent;
 mod told;
 
 pub use classes::{FileClass, FileKind, FileOwner, TRANSFER};

@@ -447,10 +447,11 @@ impl DiskFile for ShadowFile {
 
     /// \[DESIGN\] RULES.md D590: while held, into the batch held, as any
     /// write; once sealed, into the sealed batch, whose granules are
-    /// newer than its blocks and older than what was written since. A
-    /// capture into the sealed batch changes nothing a write in flight
-    /// (D472) writes over or a read waits for, so it waits for none: the
-    /// lock is held only to put its granules, copied before it is taken.
+    /// newer than its blocks and older than what was written since,
+    /// appended to its side file (D1139). A capture into the sealed batch
+    /// changes nothing a write in flight (D472) writes over or a read
+    /// waits for, so it waits for none. The lock is held while its block
+    /// is appended.
     fn write_captured_at(&self, data: &[u8], at: u64) -> Result<()> {
         let (first, within) = granule_of(at);
         let end = at.saturating_add(u64::try_from(data.len()).unwrap_or(u64::MAX));
@@ -458,7 +459,6 @@ impl DiskFile for ShadowFile {
         if within != 0 || data.is_empty() || data.len().checked_rem(GRANULE) != Some(0) {
             return Err(refused());
         }
-        let granules: Vec<(u64, Vec<u8>)> = (first..).zip(data.chunks(GRANULE).map(<[u8]>::to_vec)).collect();
         let mut pending = write(&self.0.pending)?;
         if pending.holding {
             // Held, it is a write as any, which waits for those in flight;
@@ -470,7 +470,13 @@ impl DiskFile for ShadowFile {
             }
         }
         let sealed = pending.sealed.as_mut().and_then(Arc::get_mut).filter(|s| end <= s.size).ok_or_else(refused)?;
-        sealed.side.held.extend(granules);
+        // Into the sealed batch's side file, not memory (RULES.md D1139),
+        // as a checkpoint may capture every page of the pool. One the side
+        // file refuses is held, so the failure is the commit's, which a
+        // later checkpoint takes again, as before.
+        if sealed.side.append_captured(&self.0.at, first, data.to_vec()).is_err() {
+            sealed.side.held.extend((first..).zip(data.chunks(GRANULE).map(<[u8]>::to_vec)));
+        }
         Ok(())
     }
 
