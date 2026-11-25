@@ -30,11 +30,14 @@
 //! ```
 
 mod batches;
+mod fetched;
 mod freeze;
 mod late;
 mod merge;
 mod ordered;
 mod rewrite;
+mod sampled;
+pub(super) use sampled::Chosen;
 mod shadow_bits;
 mod stamped;
 
@@ -55,7 +58,7 @@ use super::version::Version;
 use super::{RowTable, corrupt};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
-use crate::engine::columns::cache::HeaderCache;
+use crate::engine::columns::cache::{HeaderCache, Slot};
 use crate::engine::columns::group::{self, Group, Pages, Seal, Summary};
 use crate::engine::columns::scan::candidates;
 pub(super) use crate::engine::tree::LEAST_LOOKUPS;
@@ -63,7 +66,6 @@ use crate::error::Result;
 use crate::storage::{Conjunction, Row, RowId};
 use crate::sync::{lock_builtin, read};
 use crate::txn::Timestamp;
-use crate::value::Value;
 
 /// \[DESIGN\] The cost of a row of the tree scanned for none of its
 /// columns, and the cost more if all are read: a row of all costing 1
@@ -97,8 +99,10 @@ const ENTRY_BYTES: f64 = 32.0;
 const FROZEN_ROW: f64 = 0.25;
 const FROZEN_COLUMNS: f64 = 0.75;
 /// \[DESIGN\] The share by which fetching a frozen row costs more than a
-/// row of the tree, each column a page of its own.
-const FROZEN_FETCH: f64 = 0.1;
+/// row of the tree, each column a page of its own: of four columns read
+/// by scattered row ids, every header held, against the tree's row
+/// (`bench/fetch.rs`, RULES.md D1091).
+const FROZEN_FETCH: f64 = 1.7;
 
 /// A frozen page's context for its encodings: its number, the high bit
 /// set, apart from the row ids that are the contexts of rows' values.
@@ -126,6 +130,8 @@ pub(super) struct Entry {
     /// (`shadow_bits.rs`).
     pub(super) shadow: ShadowBits,
     headers: Arc<HeaderCache>,
+    /// Its group's header, while the cache holds it (RULES.md D1090).
+    slot: Arc<Slot>,
     pool: Arc<BufferPool>,
     file: FileId,
     /// Its pages, once it is retired.
@@ -298,9 +304,9 @@ impl RowTable {
     /// Where its groups' pages are, sealed as its rows are.
     pub(super) fn group_pages(&self) -> Result<Pages<'_, Sealing>> {
         let capacity = self.pool.capacity(self.file)?.saturating_sub(self.sealing.overhead()).saturating_sub(LINK);
-        let compress = self.frozen.columns().is_none_or(|c| c.compress);
-        let pax = self.frozen.columns().is_some_and(|c| c.pax);
-        let imprints = self.frozen.columns().is_some_and(|c| c.imprints);
+        let columns = self.frozen.columns();
+        let (compress, pax, imprints) =
+            (columns.is_none_or(|c| c.compress), columns.is_some_and(|c| c.pax), columns.is_some_and(|c| c.imprints));
         Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress, pax, imprints, kernels: &*self.kernels })
     }
 
@@ -310,12 +316,11 @@ impl RowTable {
     ///
     /// As `group::read`.
     pub(super) fn group_of(&self, entry: &Entry) -> Result<Arc<Group>> {
-        let key = (self.file, entry.summary.header);
-        if let Some(group) = self.headers.get(key) {
+        if let Some(group) = entry.slot.get() {
             return Ok(group);
         }
         let group = Arc::new(group::read(&self.group_pages()?, entry.summary.header, self.format.types())?);
-        self.headers.put(key, &group);
+        self.headers.put((self.file, entry.summary.header), &entry.slot, &group);
         Ok(group)
     }
 
@@ -326,24 +331,6 @@ impl RowTable {
             entry.retire(self.group_of(entry)?.pages());
         }
         Ok(())
-    }
-
-    /// Row `id`'s frozen values, `columns` of them or all, if a group of
-    /// `directory` holds it.
-    pub(super) fn frozen_in(&self, directory: &Directory, id: RowId, columns: Option<&[usize]>) -> Result<Option<Row>> {
-        let Some(entry) = directory.holding(id) else { return Ok(None) };
-        let pages = self.group_pages()?;
-        let group = self.group_of(entry)?;
-        let Some(position) = group.position(&pages, id)? else { return Ok(None) };
-        let types = self.format.types();
-        let mut row = vec![Value::Null; types.len()];
-        let all: Vec<usize> = (0..types.len()).collect();
-        for &c in columns.unwrap_or(&all) {
-            if let (Some(slot), Some(t)) = (row.get_mut(c), types.get(c)) {
-                *slot = group.value(&pages, (c, t), position)?;
-            }
-        }
-        Ok(Some(row))
     }
 
     /// Row `id`'s frozen values, if a group holds it now.
@@ -398,6 +385,7 @@ impl RowTable {
             shadow: ShadowBits::new(summary.first, summary.last),
             summary,
             headers: Arc::clone(&self.headers),
+            slot: Arc::default(),
             pool: Arc::clone(&self.pool),
             file: self.file,
             retired: Mutex::new(None),
@@ -409,7 +397,7 @@ impl RowTable {
     fn entry_of(&self, group: Group) -> Result<Arc<Entry>> {
         let header = *group.header.first().ok_or_else(|| corrupt("a group has no header"))?;
         let entry = self.entry(Summary::of(&group, header));
-        self.headers.put((self.file, header), &Arc::new(group));
+        self.headers.put((self.file, header), &entry.slot, &Arc::new(group));
         Ok(entry)
     }
 
@@ -430,42 +418,6 @@ impl RowTable {
             pages.free(&old);
         }
         Ok(())
-    }
-
-    /// Gives `each` every frozen row of `directory` that `keep` keeps and
-    /// no entry of the tree stands for, every column of it, a vector at a
-    /// time. Only the runs of rows kept are decoded, so a sampled pass
-    /// decodes its sample alone (RULES.md D473).
-    pub(super) fn each_unshadowed(
-        &self,
-        directory: &Directory,
-        keep: impl Fn(RowId) -> bool,
-        mut each: impl FnMut(RowId, Row) -> Result<()>,
-    ) -> Result<()> {
-        let pages = self.group_pages()?;
-        let types = self.format.types();
-        let all: Vec<usize> = (0..types.len()).collect();
-        for entry in &directory.groups {
-            let group = self.group_of(entry)?;
-            let ids = group.row_ids(&pages)?;
-            for (from, to) in kept_runs(&ids, &keep) {
-                let span = (u32::try_from(from).map_err(|_| corrupt("a group is too large"))?, u32::try_from(to).unwrap_or(u32::MAX));
-                let found = crate::engine::columns::scan::rows(&group, &pages, types, &all, span)?;
-                for (&id, row) in ids.get(from..to).unwrap_or_default().iter().zip(found) {
-                    self.unless_shadowed((entry, id), row, &mut each)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Gives `each` frozen row `id`, `row`, unless an entry of the tree
-    /// stands for it.
-    fn unless_shadowed(&self, (entry, id): (&Entry, RowId), row: Row, each: &mut impl FnMut(RowId, Row) -> Result<()>) -> Result<()> {
-        if self.may_shadow(entry, id) && self.tree.get(&super::key(id))?.is_some() {
-            return Ok(());
-        }
-        each(id, row)
     }
 
     /// The planner's cost of a scan of `columns` (`TableStorage::scan_cost`):
@@ -491,7 +443,7 @@ impl RowTable {
             .groups
             .iter()
             .filter(|e| e.summary.may_match(Some(conditions)))
-            .map(|e| match self.headers.get((self.file, e.summary.header)) {
+            .map(|e| match e.slot.peek() {
                 Some(group) => candidates(&group, Some(conditions)).iter().map(|(from, to)| u64::from(to.saturating_sub(*from))).sum(),
                 None => u64::from(e.summary.rows),
             })
@@ -566,22 +518,6 @@ impl RowTable {
             freeze::noted(&mut lock_builtin(&self.frozen.commits), at, columns.freeze_delay);
         }
     }
-}
-
-/// The spans of positions in `ids` of rows `keep` keeps, each a run of
-/// rows kept next to each other, of at most a vector of them.
-fn kept_runs(ids: &[RowId], keep: &impl Fn(RowId) -> bool) -> Vec<(usize, usize)> {
-    let mut runs: Vec<(usize, usize)> = Vec::new();
-    for (at, _) in ids.iter().enumerate().filter(|(_, id)| keep(**id)) {
-        let next = at.saturating_add(1);
-        let joined = runs.last_mut().filter(|run| run.1 == at && at.saturating_sub(run.0) < merge::VECTOR_ROWS);
-        if let Some(run) = joined {
-            run.1 = next;
-        } else {
-            runs.push((at, next));
-        }
-    }
-    runs
 }
 
 // Unit tests: rows frozen when due, under readers and as rows are deleted;

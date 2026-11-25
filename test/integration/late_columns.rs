@@ -68,7 +68,7 @@ fn tables() -> (Database, Session) {
 }
 
 /// The queries each table answers alike, `{t}` its name.
-const QUERIES: [&str; 29] = [
+const QUERIES: [&str; 31] = [
     "SELECT SUM(A), SUM(D), SUM(E) FROM {t} WHERE C < 60",
     "SELECT K, A, D, T, U, S FROM {t} WHERE C < 60",
     "SELECT K, U FROM {t} WHERE C BETWEEN 100 AND 3100",
@@ -98,6 +98,8 @@ const QUERIES: [&str; 29] = [
     "SELECT COUNT(A), SUM(A), COUNT(*) FROM {t} WHERE (A = 1 OR A IS NULL) AND C < 3000",
     "SELECT SUM(E), MIN(E), COUNT(*) FROM {t} WHERE E < 3.5",
     "SELECT SUM(D), MAX(D), COUNT(D) FROM {t} WHERE D < 0.30",
+    "SELECT Y.S, COUNT(*), SUM(X.A), MAX(X.U) FROM {t} X JOIN R Y ON X.N = Y.K WHERE Y.C < 900 GROUP BY Y.S",
+    "SELECT COUNT(*), SUM(X.D), MIN(X.T) FROM {t} X JOIN R Y ON X.K = Y.K JOIN R Z ON X.N = Z.K WHERE Z.C < 2000 AND X.A < 40",
 ];
 
 /// What `s` reads of table `table` by each query, sorted.
@@ -129,7 +131,8 @@ fn alike(s: &Session, what: &str) {
 /// of integers, decimals, approximate numbers, dates, a dictionary of
 /// texts, texts coded by symbols, padded and not found, and runs; of
 /// nulls; of a filter it is not told; grouped, sorted, distinct, joined,
-/// of a union; its rows frozen and not.
+/// of a union; of a grouping over one join and over two, whose probes
+/// carry its unread columns late (D1081); its rows frozen and not.
 #[test]
 fn late_columns_answer_as_rows() {
     let (_db, a) = tables();

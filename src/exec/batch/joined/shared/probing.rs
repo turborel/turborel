@@ -14,15 +14,11 @@
 use std::ops::Deref;
 
 use super::super::super::stream::Kept;
-use super::SharedTable;
+use super::{Pairs, SharedTable, pick};
 use crate::error::SqlError;
 use crate::exec::table::{KeyHashes, keys_equal};
 use crate::storage::sel::{kept_count, nth};
-use crate::storage::{BATCH_ROWS, Batch, Sel};
-
-/// The pairs of a probe not yet gathered: of each, its left row and its
-/// built row, or none.
-type Pairs = (Vec<Option<usize>>, Vec<Option<usize>>);
+use crate::storage::{BATCH_ROWS, Batch, NO_ROW, Sel};
 
 /// The batches of the pairs of a left batch's rows and the built rows of
 /// `T`, a table, their keys match, made a batch at a time.
@@ -79,8 +75,9 @@ impl<T: Deref<Target = SharedTable>> Probing<T> {
                 return Ok(());
             }
             if self.outer && !self.any {
-                pairs.0.push(Some(r));
-                pairs.1.push(None);
+                // No built row: its right columns null (RULES.md D1083).
+                pairs.0.push(pick(r));
+                pairs.1.push(NO_ROW);
             }
             (self.at, self.seen, self.any) = (self.at.saturating_add(1), 0, false);
         }
@@ -90,13 +87,23 @@ impl<T: Deref<Target = SharedTable>> Probing<T> {
 
     /// Pairs left row `r`, the one it pairs now, with the built rows its
     /// key matches, from the first it has not looked at, into `pairs`:
-    /// whether it looked at them all, not stopped as `pairs` filled.
+    /// whether it looked at them all, not stopped as `pairs` filled. A key
+    /// of one column of integers is compared in its units, and of a
+    /// direct table found by them (RULES.md D1083).
     fn row_paired(&mut self, r: usize, pairs: &mut Pairs) -> Result<bool, SqlError> {
-        let (Some(&h), Some(&miss)) = (self.hashes.hashes.get(self.at), self.hashes.misses.get(self.at)) else { return Ok(true) };
-        if miss {
+        let table = &*self.table;
+        let units = table.unit_keys(&self.batch, &self.left);
+        if let Some((probe, _)) = units.filter(|(probe, _)| table.table.is_direct() && probe.scale == 0) {
+            let Some(&key) = probe.units.get(r).filter(|_| !probe.is_null(r)) else { return Ok(true) };
+            for &p in table.table.rows_of(key).get(self.seen..).unwrap_or_default() {
+                self.seen = self.seen.saturating_add(1);
+                if !matched(&mut self.any, (r, p), pairs) {
+                    return Ok(false);
+                }
+            }
             return Ok(true);
         }
-        let table = &*self.table;
+        let (Some(&h), Some(false)) = (self.hashes.hashes.get(self.at), self.hashes.misses.get(self.at).copied()) else { return Ok(true) };
         let mut candidates = table.table.candidates(h);
         // The built rows looked at before it stopped are passed by.
         if let Some(before) = self.seen.checked_sub(1)
@@ -106,18 +113,25 @@ impl<T: Deref<Target = SharedTable>> Probing<T> {
         }
         for p in candidates {
             self.seen = self.seen.saturating_add(1);
-            if !keys_equal((&self.batch, &self.left, r), (&table.right, &table.places, p), &table.nulls)? {
-                continue;
-            }
-            self.any = true;
-            pairs.0.push(Some(r));
-            pairs.1.push(Some(p));
-            if pairs.0.len() >= BATCH_ROWS {
+            let equal = match units {
+                Some((probe, built)) => probe.units.get(r).is_some_and(|k| built.units.get(p) == Some(k)),
+                None => keys_equal((&self.batch, &self.left, r), (&table.right, &table.places, p), &table.nulls)?,
+            };
+            if equal && !matched(&mut self.any, (r, pick(p)), pairs) {
                 return Ok(false);
             }
         }
         Ok(true)
     }
+}
+
+/// Adds the pair of left row `r` and built row `p` to `pairs`, the row
+/// then matched (`any`): whether they have room for more.
+fn matched(any: &mut bool, (r, p): (usize, u32), pairs: &mut Pairs) -> bool {
+    *any = true;
+    pairs.0.push(pick(r));
+    pairs.1.push(p);
+    pairs.0.len() < BATCH_ROWS
 }
 
 impl<T: Deref<Target = SharedTable>> Iterator for Probing<T> {

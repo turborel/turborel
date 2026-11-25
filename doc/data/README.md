@@ -2,7 +2,7 @@
 
 For SQL users whose data is more than numbers and strings: its model, the queries asked of it, and the indexes that serve them, a guide each.
 
-[The documentation set](../README.md)
+[Turborel Documentation](../README.md)
 
 ## Contents
 

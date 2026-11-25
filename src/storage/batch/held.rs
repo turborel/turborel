@@ -38,6 +38,19 @@ impl Batch {
             .collect();
         Batch { columns, rows }
     }
+
+    /// \[DESIGN\] (RULES.md D1080) The vector at place `at` of the rows of
+    /// `parts`, every row of each, in order, as `joined` makes it: one
+    /// vector of a batch joined of the parts, which threads make at once,
+    /// each its own.
+    #[must_use]
+    pub fn joined_at(parts: &[Batch], at: usize) -> Column {
+        let rows = parts.iter().fold(0_usize, |n, part| n.saturating_add(part.rows));
+        let all: Vec<usize> = (0..parts.iter().map(|part| part.rows).max().unwrap_or(0)).collect();
+        let of: Vec<(Option<&Column>, &[usize])> =
+            parts.iter().map(|part| (part.columns.get(at), all.get(..part.rows).unwrap_or_default())).collect();
+        super::joined::joined_column(&of, rows)
+    }
 }
 
 impl Column {

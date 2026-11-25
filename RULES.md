@@ -687,8 +687,16 @@ verification approach DO-178C expects (§8).
 | D1075 | A hashed semi join's or antijoin's probe is a step of its left operand's pipeline |
 | D1076 | A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline |
 | D1077 | NOT IN of columns that hold no null is an antijoin hashed on their equality |
+| D1080 | A hash join's operand read by its morsels is joined, hashed, placed in its table and summed up in its filters by those threads, the table in parts of the hashes' high bits |
+| D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
+| D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
+| D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
+| D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
+| D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
+| D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
+| D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 
 ### The project
 
@@ -18694,6 +18702,209 @@ and the rule that makes the antijoin writes it so
 step of its left operand's pipeline (D1075). A column that may hold a
 null on either side keeps the condition as it was, so NOT IN keeps its
 exact meaning.
+#### D1080. A hash join's operand read by its morsels is put together by those threads, its table in parts of the hashes' high bits
+
+A hash join probed by a part run in parallel reads an operand that is
+itself a part by its morsels, on the workers (D292, D1051). What
+followed ran on the statement's thread alone while the workers waited.
+The morsels' batches were joined into one batch, a copy of every vector.
+Every key was hashed. The table was made in three passes over the
+hashes, the second a write at random for each row (D368). Each key was
+hashed again for its runtime filter (D369). Of an operand of millions
+of rows this was the longest stretch of the join that one thread ran,
+and a chain of joins ran one such stretch after another.
+
+Now an operand read by its morsels that holds more rows than a morsel
+is put together by the threads that read it, in four runs of morsels
+(`exec/parallel/build.rs`). A vector of the batch is joined by one
+thread (`Batch::joined_at`), so as many threads copy as the batch has
+vectors. The keys are hashed a run of EXECUTOR.MORSEL_ROWS rows at a
+time, a run to a thread. Each run's rows are then sorted by part. Last
+each part of the table is made by one thread, and each key's runtime
+filter by another beside them.
+
+The table is in 64 parts (`exec/table/join/parted.rs`), as many as a
+parallel grouping has partitions (D357). A hashed table's slot is the
+high bits of a hash, so the rows whose hashes share their 6 highest
+bits own a run of slots that no other row is placed in. Each part is
+then a table of its own, with its directory, its rows and their hashes,
+and a probe finds its part by those bits before its slot. A direct
+table (D601) is parted the same way by the high bits of a key's place
+in the span. Whether the keys are dense is known only once every run
+has given its least and greatest key, so such keys are first asked as
+numbers and, if they prove not dense, hashed from those numbers with no
+vector read again. No thread writes what another reads, so nothing is
+placed atomically and the core needs no `unsafe` (R-SAFE-1).
+
+A run's rows are sorted by part by a counting sort that keeps their
+order, and a part takes the runs in order. So a slot's rows and a key's
+rows are in the order the operand gave them, as in the table one
+thread makes, and a probe finds the same rows in the same order of
+either. The table one thread makes is the same structure of one part.
+
+An operand of no more rows than a morsel, a part of degree 1, and an
+operand that is not read by its morsels (D1050) are built by the
+statement's thread as before. The first took one thread's work to
+read, and the others have no threads of their own. No setting turns
+this on or off, as the result is the same and the threads are those
+the part already has.
+
+#### D1081. A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe
+
+The serial stream carries the columns of an inner hash join's left
+operand that no operator reads as the places of their rows, through
+the join, and decodes them of the rows the join kept (D361). A pipeline
+run in parallel did so only up to its first probe (D366). At a probe it
+counted every column as read, so a morsel decoded every column the
+pipeline carries, of every row its filters kept, before the first join
+dropped any. A scan of a large table probing a selective operand so
+decoded, gathered and copied its other columns for rows the join then
+dropped, and again at each join after it.
+
+Now a probe step counts as read the columns of its keys alone
+(`Deferred::left_of`), as the serial join does, and as dropping rows.
+The other columns of the probing table that no later step reads go
+through each probe as places, which a probe's gather composes with its
+pairs (`Late::gathered`), and are decoded at the pipeline's end of the
+rows every join kept (`morsel_kept`). The built operand's columns are
+held as vectors as before. A column a later filter, projection or
+probe reads is decoded at the scan as before.
+
+#### D1082. A grouping by a deterministic expression has no more groups than the columns it reads take values together
+
+The distinct values of a column are counted by its table's statistics,
+found through the nodes that pass columns on (D370). A column that is
+an expression of a projection has no table, so it was counted as one
+value for every row of the plan. A grouping by such a key, as by the
+year of a date or by a sum of two columns, was then estimated at as
+many groups as rows. With that many groups a sort of the rows and a
+streamed grouping costs less than a hashed one (D550), so a grouping of
+millions of joined rows into a few hundred groups was planned as a
+sort of every row, and its hash table would have been sized for a
+group a row.
+
+Now a grouping or DISTINCT counts an expression that is deterministic
+and changes nothing (`expr_pure`, D1041) by the columns it reads
+(`cardinality/lineage.rs`, `computed_of`, `grouped_distinct`). It is a function of them, so
+it takes at most as many values as they take together: the product of
+their distinct values, and no more than the plan's rows. An expression
+that reads no column takes one value. The bound goes through
+expressions of expressions, to the depth estimates walk (D370). An
+expression that is not deterministic may give a value of its own for
+every row and is counted as before.
+
+The bound is not tight. A year takes far fewer values than its date
+does. It is still the plan's rows or fewer, which is what it was, so no
+estimate of groups grows by it.
+
+The distinct values a join's equality is estimated by are counted as
+before, an expression's as its plan's rows. Join orders rest on those
+counts, and what bounding them would do to the orders chosen was not
+measured, so the bound is the grouping's alone.
+
+#### D1083. A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units
+
+A morsel's batch probing a shared table (D292) made its pairs as two
+lists of optional places, 16 bytes each, and gathered every vector of
+the joined batch through them one option at a time. The serial join
+holds its pairs as row numbers of 32 bits and gathers integers on the
+vector kernels (D570). Each pair was also compared through
+`keys_equal`, which asks both vectors' kinds again for every pair and
+every key column, and each probing key was made a double and hashed
+even for a direct table, which finds a key by its place alone (D601).
+
+Now the shared table's pairs are row numbers too, gathered by
+`Column::gathered_by` on the statement's kernels. A key of one column
+of integers, of one scale in the batch and in the built operand, on
+which a null matches nothing, is paired in its units
+(`exec/batch/joined/shared/paired.rs`). Equal units of one scale are
+equal numbers, so a probing row's units are compared with a built
+row's as they stand. Of a direct table of whole numbers a probing row
+finds its key's rows by its units less the least key
+(`JoinTable::rows_of`), with no double made and no hash. Every row at a
+place holds that key, so nothing is compared. A null probing row pairs
+with none.
+
+Every other key is paired as before: keys of several columns, of
+texts, of integers of scales apart, which match when rescaled, and a
+key whose nulls match. The pairs, and their order, are the same of
+either.
+
+### Column store reads
+
+#### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
+
+The headers of frozen row groups were held in one map behind one mutex,
+ordered by when each was last read (D31). Every read of a header held
+took the mutex and moved the header in an ordered tree, so the scans of
+a parallel query, a group each, met on it once a group. Its bound was
+16 MiB whatever the database's memory. A header of a table of sixteen
+columns takes about 180 KiB, so the cache held some ninety of the 915
+groups of a table of sixty million rows. A scan of the table then read
+and parsed every header again on every query, and a join that fetched
+rows by id from groups all over the table parsed a header for most of
+its fetches.
+
+A header held is now kept in a slot of its group's entry of the
+directory. A read of it takes the slot's own lock shared and looks
+nothing up, so readers of different groups share no word. The cache
+keeps the bytes and a queue of the headers in the order they were put.
+When it must give one up it takes the first of the queue, but passes
+over once each header read since it was last passed over, so the
+headers read lately stay. The order is no longer exactly by last read,
+which cost the shared ordered tree.
+
+COLUMNSTORE.HEADER_CACHE_BYTES is -1 by default, which bounds the cache
+at a 64th of MEMORY.BUDGET_BYTES. That is the share the old 16 MiB was
+of the default budget of 1 GiB, so a database of the default settings
+holds what it held, and one given more memory holds the headers of as
+much more data. A value of 0 or more is the bound in bytes as before.
+What the cache holds is still reserved of the budget (D38).
+
+#### D1091. A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured
+
+A read of a frozen row by its id found the chunk of each column by
+looking at the column's chunks one after another, made a row of the
+table's width for a read of a few listed columns, and listed every
+column's place for each read. It now finds the chunk by halving, as a
+column's chunks are in the order of their rows, and a read of listed
+columns appends their values alone (`TableStorage::get_listed`, D862).
+
+The planner priced a frozen fetch a tenth more than a fetch of the
+tree's, a figure never measured. `bench/fetch.rs` now reads the same
+table from the tree and from two groups of the column store with every
+header held. FROZEN_FETCH is set from its case of four columns read by
+scattered ids against the tree's case of scattered ids, as a join or an
+index scan fetches a few columns, each a page of its own
+(`engine/rows/frozen.rs`). A fetch of one column costs less than that,
+and one of every column more.
+
+#### D1092. A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample
+
+A table opened has no statistics, and they were left to the maintenance
+thread once a plan had asked for them (D35, D473). The first plans
+after a start were therefore made without them, on the fixed
+selectivities. A grouping of a table of sixty million rows was planned
+as a sort and a streamed grouping on one thread, and ran for minutes
+where the plan made with statistics runs for a second, and joins
+planned so were worse.
+
+The plan that first asks for the statistics of a table opened now
+gathers them itself, and plans asking meanwhile wait for that pass, so
+it is made once and no plan is made without them. The pass is bounded
+whatever the table holds, as a table of more than twice the sample's
+rows is sampled (D31). If it fails, the statistics are due for the
+maintenance thread as before. A table made in this run, and every later
+pass, are as they were, so D473 still keeps a table no plan reads from
+being gathered.
+
+For the bound to hold of the column store a sampled pass had to cost
+its sample. It read the header of every group and listed and hashed
+every row id of every group to find those sampled. It now takes the
+runs of row ids chosen, passes over a group none of them lies in with
+its header unread, and of a group whose rows are every id of its range
+in order reckons a run's places from its ids
+(`engine/rows/frozen/sampled.rs`).
 
 #### D1150. A morsel's rows are made as they are read and charged to the part's grant as they are gathered
 
@@ -18730,7 +18941,27 @@ most `BATCH_ROWS` pairs at a time, and keeps where it stopped, the left
 row and how many of its key's built rows it looked at, a run of a key's
 rows taken up again in one step. The pairs come in the order they did,
 those before an error first, then the error. A LEFT join's probe (D1076)
-is made so too, a row no built row matches paired with nulls.
+is made so too, a row no built row matches paired with nulls, and a key
+of one column of integers is paired in its units (D1083), of a direct
+table taken up at its place among its key's rows.
+
+#### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
+
+A value given for a `?` is cast to the parameter's type [ISO/IEC
+9075:1992 §17.9 GR5f]. A plan made with the values casts each as it is
+made, so a value that does not cast raised at OPEN. A plan kept reads
+its values where they are and casts one as it reads it (D610). That is
+at OPEN for a plan that can raise, which is read whole then (D931), and
+at the first FETCH for another. So the moment a cursor raised followed
+whether its plan was kept yet, and a plan learned before its table had
+statistics is learned again once they are known (D839), which the
+maintenance thread decides as it runs. The same cursor raised at OPEN
+in one run and at FETCH in another.
+
+Each value is now cast as the cursor opens (`db/prepared.rs`), and the
+first that does not cast raises CAST's error there, before any plan is
+looked for. A value already of its type is not cast again. The plans
+still cast each value as they read it, which then raises nothing.
 
 ## 2. Project layout
 

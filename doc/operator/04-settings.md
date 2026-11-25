@@ -235,8 +235,11 @@ store table stays on it too while EXECUTOR.BATCHES is on, since its
 scan by batch is faster alone; a join, window functions, a grouping or
 DISTINCT over one still run in parallel, a grouping a batch at a time
 on each thread, and so does the scan of the operand a hash join run in
-parallel builds, shown as a `Parallel` part of its own under the join. A bare COUNT(*) of a row store table stays on
-it as well, since its storage counts it faster than any split.
+parallel builds, shown as a `Parallel` part of its own under the join.
+Such an operand of more rows than a morsel is put together by those
+threads as well, its rows, its hash table and its filters. A bare
+COUNT(*) of a row store table stays on it as well, since its storage
+counts it faster than any split.
 [EXPLAIN](../sql/statements/explain.md)
 shows the part and its degree. The rows, and their order, are the same
 on any number of threads.

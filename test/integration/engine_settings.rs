@@ -85,8 +85,9 @@ fn header_bytes(db: &Database) -> String {
     rows(&db.session("OWN"), sql).unwrap().remove(0)
 }
 
-/// Verifies: [DESIGN] RULES.md D31, D36, D38: the column store's
-/// COLUMNSTORE.HEADER_CACHE_BYTES, of 16 MiB by default, bounds the
+/// Verifies: [DESIGN] RULES.md D31, D36, D38, D1090: the column store's
+/// COLUMNSTORE.HEADER_CACHE_BYTES, by default -1, a 64th of the memory
+/// budget, bounds the
 /// headers of frozen groups it holds: set to 0 in SQL by the owner, it
 /// gives up those held, their memory given back, and holds none read
 /// after; given its default again, it holds them again.
@@ -106,7 +107,7 @@ fn the_column_store_holds_headers_as_its_setting_says() {
     db.maintain().unwrap();
     let sum = || rows(&a, "SELECT SUM(K) FROM C").unwrap();
     let total = vec!["8386560".to_owned()];
-    assert_eq!(db.setting("COLUMNSTORE.HEADER_CACHE_BYTES").unwrap().to_string(), "16777216");
+    assert_eq!(db.setting("COLUMNSTORE.HEADER_CACHE_BYTES").unwrap().to_string(), "-1");
     assert_eq!(sum(), total);
     assert_ne!(header_bytes(&db), "0", "held");
     let own = db.session("OWN");
