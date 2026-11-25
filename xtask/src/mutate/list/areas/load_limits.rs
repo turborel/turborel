@@ -1,12 +1,15 @@
 //! The mutations of a long load kept within the process's limits
-//! (RULES.md R-TEST-9, D1136 to D1139): a file opened with no descriptor
+//! (RULES.md R-TEST-9, D1136 to D1142): a file opened with no descriptor
 //! left, a checkpoint due by the log's bytes, a load's given rows held
-//! unspilled, and a checkpoint's captures written to disk (D1139).
+//! unspilled, a checkpoint's captures written to disk (D1139), a
+//! value out of line freed only once no read may fetch it (D1140), a
+//! long log record written after what the log's buffer holds (D1141), and
+//! loads at once each writing their own groups (D1142).
 
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 5] = [
+pub const LOAD_LIMITS: [Mutation; 10] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -56,5 +59,55 @@ pub const LOAD_LIMITS: [Mutation; 5] = [
         replacement: "        if true {",
         integration: &[],
         unit: &["disk::buffer::pool::capture::tests::captures_go_to_the_side_file"],
+    },
+    Mutation {
+        name: "frozen-values-held",
+        package: Package::Core,
+        breaks: "a freeze frees the values out of line of the entries it takes out while a read that copied one still holds the directory",
+        file: "src/engine/rows/frozen/freeze.rs",
+        original: "            let unread = freeing.iter().take_while(|f| f.after.strong_count() == 0).count();",
+        replacement: "            let unread = freeing.len();",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::retired::a_scan_fetches_its_value_after_the_freeze"],
+    },
+    Mutation {
+        name: "frozen-read-pinned",
+        package: Package::Core,
+        breaks: "a read by row id holds no directory, so a freeze frees the value of the entry it copied",
+        file: "src/engine/rows/frozen.rs",
+        original: "        if self.plain() { None } else { self.directory().ok() }",
+        replacement: "        if true { None } else { self.directory().ok() }",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::retired::a_read_by_row_id_fetches_its_value_after_the_freeze"],
+    },
+    Mutation {
+        name: "log-long-record-ordered",
+        package: Package::Core,
+        breaks: "a log record as long as the buffer goes to the file ahead of a segment header the buffer still holds",
+        file: "src/log/file/buffered.rs",
+        original: "            if data.iter().any(|&b| b != 0) {",
+        replacement: "            if false {",
+        integration: &[],
+        unit: &["log::file::buffered::tests::a_long_record_goes_to_the_file_after_what_is_held"],
+    },
+    Mutation {
+        name: "groups-loads-together",
+        package: Package::Core,
+        breaks: "a load into groups takes the table's lock alone, so a second load waits for the first to end",
+        file: "src/db/write/bulk/load.rs",
+        original: "    if !together.indexes.iter().any(Indexed::loads) {",
+        replacement: "    if false {",
+        integration: &["bulk_groups::loads_at_once_each_write_their_own_groups"],
+        unit: &[],
+    },
+    Mutation {
+        name: "groups-ids-apart",
+        package: Package::Core,
+        breaks: "a group's row ids are counted on from one id, so they run into ids given to other rows",
+        file: "src/engine/rows/frozen/stamped.rs",
+        original: "        let first = self.next_ids(rows.len())?;",
+        replacement: "        let first = self.next_id()?;",
+        integration: &["bulk_groups::loads_at_once_each_write_their_own_groups"],
+        unit: &[],
     },
 ];

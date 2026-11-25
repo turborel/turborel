@@ -12,6 +12,7 @@ use crate::logical::Expr;
 use crate::storage::{Row, sized_row};
 use crate::value::Value;
 
+#[derive(Clone)]
 pub(super) struct Columns {
     taken: Vec<(usize, bool)>,
     identity: bool,

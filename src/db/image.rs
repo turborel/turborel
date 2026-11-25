@@ -32,6 +32,11 @@ use crate::value::types::TypeRegistry;
 
 /// The format of an image.
 pub const IMAGE_FORMAT: u8 = 1;
+/// Where an image's `through` lies in its bytes, after its format and
+/// clean flag.
+const THROUGH: std::ops::Range<usize> = 2..10;
+/// Where its `highest` lies, after `through` and `start`.
+const HIGHEST: std::ops::Range<usize> = 18..26;
 
 /// \[DESIGN\] A database as of a checkpoint.
 #[derive(Debug, Clone, Default)]
@@ -54,7 +59,8 @@ pub(super) struct Image {
 }
 
 impl Image {
-    /// It in bytes.
+    /// It in bytes: its tables and indexes by name, so an image of the
+    /// same database is the same bytes (RULES.md D1164).
     pub(super) fn encode(&self) -> Vec<u8> {
         let mut out = vec![IMAGE_FORMAT];
         out.put_u8(u8::from(self.clean));
@@ -64,19 +70,42 @@ impl Image {
         let count = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
         self.snapshot.put(&mut out);
         out.put_u32(count(self.tables.len()));
-        for (name, generation, locator) in &self.tables {
+        let mut tables: Vec<_> = self.tables.iter().collect();
+        tables.sort_by(|a, b| (&a.0.auth, &a.0.ident).cmp(&(&b.0.auth, &b.0.ident)));
+        for (name, generation, locator) in tables {
             out.put_str(&name.auth);
             out.put_str(&name.ident);
             out.put_u32(*generation);
             out.put_bytes(locator);
         }
         out.put_u32(count(self.indexes.len()));
-        for (name, generation, locator) in &self.indexes {
+        let mut indexes: Vec<_> = self.indexes.iter().collect();
+        indexes.sort_by(|a, b| a.0.cmp(&b.0));
+        for (name, generation, locator) in indexes {
             out.put_str(name);
             out.put_u32(*generation);
             out.put_bytes(locator);
         }
         out
+    }
+
+    /// Whether `last`, the image recorded last, is this one but for the
+    /// highest id given, no higher than its own (RULES.md D1164): recording
+    /// it again would change nothing, as an image of the same log position
+    /// follows no record logged, so nothing kept holds an id given since.
+    pub(super) fn recorded_in(&self, last: &[u8]) -> bool {
+        let Some(highest) = last.get(HIGHEST).and_then(|b| <[u8; 8]>::try_from(b).ok()).map(u64::from_le_bytes) else { return false };
+        let mut mine = self.encode();
+        let Some(at) = mine.get_mut(HIGHEST) else { return false };
+        at.copy_from_slice(&highest.to_le_bytes());
+        highest <= self.highest && mine == last
+    }
+
+    /// The log position `last`, the image recorded last, holds every change
+    /// before, if it is of a clean close.
+    pub(super) fn clean_through(last: &[u8]) -> Option<Lsn> {
+        let through = last.get(THROUGH).and_then(|b| <[u8; 8]>::try_from(b).ok()).map(u64::from_le_bytes)?;
+        (last.first() == Some(&IMAGE_FORMAT) && last.get(1) == Some(&1)).then_some(Lsn(through))
     }
 
     /// The image `bytes` give.

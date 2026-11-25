@@ -32,7 +32,7 @@ const JOINED: &str = "storage::batch::joined::tests::datetimes_and_truth_values_
 const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 18] = [
+pub const PARALLEL: [Mutation; 21] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -87,9 +87,9 @@ pub const PARALLEL: [Mutation; 18] = [
         name: "parallel-probe-reversed",
         package: Package::Core,
         breaks: "a probe of a table built by morsels gives a row's matches last built first",
-        file: "src/exec/batch/joined/shared.rs",
-        original: "            for p in self.table.candidates(h).filter(|_| !miss) {",
-        replacement: "            for p in self.table.candidates(h).filter(|_| !miss).collect::<Vec<usize>>().into_iter().rev() {",
+        file: "src/exec/batch/joined/shared/probing.rs",
+        original: "        for p in candidates {",
+        replacement: "        for p in candidates.collect::<Vec<usize>>().into_iter().rev() {",
         integration: &["join_tables::matches_come_in_build_order_in_parallel"],
         unit: &[],
     },
@@ -212,5 +212,35 @@ pub const PARALLEL: [Mutation; 18] = [
         replacement: "Column::Datetimes(_) => false,",
         integration: &[],
         unit: &[JOINED],
+    },
+    Mutation {
+        name: "looped-full-join-takes-part",
+        package: Package::Core,
+        breaks: "a FULL join by an index, whose unmatched rows come last, probes on a part's threads (D1114)",
+        file: "src/exec/parallel/looped.rs",
+        original: "let gives_as_read = !matches!(outer, Preserved::Both(_));",
+        replacement: "let gives_as_read = true;",
+        integration: &[],
+        unit: &["exec::parallel::looped::tests::an_index_join_over_a_part_probes_on_its_threads"],
+    },
+    Mutation {
+        name: "looped-chain-cut",
+        package: Package::Core,
+        breaks: "of a chain of index joins over a part, the joins below the first stay on the statement's thread (D1114)",
+        file: "src/exec/parallel/looped.rs",
+        original: "if depth < MAX_DEPTH && joins_alone(left) {",
+        replacement: "if depth > MAX_DEPTH && joins_alone(left) {",
+        integration: &[],
+        unit: &["exec::parallel::looped::tests::the_left_operand_of_the_lowest_join_is_taken_out"],
+    },
+    Mutation {
+        name: "looped-left-error-lost",
+        package: Package::Core,
+        breaks: "an index join over a part drops the error its left operand raised (D1114)",
+        file: "src/exec/parallel/looped.rs",
+        original: "return self.failed.take().map(Err);",
+        replacement: "return None;",
+        integration: &["looped_parts::an_index_join_over_a_part_raises_as_alone"],
+        unit: &[],
     },
 ];

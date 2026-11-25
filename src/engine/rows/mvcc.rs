@@ -114,14 +114,12 @@ fn conflict() -> SqlError {
 pub(super) enum Past {
     /// That the transaction's snapshot sees it.
     Snapshot,
-    /// That it committed at this timestamp, which `TableStorage::newest`
-    /// gave (`TableStorage::write_newest`).
+    /// That it committed at this timestamp, which `TableStorage::newest` gave (`TableStorage::write_newest`).
     Stamp(Timestamp),
 }
 
 /// A row's newest version, and, if it is one made of its frozen values,
-/// the pages of its values out of line; else where the tree's descent
-/// found it (`RowTable::newest_or_frozen`).
+/// the pages of its values out of line; else where the tree's descent found it (`RowTable::newest_or_frozen`).
 type Found = (Vec<u8>, std::result::Result<Descended, Vec<PageId>>);
 
 /// Who reads.
@@ -530,8 +528,10 @@ impl RowTable {
 }
 
 impl RowTable {
-    /// The newest state of row `id`, for UNIQUE.
+    /// The newest state of row `id`, for UNIQUE, the directory held until
+    /// its values out of line are fetched (RULES.md D1140).
     pub(super) fn newest_of(&self, tx: TxId, id: RowId) -> Result<Newest> {
+        let _pinned = self.frozen.pinned();
         let Some(newest) = self.tree.get(&key(id))? else { return Ok(Newest::of(self.frozen_row(id, None)?)) };
         let version = Version::parse(&newest)?;
         let decoded = |record: &[u8], deleted: bool| if deleted { Ok(None) } else { self.decode(id, record, None).map(Some) };

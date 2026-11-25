@@ -33,7 +33,9 @@ impl Indexed {
 /// Holds back, for the load the rows of `together` are part of, the
 /// entries of its indexes the load holds back: those of the load under way
 /// into its table; else, as it begins, each that `loads`, the table's lock
-/// taken alone first. None if a load into another table is under way.
+/// taken alone first. None if a load into another table is under way. A
+/// load that holds back no index but writes groups takes no lock beyond
+/// its insert's, so loads at once each write their own (RULES.md D1142).
 ///
 /// # Errors
 ///
@@ -46,7 +48,13 @@ pub(super) fn hold_back(st: &State, tx: &Txn, together: &mut Together<'_>) -> Re
         return Ok(());
     }
     let grouping = grouped(tx, together)?;
-    if grouping.is_none() && !together.indexes.iter().any(Indexed::loads) {
+    if !together.indexes.iter().any(Indexed::loads) {
+        // [DESIGN] RULES.md D1142: groups alone take no lock of their own,
+        // so loads at once each write theirs; else nothing is held back.
+        together.grouped = grouping;
+        if grouping.is_some() && !tx.begin_load(together.table, Vec::new(), grouping)? {
+            ungrouped(tx, together);
+        }
         return Ok(());
     }
     let begun = st.acquire(tx, together.table, LockMode::Exclusive).and_then(|()| {

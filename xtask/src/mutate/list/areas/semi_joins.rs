@@ -126,7 +126,7 @@ pub const SEMI_JOINS: [Mutation; 13] = [
         name: "semi-step-row-ignores-condition",
         package: Package::Core,
         breaks: "a semi join that is a step of a pipeline read row by row matches a pair by its keys alone",
-        file: "src/exec/parallel/pipeline.rs",
+        file: "src/exec/parallel/rows.rs",
         original: "runner)? == Truth::True,\n                None => true,",
         replacement: "runner).is_ok(),\n                None => true,",
         integration: &[STEP],

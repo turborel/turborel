@@ -454,7 +454,7 @@ fn calm(e: &Expr) -> bool {
 }
 
 /// Whether a worker evaluates `c` alone, as `calm` says of expressions.
-fn calm_cond(c: &Cond) -> bool {
+pub(crate) fn calm_cond(c: &Cond) -> bool {
     let mut all = c.subqueries().is_empty();
     c.for_each_expr(&mut |e| all = all && calm(e));
     all

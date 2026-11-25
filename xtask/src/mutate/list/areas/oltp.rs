@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 29] = [
+pub const OLTP: [Mutation; 31] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -299,5 +299,25 @@ pub const OLTP: [Mutation; 29] = [
         replacement: "        if wanted.as_mut().is_none_or(|left| left.next_if_eq(&at).is_some() || at > 0) {",
         integration: &[],
         unit: &["log::record::images::tests::an_update_of_the_columns_set_writes_the_same_bytes"],
+    },
+    Mutation {
+        name: "oltp-unchanged-setting-logged",
+        package: Package::Core,
+        breaks: "a setting set to the value it has is logged, so each start's settings move the log on and its close records a catalog image (D1164)",
+        file: "src/db/settings.rs",
+        original: "        if definition_is_node || !logged || self.set_value_of(&canonical) == was {",
+        replacement: "        if definition_is_node || !logged {",
+        integration: &["reopen::a_start_that_changes_nothing_records_no_image"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-unchanged-image-recorded",
+        package: Package::Core,
+        breaks: "an image as the one recorded last is recorded again, so a close with nothing changed grows the catalog (D1164)",
+        file: "src/db/checkpoint.rs",
+        original: "        if !recorded {",
+        replacement: "        if !recorded || recorded {",
+        integration: &["reopen::a_start_that_changes_nothing_records_no_image"],
+        unit: &[],
     },
 ];

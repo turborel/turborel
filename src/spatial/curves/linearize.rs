@@ -93,9 +93,10 @@ fn conic(u: V3, v: V3, lo: f64, hi: f64, tolerance: &Tolerance) -> Vec<f64> {
     (0..=parts).map(|k| f64::from(u32::try_from(k).unwrap_or(u32::MAX)) / total).map(|t| super::numeric::lerp(lo, hi, t)).collect()
 }
 
-/// The ceiling of `x`, at least one and at most `most`.
+/// The ceiling of `x`, at least one and at most `most`, and `most` only
+/// of an `x` reaching it, whatever `most` is (RULES.md D1166).
 pub fn count(x: f64, most: usize) -> usize {
-    let cap = u32::try_from(most).map_or(f64::from(u32::MAX), f64::from);
+    let cap = crate::stats::parts::count(u64::try_from(most).unwrap_or(u64::MAX));
     if x.is_nan() || x <= 1.0_f64 {
         return 1;
     }

@@ -113,6 +113,8 @@ impl Estimates<'_> {
     /// The classes `members` of the relations `leaves`, each pair of
     /// relations they join with its correction.
     pub(in crate::physical) fn keyed_classes(&self, leaves: &[&LogicalPlan], members: &[Vec<Member>]) -> Classes {
+        let members: Vec<Vec<Member>> = members.iter().map(|class| self.bounded(leaves, class)).collect();
+        let members = members.as_slice();
         let mut pairs = Vec::new();
         for (r, s) in linked(members) {
             let (Some(&r_plan), Some(&s_plan)) = (leaves.get(r), leaves.get(s)) else { continue };
@@ -132,6 +134,25 @@ impl Estimates<'_> {
         }
         let classes = members.iter().map(|class| class.iter().map(|m| (m.rel, m.distinct)).collect()).collect();
         Classes::new(classes).with_pairs(pairs)
+    }
+
+    /// \[DESIGN\] (RULES.md D1152) The members of a class, of those whose
+    /// distinct values are neither counted by statistics nor a key's, a
+    /// column's relation's rows taken as if a key, no more than the least
+    /// of those that are. The columns a class equates hold values of
+    /// one domain, and a row of one column matches a row of the least
+    /// distinct one only on one of its values, so without statistics a
+    /// column of 1.5 million rows equated with a key of 25 is counted as of
+    /// 25 values. Before, two tables joined on such a column were estimated
+    /// to give the rows of the larger, though each row matched a
+    /// twenty-fifth of the other, and a plan joined them first.
+    fn bounded(&self, leaves: &[&LogicalPlan], class: &[Member]) -> Vec<Member> {
+        let known = |m: &Member| {
+            let Some(&plan) = leaves.get(m.rel) else { return true };
+            self.counted_distinct(plan, m.column).is_some() || self.key_of(plan, &[m.column]).is_some()
+        };
+        let least = class.iter().filter(|m| known(m)).map(|m| m.distinct).fold(f64::INFINITY, f64::min);
+        class.iter().map(|m| if known(m) { *m } else { Member { distinct: m.distinct.min(least), ..*m } }).collect()
     }
 
     /// The correction of the join of `r` and `s`: their classes' larger
