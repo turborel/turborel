@@ -1,8 +1,9 @@
 //! \[DESIGN\] The share of rows a LIKE keeps (RULES.md D381). A constant
 //! pattern that begins with characters (`value::constant_prefix`) keeps
-//! only strings that begin with them, which lie in the range from the
-//! prefix up to the prefix with its last character the next: that
-//! range's share, by the column's common values and histogram, times
+//! only strings that begin with them: their share of the table's sample
+//! if it holds enough of them (RULES.md D1130), else the share of the
+//! range from the prefix up to the prefix with its last character the
+//! next, by the column's common values and histogram, times
 //! what the rest of the pattern asks, unless the rest is `%` alone, which
 //! asks nothing: the share of the sampled strings with the prefix that
 //! the whole pattern keeps, if the sample holds enough of them, else
@@ -34,13 +35,34 @@ pub(super) const LIKE_REST: f64 = 0.25;
 pub(super) fn selectivity(c: &Cond, known: Known<'_>) -> Option<f64> {
     known.stats?;
     let Prefixed { column, pattern, escape, prefix } = prefixed(c)?;
-    let from = compare((column, CompOp::Ge, &Value::Char(prefix.clone().into())), known);
-    let past = next_prefix(&prefix).map_or(0.0_f64, |next| compare((column, CompOp::Ge, &Value::Char(next.into())), known));
     let rest = if constant_rest_is_any(pattern, escape) { 1.0_f64 } else { sampled_rest(c, column, &prefix, known).unwrap_or(LIKE_REST) };
-    // A range narrower than a histogram's bucket shows no share of it; it
-    // keeps at least what an equality with the prefix would.
-    let equal = compare((column, CompOp::Eq, &Value::Char(prefix.into())), known);
-    Some(((from - past).max(equal).max(0.0_f64) * rest).clamp(0.0, 1.0))
+    let range = sampled_prefix(c, column, &prefix, known).unwrap_or_else(|| {
+        let from = compare((column, CompOp::Ge, &Value::Char(prefix.clone().into())), known);
+        let past = next_prefix(&prefix).map_or(0.0_f64, |next| compare((column, CompOp::Ge, &Value::Char(next.into())), known));
+        // A range narrower than a histogram's bucket shows no share of
+        // it; it keeps at least what an equality with the prefix would.
+        let equal = compare((column, CompOp::Eq, &Value::Char(prefix.clone().into())), known);
+        (from - past).max(equal).max(0.0_f64)
+    });
+    Some((range * rest).clamp(0.0, 1.0))
+}
+
+/// \[DESIGN\] (RULES.md D1130) Of the table's sampled rows, the share
+/// whose string of `column` begins with `prefix`, if the sample holds at
+/// least `SAMPLE_HITS` of them or is the whole table. A histogram's
+/// bucket of strings shows no share of a range within it, so a prefix
+/// that most strings of a bucket do not begin with is estimated by the
+/// histogram at an equality's few rows, however many begin with it.
+fn sampled_prefix(c: &Cond, column: usize, prefix: &str, known: Known<'_>) -> Option<f64> {
+    let stats = known.stats?;
+    let sample = stats.sample()?;
+    let rows = sample.rows();
+    let n = cost_of(rows.len());
+    let whole = !rows.is_empty() && stats.rows().is_some_and(|of| n >= of);
+    as_given(sample.remembered(key_of("prefix", &[c], &|_| {}), || {
+        let begun = rows.iter().filter(|row| row.get(column).and_then(text).is_some_and(|s| s.starts_with(prefix))).count();
+        remembered_as((begun >= SAMPLE_HITS || whole).then(|| cost_of(begun) / n))
+    }))
 }
 
 /// Of the sampled strings of `column` beginning with `prefix`, the share

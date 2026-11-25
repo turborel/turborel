@@ -693,6 +693,7 @@ verification approach DO-178C expects (§8).
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
 | D1129 | A grouping that a filter's input and a subquery of its condition compute alike is computed once |
+| D1130 | A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them |
 
 ### The project
 
@@ -18869,6 +18870,27 @@ A reader is told no runtime filter (D1062, D1063), as each reader is
 given every row. A grouping read once is not made a reader and takes
 its filters as before. A join computed alike in two places under
 different groupings is still run in each.
+
+#### D1130. A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them
+
+A LIKE whose pattern is a prefix and `%` was estimated by the share of
+the range of strings beginning with the prefix, by the column's common
+values and histogram (D381), and at least an equality's. A histogram's
+bucket of strings places a value within it by the characters where its
+bounds part. A prefix of a word, whose strings fill part of a bucket
+whose bounds part at its first characters, was placed in almost no
+share of it. So `P_NAME LIKE 'forest%'`, a ninety-second of a table of
+words drawn from a list, was estimated at one row. The plan made with
+that estimate read the rows it joins by an index, one probe for each of
+thousands of rows, where a hash join had read them in a part of the
+time.
+
+The share is now that of the table's sample of rows whose string begins
+with the prefix, as the sample holds at least `SAMPLE_HITS` of them or
+is the whole table (`physical/estimate/like.rs`). That is the share a
+conjunction the sample can tell is given (D382). Of fewer, the range is
+estimated as before. A pattern with more than `%` after its prefix takes
+this share times what the sample says the rest keeps of it, as before.
 
 ## 2. Project layout
 
