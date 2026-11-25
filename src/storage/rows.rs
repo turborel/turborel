@@ -170,13 +170,39 @@ pub type ScanOrder<'a> = (&'a [usize], bool, Option<usize>);
 
 /// \[DESIGN\] The bytes a table takes (`TableStorage::sizes`, RULES.md
 /// D522), counted, or, if `estimated`, of some rows their number times
-/// their mean width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// their mean width; and what each of its columns takes, of each way its
+/// values are kept (RULES.md D1165).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TableSizes {
     /// The bytes.
     pub bytes: u64,
     /// Whether some of them are estimated.
     pub estimated: bool,
+    /// Of each column, by its place, and each way it is kept, what it takes.
+    pub columns: Vec<ColumnSizes>,
+}
+
+/// \[DESIGN\] What a column takes, of one way its values are kept: the
+/// chunks of one encoding of a column store's groups, or its values in the
+/// rows of a tree (INFORMATION_SCHEMA.COLUMN_STORAGE, RULES.md D1165).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnSizes {
+    /// The column's place.
+    pub column: usize,
+    /// The encoding of its chunks, as each chunk's first byte names it,
+    /// `ROW` of its values in a tree's rows; none of a kind none names.
+    pub encoding: Option<&'static str>,
+    /// Its chunks; none of a tree's rows.
+    pub chunks: Option<u64>,
+    /// The rows they hold.
+    pub rows: u64,
+    /// Their bytes, encoded; none of a tree's rows, kept whole, or if
+    /// not known.
+    pub bytes: Option<u64>,
+    /// The bytes of the pages its chunks take: a page each of a chunk on a
+    /// page of its own, the chunk's bytes of one sharing its page; none of
+    /// a tree's rows.
+    pub page_bytes: Option<u64>,
 }
 
 // Unit tests: a row read whole given as its listed columns (RULES.md

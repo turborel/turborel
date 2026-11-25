@@ -51,7 +51,13 @@ pub(in crate::exec) fn indexed(plan: Plan, db: &Db, tx: TxId) -> RowIter {
 
 /// Fuse a column projection into a join, preserving its full predicate.
 #[inline(never)]
-pub(in crate::exec) fn projected(plan: Plan, output: Option<Columns>, db: &Db, tx: TxId) -> RowIter {
+pub(in crate::exec) fn projected(mut plan: Plan, output: Option<Columns>, db: &Db, tx: TxId) -> RowIter {
+    // Of a left operand of many rows, its probes are made on several
+    // threads (RULES.md D1114).
+    let degree = super::super::parallel::loop_degree(&mut plan);
+    if degree > 1 {
+        return super::super::parallel::looped(plan, output, (db, tx), degree);
+    }
     let db_for = db.clone();
     projected_over(plan, (output, Box::new(move |left| execute(left, &db_for, tx))), db, tx)
 }
@@ -68,7 +74,7 @@ pub(in crate::exec) fn indexed_over(plan: Plan, read: Reads, db: &Db, tx: TxId) 
 }
 
 /// `projected`, the rows of its left operand those `read` gives.
-fn projected_over(plan: Plan, (output, read): (Option<Columns>, Reads), db: &Db, tx: TxId) -> RowIter {
+pub(in crate::exec) fn projected_over(plan: Plan, (output, read): (Option<Columns>, Reads), db: &Db, tx: TxId) -> RowIter {
     let Plan::IndexJoin { outer, spatial, left, table, index, probe, cond, width, columns: needed, located, .. } = plan else {
         return failed(broken("an index join is not one"));
     };

@@ -557,3 +557,38 @@ fn a_zone_unsettled_alone_is_settled_with_its_bounds_kept() {
     assert!(!table.zones.visible(ids[0]), "a deletion is seen by no reader alone");
     assert!(reads(&table, &equal(0, 40), ids[40]), "the bounds kept");
 }
+
+/// Verifies: [DESIGN] RULES.md D1163, D31, D34, a zone settled visible to
+/// every reader is saved so: the table opened has it visible, nothing to
+/// settle again and none of its rows read; a zone a write unsettled after
+/// it was settled is saved unsettled, and opens not visible, to be summed
+/// up.
+///
+/// Regression test (R-TEST-7): every zone opened unsettled, so each start
+/// read a table's every row again to settle them.
+#[test]
+fn a_zone_saved_settled_visible_opens_so() {
+    let files = files();
+    let table = warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
+    let ids: Vec<RowId> = (0..3000).map(|n| table.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
+    summed(&table, 1);
+    assert!(table.zones.visible(ids[0]) && table.zones.visible(ids[2999]), "settled visible");
+    files.save_zones().unwrap();
+    let meta = table.meta();
+    drop(table);
+    let opened = RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap();
+    assert!(opened.zones.visible(ids[0]) && opened.zones.visible(ids[2999]), "visible as saved");
+    assert!(!unsettled(&opened, ids[0]) && !unsettled(&opened, ids[2999]), "nothing to settle again");
+    opened.update(NO_TRANSACTION, ids[0], row(0)).unwrap();
+    assert!(!opened.zones.visible(ids[0]) && unsettled(&opened, ids[0]), "a write unsettles it");
+    files.save_zones().unwrap();
+    drop(opened);
+    let again = RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap();
+    assert!(!again.zones.visible(ids[0]) && unsettled(&again, ids[0]), "the zone written opens unsettled");
+    assert!(again.zones.visible(ids[2999]) && !unsettled(&again, ids[2999]));
+}
+
+/// Whether the zone of row `id` of `table` is to be settled.
+fn unsettled(table: &RowTable, id: RowId) -> bool {
+    lock_builtin(&table.zones.slots.get(super::zone_at(id)).unwrap().zone).unsettled
+}

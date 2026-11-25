@@ -234,7 +234,10 @@ merged on the statement's thread at once. A query of DISTINCT set
 functions, computed by two groupings, runs both in one part: the first
 grouping's groups are split among the threads by the query's grouping
 columns alone, so each thread makes the second grouping's groups of its
-own, and EXPLAIN shows both groupings under one `Parallel`. A scan or sort of a column
+own, and EXPLAIN shows both groupings under one `Parallel`. An index
+nested-loop join over a part, as of a correlated EXISTS, probes its
+index on the part's threads, each taking a sixteenth of a morsel's rows
+of its left operand at a time. A scan or sort of a column
 store table stays on it too while EXECUTOR.BATCHES is on, since its
 scan by batch is faster alone; a join, window functions, a grouping or
 DISTINCT over one still run in parallel, a grouping a batch at a time

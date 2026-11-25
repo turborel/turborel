@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of zone maintenance, in the order they run.
-pub const ZONES: [Mutation; 16] = [
+pub const ZONES: [Mutation; 17] = [
     Mutation {
         name: "zone-stale-inside",
         package: Package::Core,
@@ -170,5 +170,15 @@ pub const ZONES: [Mutation; 16] = [
         replacement: "        self.owed.load(Ordering::SeqCst) > usize::MAX.saturating_sub(1)",
         integration: &[],
         unit: &["engine::rows::zones::cold::tests::versions_superseded_cold_keep_zones_unsettled_until_collected"],
+    },
+    Mutation {
+        name: "zone-visible-unsaved",
+        package: Package::Core,
+        breaks: "zone maintenance: a zone saved settled visible opens unsettled, so each start reads every row again to settle it",
+        file: "src/engine/rows/zones/saved.rs",
+        original: "            let unsettled = flags & VISIBLE == 0 || loose != 0;",
+        replacement: "            let unsettled = true;",
+        integration: &[],
+        unit: &["engine::rows::zones::tests::a_zone_saved_settled_visible_opens_so"],
     },
 ];

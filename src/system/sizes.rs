@@ -47,7 +47,7 @@ pub(super) fn tables() -> [Arc<dyn SystemTable>; 2] {
 }
 
 /// The base tables `seen` shows, in order of name.
-fn shown<'a>(seen: &Seen<'a>) -> Vec<&'a TableDesc> {
+pub(super) fn shown<'a>(seen: &Seen<'a>) -> Vec<&'a TableDesc> {
     let every = seen.may_monitor();
     let who = Who::sole(seen.state.catalog.roles(), seen.auth);
     let mut tables: Vec<&TableDesc> =
@@ -62,13 +62,14 @@ fn table_columns() -> Vec<ColumnDesc> {
 }
 
 /// The three values naming `name`.
-fn named(seen: &Seen<'_>, name: &QualifiedName) -> Row {
+pub(super) fn named(seen: &Seen<'_>, name: &QualifiedName) -> Row {
     vec![catalog_name(seen), text(&name.auth), text(&name.ident)]
 }
 
-/// A count, or the null value.
-fn maybe(n: Option<u64>) -> Value {
-    n.map_or(Value::Null, count)
+/// A count, or the null value of none or of one past what a column of
+/// counts (`BIGINT`) holds.
+pub(super) fn maybe(n: Option<u64>) -> Value {
+    n.filter(|n| i64::try_from(*n).is_ok()).map_or(Value::Null, count)
 }
 
 /// A time, an instant the clock read, or the null value.
@@ -77,12 +78,14 @@ fn when(at: Option<i64>) -> Value {
 }
 
 /// The bytes of `leaves`, the partitions of a table or the table alone,
-/// none if one does not know its own.
-fn sizes_of(seen: &Seen<'_>, leaves: &[QualifiedName]) -> Option<TableSizes> {
-    let mut all = TableSizes { bytes: 0, estimated: false };
+/// none if one does not know its own or their sum passes a count's.
+pub(super) fn sizes_of(seen: &Seen<'_>, leaves: &[QualifiedName], columns: bool) -> Option<TableSizes> {
+    let mut all = TableSizes::default();
     for leaf in leaves {
-        let own = seen.state.storage_of(leaf).ok()?.sizes()?;
-        all = TableSizes { bytes: all.bytes.saturating_add(own.bytes), estimated: all.estimated || own.estimated };
+        let own = seen.state.storage_of(leaf).ok()?.sizes(columns)?;
+        all.bytes = all.bytes.checked_add(own.bytes).filter(|n| i64::try_from(*n).is_ok())?;
+        all.estimated |= own.estimated;
+        all.columns.extend(own.columns);
     }
     Some(all)
 }
@@ -115,10 +118,10 @@ impl SystemTable for TableStatistics {
         for t in shown(seen) {
             let leaves = seen.state.catalog.partitioning().leaves(&t.name);
             let live = seen.state.row_count(&t.name).and_then(|n| u64::try_from(n).ok()).unwrap_or(0);
-            let sizes = sizes_of(seen, &leaves);
+            let sizes = sizes_of(seen, &leaves, false);
             let (changed, compacted) = stamps_of(seen, &leaves);
             let mut row = named(seen, &t.name);
-            row.extend([text(&t.engine), count(live), maybe(sizes.map(|s| s.bytes))]);
+            row.extend([text(&t.engine), count(live), maybe(sizes.as_ref().map(|s| s.bytes))]);
             row.extend([sizes.map_or(Value::Null, |s| yes(s.estimated)), when(changed), when(compacted)]);
             rows.push(row);
         }
@@ -161,3 +164,6 @@ impl SystemTable for IndexStatistics {
         Ok(rows)
     }
 }
+
+#[cfg(test)]
+mod tests;

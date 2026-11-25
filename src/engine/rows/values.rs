@@ -111,10 +111,14 @@ impl RowTable {
 
     /// Frees the pages of the values `record`, row `id`'s, keeps out of line.
     pub(in crate::engine::rows) fn free_values(&self, id: RowId, record: &[u8]) {
-        if let Ok(references) = self.sealing.plain_record(id, record).and_then(|plain| self.format.outside(&plain)) {
-            let pages: Vec<PageId> = references.iter().map(|r| PageId(r.at)).collect();
-            self.free(&pages);
-        }
+        self.free(&self.values_out_of_line(id, record));
+    }
+
+    /// The pages of the values `record`, row `id`'s, keeps out of line;
+    /// none of one that cannot be read.
+    pub(in crate::engine::rows) fn values_out_of_line(&self, id: RowId, record: &[u8]) -> Vec<PageId> {
+        let references = self.sealing.plain_record(id, record).and_then(|plain| self.format.outside(&plain));
+        references.map(|references| references.iter().map(|r| PageId(r.at)).collect()).unwrap_or_default()
     }
 
     /// The row `record` holds, row `id`'s, with `columns` decoded, or all.
