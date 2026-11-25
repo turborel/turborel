@@ -1,7 +1,8 @@
 //! Unit tests of the join estimates from keys and bounds (RULES.md D384,
 //! D385): a join on a composite key, on a referential constraint, the
 //! bound of an equality to a key, bounds never below the true rows, and
-//! the pairs' corrections giving one answer for every order of a set.
+//! the pairs' corrections giving one answer for every order of a set,
+//! and a guessed column bounded by its class's key (D1152).
 
 use super::Estimates;
 use super::joins::Classes;
@@ -203,4 +204,36 @@ fn a_table_changed_since_its_pass_keeps_its_bound() {
     let pairs = count(&s, "SELECT COUNT(*) FROM P A, P B WHERE A.SZ = B.SZ AND A.PK = 7");
     let (_, joined) = card(&s, "SELECT * FROM P A, P B WHERE A.SZ = B.SZ AND A.PK = 7");
     assert!(joined >= pairs, "bound {joined} below {pairs}");
+}
+
+/// Verifies: [DESIGN] RULES.md D1152: without statistics, a column taken
+/// as a key, of its table's rows, is counted of no more values than the
+/// key of its class: customers and suppliers, each of one of 25 nations,
+/// joined through the nations are estimated at a twenty-fifth of their
+/// product, not at its share of the customers' rows; a class of no key is
+/// left as it was.
+///
+/// Regression test (R-TEST-7): the join of 1,500 customers and 100
+/// suppliers on their nation was estimated at 25 rows, not 6,000.
+#[test]
+fn a_guessed_column_is_bounded_by_its_class_key() {
+    let db = Database::new();
+    db.set_job_policy(crate::threads::JobPolicy::Manual).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION G
+           CREATE TABLE N (NK INTEGER NOT NULL PRIMARY KEY)
+           CREATE TABLE C (CK INTEGER NOT NULL, NK INTEGER NOT NULL)
+           CREATE TABLE S (SK INTEGER NOT NULL, NK INTEGER NOT NULL)",
+    )
+    .unwrap();
+    let s = db.session("G");
+    let rows = |n: i32| (0_i32..n).map(|i| format!("({i}, {})", i % 25_i32)).collect::<Vec<_>>().join(", ");
+    s.run(&format!("INSERT INTO N VALUES {}", (0_i32..25_i32).map(|i| format!("({i})")).collect::<Vec<_>>().join(", "))).unwrap();
+    s.run(&format!("INSERT INTO C VALUES {}", rows(1_500_i32))).unwrap();
+    s.run(&format!("INSERT INTO S VALUES {}", rows(100_i32))).unwrap();
+    s.commit().unwrap();
+    let (through, _) = card(&s, "SELECT * FROM C, S, N WHERE C.NK = N.NK AND S.NK = N.NK");
+    assert!(close(through, 6_000.0_f64), "a twenty-fifth of the product: {through}");
+    let (keyless, _) = card(&s, "SELECT * FROM C, S WHERE C.NK = S.NK");
+    assert!(close(keyless, 100.0_f64), "no key, each column as many values as rows: {keyless}");
 }
