@@ -695,6 +695,7 @@ verification approach DO-178C expects (§8).
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
+| D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 
 ### The project
 
@@ -18921,6 +18922,41 @@ Each value is now cast as the cursor opens (`db/prepared.rs`), and the
 first that does not cast raises CAST's error there, before any plan is
 looked for. A value already of its type is not cast again. The plans
 still cast each value as they read it, which then raises nothing.
+
+#### D1100. A group's shadow bits are trusted only once the entries the tree held as it was published are marked
+
+A group is put in the directory first, and the entries the tree holds in
+its range of row ids are marked in its shadow bits after, so that a
+writer either finds the group or is found by the mark (D510). Between
+the two a reader could take the group with no bit set, and a scan by
+batch then read nothing of the tree over the group's range, and left
+that range out of the tree's rows it reads last
+(`engine/rows/frozen/batches.rs`). It missed every row of the range the
+group does not hold. A freeze leaves such rows out when their commit is
+not yet stamped on their entries as it reads them (D440), which a commit
+does a leaf at a time, so a freeze racing a commit made a group whose
+range held some of the commit's rows in the tree alone. The scan also
+read the frozen value of a row updated, and the row of one deleted, just
+before the group was published. A count read this way was of no state
+ever committed.
+
+A group's bits are now settled only when its mark has read the tree
+(`engine/rows/frozen/shadow_bits.rs`). Until then every bit is taken as
+set, so a scan reads the tree over the group's range whole, as it did
+before there were bits, and a group is not said to have no bit. A reader
+reads that the bits are settled before it reads any of them, so the bits
+it trusts hold every mark made by then. A table opened settles its
+groups' bits once it has marked them. Publishing is two steps, the group
+put in the directory and its bits marked (`engine/rows/frozen/freeze.rs`),
+so a test reads between them.
+
+Rejected was marking the bits before the group is in the directory,
+which misses the writer that writes between the mark and the directory.
+Rejected too was holding the directory's lock while the tree is read,
+which would stop every reader and writer of the table for as long as the
+mark takes. A scan in row id order, a morsel's by row and a scan in the
+groups' order merge the tree's entries with the groups' rows by row id
+and never read the bits, so they were not at fault.
 
 ## 2. Project layout
 
