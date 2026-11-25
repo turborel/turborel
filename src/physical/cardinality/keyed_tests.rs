@@ -5,6 +5,7 @@
 //! and a guessed column bounded by its class's key (D1152).
 
 use super::Estimates;
+use super::composite::Member;
 use super::joins::Classes;
 use crate::db::{Database, Session};
 
@@ -208,13 +209,14 @@ fn a_table_changed_since_its_pass_keeps_its_bound() {
 
 /// Verifies: [DESIGN] RULES.md D1152: without statistics, a column taken
 /// as a key, of its table's rows, is counted of no more values than the
-/// key of its class: customers and suppliers, each of one of 25 nations,
-/// joined through the nations are estimated at a twenty-fifth of their
-/// product, not at its share of the customers' rows; a class of no key is
-/// left as it was.
+/// key of its class: of customers and suppliers, each of one of 25
+/// nations, a class through the nations' key keeps a twenty-fifth of the
+/// pairs of customers and suppliers, not one in as many as the
+/// customers' rows; a class of no key is left as it was.
 ///
 /// Regression test (R-TEST-7): the join of 1,500 customers and 100
-/// suppliers on their nation was estimated at 25 rows, not 6,000.
+/// suppliers on their nation, within a join of the nations, was estimated
+/// at 100 rows, not 6,000, so a plan joined them first.
 #[test]
 fn a_guessed_column_is_bounded_by_its_class_key() {
     let db = Database::new();
@@ -232,8 +234,15 @@ fn a_guessed_column_is_bounded_by_its_class_key() {
     s.run(&format!("INSERT INTO C VALUES {}", rows(1_500_i32))).unwrap();
     s.run(&format!("INSERT INTO S VALUES {}", rows(100_i32))).unwrap();
     s.commit().unwrap();
-    let (through, _) = card(&s, "SELECT * FROM C, S, N WHERE C.NK = N.NK AND S.NK = N.NK");
-    assert!(close(through, 6_000.0_f64), "a twenty-fifth of the product: {through}");
-    let (keyless, _) = card(&s, "SELECT * FROM C, S WHERE C.NK = S.NK");
-    assert!(close(keyless, 100.0_f64), "no key, each column as many values as rows: {keyless}");
+    let (st, c) = s.optimized("SELECT * FROM C").unwrap();
+    let ((_, sp), (_, n)) = (s.optimized("SELECT * FROM S").unwrap(), s.optimized("SELECT * FROM N").unwrap());
+    let estimates = Estimates::new(&st);
+    let member = |rel: usize, column: usize, distinct: f64| Member { rel, column, distinct };
+    let through =
+        estimates.keyed_classes(&[&c, &sp, &n], &[vec![member(0, 1, 1_500.0_f64), member(1, 1, 100.0_f64), member(2, 0, 25.0_f64)]]);
+    let pairs = through.fraction(|r| r < 2);
+    assert!((pairs * 25.0_f64 - 1.0_f64).abs() < 1e-9_f64, "a twenty-fifth of the pairs: {pairs}");
+    let keyless = estimates.keyed_classes(&[&c, &sp], &[vec![member(0, 1, 1_500.0_f64), member(1, 1, 100.0_f64)]]);
+    let alone = keyless.fraction(|r| r < 2);
+    assert!((alone * 1_500.0_f64 - 1.0_f64).abs() < 1e-9_f64, "no key, each column as many values as rows: {alone}");
 }
