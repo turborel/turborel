@@ -19686,9 +19686,12 @@ What a thread gathers of a morsel is charged to the grant a batch's
 worth at a time, and stays charged until the reader has taken it, so
 the morsels running ahead are held within the grant too
 (`exec/parallel/charged.rs`). A morsel that outgrows the grant is given
-up and its charge given back. A stream then reads that morsel itself, a
-row or a batch at a time, holding none, while the threads go on with
-those after it; a sort writes it to its runs as it reads it; a window's
+up and its charge given back. A stream's reader then reads the rest of
+that morsel's read as its thread left it, after the rows the thread
+gathered, a row or a batch at a time, holding none, while the threads go
+on with those after it. It never reads the morsel again, since a split's
+part is read once: an index scan's entries are taken by the morsel that
+reads them. A sort writes it to its runs as it reads it; a window's
 or a set operation's partitions put its rows in their lists, which
 spill; a join's build gives way to the serial join, which partitions.
 A grouping's morsel is fed its rows as they are made and holds its
