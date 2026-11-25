@@ -287,6 +287,17 @@ pub(super) fn whole_rows(rows: RowIter, (limit, ahead): (&Limit, &Ahead)) -> Res
     gathered(rows_charged(rows, &Tally::within(limit, Some(ahead))))
 }
 
+/// \[DESIGN\] (RULES.md D1115) The batches of `batches`, a morsel of a
+/// semi join's left held by its parts, gathered within `limit`, the
+/// join's grant: whole, or past it with the rest of the morsel's read.
+///
+/// # Errors
+///
+/// As reading a batch fails.
+pub(super) fn held_batches(batches: Batches, limit: &Limit) -> Result<Gathered<Kept>> {
+    gathered(batches_charged(batches, &Tally::of(limit)))
+}
+
 /// The batches of `batches`, a stream's morsel's, gathered within `limit`
 /// and the rows `ahead` of its reader.
 ///

@@ -19312,8 +19312,9 @@ Each morsel's rows are charged to the join's work grant as its thread
 gathers them (D1150). Once a morsel outgrows the grant, or the rows
 taken are on course to, the batches taken so far are given on, then the
 rest in order, to the join that builds its right, a morsel past the
-grant read again by the statement's thread a batch at a time, so every
-left row is read once and in order. The
+grant read on by the statement's thread from where its own thread left
+it, as a split's part is read once (an index's entries are taken by the
+morsel that reads them), so every left row is read once and in order. The
 first morsel that fails, in the order of their numbers, is the error
 raised, after the rows before it are taken (D15). A pipeline whose
 morsels are not read by batch, or whose batches hold other columns

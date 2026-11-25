@@ -14,8 +14,9 @@
 //! gathered (`parallel/charged.rs`, RULES.md D1150). Once a morsel
 //! outgrows the grant, or the rows taken are on course to, the batches
 //! taken are given on, then the rest in order, a morsel past the grant
-//! read again by the statement's thread a batch at a time, so the join
-//! that builds its right reads every row of the left once. The first
+//! read on by the statement's thread from where its own thread left it,
+//! as an index's part is read once, so the join that builds its right
+//! reads every row of the left once. The first
 //! morsel that fails, in the order of their numbers, is the error raised,
 //! after the rows before it are taken (RULES.md D15). A pipeline whose
 //! morsels are not read by batch, or whose batches hold other columns
@@ -24,7 +25,7 @@
 use std::sync::Arc;
 
 use super::build::{Crew, shared};
-use super::charged::{Taken, Tally, charged_batches};
+use super::charged::{Gathered, held_batches};
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit};
@@ -43,8 +44,16 @@ pub(in crate::exec) enum Left {
     Rest(Batches),
 }
 
-/// The morsels of a left operand not yet taken, each by its number.
-type Taking = Box<dyn Iterator<Item = (usize, Result<Taken<Batch>>)> + Send>;
+/// A morsel of a left operand, as its thread gathered it: its kept rows
+/// joined into one batch, with the bytes it holds of the grant; or, past
+/// the grant, the batches it gathered and the rest of its read.
+enum Morsel {
+    Whole(Batch, usize),
+    Past(Vec<Kept>, Batches),
+}
+
+/// The morsels of a left operand not yet taken, in order.
+type Taking = Morsels<Morsel>;
 
 /// The pipeline `plan`, read by its morsels on up to `degree` threads,
 /// its scans told the runtime filters `told`, its batches holding the
@@ -71,21 +80,23 @@ pub(in crate::exec) fn held_left(
         return Ok(Held::GaveWay);
     }
     let (vectors, count) = (layout.0.len(), pipeline.count());
-    let (pipeline, db_for, within) = (Arc::new(pipeline), db.clone(), limit.clone());
-    let read = Arc::clone(&pipeline);
-    let work = Box::new(move |m: usize| gathered(&read, m, (&db_for, tx), (vectors, &within)));
-    let mut morsels: Taking = Box::new((0_usize..).zip(Morsels::start(db, tx, (count, degree), work)));
-    let (mut parts, mut bytes) = (Vec::new(), 0_usize);
-    while let Some((m, taken)) = morsels.next() {
-        let Taken::Whole(batch, held) = taken? else {
-            limit.give(bytes);
-            return Ok(Held::Kept(Left::Rest(rest(parts, (Some(m), morsels), (&pipeline, &limit), (db, tx)))));
+    let (db_for, within) = (db.clone(), limit.clone());
+    let work = Box::new(move |m: usize| gathered(pipeline.morsel_kept(m, (&db_for, tx))?, (vectors, &within)));
+    let mut morsels: Taking = Morsels::start(db, tx, (count, degree), work);
+    let (mut parts, mut bytes, mut done) = (Vec::new(), 0_usize, 0_usize);
+    while let Some(taken) = morsels.next() {
+        let (batch, held) = match taken? {
+            Morsel::Whole(batch, held) => (batch, held),
+            Morsel::Past(items, read) => {
+                limit.give(bytes);
+                return Ok(Held::Kept(Left::Rest(rest(parts, (items.into_iter().map(Ok).chain(read), morsels), &limit))));
+            }
         };
         parts.push(batch);
-        bytes = bytes.saturating_add(held);
-        if !limit.on_course(0, (m.saturating_add(1), count)) {
+        (bytes, done) = (bytes.saturating_add(held), done.saturating_add(1));
+        if !limit.on_course(0, (done, count)) {
             limit.give(bytes);
-            return Ok(Held::Kept(Left::Rest(rest(parts, (None, morsels), (&pipeline, &limit), (db, tx)))));
+            return Ok(Held::Kept(Left::Rest(rest(parts, (std::iter::empty(), morsels), &limit))));
         }
     }
     // A morsel of no rows may hold no vectors; of none at all, one batch
@@ -98,56 +109,48 @@ pub(in crate::exec) fn held_left(
     Ok(Held::Kept(Left::Held(Box::new(table))))
 }
 
-/// Morsel `m` of `pipeline` gathered into a batch of `vectors` vectors,
-/// charged to `limit` as it grows, then what it holds with its table's
-/// share; nothing if it outgrows the grant.
+/// A morsel's batches `batches` gathered within `limit` into one batch of
+/// `vectors` vectors, charged then what it holds with its table's share;
+/// or, past the grant, as they were gathered, with the rest of the read.
 ///
 /// # Errors
 ///
 /// As reading the morsel fails.
-fn gathered(pipeline: &Pipeline, m: usize, (db, tx): (&Db, TxId), (vectors, limit): (usize, &Limit)) -> Result<Taken<Batch>> {
-    let tally = Tally::of(limit);
-    let parts = charged_batches(pipeline.morsel_kept(m, (db, tx))?, &tally).map(|kept| {
-        kept.map(|(b, rows)| {
-            let places = crate::storage::sel::places_of(rows, b.rows);
-            (b, places)
-        })
-    });
-    let parts = parts.collect::<Result<Vec<_>>>()?;
-    let batch = if parts.is_empty() || tally.past() { Batch::empty(vectors) } else { Batch::joined(parts) };
-    tally.settle(batch.bytes().saturating_add(batch.rows.saturating_mul(TABLE_ROW_BYTES)));
-    Ok(tally.taken(batch))
+fn gathered(batches: Batches, (vectors, limit): (usize, &Limit)) -> Result<Morsel> {
+    let (items, charged) = match held_batches(batches, limit)? {
+        Gathered::Whole(items, charged) => (items, charged),
+        Gathered::Past(items, read) => return Ok(Morsel::Past(items, read)),
+    };
+    let parts: Vec<_> = items.into_iter().map(|(b, rows)| (crate::storage::sel::places_of(rows, b.rows), b)).map(|(p, b)| (b, p)).collect();
+    let batch = if parts.is_empty() { Batch::empty(vectors) } else { Batch::joined(parts) };
+    // What the batch holds, its table's share with it, in place of what
+    // its batches held as they were gathered.
+    let held = batch.bytes().saturating_add(batch.rows.saturating_mul(TABLE_ROW_BYTES));
+    limit.give(charged);
+    let _ = limit.take(held);
+    Ok(Morsel::Whole(batch, held))
 }
 
-/// The batches `parts`, taken, then of the morsel `past` past the grant,
-/// if any, then of those left in `morsels`, in order: a morsel past the
-/// grant read again of `pipeline` by the statement's thread, a batch at a
-/// time, and each other's bytes given back to `limit` as it is given on,
-/// as what reads them holds them.
-fn rest(
-    parts: Vec<Batch>,
-    (past, morsels): (Option<usize>, Taking),
-    (pipeline, limit): (&Arc<Pipeline>, &Limit),
-    (db, tx): (&Db, TxId),
-) -> Batches {
-    let (pipeline, db, limit) = (Arc::clone(pipeline), db.clone(), limit.clone());
-    let again = move |m: usize| -> Batches {
-        match pipeline.morsel_kept(m, (&db, tx)) {
-            Ok(batches) => batches,
-            Err(e) => Box::new(std::iter::once(Err(e))),
-        }
-    };
+/// The batches `parts`, taken, then those of the morsel `past` the grant
+/// left read, then of those left in `morsels`, in order, a morsel past
+/// the grant read on from where its thread left it, so none is read
+/// twice, as an index's part is read once; each other's bytes given back
+/// to `limit` as it is given on, as what reads them holds them.
+fn rest<P>(parts: Vec<Batch>, (past, morsels): (P, Taking), limit: &Limit) -> Batches
+where
+    P: Iterator<Item = Result<Kept>> + Send + 'static,
+{
+    let limit = limit.clone();
     let given: Vec<Result<Kept>> = parts.into_iter().map(|part| Ok((part, None))).collect();
-    let past = past.map(|m| (m, Ok(Taken::Past)));
-    let left = past.into_iter().chain(morsels).flat_map(move |(m, taken)| -> Batches {
+    let left = morsels.flat_map(move |taken| -> Batches {
         match taken {
-            Ok(Taken::Whole(batch, held)) => {
+            Ok(Morsel::Whole(batch, held)) => {
                 limit.give(held);
                 Box::new(std::iter::once(Ok((batch, None))))
             }
-            Ok(Taken::Past) => again(m),
+            Ok(Morsel::Past(items, read)) => Box::new(items.into_iter().map(Ok).chain(read)),
             Err(e) => Box::new(std::iter::once(Err(e))),
         }
     });
-    Box::new(given.into_iter().chain(left))
+    Box::new(given.into_iter().chain(past).chain(left))
 }
