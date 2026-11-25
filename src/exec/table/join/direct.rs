@@ -47,14 +47,116 @@ pub(super) const NULL_NUMBER: u64 = 0x7FF8_0000_0000_0E11;
 pub(super) struct Dense {
     /// The least key.
     least: i64,
-    /// Of each place in the span and one past it, where its key's rows
+    /// Its parts, each the keys whose places share their high bits: one,
+    /// or as many as a table built by many threads has (RULES.md D1080).
+    parts: Vec<DensePart>,
+    /// How far a place is turned to give its part.
+    within: u32,
+    /// The bits of a place that place it within its part.
+    mask: usize,
+    /// The built rows of a null key whose nulls match, in the order built.
+    nulls: Vec<u32>,
+}
+
+/// The rows of the keys of a direct table whose places share their high
+/// bits (RULES.md D1080): every row of a table one thread built.
+#[derive(Debug, Default)]
+pub(in crate::exec) struct DensePart {
+    /// Of each place of the part and one past it, where its key's rows
     /// begin among `rows`.
     starts: Vec<u32>,
     /// The built rows, those of each key after the key before's, each in
     /// the order built.
     rows: Vec<u32>,
-    /// The built rows of a null key whose nulls match, in the order built.
-    nulls: Vec<u32>,
+}
+
+/// \[DESIGN\] (RULES.md D1080) What the numbers of some of a build's
+/// keys say of a direct table: the least and the greatest, how many, and
+/// whether each is a whole number below 2^51 in magnitude. Those of two
+/// runs of rows say together what the numbers of both would.
+#[derive(Debug, Clone, Copy)]
+pub(in crate::exec) struct Span {
+    least: i64,
+    most: i64,
+    keyed: usize,
+    whole: bool,
+}
+
+impl Span {
+    /// Of the keys whose `numbers` are given, the bits of each one's
+    /// nearest `f64`, but those `misses` marks and those of a null.
+    pub(in crate::exec) fn of(numbers: &[u64], misses: &[bool]) -> Span {
+        let mut span = Span { least: i64::MAX, most: i64::MIN, keyed: 0, whole: true };
+        for (&bits, _) in numbers.iter().zip(misses).filter(|&(&bits, m)| !*m && bits != NULL_NUMBER) {
+            let Some(key) = whole(bits) else {
+                span.whole = false;
+                continue;
+            };
+            span = Span { least: span.least.min(key), most: span.most.max(key), keyed: span.keyed.saturating_add(1), whole: span.whole };
+        }
+        span
+    }
+
+    /// Of its keys and `other`'s.
+    #[must_use]
+    pub(in crate::exec) fn with(self, other: Span) -> Span {
+        Span {
+            least: self.least.min(other.least),
+            most: self.most.max(other.most),
+            keyed: self.keyed.saturating_add(other.keyed),
+            whole: self.whole && other.whole,
+        }
+    }
+
+    /// The least key and the places of the span, if its keys make a
+    /// direct table: each a whole number, their span at most `DENSE_SPAN`
+    /// times their count.
+    pub(super) fn dense(&self) -> Option<(i64, usize)> {
+        let width = usize::try_from(self.most.checked_sub(self.least)?).ok()?.checked_add(1)?;
+        if !self.whole || self.keyed == 0 || width > self.keyed.saturating_mul(DENSE_SPAN) {
+            return None;
+        }
+        Some((self.least, width))
+    }
+}
+
+/// The place in a span from `least` of the key whose number's bits are
+/// `bits`; none of a null's, or of a number not whole or below `least`.
+pub(super) fn place_of(bits: u64, least: i64) -> Option<usize> {
+    if bits == NULL_NUMBER {
+        return None;
+    }
+    whole(bits).and_then(|key| key.checked_sub(least)).and_then(|p| usize::try_from(p).ok())
+}
+
+impl DensePart {
+    /// The part of `places` places of the rows `built` gives each time
+    /// it is asked, each with its key's place in the span, `count` of
+    /// them, `at` of a place its place among the part's: put by a
+    /// counting sort, the rows of a key in the order given.
+    pub(super) fn of<I: Iterator<Item = (usize, u64)>>(
+        built: impl Fn() -> I,
+        (places, count): (usize, usize),
+        at: impl Fn(u64) -> usize,
+    ) -> DensePart {
+        let mut ends = vec![0_usize; places.saturating_add(1)];
+        for (_, place) in built() {
+            if let Some(end) = ends.get_mut(at(place).saturating_add(1)) {
+                *end = end.saturating_add(1);
+            }
+        }
+        summed(&mut ends);
+        let mut next = ends.clone();
+        let mut rows = vec![0_u32; count];
+        for (r, place) in built() {
+            let Some(to) = next.get_mut(at(place)) else { continue };
+            if let Some(row) = rows.get_mut(*to) {
+                *row = u32::try_from(r).unwrap_or(u32::MAX);
+            }
+            *to = to.saturating_add(1);
+        }
+        DensePart { starts: ends.into_iter().map(|e| u32::try_from(e).unwrap_or(u32::MAX)).collect(), rows }
+    }
 }
 
 impl Dense {
@@ -65,41 +167,27 @@ impl Dense {
     /// and their span is at most `DENSE_SPAN` times their count, of rows a
     /// `u32` numbers.
     pub(super) fn of(numbers: &[u64], misses: &[bool]) -> Option<Dense> {
-        let mut keyed: Vec<(u32, i64)> = Vec::with_capacity(numbers.len());
-        let mut nulls = Vec::new();
-        let (mut least, mut most) = (i64::MAX, i64::MIN);
-        for (r, (&bits, _)) in numbers.iter().zip(misses).enumerate().filter(|(_, (_, m))| !**m) {
-            if bits == NULL_NUMBER {
-                nulls.push(u32::try_from(r).ok()?);
-                continue;
-            }
-            let key = whole(bits)?;
-            (least, most) = (least.min(key), most.max(key));
-            keyed.push((u32::try_from(r).ok()?, key));
-        }
-        let width = usize::try_from(most.checked_sub(least)?).ok()?.checked_add(1)?;
-        if keyed.is_empty() || width > keyed.len().saturating_mul(DENSE_SPAN) {
-            return None;
-        }
-        let place = |key: i64| usize::try_from(key.wrapping_sub(least)).unwrap_or(usize::MAX);
-        let mut ends = vec![0_usize; width.saturating_add(1)];
-        for &(_, key) in &keyed {
-            if let Some(end) = ends.get_mut(place(key).saturating_add(1)) {
-                *end = end.saturating_add(1);
-            }
-        }
-        summed(&mut ends);
-        let mut next = ends.clone();
-        let mut rows = vec![0_u32; keyed.len()];
-        for &(r, key) in &keyed {
-            let Some(at) = next.get_mut(place(key)) else { continue };
-            if let Some(row) = rows.get_mut(*at) {
-                *row = r;
-            }
-            *at = at.saturating_add(1);
-        }
-        let starts = ends.into_iter().map(|e| u32::try_from(e).unwrap_or(u32::MAX)).collect();
-        Some(Dense { least, starts, rows, nulls })
+        u32::try_from(numbers.len()).ok()?;
+        let (least, width) = Span::of(numbers, misses).dense()?;
+        let held = || numbers.iter().zip(misses).enumerate().filter(|(_, (_, m))| !**m);
+        let nulls = held().filter(|(_, (bits, _))| **bits == NULL_NUMBER).filter_map(|(r, _)| u32::try_from(r).ok()).collect();
+        let built = || held().filter_map(|(r, (&bits, _))| place_of(bits, least).map(|p| (r, u64::try_from(p).unwrap_or(u64::MAX))));
+        let part = DensePart::of(built, (width, built().count()), |place| usize::try_from(place).unwrap_or(usize::MAX));
+        let within = usize::BITS.saturating_sub(width.saturating_sub(1).leading_zeros());
+        Some(Dense::of_parts(least, vec![part], within, nulls))
+    }
+
+    /// \[DESIGN\] (RULES.md D1080) The table of `parts`, in order, each
+    /// the keys whose places from `least` share the bits above their
+    /// `within` lowest; the rows of a null key `nulls`.
+    pub(super) fn of_parts(least: i64, parts: Vec<DensePart>, within: u32, nulls: Vec<u32>) -> Dense {
+        Dense { least, parts, within, mask: super::parted::low_bits(within), nulls }
+    }
+
+    /// How many parts it was made in.
+    #[cfg(test)]
+    pub(super) fn parts(&self) -> usize {
+        self.parts.len()
     }
 
     /// The rows of the key whose number's bits are `bits`, in the order
@@ -109,12 +197,12 @@ impl Dense {
         if bits == NULL_NUMBER {
             return &self.nulls;
         }
-        let Some(at) = whole(bits).and_then(|key| key.checked_sub(self.least)).and_then(|p| usize::try_from(p).ok()) else {
-            return &[];
-        };
-        let (Some(&from), Some(&to)) = (self.starts.get(at), self.starts.get(at.saturating_add(1))) else { return &[] };
+        let Some(place) = place_of(bits, self.least) else { return &[] };
+        let Some(part) = self.parts.get(place.checked_shr(self.within).unwrap_or(0)) else { return &[] };
+        let at = place & self.mask;
+        let (Some(&from), Some(&to)) = (part.starts.get(at), part.starts.get(at.saturating_add(1))) else { return &[] };
         let span = usize::try_from(from).unwrap_or(usize::MAX)..usize::try_from(to).unwrap_or(0);
-        self.rows.get(span).unwrap_or_default()
+        part.rows.get(span).unwrap_or_default()
     }
 }
 

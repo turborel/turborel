@@ -25,7 +25,7 @@ use crate::value::{Value, key_equal};
 
 /// A hash join's right operand, built for a pipeline's morsels.
 pub(in crate::exec) struct SharedTable {
-    right: Batch,
+    right: Arc<Batch>,
     /// The column of the operand's rows each of `right`'s vectors holds.
     columns: Vec<usize>,
     /// The width of the operand's rows.
@@ -39,6 +39,68 @@ pub(in crate::exec) struct SharedTable {
     /// The places among `right`'s vectors of those a probe's batches hold,
     /// in order; all, if none.
     shown: Option<Vec<usize>>,
+    /// Of a table built by many threads, each key's runtime filter, if it
+    /// has one, made as the table was (RULES.md D1080).
+    made: Filters,
+}
+
+/// \[DESIGN\] (RULES.md D1080) Each of a table's keys' runtime filter, if
+/// it has one, where they were made as the table was; none where they
+/// are made as they are asked for.
+pub(in crate::exec) type Filters = Option<Vec<Option<Arc<RuntimeFilter>>>>;
+
+/// \[DESIGN\] (RULES.md D1080) What a table built by many threads
+/// (`parallel/build.rs`) is put together of: its rows joined into one
+/// batch, their columns and the width of the operand's rows, each key's
+/// place among the vectors and whether its nulls match, and how its keys
+/// are hashed.
+#[derive(Clone)]
+pub(in crate::exec) struct Frame {
+    pub(in crate::exec) right: Arc<Batch>,
+    pub(in crate::exec) columns: Vec<usize>,
+    pub(in crate::exec) width: usize,
+    pub(in crate::exec) places: Vec<usize>,
+    pub(in crate::exec) nulls: Vec<bool>,
+    pub(in crate::exec) seed: Seed,
+    pub(in crate::exec) keyed: bool,
+}
+
+impl Frame {
+    /// The frame of the operand's rows `right`, one batch of its columns
+    /// `columns` of its rows `width` wide, joined on `keys`, hashed by
+    /// `seed`.
+    ///
+    /// # Errors
+    ///
+    /// A key column the batch lacks (SQLCODE -910).
+    pub(in crate::exec) fn of(right: Batch, (columns, width): (Vec<usize>, usize), keys: &[JoinKey], seed: Seed) -> Result<Frame> {
+        let places = keys
+            .iter()
+            .map(|k| columns.iter().position(|&c| c == k.right).ok_or_else(|| crate::exec::broken("a join key its built batch lacks")))
+            .collect::<Result<Vec<usize>>>()?;
+        let keyed = places.iter().any(|&at| {
+            !matches!(right.columns.get(at), Some(Column::Ints(_) | Column::Floats(_) | Column::Datetimes(_) | Column::Bools(_)))
+        });
+        Ok(Frame { right: Arc::new(right), columns, width, places, nulls: keys.iter().map(|k| k.nulls).collect(), seed, keyed })
+    }
+
+    /// How its keys are hashed for a hashed table or a runtime filter;
+    /// given as numbers to a direct table if `direct` (RULES.md D601).
+    pub(in crate::exec) fn hashing(&self, direct: bool) -> Hashing<'_> {
+        Hashing { seed: &self.seed, keyed: self.keyed, direct }
+    }
+
+    /// The runtime filter of its key `k`, if it has one (RULES.md D369).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a value nests deeper than a type may.
+    pub(in crate::exec) fn filter(&self, k: usize) -> Result<Option<RuntimeFilter>> {
+        let (Some(&at), Some(&nulls)) = (self.places.get(k), self.nulls.get(k)) else { return Ok(None) };
+        let mut hashes = KeyHashes::default();
+        hashes.of_batch((&self.right, None), (&[at], &[nulls]), self.hashing(false))?;
+        Ok(RuntimeFilter::of_built(&self.right, (at, nulls), &hashes, self.hashing(false)))
+    }
 }
 
 impl SharedTable {
@@ -57,26 +119,8 @@ impl SharedTable {
         keys: &[JoinKey],
         (seed, dense): (Seed, bool),
     ) -> Result<SharedTable> {
-        let places = keys
-            .iter()
-            .map(|k| columns.iter().position(|&c| c == k.right).ok_or_else(|| crate::exec::broken("a join key its built batch lacks")))
-            .collect::<Result<Vec<usize>>>()?;
         let parts = parts.into_iter().map(|b| (b.rows, b)).map(|(n, b)| (b, (0..n).collect())).collect();
-        let right = Batch::joined(parts);
-        let keyed = places.iter().any(|&at| {
-            !matches!(right.columns.get(at), Some(Column::Ints(_) | Column::Floats(_) | Column::Datetimes(_) | Column::Bools(_)))
-        });
-        let mut shared = SharedTable {
-            right,
-            columns,
-            width,
-            places,
-            nulls: keys.iter().map(|k| k.nulls).collect(),
-            table: JoinTable::default(),
-            seed,
-            keyed,
-            shown: None,
-        };
+        let mut shared = SharedTable::framed(Frame::of(Batch::joined(parts), (columns, width), keys, seed)?, JoinTable::default(), None);
         // A direct table of keys dense in their span if `dense` (RULES.md
         // D601), else hashed.
         if let Some(table) = if dense { JoinTable::dense_of(&shared.right, (&shared.places, &shared.nulls), &shared.seed)? } else { None } {
@@ -87,6 +131,14 @@ impl SharedTable {
         built.of_batch((&shared.right, None), (&shared.places, &shared.nulls), shared.hashed())?;
         shared.table = JoinTable::of(&built.hashes, &built.misses);
         Ok(shared)
+    }
+
+    /// \[DESIGN\] (RULES.md D1080) The table of `frame`'s rows, found by
+    /// `table`, made of them; `made` each of its keys' runtime filters, if
+    /// they were made with it.
+    pub(in crate::exec) fn framed(frame: Frame, table: JoinTable, made: Filters) -> SharedTable {
+        let Frame { right, columns, width, places, nulls, seed, keyed } = frame;
+        SharedTable { right, columns, width, places, nulls, table, seed, keyed, shown: None, made }
     }
 
     /// The table of the operand's `rows`, each `width` wide, kept in
@@ -121,6 +173,10 @@ impl SharedTable {
     ///
     /// SQLCODE -910 if a value nests deeper than a type may.
     pub(in crate::exec) fn filters(&self, keys: &[JoinKey]) -> Result<Vec<Told>> {
+        if let Some(made) = &self.made {
+            let told = keys.iter().zip(made).filter_map(|(key, filter)| filter.as_ref().map(|f| Told::of(Arc::clone(f), key.left)));
+            return Ok(told.collect());
+        }
         let mut told = Vec::new();
         for ((key, &at), &nulls) in keys.iter().zip(&self.places).zip(&self.nulls) {
             let mut hashes = KeyHashes::default();
@@ -136,6 +192,12 @@ impl SharedTable {
     #[cfg(test)]
     pub(in crate::exec) fn rows(&self) -> usize {
         self.right.rows
+    }
+
+    /// How many parts its table was made in (RULES.md D1080).
+    #[cfg(test)]
+    pub(in crate::exec) fn parts(&self) -> usize {
+        self.table.parts()
     }
 
     /// Whether its table is direct (RULES.md D601).

@@ -48,7 +48,7 @@ use crate::txn::{TxId, checked};
 use crate::value::Value;
 pub(in crate::exec) use held::{TABLE_ROW_BYTES, dense_wanted};
 use probe::Kind;
-pub(in crate::exec) use shared::SharedTable;
+pub(in crate::exec) use shared::{Filters, Frame, SharedTable};
 
 /// The operands of `plan`, if it is a join: a product, a hash join or an
 /// outer join.

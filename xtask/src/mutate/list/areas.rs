@@ -42,6 +42,7 @@ mod estimates;
 mod group_table;
 mod hot_rows;
 mod insert_values;
+mod join_build;
 mod join_estimates;
 mod join_table;
 mod joins;
@@ -293,7 +294,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's and the routine
 /// debugger's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 25] {
+fn closing() -> [&'static [Mutation]; 26] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -308,6 +309,7 @@ fn closing() -> [&'static [Mutation]; 25] {
         &late::LATE,
         &group_table::GROUP_TABLE,
         &join_table::JOIN_TABLE,
+        &join_build::JOIN_BUILD,
         &xxhash::XXHASH,
         &semi_joins::SEMI_JOINS,
         &mark_joins::MARK_JOINS,

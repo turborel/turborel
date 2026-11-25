@@ -25,18 +25,26 @@
 //! dense in their span is direct instead (`direct.rs`): a probe gives it
 //! its key's number, not a hash (`Hashing::direct`), and finds the rows of
 //! that number at its place in the span.
+//!
+//! \[DESIGN\] (RULES.md D1080) A table is held in parts, each the rows
+//! whose slots share their high bits, with a directory of its own: one
+//! part, if one thread built it, or `BUILD_PARTS`, each made by the
+//! thread that took it (`parted.rs`). A probe finds its part by the high
+//! bits of its slot, then its slot within the part.
 
 mod direct;
 mod equal;
 mod keys;
+mod parted;
 mod placed;
 
 #[cfg(test)]
 mod tests;
 
-pub(in crate::exec) use direct::DENSE_SPAN;
+pub(in crate::exec) use direct::{DENSE_SPAN, Span};
 pub(in crate::exec) use equal::keys_equal;
-pub(in crate::exec) use keys::{Hashing, KeyHashes, values_hash};
+pub(in crate::exec) use keys::{Hashing, KeyHashes, numbers_hashed, values_hash};
+pub(in crate::exec) use parted::{BUILD_PARTS, BuiltPart, Parted, Parting};
 
 /// \[DESIGN\] How far a directory word's 16 tag bits are turned.
 const TAG_SHIFT: u32 = 48;
@@ -56,17 +64,53 @@ const MIN_SLOTS: usize = 16;
 /// another; a slot of more is sorted by hash and searched.
 pub(super) const LINEAR: usize = 8;
 
-/// A hash join's built rows, found by their keys' hashes.
+/// The rows of a table whose slots share their high bits (RULES.md
+/// D1080): every row of a table one thread built.
 #[derive(Debug, Default)]
-pub(in crate::exec) struct JoinTable {
+pub(in crate::exec) struct Part {
     /// Of each slot, after a word of 0: its tags above where its rows end.
     directory: Vec<u64>,
     /// The built rows, those of each slot after the slot before's.
     rows: Vec<u32>,
     /// Each of `rows`' hash.
     hashes: Vec<u64>,
+}
+
+impl Part {
+    /// The part of `slots` slots of the rows `built` gives each time it
+    /// is asked, each with its hash, `count` of them, `slot` of a hash
+    /// its slot among the part's.
+    fn of<I: Iterator<Item = (usize, u64)>>(built: impl Fn() -> I, (slots, count): (usize, usize), slot: impl Fn(u64) -> usize) -> Part {
+        let mut ends = vec![0_usize; slots.saturating_add(1)];
+        for (_, h) in built() {
+            if let Some(end) = ends.get_mut(slot(h).saturating_add(1)) {
+                *end = end.saturating_add(1);
+            }
+        }
+        placed::summed(&mut ends);
+        let (mut rows, mut hashes) = placed::scattered(built(), &ends, &slot, count);
+        placed::sorted(&ends, &mut rows, &mut hashes);
+        let mut directory = vec![0_u64; slots.saturating_add(1)];
+        for (word, (from, to)) in directory.iter_mut().skip(1).zip(ends.iter().zip(ends.iter().skip(1))) {
+            let tags = hashes.get(*from..*to).unwrap_or_default().iter().fold(0_u64, |t, &h| t | tag(h));
+            *word = tags | u64::try_from(*to).unwrap_or(END_MASK);
+        }
+        Part { directory, rows, hashes }
+    }
+}
+
+/// A hash join's built rows, found by their keys' hashes.
+#[derive(Debug, Default)]
+pub(in crate::exec) struct JoinTable {
+    /// Its parts, each the rows whose slots share their high bits: one,
+    /// or `BUILD_PARTS` (RULES.md D1080).
+    parts: Vec<Part>,
     /// How far a hash is turned to give its slot.
     shift: u32,
+    /// How far a slot is turned to give its part.
+    within: u32,
+    /// The bits of a slot that place it within its part.
+    mask: usize,
     /// Of a direct table, its rows by their keys' places (RULES.md D601),
     /// boxed, as an operator holds its table beside its state.
     dense: Option<Box<direct::Dense>>,
@@ -79,23 +123,33 @@ impl JoinTable {
     pub(in crate::exec) fn of(hashes: &[u64], misses: &[bool]) -> JoinTable {
         let keyed = misses.iter().filter(|&&m| !m).count();
         let slots = keyed.saturating_mul(2).max(MIN_SLOTS).checked_next_power_of_two().unwrap_or(MIN_SLOTS);
-        let shift = u64::BITS.saturating_sub(slots.trailing_zeros());
-        let mut table = JoinTable { directory: vec![0; slots.saturating_add(1)], rows: Vec::new(), hashes: Vec::new(), shift, dense: None };
-        let mut ends = vec![0_usize; slots.saturating_add(1)];
+        let (bits, shift) = (slots.trailing_zeros(), u64::BITS.saturating_sub(slots.trailing_zeros()));
         let built = || hashes.iter().zip(misses).enumerate().filter(|(_, (_, m))| !**m).map(|(r, (&h, _))| (r, h));
-        for (_, h) in built() {
-            if let Some(end) = ends.get_mut(table.slot(h).saturating_add(1)) {
-                *end = end.saturating_add(1);
+        let part = Part::of(built, (slots, keyed), |h| usize::try_from(h.checked_shr(shift).unwrap_or(0)).unwrap_or(0));
+        JoinTable { parts: vec![part], shift, within: bits, mask: parted::low_bits(bits), dense: None }
+    }
+
+    /// \[DESIGN\] (RULES.md D1080) The table of `parts`, each made as
+    /// `parting` parts its rows (`Parting::part`), in order; of a direct
+    /// table, the rows of a null key those of `runs`, in order.
+    pub(in crate::exec) fn of_parts(parting: &Parting, parts: Vec<BuiltPart>, runs: &[Parted]) -> JoinTable {
+        let (mut hashed, mut placed) = (Vec::new(), Vec::new());
+        for part in parts {
+            match part {
+                BuiltPart::Hashed(h) => hashed.push(h),
+                BuiltPart::Dense(d) => placed.push(d),
             }
         }
-        placed::summed(&mut ends);
-        (table.rows, table.hashes) = placed::scattered(built(), &ends, |h| table.slot(h), keyed);
-        placed::sorted(&ends, &mut table.rows, &mut table.hashes);
-        for (word, (from, to)) in table.directory.iter_mut().skip(1).zip(ends.iter().zip(ends.iter().skip(1))) {
-            let tags = table.hashes.get(*from..*to).unwrap_or_default().iter().fold(0_u64, |t, &h| t | tag(h));
-            *word = tags | u64::try_from(*to).unwrap_or(END_MASK);
+        match parting {
+            Parting::Hashed { shift, within } => {
+                JoinTable { parts: hashed, shift: *shift, within: *within, mask: parted::low_bits(*within), dense: None }
+            }
+            Parting::Dense { least, within, .. } => {
+                let nulls = runs.iter().flat_map(|run| run.nulls.iter().copied()).collect();
+                let dense = direct::Dense::of_parts(*least, placed, *within, nulls);
+                JoinTable { dense: Some(Box::new(dense)), ..JoinTable::default() }
+            }
         }
-        table
     }
 
     /// \[DESIGN\] (RULES.md D601) The direct table of the rows whose keys'
@@ -127,6 +181,12 @@ impl JoinTable {
         Ok(JoinTable::direct(&numbers.hashes, &numbers.misses))
     }
 
+    /// How many parts it was made in (RULES.md D1080).
+    #[cfg(test)]
+    pub(in crate::exec) fn parts(&self) -> usize {
+        self.dense.as_ref().map_or(self.parts.len(), |dense| dense.parts())
+    }
+
     /// Whether it is direct, its probes giving their keys' numbers, not
     /// hashes (RULES.md D601).
     pub(in crate::exec) fn is_direct(&self) -> bool {
@@ -145,14 +205,16 @@ impl JoinTable {
         if let Some(dense) = &self.dense {
             return Candidates::Run(dense.candidates(h).iter());
         }
-        let at = self.slot(h);
-        let Some(&word) = self.directory.get(at.saturating_add(1)) else { return Candidates::Run([].iter()) };
+        let slot = self.slot(h);
+        let Some(part) = self.parts.get(slot.checked_shr(self.within).unwrap_or(0)) else { return Candidates::Run([].iter()) };
+        let at = slot & self.mask;
+        let Some(&word) = part.directory.get(at.saturating_add(1)) else { return Candidates::Run([].iter()) };
         if word & tag(h) == 0 {
             return Candidates::Run([].iter());
         }
-        let from = self.directory.get(at).map_or(0, |&w| end_of(w));
+        let from = part.directory.get(at).map_or(0, |&w| end_of(w));
         let to = end_of(word);
-        let (Some(hashes), Some(rows)) = (self.hashes.get(from..to), self.rows.get(from..to)) else {
+        let (Some(hashes), Some(rows)) = (part.hashes.get(from..to), part.rows.get(from..to)) else {
             return Candidates::Run([].iter());
         };
         if hashes.len() <= LINEAR {

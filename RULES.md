@@ -678,6 +678,7 @@ verification approach DO-178C expects (§8).
 | D1062 | A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null |
 | D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
+| D1080 | A hash join's operand read by its morsels is joined, hashed, placed in its table and summed up in its filters by those threads, the table in parts of the hashes' high bits |
 
 ### The project
 
@@ -18515,6 +18516,53 @@ judged of every row. A conjunct of no subquery, or of an uncorrelated
 one, stays below, where it is cheap and may be told to a scan. Beside an
 antijoin every conjunct stays below, as an antijoin often keeps most of
 its rows and the conjunct may keep few.
+
+#### D1080. A hash join's operand read by its morsels is put together by those threads, its table in parts of the hashes' high bits
+
+A hash join probed by a part run in parallel reads an operand that is
+itself a part by its morsels, on the workers (D292, D1051). What
+followed ran on the statement's thread alone while the workers waited.
+The morsels' batches were joined into one batch, a copy of every vector.
+Every key was hashed. The table was made in three passes over the
+hashes, the second a write at random for each row (D368). Each key was
+hashed again for its runtime filter (D369). Of an operand of millions
+of rows this was the longest stretch of the join that one thread ran,
+and a chain of joins ran one such stretch after another.
+
+Now an operand read by its morsels that holds more rows than a morsel
+is put together by the threads that read it, in four runs of morsels
+(`exec/parallel/build.rs`). A vector of the batch is joined by one
+thread (`Batch::joined_at`), so as many threads copy as the batch has
+vectors. The keys are hashed a run of EXECUTOR.MORSEL_ROWS rows at a
+time, a run to a thread. Each run's rows are then sorted by part. Last
+each part of the table is made by one thread, and each key's runtime
+filter by another beside them.
+
+The table is in 64 parts (`exec/table/join/parted.rs`), as many as a
+parallel grouping has partitions (D357). A hashed table's slot is the
+high bits of a hash, so the rows whose hashes share their 6 highest
+bits own a run of slots that no other row is placed in. Each part is
+then a table of its own, with its directory, its rows and their hashes,
+and a probe finds its part by those bits before its slot. A direct
+table (D601) is parted the same way by the high bits of a key's place
+in the span. Whether the keys are dense is known only once every run
+has given its least and greatest key, so such keys are first asked as
+numbers and, if they prove not dense, hashed from those numbers with no
+vector read again. No thread writes what another reads, so nothing is
+placed atomically and the core needs no `unsafe` (R-SAFE-1).
+
+A run's rows are sorted by part by a counting sort that keeps their
+order, and a part takes the runs in order. So a slot's rows and a key's
+rows are in the order the operand gave them, as in the table one
+thread makes, and a probe finds the same rows in the same order of
+either. The table one thread makes is the same structure of one part.
+
+An operand of no more rows than a morsel, a part of degree 1, and an
+operand that is not read by its morsels (D1050) are built by the
+statement's thread as before. The first took one thread's work to
+read, and the others have no threads of their own. No setting turns
+this on or off, as the result is the same and the threads are those
+the part already has.
 
 ## 2. Project layout
 
