@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 11] = [
+pub const RANGE_READS: [Mutation; 13] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -120,6 +120,26 @@ pub const RANGE_READS: [Mutation; 11] = [
         original: "                conformed(value.clone(), &to)?;",
         replacement: "                drop(conformed(value.clone(), &to));",
         integration: &["prepared::a_value_that_does_not_cast_raises_at_open_whether_the_plan_is_kept_or_not"],
+        unit: &[],
+    },
+    Mutation {
+        name: "coded-memo-kept",
+        package: Package::Core,
+        breaks: "a morsel grouped by codes keeps its memo of groups when a batch comes of other dictionaries (D1161)",
+        file: "src/exec/batch/groups/coded.rs",
+        original: "        if same {",
+        replacement: "        if same || !self.entries.is_empty() {",
+        integration: &[],
+        unit: &["exec::batch::groups::coded::tests::rows_grouped_by_their_codes_make_the_groups_of_their_texts"],
+    },
+    Mutation {
+        name: "coded-serial-first-group",
+        package: Package::Core,
+        breaks: "a grouping on one thread puts a row whose codes went to a group held into the first group (D1161)",
+        file: "src/exec/batch/groups.rs",
+        original: "            self.held.take(g, (n, r));\n            return (place, None);",
+        replacement: "            self.held.take(0, (n, r));\n            return (place, None);",
+        integration: &["batches::texts_coded_group_by_their_codes_as_the_texts_group"],
         unit: &[],
     },
 ];
