@@ -687,6 +687,8 @@ verification approach DO-178C expects (§8).
 | D1075 | A hashed semi join's or antijoin's probe is a step of its left operand's pipeline |
 | D1076 | A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline |
 | D1077 | NOT IN of columns that hold no null is an antijoin hashed on their equality |
+| D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
+| D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 
 ### The project
 
@@ -18692,6 +18694,43 @@ and the rule that makes the antijoin writes it so
 step of its left operand's pipeline (D1075). A column that may hold a
 null on either side keeps the condition as it was, so NOT IN keeps its
 exact meaning.
+
+#### D1150. A morsel's rows are made as they are read and charged to the part's grant as they are gathered
+
+A morsel's rows were taken through its pipeline's steps and gathered
+whole before the first was read, by every thread and for every morsel
+running ahead of the reader, three times the degree, and none of it was
+charged to the part's work grant (D38, D298). A join whose keys each
+match thousands of rows makes millions of rows of one morsel of 16,384,
+so a plan that joined two tables on a key of few values, as a plan made
+before any statistics may, grew the server past its memory budget until
+the kernel killed it. A morsel read row by row is now made a row at a
+time as it is asked for (`exec/parallel/rows.rs`): a probe's matches of
+a row are held as their built rows' numbers, each joined as it is read.
+What a thread gathers of a morsel is charged to the grant a batch's
+worth at a time, and stays charged until the reader has taken it, so
+the morsels running ahead are held within the grant too
+(`exec/parallel/charged.rs`). A morsel that outgrows the grant is given
+up and its charge given back. A stream then reads that morsel itself, a
+row or a batch at a time, holding none, while the threads go on with
+those after it; a sort writes it to its runs as it reads it; a window's
+or a set operation's partitions put its rows in their lists, which
+spill; a join's build gives way to the serial join, which partitions.
+A grouping's morsel is fed its rows as they are made and holds its
+groups alone. Every answer, and its order, is the one the plan gives
+alone.
+
+#### D1151. A probe of a table built for a pipeline's morsels makes its pairs a batch at a time
+
+A probe by batch of a table a pipeline's morsels share (D368) gave every
+pair of a left batch at once, its rows times their keys' rows, a list
+of batches held before the first was read. It now makes them as they
+are asked for (`exec/batch/joined/shared/probing.rs`), a batch of at
+most `BATCH_ROWS` pairs at a time, and keeps where it stopped, the left
+row and how many of its key's built rows it looked at, a run of a key's
+rows taken up again in one step. The pairs come in the order they did,
+those before an error first, then the error. A LEFT join's probe (D1076)
+is made so too, a row no built row matches paired with nulls.
 
 ## 2. Project layout
 

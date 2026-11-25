@@ -22,8 +22,7 @@ use crate::exec::Db;
 use crate::exec::batch::{
     Batches, Deferred, Shaped, filter_step, outer_step, probe_step, project_step, resolved, rows_of, runtime_step, semi_step, through,
 };
-use crate::exec::broken;
-use crate::storage::Row;
+use crate::exec::{RowIter, broken};
 use crate::txn::TxId;
 
 /// How a pipeline's morsels are read by batch: each branch's steps over
@@ -138,13 +137,14 @@ impl Pipeline {
     }
 
     /// The rows of morsel `n`, read by batch if the pipeline is, else row
-    /// by row (`Pipeline::morsel`), in order.
+    /// by row (`parallel/rows.rs`), in order, each made as it is asked for.
     ///
     /// # Errors
     ///
-    /// As reading a row or a step fails, the rows before it given up.
-    pub(super) fn morsel_rows(&self, n: usize, (db, tx): (&Db, TxId), runner: &crate::exec::Runner) -> Result<Vec<Row>> {
-        let Some(by) = &self.batched else { return self.morsel(n, runner) };
-        rows_of(self.morsel_kept(n, (db, tx))?, by.layout.clone(), by.width).collect()
+    /// SQLCODE -910 if `n` is past its last morsel; a row or a step that
+    /// fails is an error item after the rows before it.
+    pub(super) fn morsel_rows(self: &Arc<Self>, n: usize, (db, tx): (&Db, TxId), runner: crate::exec::Runner) -> Result<RowIter> {
+        let Some(by) = &self.batched else { return super::rows::morsel_rows(self, n, runner) };
+        Ok(rows_of(self.morsel_kept(n, (db, tx))?, by.layout.clone(), by.width))
     }
 }

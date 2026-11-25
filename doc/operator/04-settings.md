@@ -245,7 +245,13 @@ An operator holds its rows in memory up to a grant of the memory
 budget, half of MEMORY.BUDGET_BYTES left free as it starts, at most
 MEMORY.WORK_BYTES, then spills. Grants shrink as more statements run at
 once, and never together pass the budget. A part run in parallel holds
-one grant for all its threads. One of 4 MiB or less is held unreserved,
+one grant for all its threads, and the rows a thread gathers of a
+morsel count against it until they are read. A morsel a join makes too
+many rows of, as one whose keys each match thousands of rows, is read
+again by the operator above the part as its rows are made, a sort or a
+window's partitions spilling them, a hash join's build giving way to
+the join run alone, so the part keeps to its grant however many rows
+its joins make. One of 4 MiB or less is held unreserved,
 as a session that sets MEMORY.WORK_BYTES below 4 MiB asks.
 
 ```sql

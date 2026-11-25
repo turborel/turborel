@@ -163,6 +163,7 @@ mod expression_indexes;
 mod expressions;
 mod extension_types;
 mod failures;
+mod fan_out;
 mod faults;
 mod fenced;
 mod fetch_bounded;

@@ -16,8 +16,10 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use super::charged::{Taken, Tally, charged_rows};
 use super::pipeline::Pipeline;
 use super::probe::{PARTS, part_of};
+use super::rows::morsel_rows;
 use super::run::Morsels;
 use super::sorted::merge_by;
 use super::{Held, Limit};
@@ -39,6 +41,13 @@ const PLACE_BITS: u32 = 32;
 
 /// The rows of each partition, held in lists that spill.
 type Parts = Vec<HeldRows<Row>>;
+
+/// The key of a row a stream's rows are split by, if it has one.
+type Keying = Box<dyn Fn(&Row) -> Option<Row> + Send + Sync>;
+
+/// A morsel's rows by partition, and the width of its rows before a
+/// place, if it has one.
+type MorselParts = (Vec<Vec<Row>>, Option<usize>);
 
 /// [ISO/IEC 9075-2:2023 §7.15] The rows of the window `plan`, over a sort
 /// of a stream by its partitioning, each partition's window functions run
@@ -121,8 +130,11 @@ fn space(db: &State, share: usize) -> ListSpace {
 /// threads, split into partitions by `key` of each, a row of none in the
 /// first, each followed by its place among the stream's rows if
 /// `numbered`; and the width of its rows before it, if it has one. Held
-/// in `bytes` of `limit`'s grant, operands it builds within it. Given way
-/// if a table cannot be split.
+/// in `bytes` of `limit`'s grant, operands it builds within it, each
+/// morsel's rows charged to it as they are split, and a morsel that
+/// outgrows it read again by the statement's thread, each row put in its
+/// partition's list as it is read (RULES.md D1150). Given way if a table
+/// cannot be split.
 fn split(
     input: &Plan,
     (db, tx, degree): (&Db, TxId, usize),
@@ -130,35 +142,74 @@ fn split(
     (limit, bytes): (&Limit, usize),
 ) -> Result<Held<(Parts, Option<usize>)>> {
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), limit)? else { return Ok(Held::GaveWay) };
-    let (pipeline, db_for) = (Arc::new(pipeline), db.clone());
-    let (count, seed) = (pipeline.count(), db.functions.seed().clone());
-    let work = Box::new(move |m: usize| {
-        let mut parts: Vec<Vec<Row>> = (0..PARTS).map(|_| Vec::new()).collect();
-        let mut width = None;
-        let base = i128::try_from(m).unwrap_or(i128::MAX).checked_shl(PLACE_BITS).unwrap_or(i128::MAX);
-        for (place, mut row) in (0_i128..).zip(pipeline.morsel(m, &Runner::new(&db_for, tx))?) {
-            let p = key(&row).map_or(0, |k| part_of(&norm_row(&k), &seed));
-            width = width.or(Some(row.len()));
-            if numbered {
-                row.push(Value::Exact(Decimal::new(base.saturating_add(place), 0)));
-            }
-            parts.get_mut(p).ok_or_else(|| broken("a partition of a parallel query is missing"))?.push(row);
-        }
-        Ok((parts, width))
-    });
+    let (pipeline, db_for, within) = (Arc::new(pipeline), db.clone(), limit.clone());
+    let (count, read) = (pipeline.count(), Arc::clone(&pipeline));
+    let how: Arc<Splitting> = Arc::new(Splitting { key: Box::new(key), seed: db.functions.seed().clone(), numbered });
+    let making = Arc::clone(&how);
+    let work = Box::new(move |m: usize| morsel_parts(&pipeline, m, (&db_for, tx), &making, &within));
     let share = bytes.checked_div(PARTS).unwrap_or_default().max(1);
     let mut held: Parts = (0..PARTS).map(|_| HeldRows::new(space(db, share))).collect();
     let mut width = None;
-    for made in Morsels::start(db, tx, (count, degree), work) {
-        let (parts, w) = made?;
+    for (m, made) in Morsels::start(db, tx, (count, degree), work).enumerate() {
+        let Taken::Whole((parts, w), charged) = made? else {
+            for (place, row) in (0_i128..).zip(morsel_rows(&read, m, Runner::new(db, tx))?) {
+                let row = row?;
+                width = width.or(Some(row.len()));
+                let (p, row) = how.placed(row, (m, place));
+                held.get_mut(p).ok_or_else(|| broken("a partition of a parallel query is missing"))?.push(row)?;
+            }
+            continue;
+        };
         width = width.or(w);
         for (list, rows) in held.iter_mut().zip(parts) {
             for row in rows {
                 list.push(row)?;
             }
         }
+        limit.give(charged);
     }
     Ok(Held::Kept((held, width)))
+}
+
+/// How a stream's rows are split into partitions: by the key of each, the
+/// partition of its normal form hashed by the query's seed, each followed
+/// by its place among the stream's rows if numbered.
+struct Splitting {
+    key: Keying,
+    seed: crate::exec::Seed,
+    numbered: bool,
+}
+
+impl Splitting {
+    /// The partition of `row`, at `place` of morsel `m`, and the row.
+    fn placed(&self, mut row: Row, (m, place): (usize, i128)) -> (usize, Row) {
+        let p = (self.key)(&row).map_or(0, |k| part_of(&norm_row(&k), &self.seed));
+        if self.numbered {
+            let base = i128::try_from(m).unwrap_or(i128::MAX).checked_shl(PLACE_BITS).unwrap_or(i128::MAX);
+            row.push(Value::Exact(Decimal::new(base.saturating_add(place), 0)));
+        }
+        (p, row)
+    }
+}
+
+/// The rows of morsel `m` of `pipeline`, split into partitions as `how`
+/// says, charged to `limit` as they are; and the width of its rows before
+/// a place, if it has one. Nothing if they outgrow the grant.
+///
+/// # Errors
+///
+/// As reading the morsel fails.
+fn morsel_parts(pipeline: &Arc<Pipeline>, m: usize, (db, tx): (&Db, TxId), how: &Splitting, limit: &Limit) -> Result<Taken<MorselParts>> {
+    let tally = Tally::of(limit);
+    let mut parts: Vec<Vec<Row>> = (0..PARTS).map(|_| Vec::new()).collect();
+    let mut width = None;
+    for (place, row) in (0_i128..).zip(charged_rows(morsel_rows(pipeline, m, Runner::new(db, tx))?, &tally)) {
+        let row = row?;
+        width = width.or(Some(row.len()));
+        let (p, row) = how.placed(row, (m, place));
+        parts.get_mut(p).ok_or_else(|| broken("a partition of a parallel query is missing"))?.push(row);
+    }
+    Ok(tally.taken((parts, width)))
 }
 
 /// Runs the plan `each` makes of each partition's rows on a thread of up

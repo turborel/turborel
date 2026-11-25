@@ -30,6 +30,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
 
+use super::charged::{Taken, Tally, charged_batches, charged_rows};
 use super::pipeline::Pipeline;
 use super::run::Morsels;
 use super::{Held, Limit, Streamed};
@@ -57,6 +58,10 @@ const FEW_FIRST: usize = crate::storage::BATCH_ROWS;
 /// \[DESIGN\] The keys sampled of each run to cut the ranges at.
 const SAMPLES_PER_RUN: usize = 64;
 
+/// A sort's runs written to its spill area: the sorter, and the work area
+/// whose spill area holds them.
+type Spilling = (Sorter, Work);
+
 /// [X3.135-1986 §8.3 GR3b] The rows of the sort `plan` over a stream,
 /// sorted by morsels and merged by ranges on up to `degree` threads.
 ///
@@ -71,21 +76,11 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resul
     let most = most.map(|m| m.rows);
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
-    let (pipeline, keys, db_for) = (Arc::new(pipeline), Arc::new(keys.clone()), db.clone());
-    let (count, keys_for) = (pipeline.count(), Arc::clone(&keys));
-    let each = Box::new(move |m: usize| morsel_run(&pipeline, m, (&keys_for, most), (&db_for, tx)));
-    let (mut runs, from) = (Vec::new(), limit.held());
-    let mut spilled: Option<(Sorter, Work)> = None;
-    for (done, run) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), each)) {
-        let run = run?;
-        if let Some((sorter, work)) = spilled.as_mut() {
-            run.push_to(sorter, work)?;
-        } else if !limit.take(run.bytes()) || !limit.on_course(from, (done, count)) {
-            spilled = Some(spilled_of(&keys, runs.drain(..).chain(std::iter::once(run)), (db, tx))?);
-        } else {
-            runs.push(run);
-        }
-    }
+    let (pipeline, keys, db_for, within) = (Arc::new(pipeline), Arc::new(keys.clone()), db.clone(), limit.clone());
+    let (count, keys_for, read) = (pipeline.count(), Arc::clone(&keys), Arc::clone(&pipeline));
+    let each = Box::new(move |m: usize| morsel_run(&pipeline, m, (&keys_for, most), (&db_for, tx), &within));
+    let morsels = Morsels::start(db, tx, (count, degree), each);
+    let (mut runs, mut spilled) = held_runs(morsels, (&keys, &read), (db, tx, count), &limit)?;
     // The runs held as vectors are made rows to be merged in memory, if
     // those rows fit too.
     if spilled.is_none() && !limit.take(runs.iter().map(Run::made_bytes).sum()) {
@@ -106,28 +101,85 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resul
     })))
 }
 
+/// The runs of `morsels`, `count` of `pipeline`'s sorted by `keys`, held
+/// within `limit`; or, once they outgrow it, written to a sorter's spill
+/// area as they come, a morsel that outgrew the grant alone read again
+/// and its rows written as they are read (RULES.md D1150).
+///
+/// # Errors
+///
+/// As reading a morsel or writing a run fails.
+fn held_runs(
+    morsels: Morsels<Taken<Run>>,
+    (keys, pipeline): (&[SortKey], &Arc<Pipeline>),
+    (db, tx, count): (&Db, TxId, usize),
+    limit: &Limit,
+) -> Result<(Vec<Run>, Option<Spilling>)> {
+    let (mut runs, from) = (Vec::new(), limit.held());
+    let mut spilled: Option<Spilling> = None;
+    for (done, run) in (1_usize..).zip(morsels) {
+        let run = match run? {
+            Taken::Whole(run, bytes) => {
+                limit.give(bytes);
+                run
+            }
+            Taken::Past => {
+                let (sorter, work) = match spilled.as_mut() {
+                    Some(spilled) => spilled,
+                    None => spilled.insert(spilled_of(keys, runs.drain(..), (db, tx))?),
+                };
+                sorter.push_rows(pipeline.morsel_rows(done.saturating_sub(1), (db, tx), Runner::new(db, tx))?, work)?;
+                continue;
+            }
+        };
+        if let Some((sorter, work)) = spilled.as_mut() {
+            run.push_to(sorter, work)?;
+        } else if !limit.take(run.bytes()) || !limit.on_course(from, (done, count)) {
+            spilled = Some(spilled_of(keys, runs.drain(..).chain(std::iter::once(run)), (db, tx))?);
+        } else {
+            runs.push(run);
+        }
+    }
+    Ok((runs, spilled))
+}
+
 /// Morsel `m` of `pipeline`, sorted by `keys`, its first `most` rows
 /// alone if given: by its batches if it is read by batch and they hold
-/// every column of its rows, else as its rows (RULES.md D380).
+/// every column of its rows, else as its rows (RULES.md D380). A run that
+/// holds the morsel whole is charged to `limit` as it is read, and is
+/// none if it outgrows the grant (RULES.md D1150).
 ///
 /// # Errors
 ///
 /// As reading the morsel fails.
-fn morsel_run(pipeline: &Pipeline, m: usize, (keys, most): (&[SortKey], Option<usize>), (db, tx): (&Db, TxId)) -> Result<Run> {
+fn morsel_run(
+    pipeline: &Arc<Pipeline>,
+    m: usize,
+    (keys, most): (&[SortKey], Option<usize>),
+    (db, tx): (&Db, TxId),
+    limit: &Limit,
+) -> Result<Taken<Run>> {
+    let tally = Tally::of(limit);
     let whole = pipeline.batched.as_ref().is_some_and(|b| b.layout.iter().copied().eq(0..b.width));
-    if whole {
+    let run = if whole {
         let kept = pipeline.morsel_kept(m, (db, tx))?;
-        return match most.map(|n| (n, n <= FEW_FIRST)) {
-            Some((n, true)) => first_of_morsel(keys, kept, n, (db, tx)).map(Run::Rows),
-            Some((n, false)) => sorted_morsel(keys, kept, n, crate::db::kernels::chosen(db)).map(Run::Rows),
-            None => sorted_morsel_batches(keys, kept, crate::db::kernels::chosen(db)).map(Run::Batches),
-        };
+        match most.map(|n| (n, n <= FEW_FIRST)) {
+            Some((n, true)) => Run::Rows(first_of_morsel(keys, kept, n, (db, tx))?),
+            Some((n, false)) => Run::Rows(sorted_morsel(keys, charged_batches(kept, &tally), n, crate::db::kernels::chosen(db))?),
+            None => Run::Batches(sorted_morsel_batches(keys, charged_batches(kept, &tally), crate::db::kernels::chosen(db))?),
+        }
+    } else {
+        let rows = charged_rows(pipeline.morsel_rows(m, (db, tx), Runner::new(db, tx))?, &tally);
+        let mut run = sorted_rows(keys, rows.collect::<Result<Vec<Row>>>()?);
+        if let Some(first) = most {
+            run.truncate(first);
+        }
+        Run::Rows(run)
+    };
+    if !tally.past() {
+        tally.settle(run.bytes());
     }
-    let mut run = sorted_rows(keys, pipeline.morsel_rows(m, (db, tx), &Runner::new(db, tx))?);
-    if let Some(rows) = most {
-        run.truncate(rows);
-    }
-    Ok(Run::Rows(run))
+    Ok(tally.taken(run))
 }
 
 /// \[DESIGN\] (RULES.md D380) A morsel's run, sorted: its rows, or, of a
