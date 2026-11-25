@@ -174,6 +174,12 @@ impl Work {
         &self.lobs
     }
 
+    /// Its grant, for the threads of a part that charge what they hold to
+    /// it (RULES.md D1115).
+    pub(super) fn grant(&self) -> Arc<Grant> {
+        Arc::clone(&self.grant)
+    }
+
     /// The bytes it may hold in memory.
     pub(super) fn limit(&self) -> usize {
         self.limit
