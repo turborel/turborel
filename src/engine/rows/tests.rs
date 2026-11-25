@@ -44,7 +44,7 @@ fn stale_references_are_refused() {
     assert_eq!(table.get_value(8, reference).err().map(|e| e.code), Some(Code::Corrupt), "another row");
     let other_column = Reference { column: 1, ..reference };
     assert_eq!(table.get_value(7, other_column).err().map(|e| e.code), Some(Code::Corrupt), "another column");
-    let meta = Meta { tree: PageId(3), reserved: 9, directory: 11, zones: 13, rows: 17, lobs: 19 };
+    let meta = Meta { tree: PageId(3), reserved: 9, directory: 11, zones: 13, rows: 17, lobs: 19, statistics: 23 };
     assert_eq!(parse_meta(&meta_content(meta)), Some(meta));
     assert_eq!(parse_meta(&[TABLE_FORMAT; 3]), None);
     let mut other_format = meta_content(meta);
@@ -362,22 +362,22 @@ fn a_fetch_is_priced_by_what_its_table_reads() {
     let small = RowTable::create(&files, &types, TableOptions::default()).unwrap();
     let ids: Vec<RowId> = (0..10_u32).map(|n| small.insert(NO_TRANSACTION, wide(n)).unwrap()).collect();
     let held = |cost: f64| (cost - frozen::ROW_FETCH_HELD).abs() < 1e-9_f64;
-    assert!(held(small.fetch_cost()), "{}", small.fetch_cost());
+    assert!(held(small.fetch_cost(1)), "{}", small.fetch_cost(1));
     let large = RowTable::create(&files, &types, TableOptions::default()).unwrap();
     let many: Vec<RowId> = (0..2000_u32).map(|n| large.insert(NO_TRANSACTION, wide(n)).unwrap()).collect();
-    assert!(held(small.fetch_cost()), "its own share, not its file's: {}", small.fetch_cost());
+    assert!(held(small.fetch_cost(1)), "its own share, not its file's: {}", small.fetch_cost(1));
     for _ in 0..frozen::LEAST_LOOKUPS {
         for &id in &ids {
             small.tree.get(&key(id)).unwrap();
         }
     }
     // Its pages read again once, after the large table's took the pool.
-    assert!(small.fetch_cost() < frozen::ROW_FETCH_HELD + 0.1_f64, "its lookups found its pages: {}", small.fetch_cost());
+    assert!(small.fetch_cost(1) < frozen::ROW_FETCH_HELD + 0.1_f64, "its lookups found its pages: {}", small.fetch_cost(1));
     for n in 0..frozen::LEAST_LOOKUPS {
         let at = usize::try_from(n.wrapping_mul(7919_u64) % 2000_u64).unwrap();
         large.tree.get(&key(many[at])).unwrap();
     }
-    let missed = large.fetch_cost();
+    let missed = large.fetch_cost(1);
     assert!(missed > 10.0_f64 && missed <= frozen::ROW_FETCH_CACHED, "{missed}");
 }
 
@@ -414,14 +414,14 @@ fn a_fetch_is_priced_by_the_system_cache() {
     let table = RowTable::create(&files, &[DataType::character(200)], TableOptions::default()).unwrap();
     table.insert(NO_TRANSACTION, wide(0_u32)).unwrap();
     files.system_cache.store(0_u64, Ordering::Release);
-    assert!((table.fetch_cost() - frozen::ROW_FETCH_HELD).abs() < 1e-9_f64, "the file fits the pool");
+    assert!((table.fetch_cost(1) - frozen::ROW_FETCH_HELD).abs() < 1e-9_f64, "the file fits the pool");
     for n in 1..2000_u32 {
         table.insert(NO_TRANSACTION, wide(n)).unwrap();
     }
     let mut costs = Vec::new();
     for cache in [u64::MAX, 1_u64 << 18_u32, 1_u64 << 17_u32, 1_u64 << 16_u32, 0_u64] {
         files.system_cache.store(cache, Ordering::Release);
-        costs.push(table.fetch_cost());
+        costs.push(table.fetch_cost(1));
     }
     assert!(costs.windows(2).all(|w| w[0] < w[1]), "{costs:?}");
     let missed = 1.0_f64 - table.held_share();

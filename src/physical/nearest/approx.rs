@@ -161,6 +161,10 @@ impl PhysicalPlanner<'_> {
         let all = cost_of(storage.row_count());
         let list = read.target.search_list.map_or(cost_of(first), f64::from).max(cost_of(first));
         let candidates = (list / read.selectivity).min(all);
-        Some(model.index_descent * (all + 1.0_f64).log2() + candidates * storage.fetch_cost() + model.sort(cost_of(first)))
+        Some(
+            model.index_descent * (all + 1.0_f64).log2()
+                + candidates * storage.fetch_cost(self.db.catalog.table(table).map_or(1, |desc| desc.columns.len()))
+                + model.sort(cost_of(first)),
+        )
     }
 }

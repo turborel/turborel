@@ -98,11 +98,15 @@ const ENTRY_BYTES: f64 = 32.0;
 /// (`bench/analytics.rs`).
 const FROZEN_ROW: f64 = 0.25;
 const FROZEN_COLUMNS: f64 = 0.75;
-/// \[DESIGN\] The share by which fetching a frozen row costs more than a
-/// row of the tree, each column a page of its own: of four columns read
-/// by scattered row ids, every header held, against the tree's row
-/// (`bench/fetch.rs`, RULES.md D1091).
-const FROZEN_FETCH: f64 = 1.7;
+/// \[DESIGN\] What fetching a frozen row costs, a row of the tree's
+/// costing 1: `FROZEN_FETCH` to find its group and place, whatever is
+/// read, and `FROZEN_FETCH_COLUMN` more for each column read, each a
+/// chunk of its own on a page of its own: the line through one and four
+/// columns read by scattered row ids, every header held, against the
+/// tree's row, which eight and seventeen lie near (`bench/fetch.rs`,
+/// RULES.md D1091, D1097).
+const FROZEN_FETCH: f64 = 0.26;
+const FROZEN_FETCH_COLUMN: f64 = 0.6;
 
 /// A frozen page's context for its encodings: its number, the high bit
 /// set, apart from the row ids that are the contexts of rows' values.
@@ -484,12 +488,14 @@ impl RowTable {
     /// The planner's cost of a row fetched by id (`TableStorage::fetch_cost`):
     /// `ROW_FETCH_HELD` of the share the pool holds; of the rest, as read
     /// from the system's cache by the share it holds, else from the disk;
-    /// `FROZEN_FETCH` more as all the rows are frozen.
-    pub(super) fn frozen_fetch_cost(&self) -> f64 {
+    /// of the share of the rows frozen, `FROZEN_FETCH` and
+    /// `FROZEN_FETCH_COLUMN` for each of the `columns` read of that.
+    pub(super) fn frozen_fetch_cost(&self, columns: usize) -> f64 {
         let (frozen, all) = self.frozen_share();
         let share = if all > 0.0_f64 { (frozen / all).min(1.0_f64) } else { 0.0_f64 };
         let fetch = ROW_FETCH_HELD + self.page_missed_cost() * (1.0_f64 - self.held_share());
-        fetch * (1.0_f64 + FROZEN_FETCH * share)
+        let frozen_row = FROZEN_FETCH + FROZEN_FETCH_COLUMN * crate::storage::cost_of(columns);
+        fetch * (1.0_f64 - share + frozen_row * share)
     }
 
     /// The cost more of a fetch whose page the pool missed than of one it

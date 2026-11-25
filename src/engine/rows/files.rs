@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 use super::UndoStore;
 use super::counted::Counted;
 use super::mvcc::Statuses;
+use super::stats::Kept;
 use super::zones::Zones;
 use crate::disk::buffer::{BufferPool, Capture, FileId};
 use crate::disk::shadow::ShadowFileSystem;
@@ -51,6 +52,9 @@ pub struct TableFiles {
     /// The counts of rows of its tables open, saved at each checkpoint
     /// (`rows/counted.rs`).
     pub(super) counts: Arc<Mutex<Vec<Weak<Counted>>>>,
+    /// Where the statistics of its tables open are saved, at each
+    /// checkpoint (`rows/stats/saved.rs`).
+    pub(super) statistics: Arc<Mutex<Vec<Weak<Kept>>>>,
     /// The tables opened of its files that counted their rows by a pass.
     pub(super) passes: Arc<AtomicU64>,
     /// The bytes of its file the system's cache is taken to hold beyond
@@ -89,6 +93,7 @@ impl TableFiles {
             headers: Arc::default(),
             zones: Arc::default(),
             counts: Arc::default(),
+            statistics: Arc::default(),
             passes: Arc::default(),
             system_cache: Arc::new(AtomicU64::new(u64::MAX)),
             capture: Arc::default(),

@@ -76,7 +76,7 @@ impl TableStorage for CostlyFetchTable {
     fn row_count(&self) -> usize {
         self.0.row_count()
     }
-    fn fetch_cost(&self) -> f64 {
+    fn fetch_cost(&self, _: usize) -> f64 {
         COSTLY_FETCH
     }
 }
