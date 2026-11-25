@@ -93,7 +93,7 @@ impl Pipeline {
 
     /// \[DESIGN\] (RULES.md D1063) As `of`, `told` the runtime filters of
     /// the stream's columns a join above the part tells it
-    /// (`Told::from_above`), as a grouping run in parallel is told those
+    /// (`Told::given_above`), as a grouping run in parallel is told those
     /// of its grouping columns. Their ranges go down to the scans as the
     /// pipeline's own joins' do, and a step right after each scan they
     /// reach judges them whole of each morsel's batches (`above`): no

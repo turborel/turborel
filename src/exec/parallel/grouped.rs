@@ -107,7 +107,7 @@ impl Grouping {
 ///
 /// As reading the stream, or a set function, fails.
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
-    grouped_told(plan, (db, tx), degree, Vec::new())
+    grouped_told(plan, (db, tx), degree, &[])
 }
 
 /// \[DESIGN\] (RULES.md D1063) As `grouped`, the grouping's input told
@@ -117,7 +117,7 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resu
 /// # Errors
 ///
 /// As `grouped`.
-pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: Vec<Told>) -> Result<Held<RowIter>> {
+pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: &[Told]) -> Result<Held<RowIter>> {
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
         (Grouping { spec, distinct: false, read: None, seed: db.functions.seed().clone() }, input)
@@ -128,7 +128,7 @@ pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: 
         return Err(broken("not a grouping run in parallel"));
     };
     let limit = Limit::of(db);
-    let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, &told)? else { return Ok(Held::GaveWay) };
+    let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, told)? else { return Ok(Held::GaveWay) };
     let mut grouping = grouping;
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     let grouping = Arc::new(grouping);

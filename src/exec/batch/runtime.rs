@@ -63,7 +63,7 @@ impl Told {
     }
 
     /// It, told a part run in parallel by a join above the part.
-    pub(in crate::exec) fn from_above(self) -> Told {
+    pub(in crate::exec) fn given_above(self) -> Told {
         Told { above: true, ..self }
     }
 
@@ -140,7 +140,8 @@ fn passed(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
 /// D15).
 fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
     match plan {
-        Plan::IndexScan { .. } => Some((column, false)),
+        // A DISTINCT's every column is a grouping column (RULES.md D1066).
+        Plan::IndexScan { .. } | Plan::Distinct { .. } => Some((column, false)),
         Plan::IndexJoin { left, cond, .. } => (!raises(cond.as_ref()) && column < stream::layout(left, db)?.1).then_some((column, false)),
         Plan::MergeJoin(m) => {
             if raises(m.cond.as_ref()) {
@@ -149,8 +150,6 @@ fn row_by_row(plan: &Plan, column: usize, db: &State) -> Option<(usize, bool)> {
             column.checked_sub(m.widths.0).map_or(Some((column, false)), |r| (r == m.key.right).then_some((m.key.left, true)))
         }
         Plan::Aggregate { groups, .. } => groups.get(column).map(|&g| (g, false)),
-        // A DISTINCT's every column is a grouping column (RULES.md D1066).
-        Plan::Distinct { .. } => Some((column, false)),
         Plan::SeqScan { .. }
         | Plan::Nearest(_)
         | Plan::Filter { .. }
@@ -261,14 +260,12 @@ pub(super) fn reaches(plan: &Plan, column: usize, db: &State) -> bool {
         return true;
     }
     let Some((next, _)) = passed(plan, column, db) else { return false };
-    match below(plan) {
-        Some(input) => reaches(input, next, db),
-        // A grouping judges it of its input's batches at least.
-        None => {
-            let scans = matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. });
-            scans || matches!(plan, Plan::Aggregate { .. } | Plan::Distinct { .. } | Plan::Parallel(_))
-        }
+    if let Some(input) = below(plan) {
+        return reaches(input, next, db);
     }
+    // A grouping judges it of its input's batches at least.
+    let scans = matches!(plan, Plan::SeqScan { .. } | Plan::IndexScan { .. });
+    scans || matches!(plan, Plan::Aggregate { .. } | Plan::Distinct { .. } | Plan::Parallel(_))
 }
 
 /// \[DESIGN\] (RULES.md D600) The column of the right operand of the

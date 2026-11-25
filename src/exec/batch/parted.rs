@@ -95,8 +95,8 @@ fn grouped_batches(part: Parallel, (db, tx): (&Db, TxId), deferred: &Deferred) -
     let nullable = |at: &usize| input_columns.get(*at).is_none_or(|&c| !typed::never_null(rows, c, db));
     let warns = |t: &Taken| if let Taken::Column(at) = t { nullable(at) } else { false };
     let below = if read.taken.iter().any(warns) { Vec::new() } else { runtime::taken(&input, deferred.filters(), db).0 };
-    let below = below.into_iter().map(runtime::Told::from_above).collect();
-    match crate::exec::parallel::grouped_told(&input, (db, tx), degree, below)? {
+    let below: Vec<_> = below.into_iter().map(runtime::Told::given_above).collect();
+    match crate::exec::parallel::grouped_told(&input, (db, tx), degree, &below)? {
         Held::Kept(groups) => Ok(gathered(groups, &columns)),
         Held::GaveWay => told::grouped_batches(input, (db, tx), deferred),
     }
