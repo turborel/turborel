@@ -3,11 +3,12 @@
 //! each morsel's rows taken through the steps over them, a filter's, a
 //! projection's, a hash join's probe, a LEFT join's (RULES.md D1076) and
 //! a hashed semi join's or antijoin's (RULES.md D1075), one row at a time
-//! to the end, as
-//! Leis et al., "Morsel-Driven Parallelism" (2014), run a pipeline
-//! fragment on a morsel. The steps are those of the plan, applied as its
-//! operators apply them, so a morsel gives the rows, in the order, and
-//! raises the error, the plan's operators would of those of its table.
+//! through them all, each as it is asked for (`parallel/rows.rs`, RULES.md
+//! D1150), as Leis et al., "Morsel-Driven Parallelism" (2014), run a
+//! pipeline fragment on a morsel. The steps are those of the plan,
+//! applied as its operators apply them, so a morsel gives the rows, in the
+//! order, and raises the error, the plan's operators would of those of its
+//! table.
 //!
 //! An index scan's morsels are parts of its range of keys
 //! (`parallel/indexed.rs`).
@@ -37,11 +38,11 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::{Told, runtime_taken as taken, wanted};
-use crate::exec::{Runner, broken, eval, eval_cond};
-use crate::logical::{Cond, Expr, Truth, pushed_conjuncts};
+use crate::exec::broken;
+use crate::logical::{Cond, Expr, pushed_conjuncts};
 use crate::physical::{NodeCount, Plan};
 use crate::settings::EXECUTOR_MORSEL_ROWS;
-use crate::storage::{Conjunct, Conjunction, Row, Split};
+use crate::storage::{Conjunct, Conjunction, Split};
 use crate::txn::TxId;
 
 /// \[DESIGN\] The most steps a pipeline takes a row through (RULES.md
@@ -134,24 +135,6 @@ impl Pipeline {
     /// How many morsels it has.
     pub(super) fn count(&self) -> usize {
         self.branches.iter().map(|b| b.split.morsels()).sum()
-    }
-
-    /// The rows of morsel `n`, in order, its expressions evaluated by
-    /// `runner`.
-    ///
-    /// # Errors
-    ///
-    /// As reading a row or a step fails, the rows before it given up.
-    pub(super) fn morsel(&self, n: usize, runner: &Runner) -> Result<Vec<Row>> {
-        let mut at = n;
-        for branch in &self.branches {
-            let morsels = branch.split.morsels();
-            if at < morsels {
-                return branch.morsel(at, runner);
-            }
-            at = at.saturating_sub(morsels);
-        }
-        Err(broken("a morsel past a pipeline's last"))
     }
 }
 
@@ -314,15 +297,6 @@ fn copied(step: &Step) -> Step {
     }
 }
 
-/// Adds to each counted step of `steps` the rows `tally` counted of it.
-fn counted(steps: &[Step], tally: &[u64]) {
-    for (step, &rows) in steps.iter().zip(tally) {
-        if let Step::Count(count) = step {
-            count.stepped(rows);
-        }
-    }
-}
-
 /// The split of `storage`'s rows `tx` sees, `columns` read, those
 /// `conditions` may match if given, into morsels of about `rows` rows.
 fn split(
@@ -330,143 +304,6 @@ fn split(
     (tx, columns, conditions, rows): (TxId, &[usize], Option<&Conjunction>, usize),
 ) -> Option<Arc<dyn Split>> {
     Arc::clone(storage).split(tx, columns, conditions, rows)
-}
-
-impl Branch {
-    /// The rows of its morsel `at`, its steps' expressions evaluated by
-    /// `runner`. A pipeline of no counted step, as every one is but an
-    /// analyzed plan's, tallies nothing a row (RULES.md D378).
-    ///
-    /// # Errors
-    ///
-    /// As reading a row or a step fails.
-    fn morsel(&self, at: usize, runner: &Runner) -> Result<Vec<Row>> {
-        let mut out = Vec::new();
-        if !self.steps.iter().any(|s| matches!(s, Step::Count(_))) {
-            for read in self.split.morsel(at) {
-                feed(&self.steps, read?.1, runner, &mut out)?;
-            }
-            return Ok(out);
-        }
-        let mut tally = vec![0_u64; self.steps.len()];
-        for read in self.split.morsel(at) {
-            tallied(&self.steps, (&mut tally, read?.1), runner, &mut out)?;
-        }
-        counted(&self.steps, &tally);
-        Ok(out)
-    }
-}
-
-/// Takes `row` through `steps`, the first first, adding each row it gives
-/// to `out`; a counted step passes it on, as no step of a plan not
-/// analyzed is one.
-fn feed(steps: &[Step], row: Row, runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
-    let Some((step, rest)) = steps.split_first() else {
-        out.push(row);
-        return Ok(());
-    };
-    match step {
-        Step::Filter(cond) => {
-            if eval_cond(cond, &row, runner)? == Truth::True {
-                feed(rest, row, runner, out)?;
-            }
-            Ok(())
-        }
-        Step::Project(exprs) => {
-            let projected = exprs.iter().map(|e| eval(e, &row, runner)).collect::<Result<Row>>()?;
-            feed(rest, projected, runner, out)
-        }
-        Step::Probe(table) => table.each_match(&row, |r| feed(rest, row.iter().chain(r.iter()).cloned().collect(), runner, out)),
-        Step::Outer(table) => {
-            let mut any = false;
-            table.each_match(&row, |r| {
-                any = true;
-                feed(rest, row.iter().chain(r.iter()).cloned().collect(), runner, out)
-            })?;
-            if any { Ok(()) } else { feed(rest, unmatched(table, row), runner, out) }
-        }
-        Step::Semi(table, semi) => {
-            if found(table, semi, &row, runner)? != semi.anti {
-                feed(rest, row, runner, out)?;
-            }
-            Ok(())
-        }
-        Step::Runtime(..) | Step::Count(_) => feed(rest, row, runner, out),
-    }
-}
-
-/// `row`, a left row no row of `table`, a LEFT join's built operand,
-/// matches, with nulls for the operand's columns [ISO/IEC 9075:1992 §7.5
-/// GR5b].
-fn unmatched(table: &Table, mut row: Row) -> Row {
-    row.resize(row.len().saturating_add(table.shared.width()), crate::value::Value::Null);
-    row
-}
-
-/// Whether a row of `table`, a semi join's built operand, matches `row`
-/// as `semi` asks: its keys, and the rest of the condition true of the
-/// pair [X3.135-1986 §5.17 GR2].
-fn found(table: &Table, semi: &SemiOf, row: &Row, runner: &Runner) -> Result<bool> {
-    let mut any = false;
-    table.each_match(row, |r| {
-        if !any {
-            any = match &semi.cond {
-                Some(cond) => eval_cond(cond, &row.iter().chain(r.iter()).cloned().collect::<Row>(), runner)? == Truth::True,
-                None => true,
-            };
-        }
-        Ok(())
-    })?;
-    Ok(any)
-}
-
-/// As `feed`, adding to `tally`, a count for each step, the rows that
-/// reach a counted one.
-fn tallied(steps: &[Step], (tally, row): (&mut [u64], Row), runner: &Runner, out: &mut Vec<Row>) -> Result<()> {
-    let Some((step, rest)) = steps.split_first() else {
-        out.push(row);
-        return Ok(());
-    };
-    let (seen, later) = match tally.split_first_mut() {
-        Some((seen, later)) => (Some(seen), later),
-        None => (None, &mut [][..]),
-    };
-    match step {
-        Step::Filter(cond) => {
-            if eval_cond(cond, &row, runner)? == Truth::True {
-                tallied(rest, (later, row), runner, out)?;
-            }
-            Ok(())
-        }
-        Step::Project(exprs) => {
-            let projected = exprs.iter().map(|e| eval(e, &row, runner)).collect::<Result<Row>>()?;
-            tallied(rest, (later, projected), runner, out)
-        }
-        Step::Probe(table) => {
-            table.each_match(&row, |r| tallied(rest, (&mut *later, row.iter().chain(r.iter()).cloned().collect()), runner, out))
-        }
-        Step::Outer(table) => {
-            let mut any = false;
-            table.each_match(&row, |r| {
-                any = true;
-                tallied(rest, (&mut *later, row.iter().chain(r.iter()).cloned().collect()), runner, out)
-            })?;
-            if any { Ok(()) } else { tallied(rest, (later, unmatched(table, row)), runner, out) }
-        }
-        Step::Semi(table, semi) => {
-            if found(table, semi, &row, runner)? != semi.anti {
-                tallied(rest, (later, row), runner, out)?;
-            }
-            Ok(())
-        }
-        Step::Count(_) => {
-            if let Some(seen) = seen {
-                *seen = seen.saturating_add(1);
-            }
-            tallied(rest, (later, row), runner, out)
-        }
-        Step::Runtime(..) => tallied(rest, (later, row), runner, out),
-    }
 }
 
 // Unit tests: a pipeline's runtime filters (RULES.md R-TEST-1, R-TEST-8).

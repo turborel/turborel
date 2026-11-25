@@ -317,7 +317,7 @@ fn pieces(pipeline: Pipeline, grouping: Arc<Grouping>, (db, tx, degree): (&Db, T
     let count = pipeline.count();
     let work = Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
-        let rows = pipeline.morsel(m, &runner)?;
+        let rows = super::rows::morsel_rows(&pipeline, m, Runner::new(&db_for, tx))?;
         let parts = morsel_pieces(&grouping, (m, rows), &runner)?;
         Ok(parts.into_iter().map(|made| (pieces_bytes(&made), made)).collect::<Vec<_>>())
     });
@@ -383,12 +383,14 @@ fn first_of(grouping: &Grouping, m: usize) -> u64 {
 }
 
 /// The pieces of morsel `m`'s `rows`, by partition, its expressions
-/// evaluated by `runner`.
-fn morsel_pieces(grouping: &Grouping, (m, rows): (usize, Vec<Row>), runner: &Runner) -> Result<Vec<Vec<Piece>>> {
+/// evaluated by `runner`, each row grouped as it is made, none held
+/// (RULES.md D1150).
+fn morsel_pieces(grouping: &Grouping, (m, rows): (usize, RowIter), runner: &Runner) -> Result<Vec<Vec<Piece>>> {
     let base = first_of(grouping, m);
     let mut found: HashMap<Vec<u8>, usize> = HashMap::new();
     let mut made: Vec<Making> = Vec::new();
     for (place, row) in (0_u64..).zip(rows) {
+        let row = row?;
         let values = grouping.values(&row)?;
         let key = group_key(&grouping.spec, &values)?;
         let at = if let Some(&at) = found.get(&key) {

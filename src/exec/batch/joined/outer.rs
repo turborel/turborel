@@ -216,6 +216,9 @@ struct Probe {
     barred: Option<Vec<bool>>,
     state: Phase,
     out: Out,
+    /// The left batch probing now, the places of its rows kept, and how
+    /// many of them probed.
+    at: Option<(Batch, Vec<usize>, usize)>,
 }
 
 impl Probe {
@@ -224,35 +227,52 @@ impl Probe {
     fn new((left, right): (Batches, Right), read: Read, out: Out) -> Probe {
         let (widths, rows) = (right.spec().widths, right.len());
         let scratch = vec![Value::Null; widths.0.saturating_add(widths.1)];
-        Probe { left, right, read, scratch, matched: vec![false; rows], barred: None, state: Phase::Probing, out }
+        Probe { left, right, read, scratch, matched: vec![false; rows], barred: None, state: Phase::Probing, out, at: None }
     }
 
-    /// Probes the right operand with the rows of `batch` at `rows`: of a
-    /// right held as vectors, their keys hashed a vector at a time first.
-    fn probe(&mut self, batch: &Batch, rows: &[usize]) -> Result<()> {
+    /// Probes the right operand with the rows of `batch` at `rows` from
+    /// the one at `from`, until a batch of pairs is made or they end, as
+    /// the inner probe does (RULES.md D1154): how many of them are probed.
+    /// Of a right held as vectors, their keys are hashed a vector at a
+    /// time first, as the first is probed.
+    fn probe(&mut self, batch: &Batch, rows: &[usize], from: usize) -> Result<usize> {
         let left: Vec<usize> = self.read.keys.iter().map(|k| k.left).collect();
         let probing = match &mut self.right {
             Right::Vectors(v) => {
-                v.held.hash_probing((batch, &left), rows)?;
+                if from == 0 {
+                    v.held.hash_probing((batch, &left), rows)?;
+                }
                 Some(std::mem::take(&mut v.held.probing))
             }
             Right::Rows(_) => None,
         };
-        let probed = self.probe_rows((batch, &left), rows, probing.as_ref());
+        let probed = self.probe_rows((batch, &left), (rows, from), probing.as_ref());
         if let (Right::Vectors(v), Some(hashes)) = (&mut self.right, probing) {
             v.held.probing = hashes;
-            probed?;
-            return v.held.settle();
+            let probed = probed?;
+            if probed >= rows.len() {
+                v.held.settle()?;
+            }
+            return Ok(probed);
         }
         probed
     }
 
-    /// Probes the right operand with the rows of `batch` at `rows`, its key
-    /// columns at `left`, their keys' hashes `probing` if hashed.
-    fn probe_rows(&mut self, (batch, left): (&Batch, &[usize]), rows: &[usize], probing: Option<&KeyHashes>) -> Result<()> {
+    /// Probes the right operand with the rows of `batch` at `rows` from the
+    /// one at `from`, until a batch of pairs is made, its key columns at
+    /// `left`, their keys' hashes `probing` if hashed: how many are probed.
+    fn probe_rows(
+        &mut self,
+        (batch, left): (&Batch, &[usize]),
+        (rows, from): (&[usize], usize),
+        probing: Option<&KeyHashes>,
+    ) -> Result<usize> {
         let mut key: Vec<Bucket> = Vec::with_capacity(self.read.keys.len());
         let mut values: Vec<Value> = Vec::with_capacity(self.read.keys.len());
-        for (n, &r) in rows.iter().enumerate() {
+        for (n, &r) in rows.iter().enumerate().skip(from) {
+            if self.out.ready() {
+                return Ok(n);
+            }
             self.bar()?;
             for &(at, c) in &self.read.columns {
                 if let Some(slot) = self.scratch.get_mut(c) {
@@ -277,7 +297,7 @@ impl Probe {
                 self.out.push_held(Some(batch), Some(r), None);
             }
         }
-        Ok(())
+        Ok(rows.len())
     }
 
     /// Joins row `r` of `batch`, its key columns at `left`, of key buckets
@@ -373,11 +393,16 @@ impl Probe {
         }
     }
 
-    /// Probes with the rows of `batch` kept, `rows`, its joined rows put in
-    /// batches; the rows joined before an error, then the error.
-    fn batch(&mut self, batch: &Batch, rows: Option<crate::storage::Sel>) {
-        let done = self.probe(batch, &kept_rows(rows, batch.rows));
-        if self.out.settle(Some(batch), done) {
+    /// Probes with the rows of `batch` at `rows` from the one at `from`,
+    /// its joined rows put in batches, kept to probe on if a batch is made
+    /// before they end; the rows joined before an error, then the error.
+    fn batch(&mut self, batch: Batch, rows: Vec<usize>, from: usize) {
+        let done = self.probe(&batch, &rows, from);
+        if let Ok(probed) = done
+            && probed < rows.len()
+        {
+            self.at = Some((batch, rows, probed));
+        } else if self.out.settle(Some(&batch), done.map(|_| ())) {
             self.state = Phase::Done;
         }
     }
@@ -391,11 +416,18 @@ impl Iterator for Probe {
             if let Some(given) = self.out.next() {
                 return Some(given);
             }
+            if let Some((batch, rows, from)) = self.at.take() {
+                self.batch(batch, rows, from);
+                continue;
+            }
             match self.state {
                 Phase::Done => return None,
                 Phase::Tail(from) => self.tail(from),
                 Phase::Probing => match self.left.next() {
-                    Some(Ok((batch, rows))) => self.batch(&batch, rows),
+                    Some(Ok((batch, rows))) => {
+                        let rows = kept_rows(rows, batch.rows);
+                        self.batch(batch, rows, 0);
+                    }
                     Some(Err(e)) => return Some(Err(e)),
                     None => self.state = if self.right.spec().kind.keeps_right() { Phase::Tail(0) } else { Phase::Done },
                 },

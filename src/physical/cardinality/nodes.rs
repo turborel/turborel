@@ -135,6 +135,13 @@ impl Estimates<'_> {
         counted.or_else(|| self.table_rows(found.table)).unwrap_or(UNKNOWN_ROWS)
     }
 
+    /// The distinct values of `plan`'s column `column` its table's
+    /// statistics count, if they do.
+    pub(super) fn counted_distinct(&self, plan: &LogicalPlan, column: usize) -> Option<f64> {
+        let found = origin(plan, column)?;
+        self.statistics(found.table)?.distinct(found.column)
+    }
+
     /// \[DESIGN\] (RULES.md D1082) The distinct values a grouping counts of
     /// `plan`'s column `column`: as `distinct` gives them, but of a
     /// deterministic expression no more than the combinations of the

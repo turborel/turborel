@@ -32,6 +32,12 @@ use crate::txn::{Stop, TxId};
 /// one run's results, few enough that a reader stopping early wastes few.
 const AHEAD_PER_THREAD: usize = 2;
 
+/// The morsels a run of `degree` threads takes at most past the one its
+/// reader waits for, that one among them.
+pub(super) fn window(degree: usize) -> usize {
+    degree.max(1).saturating_mul(AHEAD_PER_THREAD)
+}
+
 /// The work of each morsel, by its number.
 pub(in crate::exec) type Work<T> = Box<dyn Fn(usize) -> Result<T> + Send + Sync>;
 
@@ -179,7 +185,7 @@ impl<T: Send + 'static> Morsels<T> {
             work,
             count,
             degree,
-            window: degree.saturating_mul(AHEAD_PER_THREAD),
+            window: window(degree),
             stop: db.tx.stop_of(tx),
             taken: AtomicUsize::new(0),
             running: AtomicUsize::new(0),
