@@ -369,7 +369,7 @@ fn words<S: Seal>(
 ) -> Result<Option<RunWords>> {
     let Some(zones) = group.columns.get(column) else { return Ok(None) };
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-    let (mut units, mut nulls) = (Vec::with_capacity(count), Mask::default());
+    let (mut units, mut nulls) = (prepared.words(count), Mask::default());
     let mut runs = Some(Vec::new());
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));

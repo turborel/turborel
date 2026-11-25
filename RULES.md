@@ -692,6 +692,8 @@ verification approach DO-178C expects (§8).
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
 | D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
 | D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
+| D1095 | A scan that keeps few rows of a run decodes the next run into the vectors it judged the last by, and holds the rows kept in vectors with room for a batch |
+| D1096 | A request to read ahead pages the pool holds takes no lock scans share |
 
 ### The project
 
@@ -18838,6 +18840,50 @@ opened bytes kept for its runs, as opening it once is what D352 saves.
 Which a page is is known as it is read, page by page, so a table whose
 encodings changed reads each page as it was written. No format
 changes.
+
+#### D1095. A scan that keeps few rows of a run decodes the next run into the vectors it judged the last by, and holds the rows kept in vectors with room for a batch
+
+A scan that judges its conjuncts of a run (D360) decodes each judged
+column into a vector of the run's rows. Where the conjuncts keep fewer
+than one row in eight, it gathers the rows kept into what it holds
+(D366) and reads those vectors no more. Each was allocated for the run
+and freed after it, and the vectors holding the rows kept began empty
+and grew as each run was added, so each was allocated and copied again
+every time it doubled. On a scan that reads two or three narrow
+columns to keep a few rows in a hundred, the allocator and those
+copies were about a tenth of its time.
+
+The scan now gives the vectors it judged a run by back to what it
+keeps of its chunks (`engine/columns/prepared.rs`, `give`), and the
+next run's judged columns are decoded into them (`words`). A run gives
+back no more than it took or made, so what is kept is never more than
+one run decodes, and no bound is set. The places of the rows held and
+each judged column held of them are made with room for a batch of
+rows, which is the most a scan holds (`frozen/batches/pending.rs`), so
+none grows.
+
+A run given whole, as one of which many rows are kept is, passes its
+vectors to its batch as before, and they are the batch's.
+
+#### D1096. A request to read ahead pages the pool holds takes no lock scans share
+
+A scan of frozen groups asks the pool, as it takes up each run, to
+read ahead the pages it will read (D30). To learn which of them were
+not in the pool it took the lock of the read-ahead queue, which every
+scan of the pool shares, and under it asked each page's shard of the
+page table, behind that shard's lock. A scan of pages the pool already
+holds, which is every scan of a table that fits it, wants none read,
+yet paid both locks for every page, and scans on many threads met at
+the queue's.
+
+Whether a page is in the pool is now read of its hint first, with no
+lock (`buffer/hits.rs`). The frame hinted holding the page says it is.
+Only otherwise is the shard's map asked. The pages in the pool before
+the first that is not are passed over before the queue is looked at,
+so a request whose pages are all held never takes its lock
+(`buffer/pool/ahead.rs`). A hint may name a frame being emptied, whose
+page is then taken as held and not read ahead. The scan reads that
+page itself, as it reads any page the reader has not reached.
 
 ## 2. Project layout
 
