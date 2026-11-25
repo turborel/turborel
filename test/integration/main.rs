@@ -46,6 +46,7 @@ mod compiled_procedures;
 mod compiled_tpcc;
 mod compiled_writes;
 mod composite_columns;
+mod computed_keys;
 mod concepts;
 /// The fixtures over a database and the suites every log passes, written
 /// once in `support/` for the tests of the replicated log too (RULES.md
