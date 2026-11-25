@@ -170,9 +170,8 @@ fn streamed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<Ro
     let Held::Kept(pipeline) = Pipeline::of(plan, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, db_for, within) = (Arc::new(pipeline), db.clone(), (limit.clone(), ahead.clone()));
     let (count, read, db_alone) = (pipeline.count(), Arc::clone(&pipeline), db.clone());
-    let work = Box::new(move |m: usize| {
-        whole_rows(pipeline.morsel_rows(m, (&db_for, tx), Runner::new(&db_for, tx))?, (&within.0, &within.1))
-    });
+    let work =
+        Box::new(move |m: usize| whole_rows(pipeline.morsel_rows(m, (&db_for, tx), Runner::new(&db_for, tx))?, (&within.0, &within.1)));
     let alone: Alone<Row> = Box::new(move |m| read.morsel_rows(m, (&db_alone, tx), Runner::new(&db_alone, tx)));
     let morsels = Morsels::start(db, tx, (count, degree), work);
     Ok(Held::Kept(Box::new(Flow::of_rows(morsels, alone, (&limit, &ahead), db.tx.stop_of(tx)))))

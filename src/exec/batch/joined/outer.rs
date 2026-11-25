@@ -261,7 +261,12 @@ impl Probe {
     /// Probes the right operand with the rows of `batch` at `rows` from the
     /// one at `from`, until a batch of pairs is made, its key columns at
     /// `left`, their keys' hashes `probing` if hashed: how many are probed.
-    fn probe_rows(&mut self, (batch, left): (&Batch, &[usize]), (rows, from): (&[usize], usize), probing: Option<&KeyHashes>) -> Result<usize> {
+    fn probe_rows(
+        &mut self,
+        (batch, left): (&Batch, &[usize]),
+        (rows, from): (&[usize], usize),
+        probing: Option<&KeyHashes>,
+    ) -> Result<usize> {
         let mut key: Vec<Bucket> = Vec::with_capacity(self.read.keys.len());
         let mut values: Vec<Value> = Vec::with_capacity(self.read.keys.len());
         for (n, &r) in rows.iter().enumerate().skip(from) {

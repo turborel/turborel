@@ -165,11 +165,16 @@ pub(super) mod tests {
     #[test]
     fn a_probe_holds_the_pairs_of_a_row_at_most() {
         let db = Database::new();
+        db.set_job_policy(crate::threads::JobPolicy::Manual).unwrap();
         db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE L (K INTEGER, G INTEGER) CREATE TABLE B (G INTEGER, T INTEGER)").unwrap();
         let a = db.session("A");
         let rows = |n: i32| (0_i32..n).map(|k| format!("({k}, {})", k % 3_i32)).collect::<Vec<_>>().join(", ");
         a.run(&format!("INSERT INTO L VALUES {}", rows(1_500_i32))).unwrap();
-        a.run(&format!("INSERT INTO B VALUES {}", (0_i32..3_000_i32).map(|t| format!("({}, {t})", t % 3_i32)).collect::<Vec<_>>().join(", "))).unwrap();
+        a.run(&format!(
+            "INSERT INTO B VALUES {}",
+            (0_i32..3_000_i32).map(|t| format!("({}, {t})", t % 3_i32)).collect::<Vec<_>>().join(", ")
+        ))
+        .unwrap();
         a.commit().unwrap();
         db.set_setting("EXECUTOR.DEGREE", &Value::Exact(Decimal::new(1, 0))).unwrap();
         db.set_setting("EXECUTOR.BATCHES", &Value::Char("ON".into())).unwrap();
@@ -184,7 +189,8 @@ pub(super) mod tests {
             a.commit().unwrap();
             assert_eq!(count, 1_500_000, "{join}: every pair");
             let most = MOST_READY.with(Cell::get);
-            assert!((1..=2).contains(&most), "{join}: {most} batches held at once");
+            let plan = a.physical_plan(&sql, &crate::params::Params::new()).unwrap();
+            assert!((1..=2).contains(&most), "{join}: {most} batches held at once, of\n{plan}");
         }
     }
 }

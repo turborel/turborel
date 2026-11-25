@@ -265,14 +265,24 @@ pub(super) fn whole_batches(batches: Batches, (limit, ahead): (&Limit, &Ahead)) 
 
 impl Flow<Row> {
     /// The rows of `morsels`, as `Flow::of`.
-    pub(super) fn of_rows(morsels: Morsels<Taken<Vec<Row>>>, alone: Alone<Row>, (limit, ahead): (&Limit, &Ahead), stop: Option<Arc<Stop>>) -> Flow<Row> {
+    pub(super) fn of_rows(
+        morsels: Morsels<Taken<Vec<Row>>>,
+        alone: Alone<Row>,
+        (limit, ahead): (&Limit, &Ahead),
+        stop: Option<Arc<Stop>>,
+    ) -> Flow<Row> {
         Flow::of(morsels, alone, (limit, ahead, one_row), stop)
     }
 }
 
 impl Flow<Kept> {
     /// The batches of `morsels`, as `Flow::of`.
-    pub(super) fn of_batches(morsels: Morsels<Taken<Vec<Kept>>>, alone: Alone<Kept>, (limit, ahead): (&Limit, &Ahead), stop: Option<Arc<Stop>>) -> Flow<Kept> {
+    pub(super) fn of_batches(
+        morsels: Morsels<Taken<Vec<Kept>>>,
+        alone: Alone<Kept>,
+        (limit, ahead): (&Limit, &Ahead),
+        stop: Option<Arc<Stop>>,
+    ) -> Flow<Kept> {
         Flow::of(morsels, alone, (limit, ahead, kept_rows), stop)
     }
 }
@@ -312,7 +322,12 @@ pub(super) struct Flow<T: Send + 'static> {
 impl<T: Send + 'static> Flow<T> {
     /// The flow of `morsels`, each gathered within `limit` and `ahead` or
     /// left to `alone`, for a statement `stop` cancels.
-    fn of(morsels: Morsels<Taken<Vec<T>>>, alone: Alone<T>, (limit, ahead, rows): (&Limit, &Ahead, fn(&T) -> usize), stop: Option<Arc<Stop>>) -> Flow<T> {
+    fn of(
+        morsels: Morsels<Taken<Vec<T>>>,
+        alone: Alone<T>,
+        (limit, ahead, rows): (&Limit, &Ahead, fn(&T) -> usize),
+        stop: Option<Arc<Stop>>,
+    ) -> Flow<T> {
         let (now, limit, ahead) = (Now::Whole(Vec::new().into_iter()), limit.clone(), ahead.clone());
         Flow { morsels, alone, now, held: (0, 0), next: 0, limit, ahead, rows, stop, ended: false }
     }
@@ -329,8 +344,8 @@ impl<T: Send + 'static> Flow<T> {
         let n = self.next;
         self.next = n.checked_add(1).ok_or_else(|| broken("a pipeline of too many morsels"))?;
         self.now = match taken {
-            Taken::Whole(items, bytes) => {
-                self.held = (bytes, items.iter().map(self.rows).sum());
+            Taken::Whole(items, charged) => {
+                self.held = (charged, items.iter().map(self.rows).sum());
                 Now::Whole(items.into_iter())
             }
             Taken::Past => Now::Alone((self.alone)(n)?),
@@ -404,11 +419,13 @@ mod tests {
     }
 
     /// Of `db` as it is set, the first morsel of T joined with U on K
-    /// gathered within a grant of MEMORY.WORK_BYTES and `ahead`, by batch
+    /// gathered within a grant of MEMORY.WORK_BYTES and the rows ahead of
+    /// a reader of one thread over morsels of `ahead` rows, by batch
     /// if it is read so, else row by row: its rows, if it fit; and whether
     /// the grant holds what the build held once the morsel is given up,
-    /// and `ahead` no rows.
-    fn first_morsel(database: &Database, ahead: &Ahead) -> (Option<usize>, bool) {
+    /// and no row is held ahead.
+    fn first_morsel(database: &Database, ahead: usize) -> (Option<usize>, bool) {
+        let ahead = &Ahead::of(1, ahead);
         let join = Plan::HashJoin {
             left: scan("T"),
             right: scan("U"),
@@ -457,12 +474,12 @@ mod tests {
         set("EXECUTOR.MORSEL_ROWS", Value::Exact(Decimal::new(100_000, 0)));
         for batches in ["ON", "OFF"] {
             set("EXECUTOR.BATCHES", Value::Char(batches.into()));
-            let (wide, narrow) = (Ahead::of(1, 100_000), Ahead::of(1, 300));
+            let (wide, narrow) = (100_000, 300);
             set("MEMORY.WORK_BYTES", Value::Exact(Decimal::new(64 << 20, 0)));
-            assert_eq!(first_morsel(&db, &wide), (Some(30_000), true), "within the grant, batches {batches}");
-            assert_eq!(first_morsel(&db, &narrow), (None, true), "past the rows ahead, batches {batches}");
+            assert_eq!(first_morsel(&db, wide), (Some(30_000), true), "within the grant, batches {batches}");
+            assert_eq!(first_morsel(&db, narrow), (None, true), "past the rows ahead, batches {batches}");
             set("MEMORY.WORK_BYTES", Value::Exact(Decimal::new(65_536, 0)));
-            assert_eq!(first_morsel(&db, &wide), (None, true), "past the grant, batches {batches}");
+            assert_eq!(first_morsel(&db, wide), (None, true), "past the grant, batches {batches}");
         }
     }
 }
