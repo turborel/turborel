@@ -678,6 +678,7 @@ verification approach DO-178C expects (§8).
 | D1062 | A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null |
 | D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
+| D1065 | An uncorrelated NOT IN or ALL that is a conjunct is an antijoin |
 | D1070 | A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows |
 | D1071 | A hashed semi join of streams read row by row is made of its batches |
 | D1072 | A join reads a grouping by batch whatever its set functions, and a grouping run in parallel too |
@@ -18522,6 +18523,25 @@ judged of every row. A conjunct of no subquery, or of an uncorrelated
 one, stays below, where it is cheap and may be told to a scan. Beside an
 antijoin every conjunct stays below, as an antijoin often keeps most of
 its rows and the conjunct may keep few.
+
+#### D1065. An uncorrelated NOT IN or ALL that is a conjunct is an antijoin
+
+The semi join rule took every correlated subquery of existence, and of
+the uncorrelated ones the IN and SOME conjuncts alone (D541). An
+uncorrelated `x NOT IN (SELECT ...)` or `x <> ALL (SELECT ...)` stayed a
+nested subquery. The executor reads such a subquery once, but then
+judges the comparison of every outer row against the rows it holds, on
+one thread.
+
+The rule is now offered those conjuncts too (`found::negated`). NOT of a
+comparison with SOME is the antijoin on `(x op y) IS NOT FALSE`, a
+comparison with ALL the antijoin on `(x op y) IS NOT TRUE`, and NOT of
+one with ALL a semi join, as D541 makes them of a correlated subquery,
+so a null on either side still decides as the standard's truth tables
+say. The join is made only of a subquery that is pure and cannot raise,
+as before. One that is refused is offered to no other rule and stays
+nested, read once, since the general unnesting of an uncorrelated
+subquery would gain nothing over that.
 
 #### D1070. A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows
 
