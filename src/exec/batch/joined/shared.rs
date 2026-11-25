@@ -60,6 +60,20 @@ pub(in crate::exec) struct SharedTable {
 /// batch and its built row, or `NO_ROW` of a LEFT join's row none matches.
 type Pairs = (Vec<u32>, Vec<u32>);
 
+/// \[DESIGN\] (RULES.md D1087) The bytes of a table past which a probe
+/// looks first in its key's Bloom filter: 4 MiB, about the third-level
+/// cache a thread has of a processor of several cores, 36 MiB for 8
+/// threads of the build machine, so a larger table is read from memory
+/// at random while a filter of 8 bits a key stays in the second level.
+const SCREENED_BYTES: usize = 4 << 20;
+
+/// The places of the probes of a batch to look up: those `screened`, in
+/// order, or all `count` (RULES.md D1087).
+fn probes(screened: Option<&[u32]>, count: usize) -> impl Iterator<Item = usize> + '_ {
+    let all = if screened.is_none() { count } else { 0 };
+    screened.unwrap_or_default().iter().map(|&n| crate::storage::mask::index(n)).chain(0..all)
+}
+
 /// Row `r` as a pick: `NO_ROW` of one past what a pick numbers.
 fn pick(r: usize) -> u32 {
     u32::try_from(r).unwrap_or(NO_ROW)
@@ -207,6 +221,18 @@ impl SharedTable {
         Ok(shared)
     }
 
+    /// \[DESIGN\] (RULES.md D1087) Of the probes whose keys' hashes are
+    /// `hashes`, the places of those the Bloom filter of its one key may
+    /// hold, if its table is past `SCREENED_BYTES` and the filter, made with
+    /// it, still pays; none to look at every probe in the table.
+    fn screened(&self, hashes: &[u64]) -> Option<Vec<u32>> {
+        if self.places.len() != 1 || self.table.is_direct() || self.table.bytes() <= SCREENED_BYTES {
+            return None;
+        }
+        let filter = self.made.as_ref()?.first()?.as_ref()?;
+        filter.screened(hashes, &*self.kernels)
+    }
+
     /// The runtime filters of its keys `keys` (RULES.md D369, D389), each
     /// told of the left column of its key.
     ///
@@ -227,6 +253,13 @@ impl SharedTable {
             }
         }
         Ok(told)
+    }
+
+    /// Whether its probes are screened by its key's Bloom filter (RULES.md
+    /// D1087).
+    #[cfg(test)]
+    pub(in crate::exec) fn screens(&self) -> bool {
+        self.screened(&[0]).is_some()
     }
 
     /// The rows it holds.
@@ -380,7 +413,11 @@ impl SharedTable {
         }
         let mut hashes = KeyHashes::default();
         hashes.of_batch((batch, Some(given)), (left, &self.nulls), self.hashing())?;
-        for ((&r, &h), &miss) in given.iter().zip(&hashes.hashes).zip(&hashes.misses) {
+        // Of a table past the caches, the probes its key's Bloom filter
+        // may hold alone (RULES.md D1087).
+        let screened = self.screened(&hashes.hashes);
+        for n in probes(screened.as_deref(), given.len()) {
+            let (Some(&r), Some(&h), Some(&miss)) = (given.get(n), hashes.hashes.get(n), hashes.misses.get(n)) else { continue };
             for p in self.table.candidates(h).filter(|_| !miss) {
                 if keys_equal((batch, left, r), (&self.right, &self.places, p), &self.nulls)? {
                     pairs.0.push(pick(r));

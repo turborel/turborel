@@ -15,7 +15,7 @@
 //! at a time and compared a pair at a time (`table/join/equal.rs`). The
 //! pairs are the same, in the same order, of either.
 
-use super::{SharedTable, pick};
+use super::{SharedTable, pick, probes};
 use crate::error::Result;
 use crate::exec::table::KeyHashes;
 use crate::storage::{Batch, Column, Ints};
@@ -56,7 +56,11 @@ impl SharedTable {
         }
         let mut hashes = KeyHashes::default();
         hashes.of_batch((batch, Some(given)), (left, &self.nulls), self.hashing())?;
-        for ((&r, &h), _) in given.iter().zip(&hashes.hashes).zip(&hashes.misses).filter(|(_, miss)| !**miss) {
+        // Of a table past the caches, the probes its key's Bloom filter
+        // may hold alone (RULES.md D1087).
+        let screened = self.screened(&hashes.hashes);
+        for n in probes(screened.as_deref(), given.len()) {
+            let (Some(&r), Some(&h), Some(false)) = (given.get(n), hashes.hashes.get(n), hashes.misses.get(n).copied()) else { continue };
             let Some(key) = probe.units.get(r) else { continue };
             for p in self.table.candidates(h) {
                 if built.units.get(p) == Some(key) {

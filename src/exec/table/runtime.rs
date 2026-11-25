@@ -251,6 +251,18 @@ impl RuntimeFilter {
         Some(Box::new(move |u: i64| at_scale(u, from, scale).is_some_and(|k| keys.binary_search(&k).is_ok())))
     }
 
+    /// \[DESIGN\] (RULES.md D1087) The places among `hashes`, a join's
+    /// probing keys hashed as its table hashes them, whose keys its Bloom
+    /// filter may hold, in order, counted toward whether it pays; none if
+    /// it has no Bloom filter or no longer judges.
+    pub(in crate::exec) fn screened(&self, hashes: &[u64], kernels: &dyn Kernels) -> Option<Vec<u32>> {
+        let words = self.bloom.as_ref().filter(|_| self.judging())?;
+        let mut held = Vec::with_capacity(hashes.len());
+        kernels.bloom_probe(words, hashes, &mut held);
+        self.count((hashes.len(), held.len()));
+        Some(held)
+    }
+
     /// Counts a batch judged, of `judged` rows of which it kept `kept`.
     fn count(&self, (judged, kept): (usize, usize)) {
         if self.batches.fetch_add(1, Ordering::Relaxed) < TRIED {

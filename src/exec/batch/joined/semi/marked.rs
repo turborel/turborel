@@ -40,7 +40,7 @@ use super::Parts;
 use super::pairing::Pairing;
 use crate::error::Result;
 use crate::exec::parallel::{Held, each_morsel, pipelined};
-use crate::exec::table::{Hashing, JoinTable, KEYSET_MAX, KeyHashes, RuntimeFilter, Seed, keys_equal};
+use crate::exec::table::{Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal};
 use crate::exec::work::Work;
 use crate::exec::{Db, Runner, broken, execute};
 use crate::physical::{JoinKey, Plan, SemiJoin, SemiMethod};
@@ -183,16 +183,16 @@ impl HeldLeft {
 
     /// The runtime filters of its keys, each told of the right column of
     /// its key of `keys`, of those that reach a scan of `right` in no
-    /// order (RULES.md D369), if the database makes them; none of more
-    /// held rows than a filter lists the keys of (`KEYSET_MAX`). A filter
-    /// of that many keys tells the scan each key, so it reads little but
-    /// their rows. One of more tells it a range and a few spans, which
-    /// cost each row read a comparison and spare it only a look into the
-    /// held rows' table, which costs as little.
+    /// order (RULES.md D369), if the database makes them. A filter of a
+    /// few keys tells the scan each key, so it reads little but their
+    /// rows. One of more keys tells it a range and a Bloom filter, which
+    /// stays in a core's cache and spares the rows it drops a look into
+    /// the held rows' table, a read from memory once that table is past
+    /// the cache (D1087).
     fn filters(&self, keys: &[JoinKey], right: &Plan, db: &Db) -> Result<Vec<Told>> {
         let read = if let Plan::Parallel(p) = right { &p.input } else { right };
         let mut told = Vec::new();
-        if !runtime::wanted(db) || in_order(read) || self.batch.rows > KEYSET_MAX {
+        if !runtime::wanted(db) || in_order(read) {
             return Ok(told);
         }
         let how = Hashing { seed: &self.seed, keyed: self.keyed, direct: false };

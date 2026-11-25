@@ -12,7 +12,10 @@
 //! row's matches in the order built; of D1084, integers known as runs
 //! judged of the rows asked of alone, a run no row asks of left unjudged,
 //! and a null of a run kept never; of D1086, a join on keys computed of
-//! each operand's columns, and only of deterministic ones.
+//! each operand's columns, and only of deterministic ones; of D1087, a
+//! probe of a table past a thread's share of the cache screened by its
+//! Bloom filter on the kernels, and a semi join of many held keys
+//! filtering its right.
 
 use super::super::{Mutation, Package};
 
@@ -48,7 +51,7 @@ const COLLATED: &str = "src/physical/collated.rs";
 /// The test of joins on computed keys.
 const COMPUTED: &str = "computed_keys::an_equality_of_computed_keys_is_a_hash_join";
 
-pub const JOIN_BUILD: [Mutation; 20] = [
+pub const JOIN_BUILD: [Mutation; 23] = [
     Mutation {
         name: "probe-units-reversed",
         package: Package::Core,
@@ -248,5 +251,35 @@ pub const JOIN_BUILD: [Mutation; 20] = [
         replacement: "        let raises = false;",
         integration: &[COMPUTED],
         unit: &[],
+    },
+    Mutation {
+        name: "probe-screen-never",
+        package: Package::Core,
+        breaks: "a probe of a table past a thread's share of the cache is screened by its Bloom filter (D1087)",
+        file: "src/exec/batch/joined/shared.rs",
+        original: "|| self.table.bytes() <= SCREENED_BYTES {",
+        replacement: "|| self.table.bytes() > 0 {",
+        integration: &[],
+        unit: &["exec::parallel::build::tests::probes_screened_by_the_bloom_filter_pair_as_every_probe"],
+    },
+    Mutation {
+        name: "marked-filter-few-keys",
+        package: Package::Core,
+        breaks: "a semi join of more held keys than a filter lists filters its right (D1087)",
+        file: "src/exec/batch/joined/semi/marked.rs",
+        original: "        if !runtime::wanted(db) || in_order(read) {",
+        replacement: "        if !runtime::wanted(db) || in_order(read) || self.batch.rows > crate::exec::table::KEYSET_MAX {",
+        integration: &["marked_semi::a_built_left_of_many_keys_filters_its_right"],
+        unit: &[],
+    },
+    Mutation {
+        name: "simd-bloom-keeps-all",
+        package: Package::Simd,
+        breaks: "the vector Bloom probe keeps only the hashes the filter may hold (D1087)",
+        file: "simd/src/x86/bloom.rs",
+        original: "    out.truncate(len.saturating_add(keep));",
+        replacement: "    out.truncate(len.saturating_add(keep | 1));",
+        integration: &[],
+        unit: &["tests::every_available_set_gives_the_portable_results"],
     },
 ];

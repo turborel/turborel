@@ -695,6 +695,7 @@ verification approach DO-178C expects (§8).
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
 | D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
 | D1086 | An equality of an expression of each operand's columns is a hash join on the keys computed once a row |
+| D1087 | A probe of a join table past a thread's share of the cache is screened by its key's Bloom filter, and a semi join of many held keys filters its right |
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
@@ -18939,6 +18940,42 @@ declared types is not hashed at all (D776), so computing the key of a
 row that no pair holds raises nothing the nested loop would not. An
 outer join keeps such a condition whole too, as its keys would be
 computed of every row of an operand even when the other has none.
+
+#### D1087. A probe of a join table past a thread's share of the cache is screened by its key's Bloom filter, and a semi join of many held keys filters its right
+
+A probe of a hash join's table reads one word of its directory at a
+random place for every probing row. A table past the last level of
+cache makes that read a trip to memory, and most of a probe's time
+waits on it, even for the rows no built row matches. Laying out the
+table another way (located a batch at a time, a slot of one row
+holding its row and key) left that read where it was and gained
+nothing, measured on TPC-H.
+
+A parallel build of one key sums its keys in a Bloom filter as it is
+built (D1080). A probe of such a table (`exec/batch/joined/shared.rs`)
+now first asks that filter of its batch's hashes, on the kernels, and
+reads the directory only at the places it passes. The filter takes a
+byte a key and stays in a core's cache, so a probing row of no match
+costs a read from cache instead of one from memory. A table that fits
+in a thread's share of the last level, 4 MiB (36 MiB shared by 8
+threads on the reference machine, rounded down), is not screened, as
+its directory read is a cache read already. The filter judges itself
+as a runtime filter does (D369): after its first batches, if it kept
+most rows, it stops being asked. The pairs a probe gives are those it
+gives unscreened, as the filter keeps every row whose key the table
+may hold.
+
+The kernels screen hashes by the filter's blocks with one vector of
+blocks at a time on x86 (`simd/src/x86/bloom.rs`), with AVX2 or
+AVX-512 as the machine has, and the portable code elsewhere; a hash
+passes the same filter on every kernel.
+
+A semi join that builds its left (D1070) gave its right's scan no
+runtime filter when it held more keys than a filter lists, on the
+reasoning that the scan's comparison costs as much as the probe it
+spares. Past the cache that probe is a read from memory, so it now
+tells the scan its filter of a range and a Bloom filter whatever the
+number of its keys.
 
 ### Column store reads
 
