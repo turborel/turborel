@@ -712,6 +712,7 @@ verification approach DO-178C expects (§8).
 | D1130 | A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them |
 | D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
 | D1132 | A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels |
+| D1133 | A count over another grouping's groups crosses its partitions, each partition's counts merged by the statement's thread |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
@@ -19435,6 +19436,33 @@ be probed from its row (`optimizer/unnesting/scalar.rs`).
 The left of a semi join that builds its left is now marked as a hash
 join's built operand is: it is held by batch whatever its store, so a
 table kept by column is read in parallel there too.
+
+#### D1133. A count over another grouping's groups crosses its partitions, each partition's counts merged by the statement's thread
+
+A grouping over another runs as one part when it groups by some of the
+first's grouping columns (D1113). A grouping that groups by a set
+function's result of the first, or by an expression a projection
+between the two computes, as TPC-H Q13 groups customers by their count
+of orders, stayed above the part: each of the first's groups came to
+the statement's thread as a row, went through the projections and was
+grouped again there, a row at a time.
+
+Such a grouping whose set functions are COUNT alone now runs in the
+part too (`physical::crosses`). Its partitions are the first's, by the
+whole key. The thread that finishes a partition takes its groups of the
+first, in the order of their first rows, through the projections and
+groups them again, and writes each group's states
+(`exec/parallel/grouped/regrouped.rs`). The statement's thread merges
+the states of each group of the partitions and numbers it by the least
+of their numbers, the first row of the group of all, so the groups come
+in the order the serial grouping gives them. Its HAVING condition is
+judged after the merge. A count is the same whatever order its rows are
+counted in. Another set function's state, as a sum of approximate
+numbers or an extreme of values a collation holds equal, could differ
+by the order its partitions are merged in, so a grouping of one stays
+above the part. A projection that fails in a partition gives the part
+way to the serial plan, which meets the rows in their order and raises
+what it raises (D15).
 
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 
