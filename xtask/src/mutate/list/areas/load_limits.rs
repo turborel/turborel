@@ -1,13 +1,14 @@
 //! The mutations of a long load kept within the process's limits
-//! (RULES.md R-TEST-9, D1136 to D1140): a file opened with no descriptor
+//! (RULES.md R-TEST-9, D1136 to D1141): a file opened with no descriptor
 //! left, a checkpoint due by the log's bytes, a load's given rows held
-//! unspilled, a checkpoint's captures written to disk (D1139), and a
-//! value out of line freed only once no read may fetch it (D1140).
+//! unspilled, a checkpoint's captures written to disk (D1139), a
+//! value out of line freed only once no read may fetch it (D1140), and a
+//! long log record written after what the log's buffer holds (D1141).
 
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 7] = [
+pub const LOAD_LIMITS: [Mutation; 8] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -77,5 +78,15 @@ pub const LOAD_LIMITS: [Mutation; 7] = [
         replacement: "        if true { None } else { self.directory().ok() }",
         integration: &[],
         unit: &["engine::rows::frozen::tests::retired::a_read_by_row_id_fetches_its_value_after_the_freeze"],
+    },
+    Mutation {
+        name: "log-long-record-ordered",
+        package: Package::Core,
+        breaks: "a log record as long as the buffer goes to the file ahead of a segment header the buffer still holds",
+        file: "src/log/file/buffered.rs",
+        original: "            if data.iter().any(|&b| b != 0) {",
+        replacement: "            if false {",
+        integration: &[],
+        unit: &["log::file::buffered::tests::a_long_record_goes_to_the_file_after_what_is_held"],
     },
 ];

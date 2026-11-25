@@ -710,6 +710,7 @@ verification approach DO-178C expects (§8).
 | D1138 | The rows an execution of a load is given are held, never spilled |
 | D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
 | D1140 | A value out of line of an entry a freeze takes out is freed only once no read may still fetch it |
+| D1141 | A log record as long as the buffer reaches its segment after the bytes the buffer holds |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 
@@ -19324,6 +19325,23 @@ made. A read by row id, and the newest version UNIQUE reads, take the
 directory first and hold it until the values are fetched
 (`Frozen::pinned`). A table that has never frozen rows takes nothing,
 so its reads still share no word.
+
+#### D1141. A log record as long as the buffer reaches its segment after the bytes the buffer holds
+
+A segment's file is written through a buffer (D921), and a write as long
+as the buffer went to the file at once, leaving what the buffer held.
+That suits the zeros written ahead (D796), but a record so long went to
+the file past bytes the buffer still held. Under LOG.DURABILITY NONE
+nothing syncs the buffer, so a new segment's header could stay held while
+megabytes of long records reached the file behind it. A server killed for
+memory in a load into a column store left such a segment, its header
+zeros, and the database could not be opened again.
+
+A write as long as the buffer now has what is held written first, unless
+it is all zeros, which may still go to the file alone
+(`log/file/buffered.rs`). The file then never holds a record past bytes
+held, so a failure of the process loses only the log's tail, which
+recovery cuts as it cuts a torn end.
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
