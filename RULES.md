@@ -18827,7 +18827,7 @@ lies. What D352 keeps of a chunk, its table of symbols and its
 dictionary's entries, is still made once and kept. Its bytes are not.
 Each run finds the page in the pool again, holds it while it decodes
 its rows of it, and lets it go (`engine/columns/prepared.rs`). Finding
-a page the pool holds is a hash and a latch (D502), which costs less
+a page the pool holds is a hash and a latch, which costs less
 than copying the page, and a run of a vector of rows touches a chunk
 once or twice. A group's pages are not written again while a reader
 holds the group, and a run never reads a second page while it holds
