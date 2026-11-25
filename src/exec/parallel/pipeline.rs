@@ -38,11 +38,11 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::{Told, runtime_taken as taken, wanted};
-use crate::exec::broken;
+use crate::exec::{Runner, broken, eval};
 use crate::logical::{Cond, Expr, pushed_conjuncts};
 use crate::physical::{NodeCount, Plan};
 use crate::settings::EXECUTOR_MORSEL_ROWS;
-use crate::storage::{Conjunct, Conjunction, Split};
+use crate::storage::{Conjunct, Conjunction, Row, Split};
 use crate::txn::TxId;
 
 /// \[DESIGN\] The most steps a pipeline takes a row through (RULES.md
