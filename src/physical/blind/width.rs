@@ -1,5 +1,6 @@
 //! The widths of a physical plan's rows, of each operator the reduction
-//! walks through (`physical/blind.rs`), found once, from the scans up.
+//! (`physical/blind.rs`) and the pruning (`blind/pruned.rs`) walk
+//! through, found once, from the scans up.
 
 use super::super::{PhysicalPlanner, Plan, Preserved};
 
@@ -54,14 +55,17 @@ impl PhysicalPlanner<'_> {
                 let found = if matches!(outer, Preserved::Semi | Preserved::Anti) { 0 } else { *width };
                 Sized { width: kid.width.map(|w| w.saturating_add(found)), kids: vec![kid] }
             }
-            Plan::SemiJoin(s) => alone(Some(s.widths.0)),
-            Plan::OuterJoin { widths, .. } => alone(Some(widths.0.saturating_add(widths.1))),
+            Plan::SemiJoin(s) => Sized { width: Some(s.widths.0), kids: vec![self.sized(&s.left), self.sized(&s.right)] },
+            Plan::OuterJoin { left, right, widths, .. } => {
+                Sized { width: Some(widths.0.saturating_add(widths.1)), kids: vec![self.sized(left), self.sized(right)] }
+            }
+            // A grouping's own width is not needed here, its input's is.
+            Plan::Aggregate { input, .. } => Sized { width: None, kids: vec![self.sized(input)] },
             Plan::Nearest(_)
             | Plan::Counted(_)
             | Plan::MergeJoin(_)
             | Plan::RangeJoin(_)
             | Plan::MarkJoin(_)
-            | Plan::Aggregate { .. }
             | Plan::Distinct { .. }
             | Plan::SetOp { .. }
             | Plan::System { .. }

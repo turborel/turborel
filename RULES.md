@@ -20045,7 +20045,11 @@ them all.
 
 An operand of a join, built or probing, or the input of a sort, that
 gives a column neither it nor one above reads is put under a projection
-of its columns giving that column null. The join or the sort carries a
+of its columns giving that column null, or, if it is a projection of
+columns, gives the null itself. An operand whose columns holding a
+value are not known here, as an index's scan, is left as it is, and the
+join over it is the one put under the projection. The join or the sort
+carries a
 vector of nulls in its place, which costs nothing to copy, and a filter
 or a join's key drops out after its operator. Every column keeps its
 place, so nothing above is renumbered and the plan's columns and their
@@ -20053,9 +20057,10 @@ order are as they were. EXPLAIN shows each such projection, the columns
 kept by name and the others as NULL. A projection of columns and the
 null value moves its vectors and makes a vector of nulls
 (`exec/batch/picks.rs`), so it costs a pipeline no more than a move.
-The texts gathered of a vector are found once and copied into a buffer
-made at their length (`storage/batch/gathered.rs`), not one grown as
-they are copied.
+The plan is pruned in place, so the walk of a deep plan holds little
+on the stack. The texts gathered of a vector are found once and copied
+into a buffer made at their length (`storage/batch/gathered.rs`), not
+one grown as they are copied.
 
 ## 2. Project layout
 

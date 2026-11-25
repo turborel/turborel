@@ -31,9 +31,9 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::Runner;
-use crate::logical::{Cond, Expr, Window, pushed_conjuncts};
+use crate::logical::{Cond, Window, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Batch, Column, Conjunct, Conjunction, Sel};
+use crate::storage::{Batch, Conjunct, Conjunction, Sel};
 use crate::txn::{TxId, counted};
 
 /// A batch, and the rows of it a filter kept, if one did.

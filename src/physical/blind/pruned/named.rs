@@ -4,7 +4,6 @@
 //! place.
 
 use super::super::super::{PhysicalPlanner, Plan};
-use crate::catalog::Catalog;
 use crate::logical::Expr;
 
 impl PhysicalPlanner<'_> {

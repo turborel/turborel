@@ -60,7 +60,7 @@ fn join(left: Plan, right: Plan, on: &[(usize, usize)]) -> Plan {
 /// `plan` pruned, as EXPLAIN shows it.
 fn pruned(plan: Plan) -> String {
     let st = state();
-    PhysicalPlanner::new(&st).pruned(plan).explain()
+    PhysicalPlanner::describing(&st).pruned(plan).explain()
 }
 
 /// The columns the first scan of table `t` in `plan` reads.
@@ -92,7 +92,7 @@ fn a_scan_reads_only_what_is_read_above_it() {
 /// side; a join's key is read of both.
 #[test]
 fn a_filters_own_column_is_given_null_to_the_join_above_it() {
-    let plan = project(&[0, 3], join(filter(1, scan("T", &[0, 1, 2])), filter(5, scan("U", &[0, 1, 2])), &[(2, 1)]));
+    let plan = project(&[0, 3], join(filter(1, scan("T", &[0, 1, 2])), filter(2, scan("U", &[0, 1, 2])), &[(2, 1)]));
     let shown = pruned(plan);
     assert!(shown.contains("Project T.A, NULL, T.C"), "{shown}");
     assert!(shown.contains("Project U.D, U.E, NULL"), "{shown}");
@@ -159,7 +159,7 @@ fn every_joins_operands_carry_only_what_is_read_of_them() {
     let outer = Plan::OuterJoin {
         kind: OuterJoin::Left,
         left: Box::new(left.clone()),
-        right: Box::new(filter(5, right.clone())),
+        right: Box::new(filter(2, right.clone())),
         keys: keys(&[(2, 1)]),
         cond: None,
         own: None,
@@ -167,11 +167,11 @@ fn every_joins_operands_carry_only_what_is_read_of_them() {
         detail: String::new(),
         est: 1.0_f64,
     };
-    let shown = pruned(project(&[0, 3], outer));
-    assert!(shown.contains("Project T.A, NULL, T.C") && shown.contains("Project U.D, U.E, NULL"), "{shown}");
+    let outer_shown = pruned(project(&[0, 3], outer));
+    assert!(outer_shown.contains("Project T.A, NULL, T.C") && outer_shown.contains("Project U.D, U.E, NULL"), "{outer_shown}");
     let product = Plan::Product { left: Box::new(left.clone()), right: Box::new(right.clone()), est: 1.0_f64 };
-    let shown = pruned(project(&[0, 3], product));
-    assert!(shown.contains("Project T.A, NULL, NULL"), "{shown}");
+    let product_shown = pruned(project(&[0, 3], product));
+    assert!(product_shown.contains("Project T.A, NULL, NULL"), "{product_shown}");
     let semi = SemiJoin {
         anti: false,
         method: SemiMethod::Hash,
@@ -183,8 +183,8 @@ fn every_joins_operands_carry_only_what_is_read_of_them() {
         detail: String::new(),
         est: 1.0_f64,
     };
-    let shown = pruned(project(&[0], Plan::SemiJoin(Box::new(semi))));
-    assert!(shown.contains("Project T.A, NULL, T.C") && shown.contains("Project NULL, U.E, NULL"), "{shown}");
+    let semi_shown = pruned(project(&[0], Plan::SemiJoin(Box::new(semi))));
+    assert!(semi_shown.contains("Project T.A, NULL, T.C") && semi_shown.contains("Project NULL, U.E, NULL"), "{semi_shown}");
 }
 
 /// Verifies: [DESIGN] RULES.md D1167: an expression not read above still
@@ -197,6 +197,6 @@ fn a_computed_column_unread_above_still_reads_its_columns() {
     let inner = Plan::Project { exprs, detail: String::new(), input: Box::new(scan("T", &[0, 1, 2])) };
     let plan = PhysicalPlanner::new(&st).pruned(project(&[0], inner));
     assert_eq!(read(&plan, "T"), Some(vec![0, 1]));
-    let whole = PhysicalPlanner::new(&st).pruned(join(scan("T", &[0, 1, 2]), scan("U", &[0, 1, 2]), &[(0, 0)]));
+    let whole = PhysicalPlanner::describing(&st).pruned(join(scan("T", &[0, 1, 2]), scan("U", &[0, 1, 2]), &[(0, 0)]));
     assert!(!whole.explain().contains("NULL"), "{}", whole.explain());
 }

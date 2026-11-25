@@ -17,9 +17,11 @@
 //!
 //! An operand of a join, or the input of a sort, that gives a column
 //! neither it nor one above reads is put under a projection of its
-//! columns that gives that column null (`exec/batch/picks.rs`), so the
-//! join or the sort carries a vector of nulls in its place, which costs
-//! nothing to copy. Every column keeps its place, so nothing above is
+//! columns that gives that column null (`exec/batch/picks.rs`), or, if it
+//! is a projection of columns, gives null itself, so the join or the sort
+//! carries a vector of nulls in its place, which costs nothing to copy.
+//! The plan is pruned in place, so a deep plan's walk holds little on the
+//! stack. Every column keeps its place, so nothing above is
 //! renumbered, and the plan's own columns are as they were. EXPLAIN shows
 //! each such projection, the columns kept by name and the others as NULL
 //! (`pruned/named.rs`).
@@ -29,6 +31,7 @@ mod named;
 mod single;
 
 use super::super::{PhysicalPlanner, Plan};
+use super::width::Sized;
 use single::scan_pruned;
 
 use crate::logical::Expr;
@@ -38,36 +41,52 @@ use crate::value::Value;
 /// null; none if not known here, so any may.
 type Live = Option<Vec<usize>>;
 
+/// A plan of no rows, left in a plan's place while it is moved.
+fn placeholder() -> Plan {
+    Plan::Values { rows: Vec::new(), detail: String::new() }
+}
+
 impl PhysicalPlanner<'_> {
     /// `plan`, each operator carrying only the columns read above it, its
     /// own columns as they were.
-    pub(in crate::physical) fn pruned(&self, plan: Plan) -> Plan {
-        let Some(width) = self.sized(&plan).width else { return self.whole(plan).0 };
-        self.pruned_in(plan, &(0..width).collect::<Vec<_>>()).0
+    pub(in crate::physical) fn pruned(&self, mut plan: Plan) -> Plan {
+        self.prune(&mut plan);
+        plan
     }
 
-    /// `plan`, of whose columns those above read `needed`, pruned, and the
-    /// columns of its rows that may hold a value.
-    fn pruned_in(&self, plan: Plan, needed: &[usize]) -> (Plan, Live) {
+    /// Prunes `plan`, all of whose columns are read, its widths found once
+    /// for the walk.
+    fn prune(&self, plan: &mut Plan) {
+        let sizes = self.sized(plan);
+        // A grouping reads what its groups and its set functions read alone.
+        if matches!(plan, Plan::Aggregate { .. }) {
+            self.aggregate_pruned(plan, sizes.kid(0));
+            return;
+        }
+        let Some(width) = sizes.width else {
+            self.read_whole(plan);
+            return;
+        };
+        self.pruned_in(plan, &sizes, &(0..width).collect::<Vec<_>>());
+    }
+
+    /// Prunes `plan`, of the widths `sizes`, of whose columns those above
+    /// read `needed`: the columns of its rows that may hold a value.
+    fn pruned_in(&self, plan: &mut Plan, sizes: &Sized, needed: &[usize]) -> Live {
         match plan {
             Plan::SeqScan { .. } => scan_pruned(plan, needed),
-            Plan::Filter { .. } => self.filter_pruned(plan, needed),
-            Plan::Project { .. } => self.project_pruned(plan, needed),
-            Plan::Sort { keys, detail, input, most } => {
+            Plan::Filter { .. } => self.filter_pruned(plan, sizes.kid(0), needed),
+            Plan::Project { .. } => self.project_pruned(plan, sizes.kid(0), needed),
+            Plan::Sort { keys, input, .. } => {
                 let reads: Vec<usize> = needed.iter().copied().chain(keys.iter().map(|k| k.column)).collect();
-                let (input, live) = self.operand_pruned(*input, &reads);
-                (Plan::Sort { keys, detail, input: Box::new(input), most }, live)
+                self.operand_pruned(input, sizes.kid(0), &reads)
             }
-            Plan::Limit { limit, input, est } => {
-                let (input, live) = self.pruned_in(*input, needed);
-                (Plan::Limit { limit, input: Box::new(input), est }, live)
-            }
-            Plan::Aggregate { .. } => self.aggregate_pruned(plan),
-            Plan::HashJoin { left, right, keys, detail, est } => self.hash_pruned((*left, *right), (keys, detail, est), needed),
-            Plan::Product { left, right, est } => self.product_pruned((*left, *right), est, needed),
-            Plan::OuterJoin { .. } => self.outer_pruned(plan, needed),
-            Plan::SemiJoin(semi) => self.semi_pruned(*semi, needed),
-            other @ (Plan::Nearest(_)
+            Plan::Limit { input, .. } => self.pruned_in(input, sizes.kid(0), needed),
+            Plan::Aggregate { .. } => self.aggregate_pruned(plan, sizes.kid(0)),
+            Plan::HashJoin { .. } | Plan::Product { .. } => self.join_pruned(plan, sizes, needed),
+            Plan::OuterJoin { .. } => self.outer_pruned(plan, sizes, needed),
+            Plan::SemiJoin(semi) => self.semi_pruned(semi, sizes, needed),
+            Plan::Nearest(_)
             | Plan::IndexScan { .. }
             | Plan::IndexJoin { .. }
             | Plan::MergeJoin(_)
@@ -89,40 +108,55 @@ impl PhysicalPlanner<'_> {
             | Plan::Polymorphic(_)
             | Plan::Parallel(_)
             | Plan::Transfer(_)
-            | Plan::Counted(_)) => self.whole(other),
+            | Plan::Counted(_) => self.read_whole(plan),
         }
     }
 
-    /// `plan`, an operator that reads every column of its inputs, or of a
-    /// kind not pruned here, each input pruned as a plan of its own.
-    fn whole(&self, mut plan: Plan) -> (Plan, Live) {
-        plan.each_input(&mut |input| {
-            let taken = std::mem::replace(input, Plan::Values { rows: Vec::new(), detail: String::new() });
-            *input = self.pruned(taken);
-        });
-        (plan, None)
+    /// Prunes `plan`, an operator that reads every column of its inputs,
+    /// or of a kind not pruned here: each input as a plan of its own.
+    fn read_whole(&self, plan: &mut Plan) -> Live {
+        plan.each_input(&mut |input| self.prune(input));
+        None
     }
 
-    /// `operand`, an operand of a join or a sort's input, of whose columns
-    /// it and those above read `reads`, pruned, and put under a projection
-    /// giving null for each column it gives that none of them reads.
-    fn operand_pruned(&self, operand: Plan, reads: &[usize]) -> (Plan, Live) {
-        let (operand, live) = self.pruned_in(operand, reads);
-        let Some(width) = self.sized(&operand).width else { return (operand, live) };
-        let live = live.unwrap_or_else(|| (0..width).collect());
+    /// Prunes `operand`, of the widths `sizes`, an operand of a join or a
+    /// sort's input, of whose columns it and those above read `reads`, and
+    /// gives null for each column it gives that none of them reads: a
+    /// projection of columns itself, any other under one. Its columns are
+    /// named for EXPLAIN alone.
+    fn operand_pruned(&self, operand: &mut Plan, sizes: &Sized, reads: &[usize]) -> Live {
+        let live = self.pruned_in(operand, sizes, reads)?;
         if live.iter().all(|c| reads.contains(c)) {
-            return (operand, Some(live));
+            return Some(live);
         }
-        let names = self.names(&operand, width);
-        let (mut exprs, mut shown) = (Vec::with_capacity(width), Vec::with_capacity(width));
-        for (c, name) in names.into_iter().enumerate() {
-            let kept = reads.contains(&c);
-            exprs.push(if kept { Expr::Column(c) } else { Expr::Const(Value::Null) });
-            shown.push(if kept { name } else { "NULL".to_owned() });
+        let Some(width) = sizes.width else { return Some(live) };
+        let shown = |c: usize, name: String| if reads.contains(&c) { name } else { "NULL".to_owned() };
+        let detail = if self.shown {
+            self.names(operand, width).into_iter().enumerate().map(|(c, name)| shown(c, name)).collect::<Vec<_>>().join(", ")
+        } else {
+            String::new()
+        };
+        if let Plan::Project { exprs, detail: text, .. } = operand
+            && exprs.iter().all(moved)
+        {
+            for (c, e) in exprs.iter_mut().enumerate() {
+                if !reads.contains(&c) {
+                    *e = Expr::Const(Value::Null);
+                }
+            }
+            *text = detail;
+        } else {
+            let exprs = (0..width).map(|c| if reads.contains(&c) { Expr::Column(c) } else { Expr::Const(Value::Null) }).collect();
+            let input = Box::new(std::mem::replace(operand, placeholder()));
+            *operand = Plan::Project { exprs, detail, input };
         }
-        let kept = live.into_iter().filter(|c| reads.contains(c)).collect();
-        (Plan::Project { exprs, detail: shown.join(", "), input: Box::new(operand) }, Some(kept))
+        Some(live.into_iter().filter(|c| reads.contains(c)).collect())
     }
+}
+
+/// Whether `e` is a column moved or the null value.
+fn moved(e: &Expr) -> bool {
+    if let Expr::Const(v) = e { v.is_null() } else { matches!(e, Expr::Column(_)) }
 }
 
 #[cfg(test)]

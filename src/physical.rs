@@ -532,16 +532,14 @@ impl<'a> PhysicalPlanner<'a> {
     }
 
     /// The physical plan for `logical`, estimated by one estimator for
-    /// the whole planning (RULES.md D370).
+    /// the whole planning (RULES.md D370), its columns pruned (D1167).
     pub fn plan(&self, logical: &LogicalPlan) -> Plan {
         if self.est.is_some() {
             return self.build(logical, &[]).plan;
         }
         plannings::counted();
         let estimates = Estimates::over(self.db, logical, self.values);
-        let planned = estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan);
-        // Each operator carrying only the columns read above it (`blind/pruned.rs`, D1167).
-        self.pruned(planned)
+        self.pruned(estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan))
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if

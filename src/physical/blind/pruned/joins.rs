@@ -3,6 +3,7 @@
 //! and those its keys and its conditions read, and no other.
 
 use super::super::super::{JoinKey, PhysicalPlanner, Plan, SemiJoin};
+use super::super::width::Sized;
 use super::Live;
 use crate::logical::{Cond, cond_columns};
 
@@ -23,67 +24,59 @@ fn split(needed: &[usize], keys: &[JoinKey], (lw, conds): (usize, &[Option<&Cond
 }
 
 /// The columns of a join's rows that may hold a value, its left's `left`
-/// and its right's `right` past the left's `lw` columns; none if either
-/// is not known.
-fn beside(left: Live, right: Live, lw: usize) -> Live {
-    let mut out = left?;
-    out.extend(right?.into_iter().map(|c| c.saturating_add(lw)));
-    Some(out)
+/// and its right's `right` past the left's `lw` columns; of an operand
+/// whose are not known, each of its `rw` columns.
+fn beside(left: Live, right: Live, (lw, rw): (usize, usize)) -> Vec<usize> {
+    let mut out = left.unwrap_or_else(|| (0..lw).collect());
+    out.extend(right.unwrap_or_else(|| (0..rw).collect()).into_iter().map(|c| c.saturating_add(lw)));
+    out
 }
 
 impl PhysicalPlanner<'_> {
-    /// An inner hash join of `left` and `right` on `keys`, its operands
-    /// pruned.
-    pub(super) fn hash_pruned(
-        &self,
-        (left, right): (Plan, Plan),
-        (keys, detail, est): (Vec<JoinKey>, String, f64),
-        needed: &[usize],
-    ) -> (Plan, Live) {
-        let Some(lw) = self.sized(&left).width else {
-            return self.whole(Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail, est });
-        };
-        let (of_left, of_right) = split(needed, &keys, (lw, &[]));
-        let ((left, ll), (right, lr)) = (self.operand_pruned(left, &of_left), self.operand_pruned(right, &of_right));
-        (Plan::HashJoin { left: Box::new(left), right: Box::new(right), keys, detail, est }, beside(ll, lr, lw))
+    /// Prunes `plan`, an inner hash join or a product, of the widths
+    /// `sizes`: each operand to the columns read of it above and by the
+    /// join's keys.
+    pub(super) fn join_pruned(&self, plan: &mut Plan, sizes: &Sized, needed: &[usize]) -> Live {
+        let (Some(lw), Some(rw)) = (sizes.of(0), sizes.of(1)) else { return self.read_whole(plan) };
+        let keys: &[JoinKey] = if let Plan::HashJoin { keys, .. } = &*plan { keys } else { &[] };
+        let (of_left, of_right) = split(needed, keys, (lw, &[]));
+        let (Plan::HashJoin { left, right, .. } | Plan::Product { left, right, .. }) = plan else { return None };
+        let (ll, lr) = (self.operand_pruned(left, sizes.kid(0), &of_left), self.operand_pruned(right, sizes.kid(1), &of_right));
+        Some(beside(ll, lr, (lw, rw)))
     }
 
-    /// The product of `left` and `right`, its operands pruned.
-    pub(super) fn product_pruned(&self, (left, right): (Plan, Plan), est: f64, needed: &[usize]) -> (Plan, Live) {
-        let Some(lw) = self.sized(&left).width else {
-            return self.whole(Plan::Product { left: Box::new(left), right: Box::new(right), est });
-        };
-        let (of_left, of_right) = split(needed, &[], (lw, &[]));
-        let ((left, ll), (right, lr)) = (self.operand_pruned(left, &of_left), self.operand_pruned(right, &of_right));
-        (Plan::Product { left: Box::new(left), right: Box::new(right), est }, beside(ll, lr, lw))
-    }
-
-    /// `plan`, an outer join, its operands pruned, each to the columns
-    /// read of it also by the conditions over its own (`Own`); whole if a
-    /// subquery is in a condition.
-    pub(super) fn outer_pruned(&self, plan: Plan, needed: &[usize]) -> (Plan, Live) {
-        let Plan::OuterJoin { kind, left, right, keys, cond, own, widths, detail, est } = plan else { return (plan, None) };
+    /// Prunes `plan`, an outer join, of the widths `sizes`: each operand to
+    /// the columns read of it above and by the join's keys and conditions,
+    /// its own conditions among them (`Own`); whole if a subquery is in a
+    /// condition.
+    pub(super) fn outer_pruned(&self, plan: &mut Plan, sizes: &Sized, needed: &[usize]) -> Live {
+        let Plan::OuterJoin { left, right, keys, cond, own, widths, .. } = plan else { return None };
         let (of_l, of_r) = own.as_deref().map_or((None, None), |(l, r)| (l.as_ref(), r.as_ref()));
         if [cond.as_ref(), of_l, of_r].into_iter().flatten().any(Cond::has_subquery) {
-            return self.whole(Plan::OuterJoin { kind, left, right, keys, cond, own, widths, detail, est });
+            return self.read_whole(plan);
         }
-        let (mut of_left, mut of_right) = split(needed, &keys, (widths.0, &[cond.as_ref()]));
-        of_l.into_iter().for_each(|c| cond_columns(c, &mut of_left));
-        of_r.into_iter().for_each(|c| cond_columns(c, &mut of_right));
-        let ((left, ll), (right, lr)) = (self.operand_pruned(*left, &of_left), self.operand_pruned(*right, &of_right));
-        let live = beside(ll, lr, widths.0);
-        (Plan::OuterJoin { kind, left: Box::new(left), right: Box::new(right), keys, cond, own, widths, detail, est }, live)
+        let (mut of_left, mut of_right) = split(needed, keys, (widths.0, &[cond.as_ref()]));
+        if let Some(c) = of_l {
+            cond_columns(c, &mut of_left);
+        }
+        if let Some(c) = of_r {
+            cond_columns(c, &mut of_right);
+        }
+        let (ll, lr) = (self.operand_pruned(left, sizes.kid(0), &of_left), self.operand_pruned(right, sizes.kid(1), &of_right));
+        Some(beside(ll, lr, *widths))
     }
 
-    /// `semi`, a semi join or an antijoin, which gives its left's columns,
-    /// its operands pruned; whole if a subquery is in its condition.
-    pub(super) fn semi_pruned(&self, semi: SemiJoin, needed: &[usize]) -> (Plan, Live) {
+    /// Prunes `semi`, a semi join or an antijoin, of the widths `sizes`,
+    /// which gives its left's columns: each operand to the columns read of
+    /// it, or, if a subquery is in its condition, as a plan of its own.
+    pub(super) fn semi_pruned(&self, semi: &mut SemiJoin, sizes: &Sized, needed: &[usize]) -> Live {
         if semi.cond.as_ref().is_some_and(Cond::has_subquery) {
-            return self.whole(Plan::SemiJoin(Box::new(semi)));
+            self.prune(&mut semi.left);
+            self.prune(&mut semi.right);
+            return None;
         }
         let (of_left, of_right) = split(needed, &semi.keys, (semi.widths.0, &[semi.cond.as_ref()]));
-        let (left, live) = self.operand_pruned(semi.left, &of_left);
-        let (right, _) = self.operand_pruned(semi.right, &of_right);
-        (Plan::SemiJoin(Box::new(SemiJoin { left, right, ..semi })), live)
+        self.operand_pruned(&mut semi.right, sizes.kid(1), &of_right);
+        self.operand_pruned(&mut semi.left, sizes.kid(0), &of_left)
     }
 }
