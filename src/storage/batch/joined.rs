@@ -129,7 +129,9 @@ fn truths(parts: &[Part<'_>]) -> Mask {
         if whole(places, bools.bits.len()) {
             bits.append(&bools.bits);
         } else {
-            places.iter().for_each(|&r| bits.push(r < bools.bits.len() && bools.bits.get(r)));
+            for &r in places {
+                bits.push(r < bools.bits.len() && bools.bits.get(r));
+            }
         }
     }
     bits
