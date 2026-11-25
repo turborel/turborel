@@ -10,7 +10,7 @@ use super::lobs::LobSpace;
 use super::meta::{Meta, meta_content, parse_meta};
 use super::mvcc::Versions;
 use super::sealing::Sealing;
-use super::stats::Gathered;
+use super::stats::{Gathered, Kept};
 use super::zones::{Place, Zones, keeps_any};
 use super::{Frozen, KEY, RESERVE, RowTable, TableFiles, TableOptions, VERSION, corrupt};
 use crate::disk::pager::PageId;
@@ -33,6 +33,19 @@ pub(super) struct Found {
     lobs: u64,
 }
 
+/// The table's statistics, none yet, kept as `options` say and saved
+/// with its pages (`rows/stats/saved.rs`).
+fn gathered(
+    files: &TableFiles,
+    (meta, counted): (PageId, &Arc<Counted>),
+    format: &RecordFormat,
+    options: &TableOptions,
+) -> Result<Gathered> {
+    let kept = Arc::new(Kept::new(files, meta, counted, format));
+    files.note_statistics(&kept)?;
+    Ok(Gathered::new(options.statistics).kept_by(kept))
+}
+
 impl RowTable {
     /// Creates an empty table of columns of `types` in `files`.
     ///
@@ -46,7 +59,7 @@ impl RowTable {
         let zones = if options.columns.is_none() && keeps_any(types) { files.pool.new_page(files.file)?.0.0 } else { 0 };
         let meta = {
             let (meta, mut page) = files.pool.new_page(files.file)?;
-            *page = meta_content(Meta { tree: tree.meta(), reserved: RESERVE, directory: 0, zones, rows: 0, lobs: 0 });
+            *page = meta_content(Meta { tree: tree.meta(), reserved: RESERVE, directory: 0, zones, rows: 0, lobs: 0, statistics: 0 });
             meta
         };
         RowTable::with(files, Found { meta, tree, reserved: RESERVE, zones, rows: 0, lobs: 0 }, types, options)
@@ -57,7 +70,8 @@ impl RowTable {
     /// zone maps read as its last checkpoint saved them
     /// (`rows/counted.rs`, `rows/zones/saved.rs`), its rows counted by
     /// their newest versions instead if its file is not shadowed, and its
-    /// statistics are gathered when first asked for (`rows/recovery.rs`).
+    /// statistics as a checkpoint saved them (`rows/stats/saved.rs`), or,
+    /// none saved, gathered when first asked for (`rows/recovery.rs`).
     ///
     /// # Errors
     ///
@@ -91,6 +105,7 @@ impl RowTable {
             table.count_newest()?
         };
         table.counted.live.store(live, Ordering::Release);
+        table.gathered.restore(named.statistics, u64::try_from(live).unwrap_or(u64::MAX));
         table.gathered.gather_when_asked();
         Ok(table)
     }
@@ -127,6 +142,8 @@ impl RowTable {
         // A row's record shares its leaf entry with its key and its version.
         let spill = Spill { threshold, most: tree.max_entry().saturating_sub(KEY).saturating_sub(VERSION) };
         let lobs = Arc::new(LobSpace::open((&files.pool, files.file), types, lobs, Arc::clone(&sealing))?);
+        let format = RecordFormat::new(types);
+        let gathered = gathered(files, (meta, &counted), &format, &options)?;
         Ok(RowTable {
             lobs,
             pool: Arc::clone(&files.pool),
@@ -135,14 +152,14 @@ impl RowTable {
             versions: Versions::bounded(options.bounds(), Arc::clone(&files.work), Arc::clone(&files.statuses)),
             meta,
             tree,
-            format: RecordFormat::new(types),
+            format,
             spill,
             next,
             blocks: IdBlocks::new(),
             reserved: AtomicU64::new(reserved),
             reserving: Mutex::new(()),
             counted,
-            gathered: Gathered::new(options.statistics),
+            gathered,
             durable: Arc::clone(&files.durable),
             discarded: AtomicBool::new(false),
             sealing,
@@ -159,6 +176,7 @@ impl RowTable {
     pub(super) fn sealed(mut self, sealing: Sealing) -> RowTable {
         self.sealing = Arc::new(sealing);
         self.zones.seal_with(&self.sealing);
+        self.gathered.seal_with(&self.sealing);
         // No value reads its objects yet: the space is the table's alone.
         if let Some(lobs) = Arc::get_mut(&mut self.lobs) {
             lobs.seal_with(Arc::clone(&self.sealing));

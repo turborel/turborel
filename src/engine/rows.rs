@@ -380,7 +380,9 @@ impl TableStorage for RowTable {
         self.page_missed_cost()
     }
 
-    /// A table opened has none until first asked for them, the plan asking gathering them itself (`rows/stats.rs`, RULES.md D1092).
+    /// A table opened has those a checkpoint saved (RULES.md D1093); with
+    /// none saved, none until first asked for them, the plan asking
+    /// gathering them itself (`rows/stats.rs`, RULES.md D1092).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
         self.statistics_asked()
     }

@@ -690,6 +690,7 @@ verification approach DO-178C expects (§8).
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
+| D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
 
 ### The project
 
@@ -18771,6 +18772,46 @@ runs of row ids chosen, passes over a group none of them lies in with
 its header unread, and of a group whose rows are every id of its range
 in order reckons a run's places from its ids
 (`engine/rows/frozen/sampled.rs`).
+
+#### D1093. A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first
+
+A table's statistics were kept in memory alone, so a database opened
+had none, and the first plan of each table read a sample of it before
+it could be made (D1092). A server started therefore paid a pass of
+every table its first statements named, and what a pass had learned of
+a column growing with insertion (D381) was lost at each start.
+
+The row store now saves them. A table's meta page names a page of its
+own for them, of any length, written at the checkpoint after each pass
+that gathered them (`engine/rows/stats/saved.rs`), and read as the
+table is opened. It holds every number the pass found, and each value,
+a bound, a histogram's bound, a common value or a sampled row's, as a
+record of the table's own format (`engine/rows/stats/image.rs`), so
+nothing new describes a value. A table opened with statistics saved
+plans by them at once and makes no first pass. The rows it holds more
+or fewer than they found count as changes since, so a table that
+changed much after its last pass is due as it would have been. A table
+with none saved gathers its first as D1092 says. An index's count of
+its keys was already kept, with its locator (D35).
+
+The page holds a sample of the table's rows, so it follows the table's
+protections. It is sealed by the table's encodings (D30, D48), its
+page number the context, with a bit of its own, and passes through
+the file's encodings as every page does. Statistics that cannot be
+sealed, their encodings not registered, are saved empty. The page is
+freed with the table's other pages when the table is dropped, and a
+table truncated is a new table with no such page.
+
+Statistics are advice, so no failure of them fails a table. A page
+that is empty, that cannot be opened, or that is not what was saved is
+read as no statistics, and the table gathers them again.
+
+The meta page gains one word, the statistics page. A meta page written
+before, which ends at the large objects' tree, is read as naming none,
+so a database written before this decision opens as it is and has its
+statistics saved at its next checkpoint. A build from before this
+decision refuses a meta page of the new length as not a table's of its
+format (SQLCODE -916), and does not misread it. Formats stay 1.
 
 ## 2. Project layout
 

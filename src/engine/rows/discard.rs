@@ -5,6 +5,7 @@
 //! Freed: the pages of the values each version of each row keeps out of
 //! line, the newest in the tree and the older in the undo store; its
 //! frozen row groups' pages and their directory's; its zone maps' pages;
+//! the page its statistics are saved in (`rows/stats/saved.rs`);
 //! then the tree's pages, and the table's meta page. A failure cannot be reported
 //! from a `drop`: the pages are then lost to the file, which costs space
 //! only. Versions a crash left in the pages name older ones the undo store
@@ -52,6 +53,7 @@ impl RowTable {
             pages.free(&chain);
         }
         self.zones.free_pages()?;
+        self.gathered.free_page()?;
         self.tree.free()?;
         self.counted.free_meta()
     }
