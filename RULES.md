@@ -709,6 +709,7 @@ verification approach DO-178C expects (§8).
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
 | D1139 | A checkpoint's captures go to its sealed batch's side file, not memory |
+| D1140 | A value out of line of an entry a freeze takes out is freed only once no read may still fetch it |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 
@@ -19298,6 +19299,31 @@ rather than stopping checkpoints until the database is reopened, as a
 capture lost does (D590). The checkpoint's memory
 is then the copies writers and frees make while it walks, and the walk
 writes each capture to disk as it goes.
+
+#### D1140. A value out of line of an entry a freeze takes out is freed only once no read may still fetch it
+
+A freeze takes the tree's entries of the rows it froze out once no
+reader holds a directory from before their group (D31), and it freed
+each entry's values kept out of line at once. A read does not fetch
+such a value under the leaf's latch (D869). It copies the entry out and
+fetches the value after. A scan that took the new directory before the
+group's shadow bits were settled reads the tree over the group's range
+whole (D1100), and a read by row id reads the tree before any group,
+holding no directory at all. Either could copy an entry, the freeze
+then take it out and free its value's page, and the read fetch a page
+freed, or one a later row had taken. A scan by batch after a large load
+then failed with a page not allocated.
+
+The pages of the values of the entries taken out are now held, with the
+directory that stood as they were taken out, and freed once no reader
+holds it (`free_unread`, `rows/frozen/freeze.rs`), in the order they
+were held. The directory is then put again as another of the same
+groups (`Directory::again`), so a read that begins after, which cannot
+find the entries, holds up no free. A scan holds its directory as it is
+made. A read by row id, and the newest version UNIQUE reads, take the
+directory first and hold it until the values are fetched
+(`Frozen::pinned`). A table that has never frozen rows takes nothing,
+so its reads still share no word.
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 

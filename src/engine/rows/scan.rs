@@ -111,6 +111,8 @@ fn later<T>(shown: Result<Option<Shown<T>>>, outside: bool) -> Result<Shown<T>> 
 impl RowTable {
     /// Row `id` as `tx` sees it, `columns` decoded, or all.
     pub(super) fn get_of(&self, tx: TxId, id: RowId, columns: Option<&[usize]>, near: &mut Near) -> Result<Option<Row>> {
+        // Held until its values out of line are fetched (RULES.md D1140).
+        let _pinned = self.frozen.pinned();
         let reader = self.read_row(tx, (id, columns.map_or(EVERY_COLUMN, |c| columns_mask(c.iter().copied()))), near)?;
         near.gone = None;
         // Decoded where it lies in its leaf, if it can be (RULES.md D869).
@@ -147,6 +149,8 @@ impl RowTable {
     ///
     /// As `TableStorage::get`.
     pub fn get_listed(&self, tx: TxId, id: RowId, columns: &[usize], (near, out): (&mut Near, &mut Row)) -> Result<bool> {
+        // Held until its values out of line are fetched (RULES.md D1140).
+        let _pinned = self.frozen.pinned();
         let reader = self.read_row(tx, (id, columns_mask(columns.iter().copied())), near)?;
         near.gone = None;
         // Decoded where it lies in its leaf, if it can be (RULES.md D869).

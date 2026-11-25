@@ -1,12 +1,13 @@
 //! The mutations of a long load kept within the process's limits
-//! (RULES.md R-TEST-9, D1136 to D1139): a file opened with no descriptor
+//! (RULES.md R-TEST-9, D1136 to D1140): a file opened with no descriptor
 //! left, a checkpoint due by the log's bytes, a load's given rows held
-//! unspilled, and a checkpoint's captures written to disk (D1139).
+//! unspilled, a checkpoint's captures written to disk (D1139), and a
+//! value out of line freed only once no read may fetch it (D1140).
 
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 5] = [
+pub const LOAD_LIMITS: [Mutation; 7] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -56,5 +57,25 @@ pub const LOAD_LIMITS: [Mutation; 5] = [
         replacement: "        if true {",
         integration: &[],
         unit: &["disk::buffer::pool::capture::tests::captures_go_to_the_side_file"],
+    },
+    Mutation {
+        name: "frozen-values-held",
+        package: Package::Core,
+        breaks: "a freeze frees the values out of line of the entries it takes out while a read that copied one still holds the directory",
+        file: "src/engine/rows/frozen/freeze.rs",
+        original: "            let unread = freeing.iter().take_while(|f| f.after.strong_count() == 0).count();",
+        replacement: "            let unread = freeing.len();",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::retired::a_scan_fetches_its_value_after_the_freeze"],
+    },
+    Mutation {
+        name: "frozen-read-pinned",
+        package: Package::Core,
+        breaks: "a read by row id holds no directory, so a freeze frees the value of the entry it copied",
+        file: "src/engine/rows/frozen.rs",
+        original: "        if self.plain() { None } else { self.directory().ok() }",
+        replacement: "        if true { None } else { self.directory().ok() }",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::retired::a_read_by_row_id_fetches_its_value_after_the_freeze"],
     },
 ];

@@ -186,6 +186,13 @@ impl Directory {
     pub(super) fn rows(&self) -> u64 {
         self.groups.iter().map(|e| u64::from(e.summary.rows)).sum()
     }
+
+    /// Another of the same groups, so the readers of this one, the table's
+    /// whole directory, are told apart from those that come after
+    /// (`freeze.rs`, RULES.md D1140).
+    fn again(&self) -> Directory {
+        Directory { groups: self.groups.clone(), pending: self.pending, _whole: None }
+    }
 }
 
 /// The tree's entries of rows frozen, taken out once no reader holds a
@@ -193,6 +200,13 @@ impl Directory {
 struct Retiring {
     before: std::sync::Weak<Directory>,
     entries: Vec<(RowId, Vec<u8>)>,
+}
+
+/// The pages of the values out of line of entries taken out, freed once
+/// no reader holds the directory that stood as they were taken out.
+struct Freeing {
+    after: std::sync::Weak<Directory>,
+    pages: Vec<PageId>,
 }
 
 /// \[DESIGN\] A table's frozen row groups, and how its rows are frozen.
@@ -205,6 +219,7 @@ pub(super) struct Frozen {
     /// Held while rows are frozen, one freeze at a time.
     freezing: Mutex<()>,
     retiring: Mutex<Vec<Retiring>>,
+    freeing: Mutex<Vec<Freeing>>,
     /// Commit timestamps, each with when it was, so a freeze waits out
     /// COLUMNSTORE.FREEZE_DELAY (`freeze.rs`).
     commits: Mutex<std::collections::VecDeque<(Timestamp, Instant)>>,
@@ -246,6 +261,7 @@ impl Frozen {
             stored: AtomicU64::new(0),
             freezing: Mutex::new(()),
             retiring: Mutex::default(),
+            freeing: Mutex::default(),
             commits: Mutex::default(),
             tried: Mutex::new(None),
             shadowed: AtomicU64::new(0),
@@ -264,6 +280,15 @@ impl Frozen {
     /// The directory, as it is now.
     pub(super) fn directory(&self) -> Result<Arc<Directory>> {
         Ok(Arc::clone(&*read(&self.directory)?))
+    }
+
+    /// \[DESIGN\] The directory, held by a read by row id from before it
+    /// finds the row's entry until it has fetched the values it keeps out
+    /// of line, so a freeze taking the entry out meanwhile does not free
+    /// them under it (`freeze.rs`, RULES.md D1140). None of a table that
+    /// has never frozen rows, whose reads share no word for it.
+    pub(super) fn pinned(&self) -> Option<Arc<Directory>> {
+        if self.plain() { None } else { self.directory().ok() }
     }
 
     /// The first page of the directory as stored, 0 for none.
