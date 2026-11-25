@@ -11,7 +11,7 @@
 //! one of the list is null [§5.11 GR2]; else false.
 
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::{Cond, Expr, Truth, in_list};
@@ -37,8 +37,9 @@ pub struct InSet {
     /// Of constants that are character strings alone, nulls aside, each
     /// without its trailing spaces, as two strings are equal if they are
     /// equal so: of a list of any length, as a vector of strings is
-    /// judged by them, no value made of each (RULES.md D1126).
-    texts: Option<HashSet<String>>,
+    /// judged by them, no value made of each (RULES.md D1126), in order
+    /// and each once, so a string is looked for by halving them (D1131).
+    texts: Option<Vec<String>>,
 }
 
 impl InSet {
@@ -75,7 +76,12 @@ impl InSet {
             | Value::Extension(_)
             | Value::Xml(_) => None,
         };
-        let texts = values.iter().map(strings).collect::<Option<Vec<_>>>().map(|t| t.into_iter().flatten().collect());
+        let texts = values.iter().map(strings).collect::<Option<Vec<_>>>().map(|t| {
+            let mut texts: Vec<String> = t.into_iter().flatten().collect();
+            texts.sort_unstable();
+            texts.dedup();
+            texts
+        });
         InSet { values, nulls, buckets, texts }
     }
 
@@ -131,13 +137,9 @@ impl InSet {
     pub fn text_truth(&self, s: &str) -> Option<Truth> {
         let texts = self.texts.as_ref()?;
         let unpadded = s.trim_end_matches(' ');
-        // A short list is compared constant by constant, as hashing the
-        // string costs more than comparing it with a few (`IN_SET_LEAST`).
-        if self.buckets.is_none() {
-            let equals = |v: &Value| if let Value::Char(c) = v { c.trim_end_matches(' ') == unpadded } else { false };
-            return Some(self.decided(self.values.iter().any(equals)));
-        }
-        Some(self.decided(texts.contains(unpadded)))
+        // Unpadded once as the set is made, in order: a string is compared
+        // with as many constants as halving them takes, not hashed.
+        Some(self.decided(texts.binary_search_by(|c| c.as_str().cmp(unpadded)).is_ok()))
     }
 
     /// The truth of IN of a value not null, `found` among the constants or
