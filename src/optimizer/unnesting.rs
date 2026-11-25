@@ -47,6 +47,7 @@ mod found;
 mod joined;
 mod marked;
 mod pure;
+mod quiet;
 mod scalar;
 mod semi;
 mod simple;
@@ -55,6 +56,7 @@ mod typed;
 pub(crate) use calls::Assigned;
 pub use marked::{MARK_JOINS, MarkJoins};
 pub(crate) use pure::expr_pure;
+pub(crate) use quiet::quiet;
 pub use semi::{SEMI_JOINS, SemiJoins};
 
 use found::{Found, Node, Reference};

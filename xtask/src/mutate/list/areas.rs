@@ -82,6 +82,7 @@ mod grouped_parts;
 mod kernels;
 mod like_pieces;
 mod mark_joins;
+mod morsel_memory;
 mod outer_steps;
 mod semi_joins;
 mod steady;
@@ -299,9 +300,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// materialization's, the table of groups', the join table's, XXH3's,
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
-/// kernels', compiled procedures', rows in demand's and the routine
-/// debugger's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 29] {
+/// kernels', compiled procedures', rows in demand's, the routine
+/// debugger's and a morsel's memory's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 30] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -332,6 +333,7 @@ fn closing() -> [&'static [Mutation]; 29] {
         &compiled::COMPILED,
         &hot_rows::HOT_ROWS,
         &debugger::DEBUGGER,
+        &morsel_memory::MORSEL_MEMORY,
     ]
 }
 

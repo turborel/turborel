@@ -694,6 +694,7 @@ verification approach DO-178C expects (§8).
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
 | D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
+| D1086 | An equality of an expression of each operand's columns is a hash join on the keys computed once a row |
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
@@ -705,12 +706,14 @@ verification approach DO-178C expects (§8).
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
 | D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
 | D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
+| D1114 | An index nested-loop join over a part run in parallel probes its index on the part's threads |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
 | D1129 | A grouping that a filter's input and a subquery of its condition compute alike is computed once |
 | D1130 | A LIKE of a prefix and `%` is estimated by the sampled strings with the prefix when the sample holds enough of them |
 | D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
+| D1132 | A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
@@ -719,6 +722,11 @@ verification approach DO-178C expects (§8).
 | D1141 | A log record as long as the buffer reaches its segment after the bytes the buffer holds |
 | D1142 | Loads into a column store table at once each write their own groups, no lock taken alone |
 | D1143 | A clean close keeps the groups of every load committed, settled or not |
+| D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
+| D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
+| D1152 | A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates |
+| D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
+| D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -18923,6 +18931,30 @@ row gives. A comparison of integers known as runs is still judged once
 a run, not by the kernel over every row: measured on TPC-H, the kernel
 was the slower of the two.
 
+#### D1086. An equality of an expression of each operand's columns is a hash join on the keys computed once a row
+
+A hash join's keys are columns (D35). A condition equating sort keys of
+a collation of a column of each operand had them made columns of its
+operands, computed by a projection under the join, which another takes
+away above it (D60). Any other equality of expressions, as
+`Q.K = X.TAG + X.K`, found no key, and the join was a nested loop that
+computed both sides for every pair, even at degree 1.
+
+Now any equality, or IS NOT DISTINCT FROM, of an expression of the left
+operand's columns alone with one of the right's alone is lifted so
+(`physical/collated.rs`), unless both are columns alone, which the join
+keys as they are. Each key is computed once a row of its operand, the
+join is planned as any, by either store and in parallel, and its rows
+are the nested loop's: a null key matches none, or a null if the
+condition is IS NOT DISTINCT FROM. An expression lifted is
+deterministic and holds no subquery, so a row's key is the value the
+condition compares of it with every row of the other operand. A
+condition that can raise an exception condition by its columns'
+declared types is not hashed at all (D776), so computing the key of a
+row that no pair holds raises nothing the nested loop would not. An
+outer join keeps such a condition whole too, as its keys would be
+computed of every row of an operand even when the other has none.
+
 ### Column store reads
 
 #### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
@@ -19231,6 +19263,34 @@ groups as its partitions finish them.
 A grouping by no column is left as it was, as its one group would be
 one partition's and one thread's.
 
+#### D1114. An index nested-loop join over a part run in parallel probes its index on the part's threads
+
+An index nested-loop join probed its index for each row of its left
+operand on the statement's thread, though that operand held a part run
+in parallel and so many rows. A semi join by an index over an inner one
+over such a part, as of a correlated EXISTS, made every probe and every
+joined row there while the workers waited.
+
+Such a join now probes on the part's threads (`exec/parallel/looped.rs`).
+The statement's thread reads the left operand's rows, a wave of
+morsels at a time, four for each thread, and each morsel is joined by a
+thread through the join and every index join below it of the chain, as
+one thread joins them. A morsel of probes takes a sixteenth of
+EXECUTOR.MORSEL_ROWS of left rows, a probe costing a walk of the index
+and a read of its row: a sweep of 1, 4, 16 and 64 measured 16 the
+fastest. The morsels' rows are given in the order of their numbers, so
+each left row's matches come where they would alone, and the first
+error in that order is the one raised, after the rows before it.
+
+A join takes part if it gives each left row's rows as it reads that
+row, an inner, LEFT, semi or antijoin, and a worker evaluates its
+condition alone, as of a part's pipeline (D291). A FULL join, which
+gives the table's unmatched rows at the end, a spatial join and a probe
+by a function's predicate, which a statement's prepared budget bounds,
+stay on the statement's thread, as does a join over a left operand that
+holds no part. The degree is the greatest of the parts the left operand
+holds.
+
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
 A function with no body over vectors is called for each row of a batch
@@ -19400,6 +19460,49 @@ once as the set is made, sorted and each kept once
 compares it with as many as that takes. A string is found if it equals
 one without trailing spaces [X3.135-1986 §5.11 GR5], as before.
 
+#### D1132. A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels
+
+A filter holding a subquery stayed on the statement's thread, as a
+worker runs no subquery, so the part below it was its scan alone and the
+filter judged every row it gave by itself. A scalar subquery that reads
+nothing of the filter's rows has one value for the statement [ISO/IEC
+9075:1992 §7.11 GR1], and of those a filter's first row runs (D1127) it
+is now judged whether running it is seen by anything but its value
+(`optimizer/unnesting/quiet.rs`). It raises no error if it gives one
+row at most and the typed judgment of D1060 finds nothing in its plan
+that raises, of the declared types of the columns it reads. It raises
+no warning if its plan holds no subquery, invocation or carried
+warning, no parameter, no window and no join but a product, and each set function
+takes no argument or a column that holds no null, so no null is
+eliminated [ISO/IEC 9075:1992 §6.5 GR1b]: one declared so, or one a
+filter below the set function compares or judges IS NOT NULL, which
+keeps no row of a null there.
+
+A filter whose every subquery is such a one, and that is calm with them
+made constants, is a step of the part below it (`physical/parallel.rs`).
+As the part's pipeline is made, on the statement's thread before any
+morsel starts, each is run and made its constant
+(`exec/parallel/pipeline.rs`), and the workers judge the filter of each
+morsel. A filter that judges no row ran no subquery before, and runs
+one now, which nothing sees. The rows are those the filter kept, and a
+subquery the judgment cannot clear leaves its filter as it was, so the
+errors and warnings are the serial run's (D15).
+
+SUBSTRING of a column of a character string type, of a constant start
+and of no length or a constant one not negative, is now judged to raise
+nothing (`functions/strings.rs`), as only a substring of negative length
+raises [ISO/IEC 9075:1992 §6.7 GR1d]. A comparison with a quiet
+subquery, which reads no parameter, is not made a semi join (D773): run
+once and compared as a constant it costs no join, and the filter
+holding it runs in the part below it. One compared with a column an
+index of its table holds, or one that reads a parameter, as a
+transaction's bound of keys does, is joined as before, so the index may
+be probed from its row (`optimizer/unnesting/scalar.rs`).
+
+The left of a semi join that builds its left is now marked as a hash
+join's built operand is: it is held by batch whatever its store, so a
+table kept by column is read in parallel there too.
+
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 
 A load of a wide table failed past a few million rows with "too many
@@ -19539,7 +19642,6 @@ takes the lock alone, since others' readers would miss its entries
 recovered as before. A row another transaction writes through the tree
 meanwhile lies between groups and is read as any row of the tree. The
 freeze takes rows past the last group only, so it stays in the tree.
-
 #### D1143. A clean close keeps the groups of every load committed, settled or not
 
 A group a load writes (D533) is stamped with its transaction, and keeps
@@ -19559,6 +19661,103 @@ takes its groups out of the directory, so each group stored is of a load
 that committed. A crash still leaves recovery to judge each group by
 the transactions it redoes, as before. A replica opened to follow keeps
 its groups apart, its loads being the primary's.
+
+#### D1150. A morsel's rows are made as they are read and charged to the part's grant as they are gathered
+
+A morsel's rows were taken through its pipeline's steps and gathered
+whole before the first was read, by every thread and for every morsel
+running ahead of the reader, three times the degree, and none of it was
+charged to the part's work grant (D38, D298). A join whose keys each
+match thousands of rows makes millions of rows of one morsel of 16,384,
+so a plan that joined two tables on a key of few values, as a plan made
+before any statistics may, grew the server past its memory budget until
+the kernel killed it. A morsel read row by row is now made a row at a
+time as it is asked for (`exec/parallel/rows.rs`): a probe's matches of
+a row are held as their built rows' numbers, each joined as it is read.
+What a thread gathers of a morsel is charged to the grant a batch's
+worth at a time, and stays charged until the reader has taken it, so
+the morsels running ahead are held within the grant too
+(`exec/parallel/charged.rs`). A morsel that outgrows the grant is given
+up and its charge given back. A stream then reads that morsel itself, a
+row or a batch at a time, holding none, while the threads go on with
+those after it; a sort writes it to its runs as it reads it; a window's
+or a set operation's partitions put its rows in their lists, which
+spill; a join's build gives way to the serial join, which partitions.
+A grouping's morsel is fed its rows as they are made and holds its
+groups alone. Every answer, and its order, is the one the plan gives
+alone.
+
+#### D1151. A probe of a table built for a pipeline's morsels makes its pairs a batch at a time
+
+A probe by batch of a table a pipeline's morsels share (D368) gave every
+pair of a left batch at once, its rows times their keys' rows, a list
+of batches held before the first was read. It now makes them as they
+are asked for (`exec/batch/joined/shared/probing.rs`), a batch of at
+most `BATCH_ROWS` pairs at a time, and keeps where it stopped, the left
+row and how many of its key's built rows it looked at, a run of a key's
+rows taken up again in one step. The pairs come in the order they did,
+those before an error first, then the error. A LEFT join's probe (D1076)
+is made so too, a row no built row matches paired with nulls, and a key
+of one column of integers is paired in its units (D1083), of a direct
+table taken up at its place among its key's rows.
+
+#### D1152. A column's distinct values guessed from its rows are no more than the known ones of the columns its class equates
+
+A column whose table has no statistics is taken as a key, of its rows'
+distinct values (D302). A class of equalities keeps one row in as many
+as each of its columns but the least distinct has values, so a column
+of 1.5 million rows equated with a key of 25 was counted as 1.5
+million values. The customers and suppliers of one nation, joined
+through the nations, were estimated at the rows of the suppliers where
+each customer meets 4,000 of them, and a plan made before the first
+statistics joined them first, 6 billion rows.
+
+The columns a class equates hold values of one domain, so each joined
+row of a column matches a value of the column of the fewest. Each
+column of a class whose distinct values neither statistics count nor a
+key proves is now counted of no more than the least of those that are
+(`physical/cardinality/composite.rs`), for the estimates and the
+enumeration alike. A class with no column so known is left as it was.
+
+#### D1153. A stream's morsels ahead of its reader hold no more rows than they scan
+
+The morsels a stream's threads gathered and its reader had not taken
+were charged to the part's work grant (D1150), so a result read at a
+client's pace held up to MEMORY.WORK_BYTES of rows it had not sent, 32
+GiB where the grant is set so, and each statement so read took as much
+of the budget. A grant is for what must hold its input, a build, a sort
+or a grouping, and a stream holds its rows only to keep its threads
+busy while its reader takes them.
+
+The rows a stream's morsels hold ahead of its reader are now counted
+too, shared by its threads (`exec/parallel/charged.rs`): at most the
+rows the morsels a run takes past the one its reader waits for scan,
+two a thread (D290), each of EXECUTOR.MORSEL_ROWS. A morsel that gives
+no more rows than it scans is gathered whole, as before. One whose
+joins multiply its rows past what is left is given up and read by the
+reader as it is given, as a morsel past the grant is (D1150), so a
+result of billions of rows holds a few morsels' rows whatever the
+grant. A thread never waits for the reader: a worker so held would hold
+its thread from every other statement while a client is slow.
+
+#### D1154. A hash join of streams probed by batch stops at each batch of pairs it makes
+
+A hash join of streams run by batch (D31) probed its right operand with
+every row of a left batch before it gave a pair, its pairs made into
+batches held until read. A left batch of 2,048 rows whose keys each
+match thousands of right rows so held millions of pairs at once, and
+one whose keys each match a million held billions, past any grant.
+
+The probe now stops at the left row after which a batch of pairs is
+made, and takes the batch up there again once that batch is read
+(`exec/batch/joined/probe.rs`); its keys are hashed once, as its first
+row is probed. A batch so holds the pairs of one left row at most past
+the batch made, and those of a row are no more than the right rows,
+held within the work area. A FULL or RIGHT join's probe, and a LEFT
+join's the simple probe does not take, stop so too
+(`exec/batch/joined/outer.rs`). The pairs come in the order they did,
+those before an error first, then the error, as before. A probe of a
+table its morsels share stops so already (D1151).
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 

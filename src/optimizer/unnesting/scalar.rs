@@ -21,7 +21,8 @@
 //! comparisons that cannot raise, and the subquery may stand nowhere else
 //! in the condition.
 
-use crate::logical::{Cond, Expr, LogicalPlan, Subquery, and_all, split_and};
+use crate::catalog::Catalog;
+use crate::logical::{Cond, Expr, LogicalPlan, MAX_JUDGED_DEPTH, Subquery, and_all, split_and};
 use crate::optimizer::RuleContext;
 use crate::value::CompOp;
 
@@ -35,7 +36,7 @@ pub(super) fn joined(cond: &Cond, input: &LogicalPlan, ctx: &RuleContext<'_>) ->
     split_and(cond.clone(), &mut conjuncts);
     let mut subs: Vec<&Subquery> = Vec::new();
     for sub in conjuncts.iter().filter_map(compared_subquery) {
-        if !subs.iter().any(|s| s.id() == sub.id()) && joinable(&conjuncts, sub, ctx) {
+        if !subs.iter().any(|s| s.id() == sub.id()) && joinable(&conjuncts, (sub, input), ctx) {
             subs.push(sub);
         }
     }
@@ -65,13 +66,49 @@ pub(super) fn joined(cond: &Cond, input: &LogicalPlan, ctx: &RuleContext<'_>) ->
 
 /// Whether `sub` may be joined so: uncorrelated, of one row at most, pure
 /// and raising nothing, each of its uses among `conjuncts` such a
-/// comparison.
-fn joinable(conjuncts: &[Cond], sub: &Subquery, ctx: &RuleContext<'_>) -> bool {
+/// comparison, of the filter's `input`. A subquery that also warns of
+/// nothing and reads no parameter (`quiet`) is not, unless a column it is
+/// compared with is one an index of its table holds, which the join may
+/// probe: else, run once before the filter's rows and compared as a
+/// constant (RULES.md D1127, D1132), it costs no join.
+fn joinable(conjuncts: &[Cond], (sub, input): (&Subquery, &LogicalPlan), ctx: &RuleContext<'_>) -> bool {
     let raises = pure::plan_raises(&sub.plan, ctx);
     if !sub.outer.is_empty() || !sub.plan.one_row_at_most() || raises || !pure::plan_pure(&sub.plan) {
         return false;
     }
-    conjuncts.iter().all(|c| comparison_with(c, sub.id()).is_some() || !uses(c, sub.id()))
+    let probed = || {
+        let catalog = &*ctx.db.catalog;
+        let column = |c: &Cond| comparison_with(c, sub.id()).and_then(|(x, ..)| if let Expr::Column(at) = x { Some(at) } else { None });
+        conjuncts.iter().filter_map(column).any(|at| indexed(input, at, catalog, 0))
+    };
+    let uses_all = conjuncts.iter().all(|c| comparison_with(c, sub.id()).is_some() || !uses(c, sub.id()));
+    uses_all && (!super::quiet(sub, ctx.db) || probed())
+}
+
+/// Whether column `column` of `plan`'s rows, `depth` operators down, is
+/// a column of a table that an index holds, through filters, projections
+/// of columns and products; past `MAX_JUDGED_DEPTH` not known (RULES.md
+/// R-CF-6).
+fn indexed(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: usize) -> bool {
+    if depth > MAX_JUDGED_DEPTH {
+        return false;
+    }
+    let deeper = depth.saturating_add(1);
+    if let LogicalPlan::Scan { table, .. } = plan {
+        return catalog.indexes(table).iter().any(|i| i.columns.contains(&column));
+    }
+    if let LogicalPlan::Filter { input, .. } = plan {
+        return indexed(input, column, catalog, deeper);
+    }
+    if let LogicalPlan::Project { exprs, input } = plan {
+        let Some(Expr::Column(c)) = exprs.get(column) else { return false };
+        return indexed(input, *c, catalog, deeper);
+    }
+    let LogicalPlan::Product { left, right } = plan else { return false };
+    match column.checked_sub(left.width()) {
+        Some(r) => indexed(right, r, catalog, deeper),
+        None => indexed(left, column, catalog, deeper),
+    }
 }
 
 /// The subquery `c` compares a value with, if it is such a comparison.

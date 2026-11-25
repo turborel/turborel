@@ -265,4 +265,19 @@ impl Iterator for Candidates<'_> {
         };
         row.map(crate::storage::mask::index)
     }
+
+    /// The `n`th row on, of a run at once, so a probe that gives its pairs
+    /// a batch at a time takes up a key's rows where it left them for what
+    /// one step costs (`batch/joined/shared/probing.rs`).
+    fn nth(&mut self, n: usize) -> Option<usize> {
+        match self {
+            Candidates::Run(rows) => rows.nth(n).copied().map(crate::storage::mask::index),
+            Candidates::Scan(..) => {
+                for _ in 0..n {
+                    self.next()?;
+                }
+                self.next()
+            }
+        }
+    }
 }

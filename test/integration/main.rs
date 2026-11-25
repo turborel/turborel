@@ -47,6 +47,7 @@ mod compiled_procedures;
 mod compiled_tpcc;
 mod compiled_writes;
 mod composite_columns;
+mod computed_keys;
 mod concepts;
 /// The fixtures over a database and the suites every log passes, written
 /// once in `support/` for the tests of the replicated log too (RULES.md
@@ -165,6 +166,7 @@ mod expression_indexes;
 mod expressions;
 mod extension_types;
 mod failures;
+mod fan_out;
 mod faults;
 mod fenced;
 mod fetch_bounded;
@@ -255,6 +257,7 @@ mod log;
 mod log_buffer;
 mod log_durability;
 mod log_sync;
+mod looped_parts;
 mod manifest_settings;
 mod marked_semi;
 mod memory;
