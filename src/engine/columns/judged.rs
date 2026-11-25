@@ -235,16 +235,17 @@ impl Pred {
 
     /// Of integers: a comparison by the kernel, its constant folded to
     /// their scale once; of integers kept as runs, none null, judged once a
-    /// run (a run's first row may be a null, whose unit is not the run's).
+    /// run, the runs and the rows walked together (`Ints::kept_by_runs`,
+    /// RULES.md D1084; a run's first row may be a null, whose unit is not
+    /// the run's).
     fn ints(&self, ints: &Ints, given: Option<&[u32]>, kernels: &dyn Kernels) -> Vec<u32> {
         let bound = self.compared().and_then(|(op, c)| rescaled_bound(ints.scale, op, c));
         let value = |u: i64| Value::Exact(Decimal::new(i128::from(u), ints.scale));
         let keeps = |u: i64| bound.map_or_else(|| self.conjunct.matches_key(&[&value(u)]), |b| b.holds(u));
-        if ints.nulls.is_none() && ints.runs().is_some() {
-            let all = rows(ints.units.len(), given);
-            if let Some(runs) = ints.runs_of(&all) {
-                return runs.filter(|&(unit, _)| keeps(unit)).flat_map(|(_, these)| these.iter().copied()).collect();
-            }
+        if ints.runs().is_some()
+            && let Some(kept) = ints.kept_by_runs(given, &keeps)
+        {
+            return kept;
         }
         let mut out = Vec::new();
         match bound {
