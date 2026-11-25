@@ -691,6 +691,7 @@ verification approach DO-178C expects (§8).
 | D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
+| D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
 
 ### The project
 
@@ -18823,6 +18824,27 @@ Every other key is paired as before: keys of several columns, of
 texts, of integers of scales apart, which match when rescaled, and a
 key whose nulls match. The pairs, and their order, are the same of
 either.
+
+#### D1084. Integers known as runs are judged by walking their runs and the rows asked of together
+
+A column store's scan and a filter judge a conjunct of integers known as
+runs once a run (D31, D360). Each judgment made the list of every row
+asked of first, even of all of a run's rows, then found each run's rows
+in it by a binary search, and gave the rows kept one at a time. A key
+of a fact table read in its order, as an order's number in its lines,
+is runs of a few rows each. A join's runtime filter tells its scan the
+key's least and greatest built values (D600), so every row of such a
+key was judged that way, and the judging took more of a query than the
+probe did.
+
+Now the runs and the rows asked of are walked together, both ascending
+(`storage/batch/runs.rs`). Each run is met once and each row once. No
+list of every row is made when all are asked of, since a kept run is
+given on as the span of its places. A run that holds no row asked of
+is not judged. The rows kept, and their order, are what judging each
+row gives. A comparison of integers known as runs is still judged once
+a run, not by the kernel over every row: measured on TPC-H, the kernel
+was the slower of the two.
 
 ## 2. Project layout
 
