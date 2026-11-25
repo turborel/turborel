@@ -33,7 +33,8 @@ use crate::error::Result;
 use crate::exec::group::Spec;
 use crate::exec::{Runner, broken, eval};
 use crate::logical::Expr;
-use crate::physical::{NodeCount, Plan, between, crosses, first_level};
+use crate::physical::parallel::{between, crosses};
+use crate::physical::{NodeCount, Plan, first_level};
 use crate::spill::norm_row;
 use crate::storage::Row;
 
