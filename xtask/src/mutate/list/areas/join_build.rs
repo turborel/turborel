@@ -9,7 +9,9 @@
 //! by an expression bounded by the columns it reads, and only by a
 //! deterministic one; of D1083, a null probing row paired with none, and
 //! keys of scales apart or of matching nulls paired as values, and a
-//! row's matches in the order built.
+//! row's matches in the order built; of D1084, integers known as runs
+//! judged of the rows asked of alone, a run no row asks of left unjudged,
+//! and a null of a run kept never.
 
 use super::super::{Mutation, Package};
 
@@ -33,7 +35,13 @@ const PAIRED: &str = "src/exec/batch/joined/shared/paired.rs";
 /// The test of keys that are not paired in their units.
 const AS_VALUES: &str = "exec::batch::joined::shared::paired::tests::keys_of_scales_apart_or_matching_nulls_pair_as_values";
 
-pub const JOIN_BUILD: [Mutation; 14] = [
+/// The file of integers judged by runs.
+const RUNS: &str = "src/storage/batch/runs.rs";
+
+/// The test of rows kept by runs.
+const BY_RUNS: &str = "storage::batch::runs::tests::rows_kept_by_runs_are_the_rows_judged_one_at_a_time";
+
+pub const JOIN_BUILD: [Mutation; 17] = [
     Mutation {
         name: "probe-units-reversed",
         package: Package::Core,
@@ -173,5 +181,35 @@ pub const JOIN_BUILD: [Mutation; 14] = [
         replacement: "    if crew.degree < 2 || rows < crew.run_rows() {",
         integration: &[],
         unit: &["exec::parallel::build::tests::a_small_operand_or_one_thread_builds_alone"],
+    },
+    Mutation {
+        name: "runs-unasked-judged",
+        package: Package::Core,
+        breaks: "a run that holds no row asked of is not judged (D1084)",
+        file: RUNS,
+        original: "            let asked = rest.is_none() || !these.is_empty();",
+        replacement: "            let asked = true;",
+        integration: &[],
+        unit: &[BY_RUNS],
+    },
+    Mutation {
+        name: "runs-every-place",
+        package: Package::Core,
+        breaks: "a run kept gives the rows asked of alone, not every place of it (D1084)",
+        file: RUNS,
+        original: "                self.push_run((start, end), given.map(|_| these), &mut out);",
+        replacement: "                self.push_run((start, end), None, &mut out);",
+        integration: &[],
+        unit: &[BY_RUNS],
+    },
+    Mutation {
+        name: "runs-null-kept",
+        package: Package::Core,
+        breaks: "a null of a run kept is not kept (D1084)",
+        file: RUNS,
+        original: "            (None, Some(nulls)) => out.extend(places().filter(|&r| !nulls.get(index(r)))),",
+        replacement: "            (None, Some(_)) => out.extend(places()),",
+        integration: &[],
+        unit: &[BY_RUNS],
     },
 ];

@@ -4,7 +4,8 @@
 //! subquery with no outer reference made a constant as its first row is
 //! judged (D1127), a subquery run once planned with its parts in parallel
 //! (D1128), and a grouping a filter's input and its subqueries compute
-//! alike computed once (D1129).
+//! alike computed once (D1129), and a chunk's texts judged UTF-8 once and
+//! strings looked for among a list's in order (D1131).
 
 use super::super::{Mutation, Package};
 
@@ -16,7 +17,7 @@ const LISTED: &str = "exec::batch::expr::tests::in_a_list_of_strings_is_judged_o
 const BOUND: &str = "batch_exprs::a_filter_s_subquery_of_no_outer_reference_is_run_once_as_rows_run_it";
 
 /// Mechanisms of the work done once whose removal must fail their tests.
-pub const SHARED_WORK: [Mutation; 7] = [
+pub const SHARED_WORK: [Mutation; 9] = [
     Mutation {
         name: "substring-vector-slice-end",
         package: Package::Core,
@@ -86,5 +87,25 @@ pub const SHARED_WORK: [Mutation; 7] = [
         replacement: "        rows.held()?;",
         integration: &[],
         unit: &["exec::shared::tests::readers_of_a_cell_read_what_the_first_ran"],
+    },
+    Mutation {
+        name: "texts-span-unshifted",
+        package: Package::Core,
+        breaks: "a field of a chunk's texts judged UTF-8 at once is cut from the octets it begins at, past the range's start (D1131)",
+        file: "src/engine/columns/encoded.rs",
+        original: "            padded(text, span.get(a.checked_sub(start)?..b.checked_sub(start)?)?, pad);",
+        replacement: "            padded(text, span.get(a..b)?, pad);",
+        integration: &[],
+        unit: &["engine::columns::tests::chunks_give_their_texts"],
+    },
+    Mutation {
+        name: "text-list-unsorted",
+        package: Package::Core,
+        breaks: "a list's strings are looked for by halving them only once they are in order (D1131)",
+        file: "src/logical/sets.rs",
+        original: "            texts.sort_unstable();\n",
+        replacement: "",
+        integration: &[],
+        unit: &[LISTED],
     },
 ];

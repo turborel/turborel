@@ -90,6 +90,11 @@ impl Late {
         if self.picks.is_none() && rows.is_none() {
             return self.source.decode(self.column, &self.positions);
         }
+        if let (None, Some(rows)) = (&self.picks, rows)
+            && rows.is_sorted_by(|a, b| a < b)
+        {
+            return self.kept(rows, kernels);
+        }
         let all: Vec<u32>;
         let rows = if let Some(rows) = rows {
             rows
@@ -109,6 +114,28 @@ impl Late {
             let at = self.place(index(r)).and_then(|p| self.positions.get(p)).and_then(|q| wanted.binary_search(q).ok());
             if let Some(slot) = picks.get_mut(index(r)) {
                 *slot = at.and_then(|a| u32::try_from(a).ok()).unwrap_or(super::NO_ROW);
+            }
+        }
+        Ok(decoded.gathered_by(&super::Picks::new(&picks), kernels))
+    }
+
+    /// \[DESIGN\] (RULES.md D1162) Of a column no join gathered, its values
+    /// of the rows `rows`, ascending and each once, the others null: their
+    /// places are ascending and each once too, so the `k`th row kept is the
+    /// `k`th place decoded, none searched for among them.
+    ///
+    /// # Errors
+    ///
+    /// As `LateSource::decode`.
+    fn kept(&self, rows: &[u32], kernels: &dyn crate::kernels::Kernels) -> Result<Column> {
+        let wanted: Vec<u32> = rows.iter().filter_map(|&r| self.positions.get(index(r)).copied()).collect();
+        let decoded = self.source.decode(self.column, &wanted)?;
+        let mut picks = vec![super::NO_ROW; self.len()];
+        let mut next = 0_u32;
+        for &r in rows {
+            if let Some(slot) = picks.get_mut(index(r)) {
+                *slot = next;
+                next = next.saturating_add(1);
             }
         }
         Ok(decoded.gathered_by(&super::Picks::new(&picks), kernels))
