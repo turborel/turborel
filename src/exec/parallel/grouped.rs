@@ -17,7 +17,10 @@
 //! seeds, numbered first, and the groups are given in that order, as the
 //! serial grouping gives them (`exec/group.rs`), DISTINCT each row the
 //! first time it comes: each partition orders its own groups on its
-//! thread, and the statement's thread merges the partitions' orders. The
+//! thread, and the statement's thread merges the partitions' orders. A
+//! filter over the grouping that cannot raise, its HAVING condition, is
+//! judged of each partition's groups by the thread that finished them,
+//! so only the groups it keeps are put in order (RULES.md D1073). The
 //! pieces a grouping holds are charged to one
 //! work grant (RULES.md D38, D298); past it, or bound past it as its first
 //! morsels show, it gives way to the serial grouping, which spills, its
@@ -39,9 +42,9 @@ use crate::exec::Db;
 use crate::exec::batch::{Read, Told, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::table::Seed;
-use crate::exec::{RowIter, Runner, broken, eval, warn};
+use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
 use crate::functions::Accumulator;
-use crate::logical::AggCall;
+use crate::logical::{AggCall, Cond, Truth};
 use crate::physical::Plan;
 use crate::storage::Row;
 use crate::txn::TxId;
@@ -84,12 +87,33 @@ type Runs = Held<Vec<Vec<(u64, Row)>>>;
 /// (`exec/batch/groups/morsel.rs`) and the seed its keys are hashed by.
 struct Grouping {
     spec: Spec,
+    /// \[DESIGN\] (RULES.md D1073) The condition a group is kept by, of
+    /// a filter over the grouping, its HAVING, if any.
+    having: Option<Cond>,
     distinct: bool,
     read: Option<Read>,
     seed: Seed,
 }
 
 impl Grouping {
+    /// [X3.135-1986 §5.23 GR1] The groups of `groups` its HAVING
+    /// condition is true of, or all of none, judged by the thread that
+    /// finished them, so only the groups kept are put in order and given
+    /// (RULES.md D1073). The condition cannot raise, so the order it is
+    /// judged in shows nowhere (RULES.md D15).
+    fn kept(&self, mut groups: Vec<(u64, Row)>, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+        let Some(cond) = &self.having else { return Ok(groups) };
+        let mut failed = None;
+        groups.retain(|(_, row)| match eval_cond(cond, row, runner) {
+            Ok(truth) => truth == Truth::True,
+            Err(e) => {
+                failed.get_or_insert(e);
+                false
+            }
+        });
+        failed.map_or(Ok(groups), Err)
+    }
+
     /// The grouping values of `row`.
     fn values(&self, row: &Row) -> Result<Row> {
         if self.distinct {
@@ -97,6 +121,13 @@ impl Grouping {
         }
         self.spec.groups.iter().map(|&g| row.get(g).cloned().ok_or_else(|| broken("a grouping column past its row"))).collect()
     }
+}
+
+/// Whether `plan` is a part this module runs: a grouping, DISTINCT, or a
+/// filter over a grouping, its HAVING condition (RULES.md D1073).
+pub(super) fn is_one(plan: &Plan) -> bool {
+    let grouping = if let Plan::Filter { input, .. } = plan { input } else { plan };
+    matches!(grouping, Plan::Aggregate { .. } | Plan::Distinct { .. })
 }
 
 /// [X3.135-1986 §5.22 GR2] The groups of the grouping `plan` over a
@@ -118,12 +149,14 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resu
 ///
 /// As `grouped`.
 pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: &[Told]) -> Result<Held<RowIter>> {
+    let (plan, having) = if let Plan::Filter { cond, input, .. } = plan { (&**input, Some(cond.clone())) } else { (plan, None) };
+    let seed = db.functions.seed().clone();
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
-        (Grouping { spec, distinct: false, read: None, seed: db.functions.seed().clone() }, input)
+        (Grouping { spec, having, distinct: false, read: None, seed }, input)
     } else if let Plan::Distinct { input, .. } = plan {
         let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
-        (Grouping { spec, distinct: true, read: None, seed: db.functions.seed().clone() }, input)
+        (Grouping { spec, having, distinct: true, read: None, seed }, input)
     } else {
         return Err(broken("not a grouping run in parallel"));
     };
@@ -141,7 +174,7 @@ pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: 
     };
     if runs.iter().all(Vec::is_empty) && grouping.spec.groups.is_empty() && !grouping.distinct {
         // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
-        runs = vec![vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)]];
+        runs = vec![grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?];
     }
     Ok(Held::Kept(limit.keeping(Box::new(Ordered::of(runs)))))
 }
@@ -157,10 +190,10 @@ pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: 
 fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Runs> {
     let Held::Kept(chunks) = pieces(pipeline, Arc::clone(grouping), (db, tx, degree), limit)? else { return Ok(Held::GaveWay) };
     let chunks: Arc<Vec<Mutex<Chunks>>> = Arc::new(chunks.into_iter().map(Mutex::new).collect());
-    let merging = Arc::clone(grouping);
+    let (merging, db_for) = (Arc::clone(grouping), db.clone());
     let merge = Box::new(move |p: usize| {
         let taken = chunks.get(p).map(|c| std::mem::take(&mut *c.lock().unwrap_or_else(PoisonError::into_inner))).unwrap_or_default();
-        merged(&merging, p, taken)
+        merging.kept(merged(&merging, p, taken)?, &Runner::new(&db_for, tx))
     });
     Morsels::start(db, tx, (PARTS, degree), merge).collect::<Result<Vec<_>>>().map(Held::Kept)
 }

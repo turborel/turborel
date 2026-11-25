@@ -808,7 +808,10 @@ having none, and no row of the subquery is read twice for it. NOT IN
 keeps its exact meaning with nulls: a row is kept only if no value of
 the subquery equals it or may equal it. EXPLAIN shows HashSemiJoin,
 HashAntiJoin and their kin, and the setting OPTIMIZER.SEMI_JOINS turns
-the rewrite off.
+the rewrite off. HashRightSemiJoin and HashRightAntiJoin hold the outer
+rows, the fewer, and read the subquery's rows once to mark the outer
+rows they match. A large table under one is then shown as a Parallel
+part, read by several threads at once.
 
 EXISTS, IN, NOT IN and the comparisons with SOME, ANY and ALL of a
 correlated subquery anywhere else, under OR or NOT, in a CASE or in the

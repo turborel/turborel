@@ -1,7 +1,9 @@
 //! \[DESIGN\] A pipeline run by morsels (RULES.md D290, D292): each table
 //! it reads split into morsels by its engine (`TableStorage::split`), and
 //! each morsel's rows taken through the steps over them, a filter's, a
-//! projection's and a hash join's probe, one row at a time to the end, as
+//! projection's, a hash join's probe, a LEFT join's (RULES.md D1076) and
+//! a hashed semi join's or antijoin's (RULES.md D1075), one row at a time
+//! to the end, as
 //! Leis et al., "Morsel-Driven Parallelism" (2014), run a pipeline
 //! fragment on a morsel. The steps are those of the plan, applied as its
 //! operators apply them, so a morsel gives the rows, in the order, and
@@ -55,12 +57,27 @@ pub(super) enum Step {
     /// [X3.135-1986 §5.20 GR2b] joined with each row of the built operand
     /// whose keys equal its own.
     Probe(Arc<Table>),
+    /// [ISO/IEC 9075:1992 §7.5 GR4, GR5b] joined with each row of the
+    /// built operand whose keys equal its own, or with nulls if none does
+    /// (RULES.md D1076).
+    Outer(Arc<Table>),
+    /// [X3.135-1986 §5.17 GR2, GR3] kept if a row of the built operand
+    /// matches it, or of an antijoin if none does (RULES.md D1075).
+    Semi(Arc<Table>, Arc<SemiOf>),
     /// \[DESIGN\] (RULES.md D389) kept if hash joins' runtime filters
     /// stopped at an operator may match it; judged by batch alone.
     Runtime(Vec<Told>),
     /// \[EXTENSION\] counted, as the rows of a counted operator, each
     /// morsel's added once (RULES.md D378).
     Count(Arc<NodeCount>),
+}
+
+/// What a semi join that is a step asks beyond its keys: whether it is an
+/// antijoin, the rest of its condition, and its operands' widths.
+pub(super) struct SemiOf {
+    pub(super) anti: bool,
+    pub(super) cond: Option<Cond>,
+    pub(super) widths: (usize, usize),
 }
 
 /// The morsels of one table's split and the steps over its rows, the
@@ -226,6 +243,19 @@ fn step_of<'a>(plan: &'a Plan, (db, tx): (&Db, TxId), limit: &Limit, told: &mut 
             told.extend(table.shared.filters(keys)?);
         }
         (Step::Probe(table), left)
+    } else if let Plan::OuterJoin { left, right, keys, .. } = plan {
+        // No filter of its keys goes to its left, every row of which it
+        // gives (RULES.md D369).
+        let Held::Kept(table) = built(right, keys, (db, tx), limit)? else { return Ok(None) };
+        (Step::Outer(table), left)
+    } else if let Plan::SemiJoin(s) = plan {
+        let Held::Kept(table) = built(&s.right, &s.keys, (db, tx), limit)? else { return Ok(None) };
+        // A semi join's left takes its keys' filters, an antijoin's none
+        // (RULES.md D369).
+        if wanted(db) && !s.anti {
+            told.extend(table.shared.filters(&s.keys)?);
+        }
+        (Step::Semi(table, Arc::new(SemiOf { anti: s.anti, cond: s.cond.clone(), widths: s.widths })), &s.left)
     } else {
         return Err(broken("a part run in parallel is not a pipeline"));
     };
@@ -277,6 +307,8 @@ fn copied(step: &Step) -> Step {
         Step::Filter(c) => Step::Filter(c.clone()),
         Step::Project(e) => Step::Project(e.clone()),
         Step::Probe(t) => Step::Probe(Arc::clone(t)),
+        Step::Outer(t) => Step::Outer(Arc::clone(t)),
+        Step::Semi(t, semi) => Step::Semi(Arc::clone(t), Arc::clone(semi)),
         Step::Runtime(told) => Step::Runtime(told.clone()),
         Step::Count(c) => Step::Count(Arc::clone(c)),
     }
@@ -345,8 +377,47 @@ fn feed(steps: &[Step], row: Row, runner: &Runner, out: &mut Vec<Row>) -> Result
             feed(rest, projected, runner, out)
         }
         Step::Probe(table) => table.each_match(&row, |r| feed(rest, row.iter().chain(r.iter()).cloned().collect(), runner, out)),
+        Step::Outer(table) => {
+            let mut any = false;
+            table.each_match(&row, |r| {
+                any = true;
+                feed(rest, row.iter().chain(r.iter()).cloned().collect(), runner, out)
+            })?;
+            if any { Ok(()) } else { feed(rest, unmatched(table, row), runner, out) }
+        }
+        Step::Semi(table, semi) => {
+            if found(table, semi, &row, runner)? != semi.anti {
+                feed(rest, row, runner, out)?;
+            }
+            Ok(())
+        }
         Step::Runtime(..) | Step::Count(_) => feed(rest, row, runner, out),
     }
+}
+
+/// `row`, a left row no row of `table`, a LEFT join's built operand,
+/// matches, with nulls for the operand's columns [ISO/IEC 9075:1992 §7.5
+/// GR5b].
+fn unmatched(table: &Table, mut row: Row) -> Row {
+    row.resize(row.len().saturating_add(table.shared.width()), crate::value::Value::Null);
+    row
+}
+
+/// Whether a row of `table`, a semi join's built operand, matches `row`
+/// as `semi` asks: its keys, and the rest of the condition true of the
+/// pair [X3.135-1986 §5.17 GR2].
+fn found(table: &Table, semi: &SemiOf, row: &Row, runner: &Runner) -> Result<bool> {
+    let mut any = false;
+    table.each_match(row, |r| {
+        if !any {
+            any = match &semi.cond {
+                Some(cond) => eval_cond(cond, &row.iter().chain(r.iter()).cloned().collect::<Row>(), runner)? == Truth::True,
+                None => true,
+            };
+        }
+        Ok(())
+    })?;
+    Ok(any)
 }
 
 /// As `feed`, adding to `tally`, a count for each step, the rows that
@@ -373,6 +444,20 @@ fn tallied(steps: &[Step], (tally, row): (&mut [u64], Row), runner: &Runner, out
         }
         Step::Probe(table) => {
             table.each_match(&row, |r| tallied(rest, (&mut *later, row.iter().chain(r.iter()).cloned().collect()), runner, out))
+        }
+        Step::Outer(table) => {
+            let mut any = false;
+            table.each_match(&row, |r| {
+                any = true;
+                tallied(rest, (&mut *later, row.iter().chain(r.iter()).cloned().collect()), runner, out)
+            })?;
+            if any { Ok(()) } else { tallied(rest, (later, unmatched(table, row)), runner, out) }
+        }
+        Step::Semi(table, semi) => {
+            if found(table, semi, &row, runner)? != semi.anti {
+                tallied(rest, (later, row), runner, out)?;
+            }
+            Ok(())
         }
         Step::Count(_) => {
             if let Some(seen) = seen {

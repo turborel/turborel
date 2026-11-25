@@ -159,6 +159,13 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
         Plan::SeqScan { .. } | Plan::IndexScan { .. } => true,
         Plan::Filter { input, .. } | Plan::Project { input, .. } => pipelined(input),
         Plan::HashJoin { left, .. } => pipelined(left),
+        // A LEFT join's probe on its keys alone is a step (RULES.md D1076).
+        Plan::OuterJoin { kind, left, keys, cond, own, .. } => {
+            let on_keys = !keys.is_empty() && cond.is_none() && own.is_none();
+            *kind == crate::logical::OuterJoin::Left && on_keys && pipelined(left)
+        }
+        // A hashed semi join's probe is a step (RULES.md D1075).
+        Plan::SemiJoin(s) => s.method == crate::physical::SemiMethod::Hash && pipelined(&s.left),
         Plan::Append { left, right, .. } => pipelined(left) && pipelined(right),
         Plan::Counted(c) => pipelined(&c.input),
         // A phase reads its leaves whole before its chain (RULES.md D665).
@@ -167,10 +174,8 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
         | Plan::RangeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::MarkJoin(_)
         | Plan::Product { .. }
-        | Plan::OuterJoin { .. }
         | Plan::Aggregate { .. }
         | Plan::MergeAppend { .. }
         | Plan::SetOp { .. }

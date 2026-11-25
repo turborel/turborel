@@ -58,6 +58,11 @@ pub(super) fn batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) ->
     if matches!(p.input, Plan::Window { .. }) {
         return crate::exec::window::window_batches_on(p.input, (db, tx), p.degree);
     }
+    // A grouping that takes no filter, alone or under its HAVING
+    // condition, its rows gathered (RULES.md D1072).
+    if told::part_layout(&p.input).is_some() {
+        return told::part_batches(*p, (db, tx));
+    }
     // A part whose batches hold no layout of its own is read as its plan.
     let Some(shape) = stream::layout(&p.input, db) else { return stream::batches_with(p.input, (db, tx), deferred) };
     match crate::exec::parallel::streamed_batches(&p.input, (db, tx), p.degree, &shape)? {

@@ -678,7 +678,16 @@ verification approach DO-178C expects (§8).
 | D1062 | A runtime filter goes below a projection and into a grouping that the declared types prove raise nothing, and to the grouping's scan when its arguments hold no null |
 | D1063 | A grouping run in parallel takes the runtime filters of its grouping columns, judged of each morsel's batches |
 | D1064 | A conjunct of a correlated subquery that cannot raise is judged of the rows a semi join keeps |
+| D1065 | An uncorrelated NOT IN or ALL that is a conjunct is an antijoin |
 | D1066 | A DISTINCT by hash under a join is read by batch as the grouping by every column it is |
+| D1070 | A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows |
+| D1071 | A hashed semi join of streams read row by row is made of its batches |
+| D1072 | A join reads a grouping by batch whatever its set functions, and a grouping run in parallel too |
+| D1073 | A HAVING condition that cannot raise is judged by its grouping's part |
+| D1074 | A LIKE pattern of no `_` is matched by its pieces, each searched for as a substring |
+| D1075 | A hashed semi join's or antijoin's probe is a step of its left operand's pipeline |
+| D1076 | A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline |
+| D1077 | NOT IN of columns that hold no null is an antijoin hashed on their equality |
 
 ### The project
 
@@ -18517,6 +18526,25 @@ one, stays below, where it is cheap and may be told to a scan. Beside an
 antijoin every conjunct stays below, as an antijoin often keeps most of
 its rows and the conjunct may keep few.
 
+#### D1065. An uncorrelated NOT IN or ALL that is a conjunct is an antijoin
+
+The semi join rule took every correlated subquery of existence, and of
+the uncorrelated ones the IN and SOME conjuncts alone (D541). An
+uncorrelated `x NOT IN (SELECT ...)` or `x <> ALL (SELECT ...)` stayed a
+nested subquery. The executor reads such a subquery once, but then
+judges the comparison of every outer row against the rows it holds, on
+one thread.
+
+The rule is now offered those conjuncts too (`found::negated`). NOT of a
+comparison with SOME is the antijoin on `(x op y) IS NOT FALSE`, a
+comparison with ALL the antijoin on `(x op y) IS NOT TRUE`, and NOT of
+one with ALL a semi join, as D541 makes them of a correlated subquery,
+so a null on either side still decides as the standard's truth tables
+say. The join is made only of a subquery that is pure and cannot raise,
+as before. One that is refused is offered to no other rule and stays
+nested, read once, since the general unnesting of an uncorrelated
+subquery would gain nothing over that.
+
 #### D1066. A DISTINCT by hash under a join is read by batch as the grouping by every column it is
 
 A stream gathered the rows of a grouping that takes filters, so a hash
@@ -18538,6 +18566,154 @@ filter drops would give a distinct row the join keeps no row of. Its
 rows come in no order the plan relies on, as a grouping's by hash, so a
 join's left operand takes them as they come. A DISTINCT whose input
 comes in order, compared row by row (D550), is read as before.
+#### D1070. A semi join planned to build its left builds it by batch too, its right read by morsels that mark the held rows
+
+The planner builds the left operand of a semi join or an antijoin when
+it has fewer rows than the right (D540). Read by batch, the join built
+its right whatever the plan said. So EXISTS of an order's line items
+held every line item, on the statement's thread, and past the work area
+as rows in a table of the spill area. A join planned to build its left
+now does so by batch (`exec/batch/joined/semi/marked.rs`). The left is
+held as one batch in a join's table (D368), a mark beside each row. The
+right is read once, each of its rows marking the held rows it matches.
+The held rows are then given in their order, those marked, or of an
+antijoin those not. A held row of a null key is in no table, so no row
+marks it, as the join that builds its right finds no match for it.
+
+The right operand is told a runtime filter of each key (D369), of an
+antijoin too. A right row whose key no held row has marks none, so
+leaving it out changes no mark. It is told one only of a left of no more
+rows than a filter lists the keys of (D600). The scan then reads little
+but those keys' rows. Of a larger left the filter is a range and a few
+spans. Judging them costs each row read a comparison, and spares it only
+a look into the held rows' table, which costs as little. Measured on the
+EXISTS of line items, the filter of a larger left made the query slower.
+
+The right operand of such a join is a part run in parallel when it is a
+stream of rows enough (`physical/parallel.rs`), though a serial scan by
+batch serves a reader of rows better (D291). Its morsels' batches mark
+on the threads that read them (`exec/parallel/each.rs`), and no row is
+made of them. A mark is only ever set, and the held rows are read after
+every morsel ended, so the rows given do not depend on the threads. The
+first morsel that fails, in the order of their numbers, is the error
+raised (D15).
+
+A left operand asked for in an order is read, held and given in it. One
+past the work area gives way to the join that builds its right, the
+batches read of it given first (D38). A semi join's rows are asked for
+in an order only if its left operand's are, so a join over a semi join
+reads it by batch.
+
+#### D1071. A hashed semi join of streams read row by row is made of its batches
+
+An operator that reads its input a row at a time, as a sort of rows not
+held whole does, ran a semi join under it by the row path. Its operands
+were then read a row at a time, of the column store too, each value
+decoded alone, on one thread. A hashed semi join or antijoin of streams
+every table of which reads by batch is now made of its batches whoever
+reads it (`exec/join/semi.rs`), while EXECUTOR.BATCHES is on, and its
+rows made of them. Its operands are read by batch, and by morsels where
+D1070 says so. The rows are the row path's, in the left's order where
+one is asked.
+
+#### D1072. A join reads a grouping by batch whatever its set functions, and a grouping run in parallel too
+
+A stream gathered a grouping's rows into batches only if the grouping
+took runtime filters, one of COUNT, MIN and MAX (D600). A join over any
+other grouping, as one of SUM, had an operand that gave no batches, so
+the whole join ran a row at a time, its other operand's table read row
+by row and told no filter. A grouping not streamed is now gathered
+whatever its set functions (`exec/batch/told.rs`), and so is a grouping
+that is a part run in parallel, alone or under its HAVING condition
+(D1073), its rows made by the part's threads. A grouping of SUM or AVG
+still takes no filter to its input (D15, D600). A filter told it is
+judged of the batches it gives.
+
+#### D1073. A HAVING condition that cannot raise is judged by its grouping's part
+
+A grouping run in parallel gave every group to the statement's thread,
+which merged the partitions' groups in the order of their first rows
+(D293) and then judged the HAVING condition of each. Of a grouping of
+many groups few of which the condition keeps, that thread did most of
+the work. A filter over a grouping not streamed is now a part with it
+(`physical/parallel.rs`) if its condition cannot raise and a worker can
+evaluate it alone. The thread that finishes a partition's groups judges
+the condition of each (`exec/parallel/grouped.rs`), and only the groups
+kept are ordered and merged. The condition raises nothing, so the order
+it is judged in shows nowhere (D15). One that can raise stays above the
+part, judged in the groups' order. The part gives way as the grouping
+alone does (D298), to the filter over the grouping run alone. EXPLAIN
+ANALYZE counts the part by its filter (D378).
+
+#### D1074. A LIKE pattern of no `_` is matched by its pieces, each searched for as a substring
+
+A pattern was matched a specifier at a time, and at each character
+where it failed after a `%` it was begun again one character on. Of a
+pattern as `'%special%requests%'` over long strings that is a comparison
+or more for every character of every string. A pattern of no `_` is now
+split once into its pieces, the strings between its `%`s
+(`value/like/pieces.rs`). A value matches if it begins with the first
+piece, ends with the last past the first, and holds the pieces between
+in order and apart in what lies between the two. Each is looked for by
+the library's substring search from where the piece before it ended,
+and the first place found is taken, which leaves the most to the pieces
+after it. A piece is whole characters, so it is searched for among the
+value's bytes. A pattern with `_` is matched as before. The rows are
+those the standard's rule gives [X3.135-1986 §5.14 GR5], as a test
+compares the two matchers over patterns and values.
+
+#### D1075. A hashed semi join's or antijoin's probe is a step of its left operand's pipeline
+
+A pipeline run in parallel ended at every join but an inner hash join
+(D292). So a semi join or an antijoin that builds its right, the smaller
+operand, was probed on the statement's thread, and so ran the grouping
+over it. Its probe is now a step of its left operand's pipeline
+(`exec/parallel/pipeline.rs`), as an inner join's is. The right operand
+is built once for every morsel (`exec/batch/joined/shared.rs`). Each
+batch of a morsel keeps the rows a built row matches, or of an antijoin
+those none matches, selected (`exec/batch/joined/semi/step.rs`), and a
+pipeline read a row at a time judges each row so. The first built row
+that matches decides. A left row of a null key matches nothing. A semi
+join tells its left's scans its keys' runtime filters, an antijoin none
+(D369). The rows a morsel keeps and their order are the serial join's,
+so the part gives the plan's rows in its order (D290). A join whose
+condition beyond its keys a worker cannot evaluate alone ends its
+pipeline as before. One planned to build its left is no step: its right
+is the part (D1070).
+
+#### D1076. A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline
+
+A LEFT outer join ended every pipeline (D292), so the join and the
+grouping over it ran on the statement's thread, as the count of each
+customer's orders did. A LEFT join that matches on its keys alone, with
+no condition beyond them and none of an operand's own (D15), is now a
+step of its left operand's pipeline (`exec/parallel/pipeline.rs`). Its
+right operand is built once for every morsel, and each left row is
+joined with the built rows of its key, or with nulls if none has it
+(`exec/batch/joined/shared/outer.rs`), which depends on no other
+morsel. A morsel gives the rows the serial join gives of its rows, in
+their order, so the part gives the plan's rows in its order (D290). The
+join tells its left no runtime filter, as it gives every left row. Its
+built operand, and that of a semi join that is a step (D1075), is a part
+run in parallel by its rows alone, its morsels gathered by batch into
+the join's table, so a condition of its own, as a LIKE, is judged on the
+part's threads. A LEFT join with a condition beyond its keys, and a
+RIGHT or FULL join, whose unmatched right rows no one morsel knows, end
+their pipelines as before.
+
+#### D1077. NOT IN of columns that hold no null is an antijoin hashed on their equality
+
+NOT IN is the antijoin on `(x = y) IS NOT FALSE`, which a null on either
+side satisfies (D541). That condition is no equality of columns, so the
+join was a nested loop, every outer row read against every row of the
+subquery, and an uncorrelated NOT IN made an antijoin (D1065) ran far
+longer than its subquery run once. Of a column of each operand declared
+to hold no null, `x = y` is never unknown, so the condition is `x = y`,
+and the rule that makes the antijoin writes it so
+(`optimizer/unnesting/filled.rs`). The join is then hashed on it, and a
+step of its left operand's pipeline (D1075). A column that may hold a
+null on either side keeps the condition as it was, so NOT IN keeps its
+exact meaning.
 
 ## 2. Project layout
 

@@ -7,8 +7,8 @@
 //! Leis et al., "Morsel-Driven Parallelism" (2014), run a morsel's
 //! pipeline fragment whole on one thread. A pipeline whose every branch
 //! is a table's scan whose engine reads by batch, and whose every step is
-//! a filter, a projection or a hash join's probe the serial stream reads
-//! by batch, is read so; any other, as an index scan's, row by row
+//! a filter, a projection or a probe the serial stream reads by batch, is
+//! read so; any other, as an index scan's, row by row
 //! (`parallel/pipeline.rs`).
 //! A morsel's batches give the rows, in the order, and raise the error,
 //! that its rows would.
@@ -19,7 +19,9 @@ use super::pipeline::{Branch, Pipeline, Step};
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{Batches, Deferred, Shaped, filter_step, probe_step, project_step, resolved, rows_of, runtime_step, through};
+use crate::exec::batch::{
+    Batches, Deferred, Shaped, filter_step, outer_step, probe_step, project_step, resolved, rows_of, runtime_step, semi_step, through,
+};
 use crate::exec::broken;
 use crate::storage::Row;
 use crate::txn::TxId;
@@ -75,6 +77,16 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
                 (made, layout, width) = probe_step(&table.shared, &left, (&layout, width))?;
                 shaped.push(made);
             }
+            Step::Outer(table) => {
+                let left: Vec<usize> = table.keys().iter().map(|k| k.left).collect();
+                let made;
+                (made, layout, width) = outer_step(&table.shared, &left, (&layout, width))?;
+                shaped.push(made);
+            }
+            Step::Semi(table, semi) => {
+                let join = (table.keys(), semi.cond.as_ref(), semi.anti);
+                shaped.push(semi_step(&table.shared, join, (layout.as_slice(), semi.widths))?);
+            }
             Step::Runtime(told) => shaped.push(runtime_step(told, &layout)),
             Step::Count(count) => shaped.push(Shaped::Count(Arc::clone(count))),
         }
@@ -93,7 +105,7 @@ fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
         deferred = match step {
             Step::Filter(cond) => deferred.filtered(cond),
             Step::Project(exprs) => deferred.projected(exprs),
-            Step::Probe(_) => Deferred::default(),
+            Step::Probe(_) | Step::Outer(_) | Step::Semi(..) => Deferred::default(),
             Step::Runtime(told) => deferred.judged(&told.iter().map(|t| t.column).collect::<Vec<_>>()),
             Step::Count(_) => deferred,
         };

@@ -190,13 +190,18 @@ fn joins_build_by_batch() {
 /// subquery, rows below the least, degree 1.
 #[test]
 fn the_planner_marks_only_large_parts() {
-    let (_db, a) = tables();
+    let (db, a) = tables();
     let plan = |sql: &str| a.physical_plan(sql, &Params::new()).unwrap();
     parallel(&a);
     assert!(plan("SELECT SUM(N) FROM R").contains("Parallel"));
     assert!(!plan("SELECT COUNT(*) FROM R").contains("Parallel"), "a count the row store makes (D351)");
     assert!(!plan("SELECT N FROM R WHERE K = 5").contains("Parallel"));
+    // Unnested, the subquery is a LEFT join, a step of the part (D1076).
+    let unnested = plan("SELECT K, (SELECT COUNT(*) FROM D WHERE D.G = R.G) FROM R");
+    assert!(unnested.starts_with("Parallel"), "an unnested subquery's join is a step: {unnested}");
+    crate::common::set_rule(&db, turborel::optimizer::UNNEST_SUBQUERIES, false);
     let correlated = plan("SELECT K, (SELECT COUNT(*) FROM D WHERE D.G = R.G) FROM R");
+    crate::common::set_rule(&db, turborel::optimizer::UNNEST_SUBQUERIES, true);
     assert!(correlated.starts_with("Project") && correlated.contains("  Parallel"), "a subquery's on the statement's thread: {correlated}");
     assert!(!plan("SELECT K, N FROM C WHERE G = 3").contains("Parallel"), "the column store's scan by batch");
     assert!(plan("SELECT COUNT(*) FROM C JOIN D ON C.G = D.G").contains("Parallel"), "a probe is not by batch");

@@ -35,15 +35,21 @@ const SEMI: &[(&str, &str)] = &[
     ("SELECT K, V FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K) AND NOT EXISTS (SELECT * FROM S WHERE S.W = R.V)", "Anti"),
     ("SELECT K FROM R GROUP BY K HAVING EXISTS (SELECT * FROM S WHERE S.K = R.K AND S.W > 3)", "Semi"),
     ("SELECT K, V FROM R WHERE EXISTS (SELECT S.K FROM S, R AS X WHERE S.K = R.K AND X.V = S.W)", "Semi"),
+    // Uncorrelated, negated or of ALL (RULES.md D1065).
+    ("SELECT K, V FROM R WHERE V NOT IN (SELECT W FROM S)", "Anti"),
+    ("SELECT K, V FROM R WHERE V NOT IN (SELECT W FROM S WHERE S.C LIKE '%a%' AND W IS NOT NULL)", "Anti"),
+    ("SELECT K, V FROM R WHERE V <> ALL (SELECT W FROM S WHERE W > 1)", "Anti"),
+    ("SELECT K, V FROM R WHERE NOT (V > ALL (SELECT W FROM S WHERE W IS NOT NULL))", "Semi"),
 ];
 
 /// Forms left as they were: EXISTS under OR, which a semi join does not
 /// decide alone, and a subquery that can raise, whose rows a semi join
-/// may leave unread.
+/// may leave unread, correlated or not.
 const NOT_SEMI: &[&str] = &[
     "SELECT K, V FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K) OR V > 2",
     "SELECT K, V FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K AND 10 / S.W > 1)",
     "SELECT K, (V IN (SELECT W FROM S WHERE S.K = R.K)) FROM R",
+    "SELECT K, V FROM R WHERE V NOT IN (SELECT 10 / (W - 9) FROM S)",
 ];
 
 /// The physical plan of `sql`.
