@@ -218,9 +218,12 @@ fn frozen_rows_are_decoded_only_when_kept() {
     table.commit(10, 10);
     let keep = |id: RowId| id.checked_div(128).is_some_and(|run| run.is_multiple_of(2));
     let directory = table.frozen.directory().unwrap();
+    // The runs of 128 row ids of even number, as `keep` keeps them.
+    let even: Vec<u64> = (0..64).step_by(2).collect();
+    let chosen = crate::engine::rows::frozen::Chosen { runs: &even, ids: 128 };
     let mut given = Vec::new();
     table
-        .each_unshadowed(&directory, keep, |id, row| {
+        .each_unshadowed(&directory, Some(chosen), |id, row| {
             assert_eq!(row.len(), 5, "whole");
             given.push(id);
             Ok(())
@@ -229,9 +232,87 @@ fn frozen_rows_are_decoded_only_when_kept() {
     let expected: Vec<RowId> = ids[..4096].iter().copied().filter(|&id| keep(id) && id != ids[256]).collect();
     given.sort_unstable();
     assert_eq!(given, expected);
-    let spans = super::kept_runs(&ids, &keep);
+    let spans = super::sampled::kept_runs(&ids, &keep);
     assert!(spans.iter().all(|&(from, to)| to - from <= 2048 && ids[from..to].iter().all(|&id| keep(id))));
     assert_eq!(spans.iter().map(|&(from, to)| to - from).sum::<usize>(), ids.iter().filter(|&&id| keep(id)).count());
-    let every = super::kept_runs(&ids, &|_| true);
+    let every = super::sampled::kept_runs(&ids, &|_| true);
     assert_eq!(every.first(), Some(&(0, 2048)), "a vector at most");
+}
+
+/// `values`, each shown.
+fn shown(values: &[Value]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md D1091, a frozen row read by its id: the
+/// values of the columns listed alone are appended, in their order, after
+/// what the row held; every row of a group is found in the chunk that
+/// holds it, a column of several chunks too, the first and last row of
+/// each among them; a row no group holds is not there, the row held as it
+/// was; and a read of named columns still gives a row of the table's
+/// width.
+#[test]
+fn a_frozen_row_is_read_by_id_of_its_listed_columns_alone() {
+    let (table, ids) = table(5000);
+    table.gc(1, &mut |_, _, _| true).unwrap();
+    while table.maintain(1, true).unwrap() {}
+    let (mut near, mut out) = (crate::storage::Near::default(), vec![Value::Null]);
+    assert!(table.get_listed(NO_TRANSACTION, ids[3000], &[4, 0], (&mut near, &mut out)).unwrap());
+    assert_eq!(shown(&out), shown(&[Value::Null, row(3000)[4].clone(), row(3000)[0].clone()]));
+    for (n, &id) in ids[..4096].iter().enumerate() {
+        out.clear();
+        assert!(table.get_listed(NO_TRANSACTION, id, &[4, 2], (&mut near, &mut out)).unwrap());
+        let expected = row(i128::try_from(n).unwrap());
+        assert_eq!(shown(&out), shown(&[expected[4].clone(), expected[2].clone()]), "row {n}");
+    }
+    out = vec![Value::Null];
+    let absent = ids[4999] + 100_000;
+    assert!(!table.get_listed(NO_TRANSACTION, absent, &[0], (&mut near, &mut out)).unwrap());
+    assert_eq!(shown(&out), shown(&[Value::Null]), "as it was");
+    let whole = table.get_columns(NO_TRANSACTION, ids[100], &[2]).unwrap().unwrap();
+    assert_eq!((whole.len(), whole[2].to_string()), (5, row(100)[2].to_string()));
+}
+
+/// Verifies: [DESIGN] RULES.md D1092, a sampled pass costs its sample:
+/// of a table of two groups, a pass whose one run of row ids lies in the
+/// second gives that run's rows alone, each with its own values, and
+/// reads the header of that group alone. MC/DC of the group passed over:
+/// none of its ids in a run chosen (its header unread) against some
+/// (read).
+#[test]
+fn a_sampled_pass_reads_only_the_groups_of_its_runs() {
+    let (table, ids) = table(5000);
+    table.gc(1, &mut |_, _, _| true).unwrap();
+    while table.maintain(1, true).unwrap() {}
+    // Every header given up, so those held after are those the pass read.
+    table.headers.set_most(0);
+    table.headers.set_most(1 << 20);
+    assert_eq!(table.headers.held().1, 0);
+    let run = ids[3000].div_euclid(128);
+    let chosen = crate::engine::rows::frozen::Chosen { runs: &[run], ids: 128 };
+    let directory = table.frozen.directory().unwrap();
+    let mut given = Vec::new();
+    table
+        .each_unshadowed(&directory, Some(chosen), |id, row| {
+            given.push((id, row[0].to_string()));
+            Ok(())
+        })
+        .unwrap();
+    let expected: Vec<(RowId, String)> = ids[..4096]
+        .iter()
+        .enumerate()
+        .filter(|&(_, &id)| id.div_euclid(128) == run)
+        .map(|(n, &id)| (id, row(i128::try_from(n).unwrap())[0].to_string()))
+        .collect();
+    assert_eq!(expected.len(), 128, "a run whole");
+    assert_eq!(given, expected);
+    assert_eq!(table.headers.held().1, 1, "the header of the run's group alone");
+    let mut all = 0_usize;
+    table
+        .each_unshadowed(&directory, None, |_, _| {
+            all += 1;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(all, 4096, "every frozen row of a pass not sampled");
 }

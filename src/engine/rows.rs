@@ -380,9 +380,9 @@ impl TableStorage for RowTable {
         self.page_missed_cost()
     }
 
-    /// A table opened has none until the database's maintenance gathers them, due once first asked for (`rows/stats.rs`).
+    /// A table opened has none until first asked for them, the plan asking gathering them itself (`rows/stats.rs`, RULES.md D1092).
     fn statistics(&self) -> Option<Arc<dyn Statistics>> {
-        self.gathered.answer(u64::try_from(self.counted.live.load(Ordering::Acquire)).unwrap_or(u64::MAX))
+        self.statistics_asked()
     }
 
     fn statistics_passes(&self) -> u64 {

@@ -691,6 +691,10 @@ verification approach DO-178C expects (§8).
 | D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
+| D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
+| D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
+| D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
+| D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 
 ### The project
 
@@ -18823,6 +18827,100 @@ Every other key is paired as before: keys of several columns, of
 texts, of integers of scales apart, which match when rescaled, and a
 key whose nulls match. The pairs, and their order, are the same of
 either.
+
+### Column store reads
+
+#### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
+
+The headers of frozen row groups were held in one map behind one mutex,
+ordered by when each was last read (D31). Every read of a header held
+took the mutex and moved the header in an ordered tree, so the scans of
+a parallel query, a group each, met on it once a group. Its bound was
+16 MiB whatever the database's memory. A header of a table of sixteen
+columns takes about 180 KiB, so the cache held some ninety of the 915
+groups of a table of sixty million rows. A scan of the table then read
+and parsed every header again on every query, and a join that fetched
+rows by id from groups all over the table parsed a header for most of
+its fetches.
+
+A header held is now kept in a slot of its group's entry of the
+directory. A read of it takes the slot's own lock shared and looks
+nothing up, so readers of different groups share no word. The cache
+keeps the bytes and a queue of the headers in the order they were put.
+When it must give one up it takes the first of the queue, but passes
+over once each header read since it was last passed over, so the
+headers read lately stay. The order is no longer exactly by last read,
+which cost the shared ordered tree.
+
+COLUMNSTORE.HEADER_CACHE_BYTES is -1 by default, which bounds the cache
+at a 64th of MEMORY.BUDGET_BYTES. That is the share the old 16 MiB was
+of the default budget of 1 GiB, so a database of the default settings
+holds what it held, and one given more memory holds the headers of as
+much more data. A value of 0 or more is the bound in bytes as before.
+What the cache holds is still reserved of the budget (D38).
+
+#### D1091. A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured
+
+A read of a frozen row by its id found the chunk of each column by
+looking at the column's chunks one after another, made a row of the
+table's width for a read of a few listed columns, and listed every
+column's place for each read. It now finds the chunk by halving, as a
+column's chunks are in the order of their rows, and a read of listed
+columns appends their values alone (`TableStorage::get_listed`, D862).
+
+The planner priced a frozen fetch a tenth more than a fetch of the
+tree's, a figure never measured. `bench/fetch.rs` now reads the same
+table from the tree and from two groups of the column store with every
+header held. FROZEN_FETCH is set from its case of four columns read by
+scattered ids against the tree's case of scattered ids, as a join or an
+index scan fetches a few columns, each a page of its own
+(`engine/rows/frozen.rs`). A fetch of one column costs less than that,
+and one of every column more.
+
+#### D1092. A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample
+
+A table opened has no statistics, and they were left to the maintenance
+thread once a plan had asked for them (D35, D473). The first plans
+after a start were therefore made without them, on the fixed
+selectivities. A grouping of a table of sixty million rows was planned
+as a sort and a streamed grouping on one thread, and ran for minutes
+where the plan made with statistics runs for a second, and joins
+planned so were worse.
+
+The plan that first asks for the statistics of a table opened now
+gathers them itself, and plans asking meanwhile wait for that pass, so
+it is made once and no plan is made without them. The pass is bounded
+whatever the table holds, as a table of more than twice the sample's
+rows is sampled (D31). If it fails, the statistics are due for the
+maintenance thread as before. A table made in this run, and every later
+pass, are as they were, so D473 still keeps a table no plan reads from
+being gathered.
+
+For the bound to hold of the column store a sampled pass had to cost
+its sample. It read the header of every group and listed and hashed
+every row id of every group to find those sampled. It now takes the
+runs of row ids chosen, passes over a group none of them lies in with
+its header unread, and of a group whose rows are every id of its range
+in order reckons a run's places from its ids
+(`engine/rows/frozen/sampled.rs`).
+
+#### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
+
+A value given for a `?` is cast to the parameter's type [ISO/IEC
+9075:1992 §17.9 GR5f]. A plan made with the values casts each as it is
+made, so a value that does not cast raised at OPEN. A plan kept reads
+its values where they are and casts one as it reads it (D610). That is
+at OPEN for a plan that can raise, which is read whole then (D931), and
+at the first FETCH for another. So the moment a cursor raised followed
+whether its plan was kept yet, and a plan learned before its table had
+statistics is learned again once they are known (D839), which the
+maintenance thread decides as it runs. The same cursor raised at OPEN
+in one run and at FETCH in another.
+
+Each value is now cast as the cursor opens (`db/prepared.rs`), and the
+first that does not cast raises CAST's error there, before any plan is
+looked for. A value already of its type is not cast again. The plans
+still cast each value as they read it, which then raises nothing.
 
 ## 2. Project layout
 
