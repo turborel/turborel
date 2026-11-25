@@ -45,7 +45,7 @@ pub(super) use late::{Deferred, resolved};
 use project::Place;
 pub(super) use project::{projectable, projected, vector_of};
 pub(super) use runtime::{Told, taken as runtime_taken, wanted};
-pub(super) use shaped::{Shaped, filter_step, probe_step, project_step, runtime_step, through};
+pub(super) use shaped::{Shaped, filter_step, outer_step, probe_step, project_step, runtime_step, semi_step, through};
 pub(super) use stream::{Batches, Kept, layout, reads_by_batch, whole_batches};
 pub use transfer::HeldLeaf;
 pub(super) use transfer::rows as transfer_rows;

@@ -5,10 +5,12 @@
 //! operator's `NodeCount` (`exec/counted.rs`). A plan made to run is never
 //! wrapped, so a statement not analyzed pays nothing for the counting.
 //!
-//! Two operators are left as they are. A part run in parallel is counted
+//! Three operators are left as they are. A part run in parallel is counted
 //! by the operator at its top, as its rows are that operator's. The sort
 //! below a window run in parallel is counted by the window, since the part
-//! sorts the window's rows itself (`exec/parallel/partitioned.rs`).
+//! sorts the window's rows itself (`exec/parallel/partitioned.rs`), and
+//! the grouping below a filter run in parallel with it by the filter,
+//! since the part filters its groups itself (`exec/parallel/grouped.rs`).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -124,15 +126,27 @@ fn wrapped(mut plan: Plan, made: &mut Vec<Arc<NodeCount>>, depth: usize) -> Plan
 fn wrap_inputs(plan: &mut Plan, made: &mut Vec<Arc<NodeCount>>, depth: usize) {
     let next = depth.saturating_add(1);
     if let Plan::Parallel(p) = plan
-        && let Plan::Window { window, .. } = &mut p.input
+        && let Some(inner) = inner_of(&mut p.input)
     {
-        // The sort's input counted, not the sort.
-        wrap_inputs(&mut window.input, made, next.saturating_add(1));
+        // The inner operator's input counted, not the operator.
+        wrap_inputs(inner, made, next.saturating_add(1));
         let top = taken(&mut p.input);
         p.input = counted_node(top, made);
         return;
     }
     plan.each_input(&mut |input| *input = wrapped(taken(input), made, next));
+}
+
+/// The operator under the top of the part `part` that the top counts as
+/// its own: the sort below a window, and the grouping below a filter, its
+/// HAVING condition, whose groups the part filters itself (RULES.md
+/// D1073).
+fn inner_of(part: &mut Plan) -> Option<&mut Plan> {
+    if let Plan::Window { window, .. } = part {
+        return Some(&mut window.input);
+    }
+    let Plan::Filter { input, .. } = part else { return None };
+    matches!(**input, Plan::Aggregate { .. }).then_some(&mut **input)
 }
 
 /// `plan` counted, its count added to `made`.

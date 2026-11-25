@@ -31,6 +31,7 @@
 mod batched;
 mod batches;
 mod build;
+mod each;
 mod grouped;
 mod indexed;
 mod partitioned;
@@ -43,6 +44,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub(super) use self::batches::streamed_batches;
+pub(super) use self::each::each_morsel;
 pub(super) use self::grouped::grouped_told;
 use self::pipeline::Pipeline;
 pub(super) use self::probe::pipelined;
@@ -135,7 +137,7 @@ pub(super) fn parallel(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     if let Plan::Counted(c) = input {
         return super::counted::through(*c, db, |top| parallel(Plan::Parallel(Box::new(Parallel { degree, input: top })), db, tx));
     }
-    let run: Runs = if matches!(input, Plan::Aggregate { .. } | Plan::Distinct { .. }) {
+    let run: Runs = if grouped::is_one(&input) {
         grouped::grouped
     } else if matches!(input, Plan::Sort { .. }) {
         sorted::sorted

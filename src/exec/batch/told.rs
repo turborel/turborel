@@ -20,6 +20,10 @@
 //! held a null there, as it would of every row
 //! (`runtime::applied_warning`). Each join passes a filter only if the
 //! rest of its condition cannot raise (`runtime::passed`).
+//!
+//! (RULES.md D1072) A grouping that takes no filter is gathered too, and
+//! one run in parallel, alone or under its HAVING condition, so a join
+//! over it runs by batch. No filter told it reaches its input.
 
 use super::joined::{gathered, rows_of};
 use super::late::Deferred;
@@ -32,7 +36,7 @@ use crate::error::Result;
 use crate::exec::join::{Reads, indexed_over, merged_over};
 use crate::exec::{Db, broken, execute, failed};
 use crate::index::{BTREE_METHOD, Probe};
-use crate::physical::{Plan, Preserved};
+use crate::physical::{Parallel, Plan, Preserved};
 use crate::txn::TxId;
 use crate::value::{CompOp, DataType};
 
@@ -60,6 +64,43 @@ pub(super) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     let Plan::Aggregate { groups, aggs, streamed: false, .. } = plan else { return None };
     let width = groups.len().saturating_add(aggs.len());
     filterable(plan, db).then(|| ((0..width).collect(), width))
+}
+
+/// \[DESIGN\] (RULES.md D1072) The layout of `plan` as a stream gathers
+/// it: one that takes filters (`layout`), or a grouping not streamed that
+/// takes none, as one of SUM does, every column of its rows. So a join
+/// over a grouping runs by batch whatever its set functions, and tells
+/// its other operand's scan its filters.
+pub(super) fn gathered_layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
+    layout(plan, db).or_else(|| grouping_layout(plan))
+}
+
+/// Every column of the rows of `plan`, a grouping not streamed, and their
+/// width.
+fn grouping_layout(plan: &Plan) -> Option<(Vec<usize>, usize)> {
+    let Plan::Aggregate { groups, aggs, streamed: false, .. } = plan else { return None };
+    let width = groups.len().saturating_add(aggs.len());
+    Some(((0..width).collect(), width))
+}
+
+/// \[DESIGN\] (RULES.md D1072) The layout of `part`, a part run in
+/// parallel that is no pipeline, if it is a grouping, or a filter over
+/// one, its HAVING condition (RULES.md D1073): every column of its rows,
+/// which its threads make and a stream gathers.
+pub(super) fn part_layout(part: &Plan) -> Option<(Vec<usize>, usize)> {
+    grouping_layout(if let Plan::Filter { input, .. } = part { input } else { part })
+}
+
+/// The batches of `part`, a part run in parallel that is a grouping, or
+/// a filter over one (`part_layout`): its rows, made by the part's
+/// threads, gathered.
+///
+/// # Errors
+///
+/// As the part's rows; SQLCODE -910 of a part that gives no batches.
+pub(super) fn part_batches(part: Parallel, (db, tx): (&Db, TxId)) -> Result<Batches> {
+    let (columns, _) = part_layout(&part.input).ok_or_else(|| broken("a part run in parallel that gives no batches"))?;
+    Ok(gathered(execute(Plan::Parallel(Box::new(part)), db, tx), &columns))
 }
 
 /// Whether `plan`, an operator run row by row whose rows a stream
@@ -141,7 +182,8 @@ pub(super) fn merge_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferr
     Ok(gathered(merged_over(plan, (told_rows(left, (db, tx)), told_rows(right, (db, tx))), db, tx), &columns))
 }
 
-/// The batches of the grouping `plan`, one that takes filters
+/// The batches of the grouping `plan`: of one that takes no filter, its
+/// rows gathered; of one that takes filters
 /// (`batch::filterable`), its groups gathered, its input told the
 /// filters of its grouping columns `deferred` tells it: its scans, if no
 /// set function takes a column that may hold a null; else its batches,
@@ -152,6 +194,11 @@ pub(super) fn merge_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferr
 ///
 /// As its input's; SQLCODE -910 of a plan not of such a grouping.
 pub(super) fn grouped_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Result<Batches> {
+    // One that takes no filter gives its rows, gathered (RULES.md D1072).
+    if layout(&plan, db).is_none() {
+        let (columns, _) = grouping_layout(&plan).ok_or_else(|| broken("a grouping that gives no batches"))?;
+        return Ok(gathered(execute(plan, db, tx), &columns));
+    }
     let (columns, _) = layout(&plan, db).ok_or_else(|| broken("a grouping that gives no batches"))?;
     let below = runtime::taken(&plan, deferred.filters(), db).0;
     let (Some(read), Plan::Aggregate { aggs, input, .. }) = (read_of(&plan, db), plan) else {

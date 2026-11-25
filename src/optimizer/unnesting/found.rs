@@ -111,6 +111,27 @@ fn semi_joins(cond: &Cond, out: &mut Vec<Found>) {
     }
 }
 
+/// \[DESIGN\] (RULES.md D1065) The uncorrelated subqueries of the
+/// conjuncts of the filter `node` that are NOT of a quantified
+/// comparison, or one with ALL, as NOT IN and `<> ALL` are, each once.
+/// Made NOT EXISTS, or EXISTS, of a subquery that compares the values
+/// with its rows, each is an antijoin or a semi join (`semi.rs`); one
+/// that is made neither stays as it is, read once by the executor.
+pub(super) fn negated(node: &Node<'_>) -> Vec<Found> {
+    let Node::Filter(cond, _) = node else { return Vec::new() };
+    let (mut conjuncts, mut out) = (Vec::new(), Vec::<Found>::new());
+    split_and((*cond).clone(), &mut conjuncts);
+    for c in conjuncts {
+        let (compared, not) = if let Cond::Not(inner) = c { (*inner, true) } else { (c, false) };
+        let Cond::Quantified(_, _, quantifier, s) = compared else { continue };
+        let taken = (not && quantifier != Quantifier::One) || quantifier == Quantifier::All;
+        if taken && s.outer.is_empty() && !out.iter().any(|f| f.sub.id() == s.id()) {
+            out.push(Found { sub: s, conditional: false });
+        }
+    }
+    out
+}
+
 /// Notes `s`, if correlated, as met at a place `conditional` or not.
 fn note(s: &Arc<Subquery>, conditional: bool, out: &mut Vec<Found>) {
     if s.outer.is_empty() {

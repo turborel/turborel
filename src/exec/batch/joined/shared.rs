@@ -18,6 +18,8 @@
 //! keys are not all numbers, datetimes or truth values hashes its texts
 //! by SipHash keyed by the database's seed from the first.
 
+mod found;
+mod outer;
 mod paired;
 
 use std::sync::Arc;
@@ -55,7 +57,7 @@ pub(in crate::exec) struct SharedTable {
 }
 
 /// The pairs of a probing batch not yet gathered: of each, its row of the
-/// batch and its built row.
+/// batch and its built row, or `NO_ROW` of a LEFT join's row none matches.
 type Pairs = (Vec<u32>, Vec<u32>);
 
 /// Row `r` as a pick: `NO_ROW` of one past what a pick numbers.

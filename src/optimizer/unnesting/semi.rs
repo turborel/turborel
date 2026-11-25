@@ -52,7 +52,8 @@ impl Rule for SemiJoins {
         let LogicalPlan::Filter { cond, .. } = plan else { return None };
         let node = Node::of(plan)?;
         // A comparison with a subquery of one row at most (`scalar.rs`).
-        found::candidates(&node).iter().find_map(|f| semi_joined(&node, cond, f, ctx)).or_else(|| scalar::joined(cond, node.input(), ctx))
+        let made = found::candidates(&node).iter().chain(&found::negated(&node)).find_map(|f| semi_joined(&node, cond, f, ctx));
+        made.or_else(|| scalar::joined(cond, node.input(), ctx))
     }
 }
 
@@ -87,6 +88,8 @@ fn semi_joined(node: &Node<'_>, cond: &Cond, found: &Found, ctx: &RuleContext<'_
     };
     let w = input.width();
     let joined = if let Some((on, right, _)) = direct(sub, w) {
+        // A NOT IN of columns that hold no null, keyed (RULES.md D1077).
+        let on = super::filled::keyed(on, (&left, &right), catalog);
         LogicalPlan::SemiJoin { anti, cond: on, left: Box::new(left), right: Box::new(right) }
     } else {
         let bound = simple::pulled(sub, ctx).filter(|b| b.defaults.is_none());

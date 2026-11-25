@@ -177,7 +177,7 @@ impl Waves<'_> {
     fn finished(mut self) -> Result<Runs> {
         if !self.waved && self.wave.is_empty() {
             let Some(table) = self.direct.take() else { return Ok(Held::Kept(Vec::new())) };
-            let mut groups = table.finished()?;
+            let mut groups = self.grouping.kept(table.finished()?, &Runner::new(self.run.0, self.run.1))?;
             groups.sort_unstable_by_key(|g| g.0);
             return Ok(Held::Kept(vec![groups]));
         }
@@ -240,9 +240,10 @@ fn finished_wave(
     wave: Vec<Arc<Made>>,
     (db, tx, degree): (&Db, TxId, usize),
 ) -> Result<Vec<Vec<(u64, Row)>>> {
-    let (grouping, kept, wave) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave));
+    let (grouping, kept, wave, db_for) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), db.clone());
     let finish = Box::new(move |p: usize| {
-        let mut groups = thawed_and_merged(&grouping, (&kept, p), &wave)?.finished()?;
+        let finished = thawed_and_merged(&grouping, (&kept, p), &wave)?.finished()?;
+        let mut groups = grouping.kept(finished, &Runner::new(&db_for, tx))?;
         groups.sort_unstable_by_key(|g| g.0);
         Ok(groups)
     });

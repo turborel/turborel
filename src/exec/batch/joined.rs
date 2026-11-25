@@ -48,6 +48,7 @@ use crate::txn::{TxId, checked};
 use crate::value::Value;
 pub(in crate::exec) use held::{TABLE_ROW_BYTES, dense_wanted};
 use probe::Kind;
+pub(in crate::exec) use semi::SemiStep;
 pub(in crate::exec) use shared::{Filters, Frame, SharedTable};
 
 /// The operands of `plan`, if it is a join: a product, a hash join or an
@@ -390,7 +391,8 @@ pub(super) fn ordered(plan: &Plan) -> bool {
 /// Whether the rows of `plan`, a subtree that gives batches, are asked for
 /// in an order, as the planner relies on (`physical.rs`) where a batch
 /// comes in none (RULES.md D31): a scan's in its table's
-/// (`TableStorage::scan_ordered`), a join's in its left operand's. A plan
+/// (`TableStorage::scan_ordered`), a join's in its left operand's, a semi
+/// join's too. A plan
 /// that gives no batches is taken to be, so its order is kept, as are an
 /// index scan's and an index or merge join's, which a stream gathers
 /// (`told.rs`). A grouping by hash gives its groups in none.
@@ -401,13 +403,15 @@ fn in_order(plan: &Plan) -> bool {
         Plan::Counted(c) => in_order(&c.input),
         Plan::Transfer(t) => t.input().is_some_and(in_order),
         Plan::Product { left, .. } | Plan::HashJoin { left, .. } | Plan::OuterJoin { left, .. } => in_order(left),
+        // A semi join of streams gives its left's rows on, those it
+        // keeps, as they come (RULES.md D540, D1070).
+        Plan::SemiJoin(s) => in_order(&s.left),
         Plan::Append { left, right, .. } => in_order(left) || in_order(right),
         Plan::Aggregate { streamed, .. } => *streamed,
         Plan::Nearest(_)
         | Plan::IndexScan { .. }
         | Plan::IndexJoin { .. }
         | Plan::MergeJoin(_)
-        | Plan::SemiJoin(_)
         | Plan::MarkJoin(_)
         | Plan::RangeJoin(_)
         | Plan::SetOp { .. }
