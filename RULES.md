@@ -718,6 +718,8 @@ verification approach DO-178C expects (§8).
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
+| D1163 | A zone settled visible to every reader is saved so, and opens settled |
+| D1164 | A start that changes nothing records no catalog image |
 
 ### The project
 
@@ -19533,6 +19535,57 @@ Such a column is now resolved of its rows' places as they come, and the
 `k`th row kept takes the `k`th value decoded (`storage/batch/late.rs`).
 Rows given out of order or more than once, and a column a join
 gathered, are resolved as before.
+
+#### D1163. A zone settled visible to every reader is saved so, and opens settled
+
+A row store table's zones are saved at each checkpoint with its pages
+(D31), but whether a zone's rows were visible to every reader (D34) was
+kept in memory alone. A table opened had every zone unsettled, and the
+maintenance thread read each zone's rows again to settle it, at every
+start. Of a large table that is a pass over all its rows, which the
+read-ahead thread fed from disk while queries ran, pushing their pages
+out of the cache.
+
+A zone settled visible is now saved with a flag of its own
+(`zones/saved.rs`), and the table opened has it settled visible. Its
+rows were committed at or before the horizon when it was settled, none
+a deletion, no version left to collect, and every reader after the
+table opens sees what was committed before it closed. A write after
+the save clears the flag before its index entries are written and
+marks the zone's segment to be saved again, and a row recovery writes
+does so too. A zone saved unsettled, or not visible, opens unsettled
+as before. So a database reaches its steady state once, after its
+first checkpoint, and keeps it from start to start.
+
+#### D1164. A start that changes nothing records no catalog image
+
+Each start recorded two catalog images: one, not clean, as the
+database opened, so a crash from then on was recovered, and one, clean,
+as it closed, after logging a checkpoint record. With nothing changed
+the catalog file grew by two images a start until it compacted.
+
+A database reopened clean now records nothing as it opens. It makes the
+file `opened` in its directory, durably, before anything else runs, and
+its clean close takes it out once its image is durable
+(`db/files/running.rs`). Opened while the file is there, its last image
+is taken as not clean, and it is recovered from it as from the image
+the open recorded before. The log alone cannot tell a crash: a
+transaction open at the crash may have logged nothing yet. A database
+recovered, or made, records its image again, not clean, as before.
+
+A close that finds the log where the last clean image left it logs no
+checkpoint record, and a checkpoint or close whose image is the one
+recorded last, but for a higher id given, records none
+(`db/checkpoint.rs`, `db/image.rs`). The ids given since are held by
+nothing kept, as no record was logged. An image now lists its tables
+and indexes by name, not in the order a map held them, so the same
+database is the same bytes. A catalog in other formats than its
+settings say is recorded again, so it moves on to them.
+
+The settings a database is started with, as a server's configuration
+gives them, are set again at each start, and each was logged, so the log
+moved on and the close recorded an image. A setting set to the value it
+already has is no longer logged (`db/settings.rs`).
 
 ## 2. Project layout
 

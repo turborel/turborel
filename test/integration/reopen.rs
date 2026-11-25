@@ -427,3 +427,63 @@ fn a_database_is_open_in_one_place_at_a_time() {
     assert_eq!(rows(&second.session("S"), "SELECT K FROM T"), Ok(vec!["1".into()]));
     assert!(!marker.exists(), "cleared by the open that holds the lock");
 }
+
+/// The bytes of each catalog file of the database in `dir`, by name.
+fn catalog_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<(String, Vec<u8>)> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.file_name().is_some_and(|name| name.to_string_lossy().starts_with("catalog.")))
+        .map(|path| (path.file_name().unwrap().to_string_lossy().into_owned(), std::fs::read(&path).unwrap()))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Verifies: [DESIGN] RULES.md D1164, D25, a start that changes nothing
+/// records no image: a database reopened clean, read, its maintenance
+/// done, and closed leaves its catalog files as they were, start after
+/// start, marked running only until it closes; a row committed after
+/// such a start is recovered from the clean image after a crash, and the
+/// close after it records an image.
+///
+/// Regression test (R-TEST-7): each start recorded two images, one as it
+/// opened and one as it closed, so the catalog grew with nothing changed.
+#[test]
+fn a_start_that_changes_nothing_records_no_image() {
+    let scratch = Scratch::new("reopen-unchanged");
+    let dir = scratch.path("db");
+    let (db, _) = open(&dir);
+    define_kept(&db);
+    fill_kept(&db);
+    let expected = answers(&db);
+    db.close().unwrap();
+    drop(db);
+    // The first start may keep what its maintenance found.
+    let start = || {
+        let (db, opened) = open(&dir);
+        assert_eq!(opened, Opened::Reopened);
+        assert!(dir.join("opened").exists(), "marked running");
+        assert_eq!(answers(&db), expected);
+        db.maintain().unwrap();
+        db.close().unwrap();
+        assert!(!dir.join("opened").exists(), "closed clean");
+    };
+    start();
+    let before = catalog_files(&dir);
+    for _ in 0..3 {
+        start();
+        assert_eq!(catalog_files(&dir), before, "no image recorded");
+    }
+    let (crashed, opened) = open(&dir);
+    assert_eq!(opened, Opened::Reopened);
+    let s = crashed.session("APP");
+    s.run("INSERT INTO T VALUES (9000, 'after', 1)").unwrap();
+    s.commit().unwrap();
+    let (db, opened) = open(&dir);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    assert_eq!(rows(&db.session("APP"), "SELECT K FROM T WHERE NAME = 'after'"), Ok(vec!["9000".into()]));
+    db.close().unwrap();
+    assert_ne!(catalog_files(&dir), before, "the change recorded");
+    drop((db, s, crashed));
+}

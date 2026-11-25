@@ -50,7 +50,7 @@ impl Database {
         };
         // Taken shut: no definition is half published.
         let st = self.snapshot()?;
-        let (image, counted) = st.capture_checkpoint(false)?;
+        let (image, counted) = st.capture_checkpoint(super::Ending::NotClean)?;
         let stale = st.hold_stale();
         drop(shut);
         took.shut_micros = micros(shutting);
