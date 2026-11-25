@@ -155,6 +155,8 @@ fn a_case_is_bounded_by_its_widest_results() {
     let coalesced = plus_one(case(Expr::Column(0), number(0, 2)));
     assert!(!raises(&coalesced, &exact(35, 0), &exact(1, 0)), "35 digits and 2, then one more");
     assert!(raises(&coalesced, &exact(36, 0), &exact(1, 0)), "36 digits and 2, then one more");
+    let later = plus_one(case(number(0, 2), Expr::Column(0)));
+    assert!(raises(&later, &exact(36, 0), &exact(1, 0)), "the wider result is the later one");
     let nulled = plus_one(case(Expr::Const(Value::Null), Expr::Column(0)));
     assert!(!raises(&nulled, &exact(37, 0), &exact(1, 0)), "a null result bounds nothing");
     assert!(raises(&plus_one(case(Expr::Const(Value::Null), Expr::Const(Value::Null))), &exact(1, 0), &exact(1, 0)), "all null");

@@ -76,7 +76,7 @@ pub(in crate::exec) fn layout(plan: &Plan, db: &State) -> Option<(Vec<usize>, us
         // A top-N's first rows, few, made batches (D380).
         Plan::Limit { input, .. } => matches!(**input, Plan::Sort { most: None, .. }).then(|| layout(input, db)).flatten(),
         // Rows made row by row, gathered (RULES.md D600).
-        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => told::layout(plan, db),
+        Plan::IndexScan { .. } | Plan::IndexJoin { .. } | Plan::MergeJoin(_) | Plan::Aggregate { .. } => told::gathered_layout(plan, db),
         Plan::Append { .. } => {
             let mut held = None;
             for operand in appended(plan) {
@@ -152,11 +152,12 @@ fn parallel_layout(input: &Plan, db: &State) -> Option<(Vec<usize>, usize)> {
     if let Plan::Window { window, .. } = input {
         return windowed_layout(window, db);
     }
-    // A grouping that takes filters, its groups gathered (RULES.md D1063).
+    // A grouping that takes filters, its groups gathered (RULES.md D1063);
+    // any other grouping, alone or under its HAVING (RULES.md D1072).
     if let Some(grouping) = super::parted::grouping_in(input) {
-        return told::layout(grouping, db);
+        return told::gathered_layout(grouping, db);
     }
-    crate::exec::parallel::pipelined(input).then(|| layout(input, db)).flatten()
+    if crate::exec::parallel::pipelined(input) { layout(input, db) } else { told::part_layout(input) }
 }
 
 /// [ISO/IEC 9075-2:2023 §7.15] The layout of a window over batches: every

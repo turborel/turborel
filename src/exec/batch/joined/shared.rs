@@ -13,6 +13,9 @@
 //! keys are not all numbers, datetimes or truth values hashes its texts
 //! by SipHash keyed by the database's seed from the first.
 
+mod found;
+mod outer;
+
 use std::sync::Arc;
 
 use super::super::runtime::Told;
