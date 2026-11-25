@@ -90,6 +90,6 @@ impl PhysicalPlanner<'_> {
         let pairs = outer * choice.read.each;
         let entries = (outer + inner) * model.sort_compare;
         let rest = if choice.preserve == Preserve::Inner { 0.0_f64 } else { storage.scan_cost(read.needed) };
-        Some(entries + pairs.min(outer) * storage.fetch_cost() + rest)
+        Some(entries + pairs.min(outer) * storage.fetch_cost(read.needed.len()) + rest)
     }
 }

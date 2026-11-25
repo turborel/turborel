@@ -104,7 +104,7 @@ fn storage_contract(engine: &dyn StorageEngine) {
         assert!(counted.is_none_or(|n| n == 3), "a count of {counted:?}");
         while table.maintain(u64::MAX, true).unwrap() {}
     }
-    for cost in [table.scan_cost(&[0]), table.fetch_cost()] {
+    for cost in [table.scan_cost(&[0]), table.fetch_cost(1)] {
         assert!(cost.is_finite() && cost >= 0.0, "cost {cost}");
     }
 }

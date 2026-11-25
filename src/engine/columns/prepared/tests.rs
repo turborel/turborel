@@ -49,18 +49,22 @@ fn file() -> (std::sync::Arc<BufferPool>, FileId) {
     memory_file(&MemoryBudget::new(MEMORY_POOL_BYTES << 4_i32), "a test").unwrap()
 }
 
-/// A group of `ROWS` rows, its pages of 2,048 bytes.
-fn group(pool: &BufferPool, file: FileId) -> (Pages<'_, Plain>, Group) {
-    let pages = Pages {
-        pool,
-        file,
-        capacity: 2048,
-        sealing: &Plain,
-        compress: true,
-        pax: false,
-        imprints: true,
-        kernels: &crate::kernels::Portable,
-    };
+/// Pages opened by an encoding: each byte stored flipped.
+struct Flipped;
+
+impl Seal for Flipped {
+    fn seal(&self, _: u64, content: &[u8]) -> Result<Vec<u8>> {
+        Ok(content.iter().map(|b| !b).collect())
+    }
+    fn open<'a>(&self, _: u64, stored: &'a [u8]) -> Result<Cow<'a, [u8]>> {
+        Ok(Cow::Owned(stored.iter().map(|b| !b).collect()))
+    }
+}
+
+/// A group of `ROWS` rows, its pages of 2,048 bytes, sealed by `sealing`.
+fn group<'a, S: Seal>(pool: &'a BufferPool, file: FileId, sealing: &'a S) -> (Pages<'a, S>, Group) {
+    let pages =
+        Pages { pool, file, capacity: 2048, sealing, compress: true, pax: false, imprints: true, kernels: &crate::kernels::Portable };
     let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
     let all: Vec<Row> = (0..ROWS).map(row).collect();
     let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[], &[])).unwrap();
@@ -82,7 +86,7 @@ fn of_values(v: &[Value]) -> Vec<String> {
 
 /// Column `c` of the rows `from` to `to` as the batch scan reads it,
 /// through `prepared`.
-fn read(pages: &Pages<'_, Plain>, group: &Group, prepared: &mut Prepared, (c, from, to): (usize, u32, u32)) -> Vec<String> {
+fn read<S: Seal>(pages: &Pages<'_, S>, group: &Group, prepared: &mut Prepared, (c, from, to): (usize, u32, u32)) -> Vec<String> {
     let t = &TYPES[c];
     if let Some(v) = ints(group, (pages, &mut *prepared), (c, t), (from, to)).unwrap() {
         return of_values(v.values());
@@ -111,7 +115,7 @@ fn between(whole: &[Row], (from, to): (u32, u32)) -> &[Row] {
 #[test]
 fn chunks_are_opened_once_for_their_runs() {
     let (pool, file) = file();
-    let (pages, group) = group(&pool, file);
+    let (pages, group) = group(&pool, file, &Plain);
     let whole = rows(&group, &pages, &TYPES, &[0, 1, 2, 3, 4, 5], (0, ROWS)).unwrap();
     let chunks: usize = group.columns.iter().map(Vec::len).sum();
     assert!(group.columns.iter().filter(|zones| zones.len() > 1).count() >= 4, "most columns span chunks");
@@ -139,7 +143,7 @@ fn chunks_are_opened_once_for_their_runs() {
 #[test]
 fn positions_read_through_the_cache() {
     let (pool, file) = file();
-    let (pages, group) = group(&pool, file);
+    let (pages, group) = group(&pool, file, &Plain);
     let whole = rows(&group, &pages, &TYPES, &[0, 1, 2, 3, 4, 5], (0, ROWS)).unwrap();
     let positions: Vec<u32> = (0..ROWS).filter(|n| n % 13 < 3).collect();
     let picked: Vec<Row> = positions.iter().map(|&p| whole[usize::try_from(p).unwrap()].clone()).collect();
@@ -153,5 +157,38 @@ fn positions_read_through_the_cache() {
         assert_eq!(of_texts(&symbols), shown(4, &picked));
         let values = values_at(&group, (&pages, &mut prepared), (3, &DOUBLE), &positions).unwrap();
         assert_eq!(of_values(&values), shown(3, &picked));
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1094, a chunk read in place: of a group
+/// whose pages passed through no encoding no chunk's bytes are kept, each
+/// run reading them in the pool, and every column reads as its rows; of
+/// a group whose pages an encoding opens, each chunk's bytes are kept,
+/// opened once, and read alike. MC/DC of the bytes kept: a page as
+/// stored (none kept) against one opened by an encoding (kept).
+#[test]
+fn a_chunk_stored_as_it_is_is_read_in_the_pool() {
+    let (pool, file) = file();
+    let runs: Vec<(u32, u32)> = (0..ROWS).step_by(700).map(|f| (f, (f + 700).min(ROWS))).collect();
+    let kept = |prepared: &Prepared| -> Vec<(bool, bool)> {
+        prepared.columns.iter().flatten().map(|held| (held.in_place, held.bytes.is_empty())).collect()
+    };
+    let (pages, plain) = group(&pool, file, &Plain);
+    let whole = rows(&plain, &pages, &TYPES, &[0, 1, 2, 3, 4, 5], (0, ROWS)).unwrap();
+    let mut prepared = Prepared::default();
+    for &run in &runs {
+        for c in 0..TYPES.len() {
+            assert_eq!(read(&pages, &plain, &mut prepared, (c, run.0, run.1)), shown(c, between(&whole, run)), "column {c}, {run:?}");
+        }
+        assert!(!kept(&prepared).is_empty() && kept(&prepared).iter().all(|&held| held == (true, true)), "read in the pool");
+    }
+    let (sealed_pages, sealed) = group(&pool, file, &Flipped);
+    let mut opened = Prepared::default();
+    for &run in &runs {
+        for c in 0..TYPES.len() {
+            let got = read(&sealed_pages, &sealed, &mut opened, (c, run.0, run.1));
+            assert_eq!(got, shown(c, between(&whole, run)), "sealed, column {c}, {run:?}");
+        }
+        assert!(!kept(&opened).is_empty() && kept(&opened).iter().all(|&held| held == (false, false)), "opened once and kept");
     }
 }

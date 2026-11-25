@@ -40,7 +40,7 @@ impl PhysicalPlanner<'_> {
         let model = self.weights();
         let rows = cost_of(storage.row_count());
         let each = rows * share;
-        let cost = model.index_descent * (rows + 1.0_f64).log2() + each * storage.fetch_cost();
+        let cost = model.index_descent * (rows + 1.0_f64).log2() + each * storage.fetch_cost(read.needed.len());
         let probing = Probing {
             table: read.table.clone(),
             filter: read.filter.cloned(),

@@ -362,7 +362,7 @@ impl PhysicalPlanner<'_> {
         // Overlap can require more refinement than this estimate. That
         // affects cost alone: only runtime bounds decide when to stop.
         let read = (cost_of(first) / fraction).min(all);
-        let cost = model.index_descent * (all + 1.0_f64).log2() + read * storage.fetch_cost();
+        let cost = model.index_descent * (all + 1.0_f64).log2() + read * storage.fetch_cost(columns.len());
         let sorted = model.sort(all * fraction);
         (cost + model.sort(cost_of(first)) < storage.scan_cost(columns) + sorted).then_some(cost)
     }

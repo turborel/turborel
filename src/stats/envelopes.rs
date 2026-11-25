@@ -251,5 +251,7 @@ fn cells(frame: Bounds, sample: &[Bounds]) -> Vec<Cell> {
     cells
 }
 
+mod kept;
+
 #[cfg(test)]
 mod tests;

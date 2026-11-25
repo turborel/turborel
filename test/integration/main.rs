@@ -424,6 +424,7 @@ mod statistical_set_functions;
 mod statistics;
 mod statistics_background;
 mod statistics_estimates;
+mod statistics_kept;
 mod storage_defaults;
 mod stored_function_calls;
 mod stores;

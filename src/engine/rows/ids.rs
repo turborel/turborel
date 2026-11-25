@@ -162,6 +162,7 @@ impl RowTable {
             zones: self.zones.directory(),
             rows,
             lobs: self.lobs.meta(),
+            statistics: self.gathered.page(),
         }
     }
 }

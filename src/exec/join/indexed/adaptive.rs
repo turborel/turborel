@@ -62,7 +62,7 @@ fn cheaper(join: &IndexJoin, held: &Held, columns: &[usize], db: &State) -> Resu
         }
         let Some(probe) = join.probe.bind(row, join.table.ix.columns.len())? else { continue };
         let Some(matches) = join.table.index.estimate(&probe) else { return Ok(false) };
-        probes += model.index_descent * (rows + 1.0_f64).log2() + cost_of(matches) * storage.fetch_cost();
+        probes += model.index_descent * (rows + 1.0_f64).log2() + cost_of(matches) * storage.fetch_cost(columns.len());
     }
     Ok(scanned < probes)
 }

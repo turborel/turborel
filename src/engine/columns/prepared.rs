@@ -3,10 +3,18 @@
 //! a vector of rows, and a chunk compressed holds many more, so each run
 //! reopening, unsealing and parsing the chunks it touches read a chunk of
 //! 65,536 rows about 32 times a column. A chunk read is kept here, by its
-//! column and its first row, its bytes opened (owned, as the page it is on
-//! is not held), its table of symbols read and, of a dictionary, its
-//! entries made integers or text, so the runs after read it by parsing
-//! its few header bytes alone.
+//! column and its first row, its table of symbols read and, of a
+//! dictionary, its entries made integers or text, so the runs after read
+//! it by parsing its few header bytes alone.
+//!
+//! The bytes of a chunk whose page passed through no encoding are not
+//! kept (RULES.md D1094): each run reads them in the pool, its page held
+//! while the run is decoded of it and no longer, so a chunk is never
+//! copied to be read. A page of frozen rows is not written again while a
+//! reader holds its group, and one found in the pool is found by a hash
+//! and a latch, which costs less than copying it. Only the bytes of a
+//! chunk whose page had to be opened by its encodings are kept, owned,
+//! as opening it once for all its runs is what D352 saves.
 //!
 //! A scan reads a group's runs in order, so a chunk ended before the one
 //! read is not read again: it is let go then, and a column keeps at most
@@ -38,7 +46,11 @@ struct Held {
     /// Its first row in the group, and the row past its last.
     first: u32,
     end: u32,
+    /// Its bytes, opened; none kept of a chunk read in the pool.
     bytes: Vec<u8>,
+    /// Whether its bytes are read in the pool by each run, as its page
+    /// passed through no encoding (RULES.md D1094).
+    in_place: bool,
     table: Option<(Box<Symbols>, usize)>,
     made: Made,
 }
@@ -116,27 +128,33 @@ impl Prepared {
             kept.len().saturating_sub(1)
         };
         let held = kept.get(at).ok_or_else(|| super::corrupt("a chunk held is gone"))?;
-        let chunk = Chunk::parse_with(&held.bytes, held.table.as_ref().map(|(s, len)| (&**s, *len)))?;
-        read(&chunk, &held.made)
+        let table = held.table.as_ref().map(|(s, len)| (&**s, *len));
+        if held.in_place {
+            // Its page is held while the run is decoded of it.
+            return pages.with_run(&zone.run, |bytes| read(&Chunk::parse_with(bytes, table)?, &held.made));
+        }
+        read(&Chunk::parse_with(&held.bytes, table)?, &held.made)
     }
 }
 
-/// The chunk `zone`, of a column of type `t`, read of `pages` into
-/// `bytes`, and what its runs share made of it.
+/// The chunk `zone`, of a column of type `t`, read of `pages`, and what
+/// its runs share made of it: its bytes kept in `bytes` only if its page
+/// had to be opened by its encodings.
 fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t): (&Zone, &DataType), mut bytes: Vec<u8>) -> Result<Held> {
     bytes.clear();
-    pages.with_run(&zone.run, |b| {
-        bytes.extend_from_slice(b);
-        Ok(())
+    let (table, made, in_place) = pages.with_run_told(&zone.run, |read, in_place| {
+        if !in_place {
+            bytes.extend_from_slice(read);
+        }
+        let chunk = Chunk::parse(read)?;
+        // Entries as text of a character string type, else as integers.
+        let made = match padding(t) {
+            Some(pad) => Made { words: None, entries: chunk.body.entry_texts(pad) },
+            None => Made { words: chunk.body.entry_words(), entries: None },
+        };
+        Ok((chunk.table(), made, in_place))
     })?;
-    let chunk = Chunk::parse(&bytes)?;
-    let table = chunk.table();
-    // Entries as text of a character string type, else as integers.
-    let made = match padding(t) {
-        Some(pad) => Made { words: None, entries: chunk.body.entry_texts(pad) },
-        None => Made { words: chunk.body.entry_words(), entries: None },
-    };
-    Ok(Held { first: zone.run.first, end: zone.run.first.saturating_add(zone.run.rows), bytes, table, made })
+    Ok(Held { first: zone.run.first, end: zone.run.first.saturating_add(zone.run.rows), bytes, in_place, table, made })
 }
 
 impl Chunk<'_> {
