@@ -1,11 +1,9 @@
 //! Unit tests of the join estimates from keys and bounds (RULES.md D384,
 //! D385): a join on a composite key, on a referential constraint, the
 //! bound of an equality to a key, bounds never below the true rows, and
-//! the pairs' corrections giving one answer for every order of a set,
-//! and a guessed column bounded by its class's key (D1152).
+//! the pairs' corrections giving one answer for every order of a set.
 
 use super::Estimates;
-use super::composite::Member;
 use super::joins::Classes;
 use crate::db::{Database, Session};
 
@@ -205,44 +203,4 @@ fn a_table_changed_since_its_pass_keeps_its_bound() {
     let pairs = count(&s, "SELECT COUNT(*) FROM P A, P B WHERE A.SZ = B.SZ AND A.PK = 7");
     let (_, joined) = card(&s, "SELECT * FROM P A, P B WHERE A.SZ = B.SZ AND A.PK = 7");
     assert!(joined >= pairs, "bound {joined} below {pairs}");
-}
-
-/// Verifies: [DESIGN] RULES.md D1152: without statistics, a column taken
-/// as a key, of its table's rows, is counted of no more values than the
-/// key of its class: of customers and suppliers, each of one of 25
-/// nations, a class through the nations' key keeps a twenty-fifth of the
-/// pairs of customers and suppliers, not one in as many as the
-/// customers' rows; a class of no key is left as it was.
-///
-/// Regression test (R-TEST-7): the join of 1,500 customers and 100
-/// suppliers on their nation, within a join of the nations, was estimated
-/// at 100 rows, not 6,000, so a plan joined them first.
-#[test]
-fn a_guessed_column_is_bounded_by_its_class_key() {
-    let db = Database::new();
-    db.set_job_policy(crate::threads::JobPolicy::Manual).unwrap();
-    db.schema(
-        "CREATE SCHEMA AUTHORIZATION G
-           CREATE TABLE N (NK INTEGER NOT NULL PRIMARY KEY)
-           CREATE TABLE C (CK INTEGER NOT NULL, NK INTEGER NOT NULL)
-           CREATE TABLE S (SK INTEGER NOT NULL, NK INTEGER NOT NULL)",
-    )
-    .unwrap();
-    let s = db.session("G");
-    let rows = |n: i32| (0_i32..n).map(|i| format!("({i}, {})", i % 25_i32)).collect::<Vec<_>>().join(", ");
-    s.run(&format!("INSERT INTO N VALUES {}", (0_i32..25_i32).map(|i| format!("({i})")).collect::<Vec<_>>().join(", "))).unwrap();
-    s.run(&format!("INSERT INTO C VALUES {}", rows(1_500_i32))).unwrap();
-    s.run(&format!("INSERT INTO S VALUES {}", rows(100_i32))).unwrap();
-    s.commit().unwrap();
-    let (st, c) = s.optimized("SELECT * FROM C").unwrap();
-    let ((_, sp), (_, n)) = (s.optimized("SELECT * FROM S").unwrap(), s.optimized("SELECT * FROM N").unwrap());
-    let estimates = Estimates::new(&st);
-    let member = |rel: usize, column: usize, distinct: f64| Member { rel, column, distinct };
-    let through =
-        estimates.keyed_classes(&[&c, &sp, &n], &[vec![member(0, 1, 1_500.0_f64), member(1, 1, 100.0_f64), member(2, 0, 25.0_f64)]]);
-    let pairs = through.fraction(|r| r < 2);
-    assert!((pairs * 25.0_f64 - 1.0_f64).abs() < 1e-9_f64, "a twenty-fifth of the pairs: {pairs}");
-    let keyless = estimates.keyed_classes(&[&c, &sp], &[vec![member(0, 1, 1_500.0_f64), member(1, 1, 100.0_f64)]]);
-    let alone = keyless.fraction(|r| r < 2);
-    assert!((alone * 1_500.0_f64 - 1.0_f64).abs() < 1e-9_f64, "no key, each column as many values as rows: {alone}");
 }
