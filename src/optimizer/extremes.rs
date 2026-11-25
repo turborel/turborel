@@ -105,7 +105,7 @@ fn rejects_null_of(cond: &Cond, column: usize, width: usize) -> bool {
 /// The table whose rows `plan` is, if it is them, or them filtered by a
 /// condition that cannot raise, and that condition: none of an input
 /// already limited, which the rule made.
-fn table_rows(plan: &LogicalPlan) -> Option<(&QualifiedName, Option<&Cond>)> {
+pub(super) fn table_rows(plan: &LogicalPlan) -> Option<(&QualifiedName, Option<&Cond>)> {
     let (cond, rows) = if let LogicalPlan::Filter { cond, input } = plan { (Some(cond), &**input) } else { (None, plan) };
     let LogicalPlan::Scan { table, located: false, .. } = rows else { return None };
     cond.is_none_or(|c| !c.can_raise()).then_some((table, cond))

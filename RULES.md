@@ -689,6 +689,7 @@ verification approach DO-178C expects (§8).
 | D1077 | NOT IN of columns that hold no null is an antijoin hashed on their equality |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
+| D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
 
 ### The project
 
@@ -18735,6 +18736,39 @@ rows made and freed cost more than judging them. Each group's row is
 now made in the room of one row, the condition is judged of it there,
 and only a group kept takes a row of its own (`exec/table.rs`). The
 groups kept, their rows and their order are as before.
+
+#### D1112. A grouping over a LEFT outer join groups the join's right operand first by its keys
+
+A grouping by the left operand's columns over a LEFT outer join, as the
+count of each customer's orders, read every pair the join made, and the
+join held every row of its right operand. The rule
+`group_before_outer_join` (`optimizer/pregrouped.rs`) now groups the
+right operand first, by its columns of the join's equalities, and
+computes each set function of each of those groups. The join then
+holds a row a key, a left row matches one group at most, and the
+grouping above merges what the groups below computed: MAX and MIN
+their greatest and least, COUNT their sum. A projection above gives a
+count of 0 where the sum is null, of a left row no group matched, in
+COUNT's type.
+
+The rule takes a join whose condition is equalities of a column of
+each operand alone, and set functions that are COUNT, MAX or MIN of a
+column of the right operand declared to hold no null, neither DISTINCT
+nor filtered. The right operand is a table's rows, as they are or
+filtered by a condition that cannot raise. So the grouping below warns
+of no null, and the grouping above warns of the null of a left row no
+group matched, as the function did of that row before. Nothing that
+could raise is evaluated of a row it was not before (D15). MAX and MIN
+are taken of exact numbers alone. COUNT(*), which counts a left row
+nothing matched, SUM and AVG, whose sums of parts could pass a bound
+their whole does not, and every other shape are left as they were.
+
+Grouping the right operand first costs a row grouped for each of its
+rows. It spares the join every row beyond one a key, and the grouping
+above every row beyond one a left row. So the rule rewrites only where
+the right operand's estimated rows less its estimated keys outnumber
+the left operand's rows. Without statistics a column's distinct values
+are taken as its table's rows (D370), so the rule then leaves the plan.
 
 ## 2. Project layout
 
