@@ -187,6 +187,15 @@ impl JoinTable {
         self.dense.as_ref().map_or(self.parts.len(), |dense| dense.parts())
     }
 
+    /// \[DESIGN\] (RULES.md D1083) Of a direct table, the rows of the key
+    /// that is the whole number `key`, in the order built, as
+    /// `candidates` gives them of that number's bits, no number made of
+    /// it; of a hashed table, none.
+    pub(in crate::exec) fn rows_of(&self, key: i64) -> &[u32] {
+        let Some(dense) = &self.dense else { return &[] };
+        dense.rows_of(key)
+    }
+
     /// Whether it is direct, its probes giving their keys' numbers, not
     /// hashes (RULES.md D601).
     pub(in crate::exec) fn is_direct(&self) -> bool {

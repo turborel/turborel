@@ -8,10 +8,17 @@
 //! it a row at a time (`each_match`). Either way a probing row's matches
 //! come in the order the operand gave them.
 //!
+//! \[DESIGN\] (RULES.md D1083) A batch's pairs are held as row numbers of
+//! 32 bits and gathered on the statement's vector kernels, as the serial
+//! join gathers its own (`pairs.rs`), and a key of one column of integers
+//! of one scale on both sides is paired in its units (`shared/paired.rs`).
+//!
 //! As no probe can count the rows of its hash and another key to hash its
 //! texts anew (RULES.md D369) once threads share the table, a table whose
 //! keys are not all numbers, datetimes or truth values hashes its texts
 //! by SipHash keyed by the database's seed from the first.
+
+mod paired;
 
 use std::sync::Arc;
 
@@ -19,8 +26,9 @@ use super::super::runtime::Told;
 use super::super::stream::Kept;
 use crate::error::{Result, SqlError};
 use crate::exec::table::{Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal, values_hash};
+use crate::kernels::Kernels;
 use crate::physical::JoinKey;
-use crate::storage::{BATCH_ROWS, Batch, Column, Row};
+use crate::storage::{BATCH_ROWS, Batch, Column, NO_ROW, Picks, Row};
 use crate::value::{Value, key_equal};
 
 /// A hash join's right operand, built for a pipeline's morsels.
@@ -42,6 +50,17 @@ pub(in crate::exec) struct SharedTable {
     /// Of a table built by many threads, each key's runtime filter, if it
     /// has one, made as the table was (RULES.md D1080).
     made: Filters,
+    /// The kernels its pairs' integers are gathered on (RULES.md D1083).
+    kernels: Arc<dyn Kernels>,
+}
+
+/// The pairs of a probing batch not yet gathered: of each, its row of the
+/// batch and its built row.
+type Pairs = (Vec<u32>, Vec<u32>);
+
+/// Row `r` as a pick: `NO_ROW` of one past what a pick numbers.
+fn pick(r: usize) -> u32 {
+    u32::try_from(r).unwrap_or(NO_ROW)
 }
 
 /// \[DESIGN\] (RULES.md D1080) Each of a table's keys' runtime filter, if
@@ -138,7 +157,27 @@ impl SharedTable {
     /// they were made with it.
     pub(in crate::exec) fn framed(frame: Frame, table: JoinTable, made: Filters) -> SharedTable {
         let Frame { right, columns, width, places, nulls, seed, keyed } = frame;
-        SharedTable { right, columns, width, places, nulls, table, seed, keyed, shown: None, made }
+        SharedTable {
+            right,
+            columns,
+            width,
+            places,
+            nulls,
+            table,
+            seed,
+            keyed,
+            shown: None,
+            made,
+            kernels: Arc::new(crate::kernels::Portable),
+        }
+    }
+
+    /// \[DESIGN\] (RULES.md D1083) It, its pairs' integers gathered on
+    /// `kernels`, the statement's.
+    #[must_use]
+    pub(in crate::exec) fn on(mut self, kernels: Arc<dyn Kernels>) -> SharedTable {
+        self.kernels = kernels;
+        self
     }
 
     /// The table of the operand's `rows`, each `width` wide, kept in
@@ -323,16 +362,27 @@ impl SharedTable {
         &self,
         (batch, given): (&Batch, &[usize]),
         (left, left_shown): (&[usize], Option<&[usize]>),
-        pairs: &mut (Vec<Option<usize>>, Vec<Option<usize>>),
+        pairs: &mut Pairs,
         out: &mut Vec<Result<Kept>>,
     ) -> std::result::Result<(), SqlError> {
+        // A key of one column of integers is paired in its units (RULES.md
+        // D1083).
+        if let Some(units) = self.unit_keys(batch, left) {
+            return self.paired_units(units, (batch, given, left), |r, p| {
+                pairs.0.push(r);
+                pairs.1.push(p);
+                if pairs.0.len() >= BATCH_ROWS {
+                    out.push(Ok(self.gathered((batch, left_shown), pairs)));
+                }
+            });
+        }
         let mut hashes = KeyHashes::default();
         hashes.of_batch((batch, Some(given)), (left, &self.nulls), self.hashing())?;
         for ((&r, &h), &miss) in given.iter().zip(&hashes.hashes).zip(&hashes.misses) {
             for p in self.table.candidates(h).filter(|_| !miss) {
                 if keys_equal((batch, left, r), (&self.right, &self.places, p), &self.nulls)? {
-                    pairs.0.push(Some(r));
-                    pairs.1.push(Some(p));
+                    pairs.0.push(pick(r));
+                    pairs.1.push(pick(p));
                 }
                 if pairs.0.len() >= BATCH_ROWS {
                     out.push(Ok(self.gathered((batch, left_shown), pairs)));
@@ -345,7 +395,7 @@ impl SharedTable {
     /// The batch of `pairs`, emptied: the left's vectors of `batch` at
     /// `left_shown`, or all, gathered at their left rows, then its own
     /// shown at their built rows.
-    fn gathered(&self, (batch, left_shown): (&Batch, Option<&[usize]>), pairs: &mut (Vec<Option<usize>>, Vec<Option<usize>>)) -> Kept {
+    fn gathered(&self, (batch, left_shown): (&Batch, Option<&[usize]>), pairs: &mut Pairs) -> Kept {
         let rows = pairs.0.len();
         let lefts: Vec<&Column> = match left_shown {
             Some(at) => at.iter().filter_map(|&a| batch.columns.get(a)).collect(),
@@ -355,8 +405,10 @@ impl SharedTable {
             Some(at) => at.iter().filter_map(|&a| self.right.columns.get(a)).collect(),
             None => self.right.columns.iter().collect(),
         };
-        let mut columns: Vec<Column> = lefts.iter().map(|c| c.gathered(&pairs.0)).collect();
-        columns.extend(rights.iter().map(|c| c.gathered(&pairs.1)));
+        let (of_left, of_right) = (Picks::new(&pairs.0), Picks::new(&pairs.1));
+        let mut columns: Vec<Column> = lefts.iter().map(|c| c.gathered_by(&of_left, &*self.kernels)).collect();
+        columns.extend(rights.iter().map(|c| c.gathered_by(&of_right, &*self.kernels)));
+        drop((of_left, of_right));
         pairs.0.clear();
         pairs.1.clear();
         (Batch { columns, rows }, None)

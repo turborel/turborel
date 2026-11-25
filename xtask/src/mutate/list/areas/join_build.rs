@@ -7,7 +7,8 @@
 //! to the statement's thread; of D1081, the probing table's unread
 //! columns carried late across a pipeline's probe; of D1082, a grouping
 //! by an expression bounded by the columns it reads, and only by a
-//! deterministic one.
+//! deterministic one; of D1083, a null probing row paired with none, and
+//! keys of scales apart or of matching nulls paired as values.
 
 use super::super::{Mutation, Package};
 
@@ -25,7 +26,43 @@ const BUILT: &str = "exec::parallel::build::tests::a_table_built_by_many_threads
 
 /// Mechanisms whose removal must fail the requirements of a join's
 /// operand built by many threads.
-pub const JOIN_BUILD: [Mutation; 10] = [
+/// The file of a key of integers paired in its units.
+const PAIRED: &str = "src/exec/batch/joined/shared/paired.rs";
+
+/// The test of keys that are not paired in their units.
+const AS_VALUES: &str = "exec::batch::joined::shared::paired::tests::keys_of_scales_apart_or_matching_nulls_pair_as_values";
+
+pub const JOIN_BUILD: [Mutation; 13] = [
+    Mutation {
+        name: "probe-units-null-pairs",
+        package: Package::Core,
+        breaks: "a null probing row of a key paired in its units pairs with no row (D1083)",
+        file: PAIRED,
+        original: "probe.units.get(r).filter(|_| !probe.is_null(r)) else { continue };",
+        replacement: "probe.units.get(r) else { continue };",
+        integration: &[],
+        unit: &[AS_VALUES],
+    },
+    Mutation {
+        name: "probe-units-scales-apart",
+        package: Package::Core,
+        breaks: "keys of integers of scales apart are compared as values, not by their units (D1083)",
+        file: PAIRED,
+        original: "        (probe.scale == built.scale).then_some((probe, built))",
+        replacement: "        Some((probe, built))",
+        integration: &[],
+        unit: &[AS_VALUES],
+    },
+    Mutation {
+        name: "probe-units-nulls-match",
+        package: Package::Core,
+        breaks: "a key whose nulls match is paired as values, a null with a null (D1083)",
+        file: PAIRED,
+        original: "let ([l], [at], [false]) =",
+        replacement: "let ([l], [at], [_]) =",
+        integration: &[],
+        unit: &[AS_VALUES],
+    },
     Mutation {
         name: "estimate-expression-unbounded",
         package: Package::Core,

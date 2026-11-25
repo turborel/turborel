@@ -198,6 +198,20 @@ impl Dense {
             return &self.nulls;
         }
         let Some(place) = place_of(bits, self.least) else { return &[] };
+        self.at(place)
+    }
+
+    /// \[DESIGN\] (RULES.md D1083) The rows of the key that is the whole
+    /// number `key`, in the order built: those `candidates` gives of its
+    /// number's bits. A key past 2^51 in magnitude, which no built key is,
+    /// lies out of the span, so it finds none here as there.
+    pub(super) fn rows_of(&self, key: i64) -> &[u32] {
+        let Some(place) = key.checked_sub(self.least).and_then(|p| usize::try_from(p).ok()) else { return &[] };
+        self.at(place)
+    }
+
+    /// The rows of the key at `place` in the span; none past it.
+    fn at(&self, place: usize) -> &[u32] {
         let Some(part) = self.parts.get(place.checked_shr(self.within).unwrap_or(0)) else { return &[] };
         let at = place & self.mask;
         let (Some(&from), Some(&to)) = (part.starts.get(at), part.starts.get(at.saturating_add(1))) else { return &[] };

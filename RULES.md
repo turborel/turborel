@@ -681,6 +681,7 @@ verification approach DO-178C expects (§8).
 | D1080 | A hash join's operand read by its morsels is joined, hashed, placed in its table and summed up in its filters by those threads, the table in parts of the hashes' high bits |
 | D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
+| D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
 
 ### The project
 
@@ -18618,6 +18619,34 @@ The distinct values a join's equality is estimated by are counted as
 before, an expression's as its plan's rows. Join orders rest on those
 counts, and what bounding them would do to the orders chosen was not
 measured, so the bound is the grouping's alone.
+
+#### D1083. A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units
+
+A morsel's batch probing a shared table (D292) made its pairs as two
+lists of optional places, 16 bytes each, and gathered every vector of
+the joined batch through them one option at a time. The serial join
+holds its pairs as row numbers of 32 bits and gathers integers on the
+vector kernels (D570). Each pair was also compared through
+`keys_equal`, which asks both vectors' kinds again for every pair and
+every key column, and each probing key was made a double and hashed
+even for a direct table, which finds a key by its place alone (D601).
+
+Now the shared table's pairs are row numbers too, gathered by
+`Column::gathered_by` on the statement's kernels. A key of one column
+of integers, of one scale in the batch and in the built operand, on
+which a null matches nothing, is paired in its units
+(`exec/batch/joined/shared/paired.rs`). Equal units of one scale are
+equal numbers, so a probing row's units are compared with a built
+row's as they stand. Of a direct table of whole numbers a probing row
+finds its key's rows by its units less the least key
+(`JoinTable::rows_of`), with no double made and no hash. Every row at a
+place holds that key, so nothing is compared. A null probing row pairs
+with none.
+
+Every other key is paired as before: keys of several columns, of
+texts, of integers of scales apart, which match when rescaled, and a
+key whose nulls match. The pairs, and their order, are the same of
+either.
 
 ## 2. Project layout
 
