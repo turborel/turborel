@@ -142,8 +142,8 @@ impl State {
     }
 
     /// [SR7, SR13a, GR1] The CHECKs of tables, not copies of a domain's,
-    /// that read `qn` and bind no more, each dropped if `cascade` as
-    /// ALTER TABLE … DROP CONSTRAINT … CASCADE drops it.
+    /// that read one of `tables` and bind no more, each dropped if
+    /// `cascade` as ALTER TABLE … DROP CONSTRAINT … CASCADE drops it.
     fn drop_dependent_checks(&mut self, before: &State, (cause, tables): (Cause, &[QualifiedName]), cascade: bool) -> Result<Dropped> {
         let mut found = Vec::new();
         for t in self.catalog.tables() {
@@ -173,9 +173,9 @@ impl State {
         Ok(dropped)
     }
 
-    /// [SR7, SR13e] The constraints of domains that read `qn` and bind no
-    /// more, each dropped if `cascade` as ALTER DOMAIN … DROP CONSTRAINT
-    /// drops it, with its copies [§11.39], as NOTE 568 says.
+    /// [SR7, SR13e] The constraints of domains that read one of `tables`
+    /// and bind no more, each dropped if `cascade` as ALTER DOMAIN … DROP
+    /// CONSTRAINT drops it, with its copies [§11.39], as NOTE 568 says.
     fn drop_dependent_domain_constraints(
         &mut self,
         before: &State,
@@ -203,9 +203,9 @@ impl State {
         Ok(dropped)
     }
 
-    /// [SR5, SR13c, GR3] The views that read `qn`, directly or through
-    /// others, and bind no more, each dropped if `cascade` as DROP VIEW …
-    /// CASCADE drops it.
+    /// [SR5, SR13c, GR3] The views that read one of `tables`, directly or
+    /// through others, and bind no more, each dropped if `cascade` as DROP
+    /// VIEW … CASCADE drops it.
     fn drop_dependent_views(&mut self, before: &State, (cause, tables): (Cause, &[QualifiedName]), cascade: bool) -> Result<Dropped> {
         let binds = |st: &State, v: &ViewDesc| view_degree(st, v).is_ok();
         let mut broken: Vec<QualifiedName> = Vec::new();
@@ -227,8 +227,9 @@ impl State {
         Ok(dropped)
     }
 
-    /// [SR7, SR13e, GR4] The assertions that read `qn` and bind no more,
-    /// each dropped if `cascade` as DROP ASSERTION … CASCADE drops it.
+    /// [SR7, SR13e, GR4] The assertions that read one of `tables` and bind
+    /// no more, each dropped if `cascade` as DROP ASSERTION … CASCADE drops
+    /// it.
     fn drop_dependent_assertions(&mut self, before: &State, (cause, tables): (Cause, &[QualifiedName]), cascade: bool) -> Result<Dropped> {
         let reading = |kind: &ConstraintKind| {
             if let ConstraintKind::Check { reads, .. } = kind { reads.iter().any(|r| tables.contains(r)) } else { false }

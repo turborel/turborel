@@ -170,7 +170,7 @@ impl State {
         Ok(IndexDesc { collations, nulls, ..ix })
     }
 
-    /// The collation a `<collate clause>` in schema `schema`'s definitions,
+    /// The collation a `<collate clause>` in a schema's definitions,
     /// or a session's statement, names [§5.4 SR13a, §10.7 SR1]: its name.
     ///
     /// # Errors

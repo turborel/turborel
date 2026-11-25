@@ -126,8 +126,8 @@ impl Node {
     }
 }
 
-/// A node header's level, stamp, right link, pending flag and entry
-/// count, with its format, level and flag checked.
+/// A node header's level, stamp, right link, flags and entry
+/// count, with its format, level and flags checked.
 fn header(r: &mut Reader<'_>) -> Result<(u8, u64, u64, u8, usize)> {
     let format = r.u8()?;
     let level = r.u8()?;

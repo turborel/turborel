@@ -285,3 +285,39 @@ fn extension_aggregates_take_one_argument() {
     assert_eq!(rows(&s, "SELECT TALLY(ID) FROM T"), Ok(vec!["30".into()]));
     assert_eq!(code(&s, "SELECT TALLY(ID, ID) FROM T"), Code::SyntaxRule);
 }
+
+/// Gives the count of its calls so far, this one among them. It raises
+/// nothing, and is not deterministic.
+struct Tick(std::sync::atomic::AtomicI64);
+impl ScalarFunction for Tick {
+    fn name(&self) -> &'static str {
+        "TICK"
+    }
+    fn return_type(&self, _: &[DataType]) -> Result<DataType> {
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
+    }
+    fn call(&self, _: &[Value]) -> Result<Value> {
+        let calls = self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Value::Exact(Decimal::new(i128::from(calls) + 1, 0)))
+    }
+    fn deterministic(&self) -> bool {
+        false
+    }
+    fn raise_free(&self) -> bool {
+        true
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1041: a filter over a derived table's
+/// column that is a call of a function not deterministic judges the
+/// value the table gave, the call made once a row. Of three rows numbered
+/// by their calls, the row whose number is 2 is given as 2. The function
+/// raises nothing, so its call alone would let the filter go below.
+#[test]
+fn a_filter_judges_the_value_a_call_not_deterministic_gave() {
+    let db = setup();
+    db.register_scalar_function(Box::new(Tick(std::sync::atomic::AtomicI64::new(0)))).unwrap();
+    let s = db.session("APP");
+    crate::common::function_calls(&s);
+    assert_eq!(rows(&s, "SELECT V.R FROM (SELECT TICK(ID) AS R FROM T) AS V WHERE V.R = 2"), Ok(vec!["2".into()]));
+}

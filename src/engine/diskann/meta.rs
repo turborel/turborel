@@ -31,7 +31,7 @@ pub(super) struct Meta {
     /// The first free slot, or `NO_NODE`.
     pub(super) free: u32,
     pub(super) live: u64,
-    /// Tombstoned or unfinished nodes, which consolidation frees.
+    /// Tombstoned nodes, which consolidation frees.
     pub(super) dead: u64,
     pub(super) nodes: PageId,
     pub(super) codes: PageId,

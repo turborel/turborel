@@ -1,4 +1,4 @@
-//! The planner's cost model (RULES.md D650 to D659): the order a filter
+//! The planner's cost model (RULES.md D650 to D653): the order a filter
 //! judges its conjuncts in, what operators past their work grant cost,
 //! the degree a part will run at, and the rows a runtime filter leaves,
 //! each seen in the plan EXPLAIN shows and each plan's rows the same.

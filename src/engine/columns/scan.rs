@@ -40,7 +40,8 @@ pub fn candidates(group: &Group, conditions: Option<&Conjunction>) -> Vec<(u32, 
 
 /// As `candidates`, and of those, the runs of the parts whose Bloom
 /// filters may hold a value an equality or IN of `conditions` asks for
-/// (`bloom::kept`), their filters read from `pages`.
+/// (`bloom::kept`), their filters read from `pages`, and of a group with
+/// imprints the runs those keep too (`read_ordered`).
 ///
 /// # Errors
 ///

@@ -13,7 +13,8 @@
 //!         the row's id u64; 2 table, the two names; 3 referenced, the
 //!         names, the old row, 0 or 1 and the row's id u64 (u8); 4
 //!         assertion, its name; 5 asserted row, the table's and the
-//!         assertion's names, the row's id u64
+//!         assertion's names, the row's id u64, 0 or 1 (u8) and, if 1,
+//!         the row before it
 //! ```
 
 use super::{Check, Effect};

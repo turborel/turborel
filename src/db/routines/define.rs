@@ -9,7 +9,7 @@
 //! is none of them.
 //!
 //! \[DESIGN\] A routine's implicit specific name is its name, an
-//! underscore, and its timestamp of creation [SR9s] (UV102), another
+//! underscore, and its order of creation [SR9s] (UV102), another
 //! underscore and a count if a routine has that specific name already.
 
 use std::sync::Arc;
@@ -55,8 +55,8 @@ impl State {
     /// # Errors
     ///
     /// SQLCODE -103 for a Syntax Rule it breaks [SR9q, SR9t, SR9u, SR16,
-    /// SR23]; -900 if a routine of its name is in its schema [CR2]; a
-    /// parameter's type's, or its body's, bound.
+    /// SR23], or if it is not told apart from a routine of its name in its
+    /// schema (`told_apart`); a parameter's type's, or its body's, bound.
     pub(in crate::db) fn create_routine(&mut self, schema: &str, r: &RoutineDefinition) -> Result<Defined> {
         self.routine_in(Home { schema, names: schema, module: None }, r).map(|(defined, _)| defined)
     }

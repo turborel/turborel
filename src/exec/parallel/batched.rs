@@ -8,7 +8,8 @@
 //! pipeline fragment whole on one thread. A pipeline whose every branch
 //! is a table's scan whose engine reads by batch, and whose every step is
 //! a filter, a projection or a probe the serial stream reads by batch, is
-//! read so; any other row by row (`parallel/pipeline.rs`).
+//! read so; any other, as an index scan's, row by row
+//! (`parallel/pipeline.rs`).
 //! A morsel's batches give the rows, in the order, and raise the error,
 //! that its rows would.
 

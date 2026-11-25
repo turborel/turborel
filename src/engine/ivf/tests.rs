@@ -3,12 +3,19 @@
 //! across reopening, deletes never returned, filtered and range
 //! searches, quantized codes with re-ranking, and retraining.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use super::*;
+use crate::disk::encoding::Pipeline;
+use crate::disk::io::{DiskFile, Durability, FileLock, FileSystem, OpenMode};
+use crate::disk::memory::MemoryFileSystem;
+use crate::disk::pager::Pager;
 use crate::engine::hnsw::tests::{clustered, euclidean, float, mean_recall, pages, row};
 use crate::engine::hnsw::{Search, Sq8};
 use crate::error::Code;
+use crate::hash::crc::{CRC32_ISCSI, Crc};
 
 /// The configuration of the tests' indexes: lists sqrt(N), probes one
 /// list in eight.
@@ -337,4 +344,95 @@ fn ivf_tombstones_come_back_and_other_dimensions_find_nothing() {
     ivf.remove(&[1.0; 3], row(0)).unwrap();
     assert_eq!(ivf.rows(&[1.0; 3]).unwrap().len(), 0);
     assert_eq!(ivf.counts().unwrap(), (50, 0));
+}
+
+/// A file of `inner` whose next reads fail, as many as `fail` counts.
+struct FailingFile {
+    inner: Box<dyn DiskFile>,
+    fail: Arc<AtomicUsize>,
+}
+
+impl DiskFile for FailingFile {
+    fn read_at(&self, buf: &mut [u8], offset: u64) -> Result<usize> {
+        if self.fail.load(Ordering::SeqCst) > 0 {
+            self.fail.fetch_sub(1, Ordering::SeqCst);
+            return Err(SqlError::new(Code::Io, "[DESIGN] a read fails, as the test asks"));
+        }
+        self.inner.read_at(buf, offset)
+    }
+    fn write_all_at(&self, data: &[u8], offset: u64) -> Result<()> {
+        self.inner.write_all_at(data, offset)
+    }
+    fn size(&self) -> Result<u64> {
+        self.inner.size()
+    }
+    fn set_size(&self, size: u64) -> Result<()> {
+        self.inner.set_size(size)
+    }
+    fn sync(&self, durability: Durability) -> Result<()> {
+        self.inner.sync(durability)
+    }
+    fn reserve(&self, size: u64) -> Result<()> {
+        self.inner.reserve(size)
+    }
+}
+
+/// A file system in memory whose files' reads fail as `fail` counts.
+struct FailingFiles {
+    inner: MemoryFileSystem,
+    fail: Arc<AtomicUsize>,
+}
+
+impl FileSystem for FailingFiles {
+    fn open(&self, path: &Path, mode: OpenMode) -> Result<Box<dyn DiskFile>> {
+        Ok(Box::new(FailingFile { inner: self.inner.open(path, mode)?, fail: Arc::clone(&self.fail) }))
+    }
+    fn remove(&self, path: &Path) -> Result<()> {
+        self.inner.remove(path)
+    }
+    fn exists(&self, path: &Path) -> Result<bool> {
+        self.inner.exists(path)
+    }
+    fn create_dir_all(&self, path: &Path) -> Result<()> {
+        self.inner.create_dir_all(path)
+    }
+    fn read_dir(&self, path: &Path) -> Result<Vec<PathBuf>> {
+        self.inner.read_dir(path)
+    }
+    fn sync_dir(&self, path: &Path) -> Result<()> {
+        self.inner.sync_dir(path)
+    }
+    fn lock(&self, path: &Path) -> Result<FileLock> {
+        self.inner.lock(path)
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1044: a directory whose pages were all
+/// made, and whose write of one then fails, frees the pages it made. In
+/// a pool of one frame its first page is read back to be written, the
+/// read fails, and the file has no more pages in use than before. Once
+/// reads work the directory is written, and read back as it was given.
+#[test]
+fn ivf_directory_pages_are_freed_when_their_write_fails() {
+    let budget = MemoryBudget::new(usize::MAX);
+    let fail = Arc::new(AtomicUsize::new(0));
+    let fs = FailingFiles { inner: MemoryFileSystem::new(), fail: Arc::clone(&fail) };
+    let hash = Arc::new(Crc::new(CRC32_ISCSI).unwrap());
+    let pager = Arc::new(Pager::create(&fs, Path::new("/vectors"), hash, Pipeline::none(), 8192).unwrap());
+    let pool = BufferPool::in_budget(&budget, (8192, 8192), "a pool of one frame").unwrap();
+    let file = pool.add_pager(Arc::clone(&pager));
+    let layout = Layout::new(&pool, file, 16).unwrap();
+    // One list more than a directory page holds, so the directory is two pages.
+    let list = |n: usize| List { head: PageId(7), tail: PageId(7), live: u64::try_from(n).unwrap(), dead: 0 };
+    let given: Vec<List> = (0..=layout.per_directory).map(list).collect();
+    let used = || pager.page_count() - pager.free_pages();
+    let before = used();
+    fail.store(1, Ordering::SeqCst);
+    let error = lists::write_directory(&pool, file, &layout, &given).unwrap_err();
+    assert_eq!((error.code, fail.load(Ordering::SeqCst)), (Code::Io, 0), "the read of its first page failed: {error}");
+    assert_eq!(used(), before, "the two pages made are freed");
+    let directory = lists::write_directory(&pool, file, &layout, &given).unwrap();
+    assert_eq!((directory.len(), used()), (2, before + 2));
+    let (read, of) = lists::read_directory(&pool, file, directory[0], given.len()).unwrap();
+    assert_eq!((read.len(), read.last().map(|l| l.live), of), (given.len(), given.last().map(|l| l.live), directory));
 }

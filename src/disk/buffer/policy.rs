@@ -107,7 +107,7 @@ pub struct Report {
 }
 
 /// The policy as the evictors read it: each field atomic, so read with no
-/// lock, and replaced whole under `writing`.
+/// lock, and replaced whole by `push`.
 #[derive(Debug)]
 pub struct Table {
     history: AtomicU32,

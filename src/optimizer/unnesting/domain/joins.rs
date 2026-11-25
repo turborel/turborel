@@ -3,11 +3,14 @@
 //! §3.2).
 //!
 //! Of a product, D goes to the side that reads outer references, or, if
-//! both do, to both, the two then joined on D as well. Of an outer join,
-//! D goes to the preserved side alone if only it reads them; else to both,
-//! joined on D in the join condition, so a preserved row that matches
-//! none keeps its binding, a FULL join's binding that of whichever side
-//! the row has. A join condition that can raise an error is left as it
+//! both do, to both, the two then joined on D as well. Of a LEFT join, D
+//! goes to the preserved side alone if only it reads them. Of any other
+//! outer join, a RIGHT join only whose preserved side reads them among
+//! them, D goes to both sides, joined on D in the join condition, so a
+//! preserved row that matches none keeps its binding, a FULL join's
+//! binding that of whichever side the row has. A side that reads none is
+//! then D's product with it, which gives the same rows as D on the
+//! preserved side alone would, at the product's cost. A join condition that can raise an error is left as it
 //! is, as it would then be judged on pairs of two bindings. A set
 //! operator's operands both take D, and compare its columns with the
 //! rest, as D ⋈ (T1 ∪ T2) is (D ⋈ T1) ∪ (D ⋈ T2), and so of EXCEPT and

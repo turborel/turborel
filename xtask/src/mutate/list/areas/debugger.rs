@@ -1,5 +1,5 @@
 //! The mutations of the routine debugger (RULES.md R-TEST-9, D1000 to
-//! D1029): the DEBUG privilege held by all and lost from the catalog's
+//! D1015): the DEBUG privilege held by all and lost from the catalog's
 //! bytes; the debugger's flag, its interpreted fallback, its steps, what it
 //! sees into, its pause's timeout and cancellation, its detaching, the
 //! target's end, its conditions and the places of statements.

@@ -15,13 +15,18 @@ use crate::value::{CompOp, Decimal, Value};
 /// for each: K the primary key if `unique`, else indexed by `UK` and of
 /// 10 values; its subqueries decorrelated after 8 runs.
 fn state(unique: bool) -> Arc<State> {
+    state_of(unique, (200, 8))
+}
+
+/// `state`, of `count` rows, its subqueries decorrelated after `after` runs.
+fn state_of(unique: bool, (count, after): (i128, i128)) -> Arc<State> {
     let db = crate::db::Database::new();
-    db.set_setting("EXECUTOR.DECORRELATE_AFTER_RUNS", &int(8)).unwrap();
+    db.set_setting("EXECUTOR.DECORRELATE_AFTER_RUNS", &int(after)).unwrap();
     let key = if unique { ", PRIMARY KEY (K)" } else { "" };
     db.schema(&format!("CREATE SCHEMA AUTHORIZATION A CREATE TABLE U (K INTEGER NOT NULL, W INTEGER{key})")).unwrap();
     let s = db.session("A");
-    let keys: i128 = if unique { 200 } else { 10 };
-    let rows: Vec<String> = (0..200_i128).map(|n| format!("({}, {})", n.rem_euclid(keys), n.rem_euclid(keys))).collect();
+    let keys: i128 = if unique { count } else { 10 };
+    let rows: Vec<String> = (0..count).map(|n| format!("({}, {})", n.rem_euclid(keys), n.rem_euclid(keys))).collect();
     s.run(&format!("INSERT INTO U VALUES {}", rows.join(", "))).unwrap();
     s.commit().unwrap();
     if !unique {
@@ -82,4 +87,31 @@ fn a_unique_probe_is_decorrelated_once_its_probes_cost_a_build() {
     }
     let seen = runner.seen.borrow();
     assert!(matches!(seen.get(&sq.id()).map(|s| &s.decorrelation), Some(Decorrelation::Keyed(_))), "after 8 runs");
+}
+
+/// Verifies: [DESIGN] RULES.md D1046: a subquery whose plan was learned
+/// over its runs and kept, a probe of a key that is not unique, is
+/// decorrelated after EXECUTOR.DECORRELATE_AFTER_RUNS runs, here 20, as
+/// one planned at each run is. Its 21 runs weighed as probes come to 315
+/// rows of the 2,000 its build holds, which would keep a unique probe
+/// probed.
+#[test]
+fn a_plan_learned_that_is_no_unique_probe_is_decorrelated_after_its_runs() {
+    let shared = state_of(false, (2000, 20));
+    let (runner, sq) = (Runner::new(&shared, NO_TRANSACTION), subquery());
+    // Each run of another value, as a value run before is not run again.
+    for n in 0..20_i128 {
+        let rows = runner.rows(&sq, &[int(n)], None).unwrap();
+        assert_eq!(rows.rows().unwrap().count(), if n < 10 { 200 } else { 0 }, "run {n}");
+    }
+    {
+        let all = runner.seen.borrow();
+        let seen = all.get(&sq.id()).expect("run");
+        assert!(matches!(seen.planned, Planned::Kept(_)), "its plan learned and kept");
+        assert!(matches!(seen.decorrelation, Decorrelation::Untried), "probed for 20 runs");
+    }
+    let last = runner.rows(&sq, &[int(20)], None).unwrap();
+    assert_eq!(last.rows().unwrap().count(), 0);
+    let all = runner.seen.borrow();
+    assert!(matches!(all.get(&sq.id()).map(|s| &s.decorrelation), Some(Decorrelation::Keyed(_))), "after 20 runs");
 }

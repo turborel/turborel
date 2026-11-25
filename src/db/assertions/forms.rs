@@ -233,9 +233,9 @@ fn exists_form(s: &Subquery, known: &Known<'_>) -> Option<Form> {
     Some(Form { source: Source::Query(Box::new(query)), steps: Vec::new(), kind: Kind::NoRow, nulls: None })
 }
 
-/// `(SELECT f(x) FROM T WHERE p) op k`, `f` the standard COUNT, MAX or
-/// MIN, or MAX or MIN bounded of a query's rows: of `s`, the subquery,
-/// `op`, the comparison with it first, and `k`.
+/// `(SELECT f(x) FROM T WHERE p) op k`, `f` the standard COUNT, MAX, MIN,
+/// SUM or AVG, or MAX or MIN bounded of a query's rows: of `s`, the
+/// subquery, `op`, the comparison with it first, and `k`.
 fn aggregate_form(s: &Subquery, (op, k): (CompOp, &Expr), known: &Known<'_>) -> Option<Vec<Form>> {
     let LogicalPlan::Project { exprs, input } = &s.plan else { return None };
     let LogicalPlan::Aggregate { groups, aggs, input: rows, .. } = &**input else { return None };

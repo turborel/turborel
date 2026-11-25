@@ -1,6 +1,6 @@
 //! \[EXTENSION\] A plug-in's authentication mechanism (RULES.md D169).
 //! The server's `Authenticator` is the server's own trait, so the server
-//! wraps this one (`server/src/plugins.rs`): BEGIN starts an exchange on a
+//! wraps this one (`server/src/extensions.rs`): BEGIN starts an exchange on a
 //! process kept for it, and each STEP answers the client's bytes with a
 //! challenge, an acceptance or a refusal. The process is let go as the
 //! exchange is dropped.

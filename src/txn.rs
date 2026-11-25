@@ -33,11 +33,11 @@
 //! each transaction an id, unique, from another (`txn/clock.rs`). A
 //! transaction reads
 //! as of its snapshot: the highest timestamp below which every commit has
-//! finished, so a commit that has taken its timestamp but not yet reached
-//! every engine never shows in the middle of a reader's transaction. The
-//! oldest snapshot of the open transactions is the horizon: versions no
-//! snapshot at or after it can read are removed (`TableStorage::gc`)
-//! when a transaction ends.
+//! finished and is durable, so a commit that has taken its timestamp but
+//! not yet reached every engine never shows in the middle of a reader's
+//! transaction. The oldest snapshot of the open transactions is the
+//! horizon: versions no snapshot at or after it can read are removed
+//! (`TableStorage::gc`) when a transaction ends.
 //!
 //! The participants of a transaction are the tables whose engine it has
 //! begun: on first write to an `Undo::Native` or `Concurrency::Engine`
@@ -296,7 +296,7 @@ pub(crate) struct Transactions {
     pub(crate) replaying: crate::threads::Turn,
     /// The tables whose engines hold versions awaiting collection
     /// (`TableStorage::uncollected`), collected by the end of a
-    /// transaction that wrote them once a batch is due, or by the
+    /// transaction that wrote them once a batch is long due, or by the
     /// maintenance job's pass (RULES.md D451, D920).
     uncollected: Mutex<BTreeSet<QualifiedName>>,
     /// Whether `uncollected` names any table, as it was last changed: so
@@ -392,7 +392,7 @@ impl Default for Transactions {
 
 impl Transactions {
     /// The oldest snapshot any open transaction reads at, or, with none
-    /// open, the stable timestamp: no transaction reads before it.
+    /// open, the durable timestamp: no transaction reads before it.
     pub(crate) fn horizon(&self) -> Timestamp {
         self.clock.horizon()
     }

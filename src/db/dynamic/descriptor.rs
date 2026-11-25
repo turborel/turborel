@@ -380,6 +380,7 @@ pub(super) fn is_text(f: DescriptorItem) -> bool {
         || COLLATION.contains(&f)
         || USER_DEFINED_TYPE.contains(&f)
         || PARAMETER_SPECIFIC.contains(&f)
+        || SCOPE.contains(&f)
 }
 
 /// [ISO/IEC 9075-2:2023 §20.1, Table 29] The fields of a user-defined

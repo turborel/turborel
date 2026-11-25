@@ -209,7 +209,7 @@ fn character_default(s: &str, subject: &DataType) -> Option<Result<Value>> {
 }
 
 /// [ISO/IEC 9075:1992 §11.5 GR2] The default value of each column of
-/// `desc`, for a statement run under `auth`, as store assignment gives it
+/// `desc`, for a statement run under `user`, as store assignment gives it
 /// to the column [§9.2].
 ///
 /// # Errors

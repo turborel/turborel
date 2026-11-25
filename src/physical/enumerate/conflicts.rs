@@ -140,7 +140,8 @@ pub(super) fn rules(ops: &[Shape], b: usize) -> Vec<Rule> {
     out
 }
 
-/// Whether the join of `s1` and `s2` obeys `rules` (Fig. 9, lines 2-6).
+/// Whether the join of two sets whose union is `s` obeys `rules` (Fig. 9,
+/// lines 2-6).
 pub(super) fn obeyed(rules: &[Rule], s: Set) -> bool {
     rules.iter().all(|&(t1, t2)| t1 & s == 0 || within(t2, s))
 }

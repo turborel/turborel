@@ -1,6 +1,6 @@
 //! \[DESIGN\] The client's variables (RULES.md D212), names set and unset
 //! by `\set` and `\unset` or `-v NAME=VALUE`, their values text, read back
-//! into statements by `:NAME`, `:'NAME'` and `:"NAME"` (`split/subst.rs`)
+//! into statements by `:NAME`, `:'NAME'` and `:"NAME"` (`split.rs`)
 //! and into commands' arguments. Some names are the client's own; setting
 //! them changes how it runs, and it sets others after each statement.
 

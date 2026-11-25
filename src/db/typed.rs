@@ -268,8 +268,8 @@ impl State {
 ///
 /// # Errors
 ///
-/// SQLCODE -910 if `sup` lacks its self-referencing column, or an
-/// attribute's default no longer reads.
+/// SQLCODE -910 if `sup` lacks its self-referencing column; the parser's,
+/// if an attribute's default no longer reads.
 fn subtable_columns((table, st): (&QualifiedName, &StructuredDesc), sup: &TableDesc, at: usize) -> Result<Vec<TypedColumn>> {
     let name = sup.typed.as_ref().map(|t| t.self_referencing.as_str()).unwrap_or_default();
     let reference = sup.columns.iter().find(|c| c.name == name);
@@ -406,7 +406,7 @@ fn attribute_column(a: &AttributeDesc, at: usize, default: Option<DefaultOption>
 ///
 /// # Errors
 ///
-/// SQLCODE -910 if it no longer reads as one.
+/// The parser's, if it no longer reads as one.
 fn default_option(text: &str) -> Result<DefaultOption> {
     Parser::for_stored(text)?.default_option()
 }

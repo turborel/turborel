@@ -7,7 +7,7 @@
 //! it.
 //!
 //! The standard library offers no limit of time on a file's reads and
-//! writes, so a pipe's are not bounded once it is open (`Socket::limit`).
+//! writes, so a pipe's are not bounded once it is open (`timeouts::limit`).
 
 use std::io;
 use std::time::{Duration, Instant};

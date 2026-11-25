@@ -1,4 +1,4 @@
-//! The mutations of the OLTP paths (RULES.md R-TEST-9, D403 to D412, D470, D57): a
+//! The mutations of the OLTP paths (RULES.md R-TEST-9, D403 to D410, D470, D57): a
 //! B-tree index made by CREATE INDEX holding no key with a null, the sort
 //! an ORDER BY asks dropped where a null key survives a probe, and the
 //! equality of two columns equal to one number or one `?` not added.

@@ -168,7 +168,7 @@ impl Shape {
         }
     }
 
-    /// The stored bytes of the record at `bytes`' vector.
+    /// The stored bytes of the record at `record`'s vector.
     pub(super) fn stored_vector<'a>(&self, record: &'a [u8]) -> Result<&'a [u8]> {
         record.get(HEADER..HEADER.saturating_add(self.vector)).ok_or_else(short)
     }

@@ -21,7 +21,7 @@ pub use turborel_protocol::DebugBreakpoint;
 
 use crate::connection::{Connection, Result};
 use crate::frames::Answer;
-use crate::timeouts::io_failed;
+use crate::timeouts::{io_failed, uninterrupted};
 
 impl<S: Read + Write> Connection<S> {
     /// The reply to the Debug request `request`, but a completion.
@@ -223,7 +223,7 @@ impl<S: Read + Write> Connection<S> {
         if within != kept {
             self.set_read_timeout(within)?;
         }
-        let filled = self.stream.fill_buf().map(|bytes| !bytes.is_empty());
+        let filled = uninterrupted(|| self.stream.fill_buf().map(|bytes| !bytes.is_empty()));
         if within != kept {
             self.set_read_timeout(kept)?;
         }

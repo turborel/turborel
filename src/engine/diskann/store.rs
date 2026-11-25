@@ -73,7 +73,7 @@ impl DiskAnn {
     ///
     /// # Errors
     ///
-    /// The buffer pool's; SQLCODE -900 past 2^32 - 1 nodes.
+    /// The buffer pool's; SQLCODE -900 past 2^32 - 2 nodes.
     pub(super) fn allocate(&self) -> Result<u32> {
         let mut alloc = lock_builtin(&self.inner.alloc);
         let id = if alloc.free == NO_NODE {

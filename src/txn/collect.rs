@@ -1,7 +1,7 @@
 //! \[DESIGN\] The garbage collection of versions that follows the ends of
 //! transactions (RULES.md D29, D445, D450, D451, D920): a table a
 //! transaction wrote is collected by its end once a batch of garbage is
-//! due, and noted as awaiting collection until then; the maintenance
+//! long due, and noted as awaiting collection until then; the maintenance
 //! job's pass, a checkpoint and a close collect every table awaiting,
 //! as far as the horizon lets.
 

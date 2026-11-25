@@ -1,7 +1,7 @@
 //! Arrays [ISO/IEC 9075-2:2023 §4.12.2, §6.1, §6.25, §6.31, §6.47, §6.48,
 //! §6.49, §10.9, §14.15]: made, read, compared, cast, aggregated and
 //! assigned element by element. Their storage, defaults, domains and
-//! description are in `array_columns.rs`.
+//! description are in `composite_columns.rs`.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;

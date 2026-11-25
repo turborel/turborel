@@ -9,7 +9,7 @@
 //!   null too, given as a row of it so no null is eliminated.
 //! * `Trailing` counts the trailing spaces of a character string, so two
 //!   bindings that compare equal but are different values are kept apart
-//!   (RULES.md D312).
+//!   (RULES.md D319).
 //! * `Assigned` stores a value in a type as an SQL-invoked function's
 //!   parameters and result are [ISO/IEC 9075-2:2023 §9.18 GR4a ii, GR10a
 //!   iii], for an inlined function (RULES.md D316).

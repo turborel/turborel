@@ -11,6 +11,7 @@ use turborel_protocol::{CancelKey, Request};
 
 use crate::connection::{Result, failed};
 use crate::target::Target;
+use crate::timeouts::uninterrupted;
 
 /// What cancels the statement a connection runs, from any thread.
 #[derive(Clone)]
@@ -52,7 +53,8 @@ impl Canceller {
         let mut stream = self.target.stream_within(Some(limit))?;
         let mut bytes = Vec::new();
         Request::Cancel(self.key).encode(&mut bytes);
-        stream.write_all(&bytes).and_then(|()| stream.flush()).map_err(|e| failed(&format!("[DESIGN] cannot send: {e}")))?;
+        let sent = stream.write_all(&bytes).and_then(|()| uninterrupted(|| stream.flush()));
+        sent.map_err(|e| failed(&format!("[DESIGN] cannot send: {e}")))?;
         // The server closes it, saying nothing.
         let mut rest = Vec::new();
         stream.read_to_end(&mut rest).map_err(|e| failed(&format!("[DESIGN] cannot receive: {e}")))?;

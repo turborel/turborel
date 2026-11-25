@@ -5,7 +5,7 @@
 //! execution whose definitions, authorization, schema, time zone and
 //! settings are those it was kept with (`plans.rs`'s `Key`), so it is
 //! dropped by a change of the definitions or privileges, and a learned
-//! plan by its tables' rows moving (`moved`).
+//! plan by its tables' rows moving (`Learnt::now`).
 //!
 //! The places are found by an XXH3 hash of what the statements were
 //! prepared alike in, and that is compared whole, so two statements of one

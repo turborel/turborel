@@ -1,5 +1,5 @@
 //! \[DESIGN\] The batches of the undo store in memory, by number, in shards
-//! (RULES.md D31, D745): the batch being gathered, those being written, and
+//! (RULES.md D31, D745): the batches being gathered, those being written, and
 //! those written and kept (`kept.rs`). A reader of an older version takes
 //! one shard's lock for reading, and only for the moment of counting a
 //! share of the version, so readers of many sessions never wait on each

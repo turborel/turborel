@@ -21,7 +21,7 @@
 //!
 //! The job first collects the garbage of every table awaiting collection
 //! (`State::collect_awaiting`, RULES.md D920): a transaction's end
-//! collects a table only once a batch of garbage is due (D451), and one
+//! collects a table only once a batch of garbage is long due (D925), and one
 //! that leaves a table awaiting asks for the job a second later, so the
 //! garbage of a table gone quiet waits no longer than that. A run of the
 //! job before the second is up, for maintenance noted, makes no pass.

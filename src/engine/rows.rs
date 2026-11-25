@@ -277,8 +277,8 @@ impl TableStorage for RowTable {
         self.scan_rows(tx, columns, None)
     }
 
-    /// As `scan`, leaving out the rows `condition` does not match; only
-    /// those it matches count as read.
+    /// As `scan`, leaving out the rows `condition` does not match, which do not count as read (`scan_rows`). Of a table that
+    /// holds no group, only the rows of the zones it cannot match are left out.
     fn scan_where(self: Arc<Self>, tx: TxId, columns: &[usize], condition: &Conjunction) -> Rows {
         self.scan_rows(tx, columns, Some(condition.clone()))
     }
@@ -370,7 +370,7 @@ impl TableStorage for RowTable {
     }
 
     /// 8.6 of a table the buffer pool holds, more as it holds less of it, shared with the other tables and indexes of its file,
-    /// to 72; more by the share of the rows frozen, each a page a column (`rows/frozen.rs`).
+    /// to 72, to 5900 as the system's cache holds none of the rest; more by the share of the rows frozen (`rows/frozen.rs`).
     fn fetch_cost(&self) -> f64 {
         self.frozen_fetch_cost()
     }
@@ -531,7 +531,7 @@ impl TableStorage for RowTable {
         self.writer_of(tx, id)
     }
 
-    /// Statistics due are gathered too.
+    /// Statistics due are the maintenance's (`maintenance_due`).
     fn uncollected(&self) -> bool {
         self.awaits_collection()
     }

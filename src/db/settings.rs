@@ -24,15 +24,6 @@ use crate::value::datetime::Clocked;
 pub(super) use own::OwnValues;
 
 impl State {
-    /// Sets the database's value of the setting `name`, or its default
-    /// again for none, and logs it.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if there is no such setting, it is fixed once the
-    /// database is created, the value is not of its kind, or it names an
-    /// engine, index method, hash function or encodings not registered;
-    /// the log's errors.
     /// Refuses `value` of the setting `key` if it is STORAGE.CHECKSUM_KEY
     /// and names a key the checksum function cannot take (RULES.md D48),
     /// of a database opened from its files: before it opens, the function
@@ -51,6 +42,15 @@ impl State {
         self.checksum_hash(&values).map(drop)
     }
 
+    /// Sets the database's value of the setting `name`, or its default
+    /// again for none, and logs it.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if there is no such setting, it is fixed once the
+    /// database is created, the value is not of its kind, or it names an
+    /// engine, index method, hash function or encodings not registered;
+    /// the log's errors.
     pub(super) fn define_setting(&mut self, name: &str, value: Option<&Value>) -> Result<()> {
         self.define_as(name, value, true)
     }

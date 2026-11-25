@@ -23,7 +23,7 @@ use crate::value::DataType;
 use crate::value::types::UdtName;
 
 impl State {
-    /// [§11.17, §11.18] The scope of column `column`, written at `at`, of
+    /// [§11.17, §11.18] The scope of column `column` of
     /// the base table `qn`, its names of schema `names`, added or dropped
     /// as `action` says: what was taken away, and the tables whose
     /// columns changed.

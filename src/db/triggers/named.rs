@@ -127,7 +127,7 @@ fn statement(stmt: &SqlStatement, out: &mut Vec<TableName>) {
 }
 
 /// [ISO/IEC 9075-4:2006 draft Clause 14] Adds to `out` the table names
-/// written in the control statement `c`: in its conditions, values and
+/// written in the control statement `statement_of`: in its conditions, values and
 /// cursors' queries, and in each statement it holds.
 fn control(statement_of: &ControlStatement, out: &mut Vec<TableName>) {
     match statement_of {

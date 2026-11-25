@@ -9,8 +9,7 @@
 //! table's scan, an index's, a filter, a projection, a grouping, DISTINCT,
 //! a sort, a limit, an append, a product, a hash join, and an inner index
 //! join by the outer row's columns (RULES.md D418). An outer join, a set
-//! operation, a system table or a VALUES list has no shape a kept plan may
-//! take.
+//! operation or a system table has no shape a kept plan may take.
 
 use crate::functions::ScalarRef;
 use crate::index::Probe;

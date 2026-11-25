@@ -7,7 +7,8 @@
 //! key:       each column's value, in order
 //! NULL:      0x00 (before every value)
 //! value:     0x01, then its type's key (`SqlType::encode_key`):
-//!   exact:       the units at the column's scale as i64, sign bit flipped,
+//!   exact:       the units at the column's scale as i64, or as i128 for a
+//!                column of more than 18 digits, sign bit flipped,
 //!                big-endian
 //!   approximate: the IEEE-754 bits, all inverted if negative, else the
 //!                sign bit set, big-endian (-0.0 as 0.0)
@@ -183,9 +184,9 @@ pub struct Anchor {
 /// \[DESIGN\] The anchor of `value` among the keys of a column of
 /// `data_type` (see the module's documentation): the key of `value` if it
 /// is of the column's type; for an exact number, of it rounded down at the
-/// column's scale, within 64 bits; for a string, of it cut to the column's
-/// length. None for NULL or a value of another kind, which every key must
-/// be compared with.
+/// column's scale, within the bits its column's keys hold; for a string, of
+/// it cut to the column's length. None for NULL or a value of another kind,
+/// which every key must be compared with.
 pub fn anchor(value: &Value, data_type: &DataType) -> Option<Anchor> {
     let mut key = Vec::with_capacity(ANCHOR_BYTES);
     let exact = anchor_into(value, data_type, &mut key)?;
