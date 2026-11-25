@@ -54,15 +54,18 @@ fn tables() -> (Database, Session) {
 /// The shapes joined, `{o}` and `{l}` the tables: EXISTS of an order's
 /// lines under a condition of their own; EXISTS and NOT EXISTS of another
 /// line of a line's order, of another S, the second under a condition of
-/// its own; NOT EXISTS on a key of nulls on both sides; and EXISTS on
-/// two keys.
-const SHAPES: [&str; 4] = [
+/// its own; NOT EXISTS on a key of nulls on both sides; EXISTS on two
+/// keys; and EXISTS of another line of another S alone, unknown of a
+/// null S.
+const SHAPES: [&str; 5] = [
     "SELECT G, COUNT(*), SUM(D) FROM {o} WHERE D < 400 AND EXISTS (SELECT * FROM {l} WHERE {l}.K = {o}.K AND {l}.A < {l}.B) GROUP BY G",
     "SELECT COUNT(*), SUM(L1.S), MIN(L1.K), MAX(L1.A) FROM {l} AS L1 WHERE L1.A > 40
        AND EXISTS (SELECT * FROM {l} AS L2 WHERE L2.K = L1.K AND L2.S <> L1.S)
        AND NOT EXISTS (SELECT * FROM {l} AS L3 WHERE L3.K = L1.K AND L3.S <> L1.S AND L3.A > L3.B)",
     "SELECT COUNT(*), SUM(K), COUNT(G) FROM {o} WHERE D < 500 AND NOT EXISTS (SELECT * FROM {l} WHERE {l}.S = {o}.G AND {l}.A < 45)",
     "SELECT COUNT(*), SUM(D) FROM {o} WHERE D < 300 AND EXISTS (SELECT * FROM {l} WHERE {l}.K = {o}.K AND {l}.S = {o}.G)",
+    "SELECT COUNT(*), SUM(L1.A), COUNT(L1.S) FROM {l} AS L1 WHERE L1.A > 40
+       AND EXISTS (SELECT * FROM {l} AS L2 WHERE L2.K = L1.K AND L2.S <> L1.S)",
 ];
 
 /// The physical plan of `sql`.
