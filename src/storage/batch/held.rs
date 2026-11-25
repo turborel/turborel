@@ -1,11 +1,11 @@
 //! \[DESIGN\] Batches held by an operator (RULES.md D31, D38): the bytes
 //! their vectors hold, near enough to bound a work area by; and many
 //! batches' rows joined into one batch, each vector of the kind the
-//! batches' vectors at its place all are, so what a join holds of its
-//! right operand is gathered into its joined rows as a scan's is
-//! (`gathered.rs`).
+//! batches' vectors at its place all are (`joined.rs`), so what a join
+//! holds of its right operand is gathered into its joined rows as a scan's
+//! is (`gathered.rs`).
 
-use super::{Batch, Column, Floats, Ints, Texts};
+use super::{Batch, Column};
 use crate::spill::heap_bytes;
 use crate::value::{Decimal, Value};
 
@@ -33,7 +33,7 @@ impl Batch {
         let columns = (0..width)
             .map(|at| {
                 let of: Vec<(Option<&Column>, &[usize])> = parts.iter().map(|(b, p)| (b.columns.get(at), p.as_slice())).collect();
-                joined_column(&of, rows)
+                super::joined::joined_column(&of, rows)
             })
             .collect();
         Batch { columns, rows }
@@ -70,7 +70,7 @@ impl Column {
     }
 
     /// The scale of its integers, if it is a vector of them.
-    fn scale(&self) -> Option<u32> {
+    pub(super) fn scale(&self) -> Option<u32> {
         match self {
             Column::Ints(ints) => Some(ints.scale),
             Column::Values(_)
@@ -83,22 +83,8 @@ impl Column {
         }
     }
 
-    /// Row `r`'s units, if it is a vector of integers; 0 of a null.
-    fn unit_at(&self, r: usize) -> Option<i64> {
-        match self {
-            Column::Ints(ints) => Some(ints.units.get(r).copied().unwrap_or(0)),
-            Column::Values(_)
-            | Column::Floats(_)
-            | Column::Texts(_)
-            | Column::Datetimes(_)
-            | Column::Bools(_)
-            | Column::Nulls(_)
-            | Column::Late(_) => None,
-        }
-    }
-
     /// Whether row `r`'s value is null, or past the end.
-    fn null_at(&self, r: usize) -> bool {
+    pub(super) fn null_at(&self, r: usize) -> bool {
         match self {
             Column::Values(values) => values.get(r).is_none_or(Value::is_null),
             Column::Ints(ints) => r >= ints.units.len() || ints.is_null(r),
@@ -112,7 +98,7 @@ impl Column {
     }
 
     /// Row `r`'s value, made; a null past the end.
-    fn value_at(&self, r: usize) -> Value {
+    pub(super) fn value_at(&self, r: usize) -> Value {
         match self {
             Column::Values(values) => values.get(r).cloned().unwrap_or(Value::Null),
             Column::Ints(ints) => ints
@@ -128,40 +114,4 @@ impl Column {
             Column::Late(late) => late.values().get(r).cloned().unwrap_or(Value::Null),
         }
     }
-}
-
-/// The vector of `rows` rows of each part's column, if it has one, at the
-/// places beside it, in order: of the kind every part's is, as
-/// `Batch::joined` says.
-fn joined_column(parts: &[(Option<&Column>, &[usize])], rows: usize) -> Column {
-    let each = || parts.iter().flat_map(|&(column, places)| places.iter().map(move |&r| (column, r)));
-    let nulls = || super::mask::mask_of(&each().map(|(c, r)| c.is_none_or(|c| c.null_at(r))).collect::<Vec<bool>>());
-    let scales: Vec<Option<u32>> = parts.iter().map(|(c, _)| c.and_then(Column::scale)).collect();
-    if let Some(&Some(scale)) = scales.first()
-        && scales.iter().all(|&s| s == Some(scale))
-    {
-        let units = each().map(|(c, r)| c.and_then(|c| c.unit_at(r)).unwrap_or(0)).collect();
-        return Column::Ints(Ints::new(units, scale, nulls()));
-    }
-    let all = |kind: fn(&Column) -> bool| parts.iter().all(|(c, _)| c.is_some_and(kind));
-    if all(|c| matches!(c, Column::Floats(_))) {
-        let numbers = each().map(|(c, r)| c.and_then(|c| c.value_at(r).as_f64()).unwrap_or(0.0_f64)).collect();
-        return Column::Floats(Floats::new(numbers, nulls()));
-    }
-    if all(|c| matches!(c, Column::Texts(_))) {
-        let (mut text, mut ends) = (String::new(), Vec::with_capacity(rows));
-        for (c, r) in each() {
-            if let Some(Column::Texts(texts)) = c
-                && let Some(s) = texts.get(r)
-            {
-                text.push_str(s);
-            }
-            ends.push(text.len());
-        }
-        return Column::Texts(Texts::new(text, ends, nulls()));
-    }
-    if all(|c| matches!(c, Column::Nulls(_))) {
-        return Column::nulls(rows);
-    }
-    Column::Values(each().map(|(c, r)| c.map_or(Value::Null, |c| c.value_at(r))).collect())
 }

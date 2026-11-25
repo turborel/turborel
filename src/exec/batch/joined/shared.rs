@@ -135,6 +135,18 @@ impl SharedTable {
         Ok(told)
     }
 
+    /// The rows it holds.
+    #[cfg(test)]
+    pub(in crate::exec) fn rows(&self) -> usize {
+        self.right.rows
+    }
+
+    /// Whether its table is direct (RULES.md D601).
+    #[cfg(test)]
+    pub(in crate::exec) fn is_direct(&self) -> bool {
+        self.table.is_direct()
+    }
+
     /// How it hashes its keys.
     fn hashing(&self) -> Hashing<'_> {
         Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct() }

@@ -29,8 +29,8 @@ pub(super) struct RowSplit {
     condition: Option<Conjunction>,
     /// The groups as they were when it was split, if it reads any.
     directory: Option<Arc<Directory>>,
-    /// The ranges of the zones the condition may match, of a table read
-    /// through its tree alone (`rows/zones.rs`).
+    /// The ranges of the zones the condition may match (`rows/zones.rs`),
+    /// as they were when it was split.
     zones: Vec<(RowId, Option<RowId>)>,
     /// The first row id of each morsel after the first, which begins at 0.
     cuts: Vec<RowId>,
@@ -53,7 +53,9 @@ impl RowTable {
         let directory = self.directory_for(reader)?;
         let reads_groups = self.frozen.columns().is_some() || !directory.groups.is_empty();
         let cuts = self.cuts(&directory, rows.max(1));
-        let zones = if reads_groups { Vec::new() } else { self.zones.ranges(condition.as_ref()) };
+        // Judged once for every morsel, of a table read through its groups
+        // too, whose tree's rows each morsel reads by them (RULES.md D1052).
+        let zones = self.zones.ranges(condition.as_ref());
         let directory = reads_groups.then_some(directory);
         Ok(RowSplit { table: self, reader, columns, asked, condition, directory, zones, cuts })
     }
@@ -153,6 +155,6 @@ impl Split for RowSplit {
         let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
         let part = Arc::new(Directory::part(directory, directory.groups.iter().filter(inside).cloned().collect()));
         let what = (asked, self.condition.clone());
-        Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, range).with_late(late)))
+        Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, self.zones_within(range)).with_late(late)))
     }
 }

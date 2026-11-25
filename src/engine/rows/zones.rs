@@ -426,24 +426,6 @@ impl Zones {
         ranges
     }
 
-    /// The ranges `ranges` gives within the row ids from `first` up to, not
-    /// including, `end`, if it has one.
-    pub(super) fn ranges_within(
-        &self,
-        conditions: Option<&Conjunction>,
-        (first, end): (RowId, Option<RowId>),
-    ) -> Vec<(RowId, Option<RowId>)> {
-        let within = |(from, to): (RowId, Option<RowId>)| {
-            let from = from.max(first);
-            let to = match (to, end) {
-                (Some(a), Some(b)) => Some(a.min(b)),
-                (a, b) => a.or(b),
-            };
-            to.is_none_or(|t| from < t).then_some((from, to))
-        };
-        self.ranges(conditions).into_iter().filter_map(within).collect()
-    }
-
     /// The share of the rows a scan told `conditions` reads, by the rows of
     /// the zones it reads, those not known among them, as blocks of row ids
     /// are not as full as one another (`TableStorage::scan_share`). Of

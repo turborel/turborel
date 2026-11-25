@@ -18,7 +18,7 @@ const BUILT_LEFT: &str = "marked_semi::a_built_left_gives_the_rows_of_its_subque
 const STEP: &str = "marked_semi::a_hashed_semi_join_is_a_step_of_its_lefts_pipeline";
 
 /// Mechanisms whose removal must fail the semi join requirements.
-pub const SEMI_JOINS: [Mutation; 13] = [
+pub const SEMI_JOINS: [Mutation; 12] = [
     Mutation {
         name: "semi-built-left-keeps-matched",
         package: Package::Core,
@@ -109,16 +109,6 @@ pub const SEMI_JOINS: [Mutation; 13] = [
         file: "src/exec/batch/joined/semi/pairing.rs",
         original: "Ok(eval_cond(cond, scratch, runner)? == Truth::True)",
         replacement: "Ok(eval_cond(cond, scratch, runner)? != Truth::False)",
-        integration: &[BUILT_LEFT],
-        unit: &[],
-    },
-    Mutation {
-        name: "semi-marking-right-serial",
-        package: Package::Core,
-        breaks: "the right operand of a semi join that builds its left is no part run in parallel",
-        file: "src/physical/parallel.rs",
-        original: "if degree < 2 || depth >= MAX_DEPTH {",
-        replacement: "if degree < usize::MAX || depth >= MAX_DEPTH {",
         integration: &[BUILT_LEFT],
         unit: &[],
     },

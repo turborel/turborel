@@ -794,9 +794,12 @@ The subquery is computed once, for every set of values of the outer
 columns at a time, and joined with the outer rows, rather than run for
 each of them. Its rows, nulls and errors are those it would have run
 for each row. A scalar subquery of two rows for a row still fails with
-SQLCODE -811, and COUNT of a row with no match is still 0. A function
-that returns one value from a subquery of its parameters is unnested
-the same way, inlined where it is invoked.
+SQLCODE -811, and COUNT of a row with no match is still 0. A subquery
+of one set function correlated by equalities alone, as
+`(SELECT AVG(Q) FROM L WHERE L.K = P.K)`, is grouped once by the columns
+it is correlated by, where its declared types show it cannot overflow.
+A function that returns one value from a subquery of its parameters is
+unnested the same way, inlined where it is invoked.
 
 EXISTS, NOT EXISTS, IN and NOT IN of a subquery that is one of the
 conditions ANDed in a WHERE or HAVING clause become a semi join or an

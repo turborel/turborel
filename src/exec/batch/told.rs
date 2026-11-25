@@ -7,16 +7,19 @@
 //! column of its left operand to it, so a left row the filter drops
 //! probes nothing. An inner merge join takes a filter of either
 //! operand's column to that operand, and of its key to the other
-//! operand's key too. A grouping by batch whose set functions are COUNT,
-//! MIN and MAX takes a filter of a grouping column to its input, as a
+//! operand's key too. A grouping by batch whose set functions raise
+//! nothing takes a filter of a grouping column to its input, as a
 //! group the filter drops gives no row the join keeps (Yang et al.,
-//! "Predicate Transfer", CIDR 2024, §3). SUM and AVG can overflow, so a
-//! grouping of them keeps every row (RULES.md D15). COUNT, MIN and MAX of
-//! a column warn of a null they eliminate [ISO/IEC 9075-2:2023 §10.9
-//! GR4b], so a grouping of one judges the filter of its input's batches
-//! itself and warns if a row it dropped held a null there, as it would
-//! of every row (`runtime::applied_warning`). Each join passes a filter
-//! only if the rest of its condition cannot raise (`runtime::passed`).
+//! "Predicate Transfer", CIDR 2024, §3): COUNT, MIN and MAX, and SUM and
+//! AVG of exact values whose sum the declared types keep within an exact
+//! number's digits (RULES.md D1060, D1062). Any other SUM or AVG can
+//! overflow, so a grouping of one keeps every row (RULES.md D15). A set
+//! function of a column that may hold a null warns of one it eliminates
+//! [ISO/IEC 9075-2:2023 §10.9 GR4b], so a grouping of one judges the
+//! filter of its input's batches itself and warns if a row it dropped
+//! held a null there, as it would of every row
+//! (`runtime::applied_warning`). Each join passes a filter only if the
+//! rest of its condition cannot raise (`runtime::passed`).
 //!
 //! (RULES.md D1072) A grouping that takes no filter is gathered too, and
 //! one run in parallel, alone or under its HAVING condition, so a join
@@ -26,7 +29,7 @@ use super::joined::{gathered, rows_of};
 use super::late::Deferred;
 use super::runtime::{self, Told};
 use super::stream::{self, Batches};
-use super::{Taken, filterable, read_of};
+use super::{Taken, filterable, read_of, typed};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
@@ -88,17 +91,14 @@ pub(super) fn part_layout(part: &Plan) -> Option<(Vec<usize>, usize)> {
     grouping_layout(if let Plan::Filter { input, .. } = part { input } else { part })
 }
 
-/// The batches of `part`, a part run in parallel that is no pipeline: a
-/// window's whole partitions computed on the part's threads (RULES.md
-/// D560), or a grouping's rows (`part_layout`), gathered.
+/// The batches of `part`, a part run in parallel that is a grouping, or
+/// a filter over one (`part_layout`): its rows, made by the part's
+/// threads, gathered.
 ///
 /// # Errors
 ///
 /// As the part's rows; SQLCODE -910 of a part that gives no batches.
 pub(super) fn part_batches(part: Parallel, (db, tx): (&Db, TxId)) -> Result<Batches> {
-    if matches!(part.input, Plan::Window { .. }) {
-        return crate::exec::window::window_batches_on(part.input, (db, tx), part.degree);
-    }
     let (columns, _) = part_layout(&part.input).ok_or_else(|| broken("a part run in parallel that gives no batches"))?;
     Ok(gathered(execute(Plan::Parallel(Box::new(part)), db, tx), &columns))
 }
@@ -186,8 +186,9 @@ pub(super) fn merge_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferr
 /// rows gathered; of one that takes filters
 /// (`batch::filterable`), its groups gathered, its input told the
 /// filters of its grouping columns `deferred` tells it: its scans, if no
-/// set function takes a column; else its batches, warning of a null a
-/// set function would have eliminated of a row a filter dropped.
+/// set function takes a column that may hold a null; else its batches,
+/// warning of a null a set function would have eliminated of a row a
+/// filter dropped.
 ///
 /// # Errors
 ///
@@ -204,7 +205,11 @@ pub(super) fn grouped_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Defe
         return Err(broken("a grouping that gives no batches"));
     };
     let (input_columns, _) = stream::layout(&input, db).unwrap_or_default();
-    let args: Vec<usize> = read.taken.iter().filter_map(|t| if let Taken::Column(at) = t { Some(*at) } else { None }).collect();
+    // A column declared to hold no null has none to eliminate, so no
+    // warning to keep (RULES.md D1062).
+    let nullable = |at: &usize| input_columns.get(*at).is_none_or(|&c| !typed::never_null(&input, c, db));
+    let taken = read.taken.iter().filter_map(|t| if let Taken::Column(at) = t { Some(*at) } else { None });
+    let args: Vec<usize> = taken.filter(nullable).collect();
     let batches = if args.is_empty() {
         stream::whole_told(*input, (db, tx), below)?
     } else {

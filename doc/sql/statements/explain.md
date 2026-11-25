@@ -371,11 +371,13 @@ OK
 
 A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
 over STAFF of [Value Expressions](../04-expressions.md). The rule
-`unnest_subqueries` made the subquery a grouping of each department's
-salaries, joined with the outer rows by their departments. Each
-department is taken once, as a value and the count of its trailing
-spaces. The subquery has one row for each department, a set function of
-no grouping, so its value is read as it is, with no SINGLE:
+`unnest_subqueries` made the subquery a grouping of every department's
+salaries, computed once and joined with the outer rows by their
+departments. The subquery has one row for each department, a set
+function of no grouping, so its value is read as it is, with no SINGLE.
+A department with no row would read the value AVG has of no rows, a
+null, which the CASE gives. The comparison is never true of that null,
+so `push_filter_into_outer_join` made the outer join the inner join:
 
 ```sql
 CREATE TABLE STAFF (ID INTEGER PRIMARY KEY, NAME VARCHAR(30), DEPT CHAR(3), SALARY DECIMAL(9,2));
@@ -400,49 +402,33 @@ OK
          Aggregate group by [] computing [AVG(T.SALARY)]
            Filter T.DEPT = S.DEPT
              Scan ANN.STAFF
- -- rules: unnest_subqueries
+ -- rules: unnest_subqueries, push_filter_into_outer_join, merge_filters
  -- optimized:
  Project S.NAME
    Project S.ID, S.NAME, S.DEPT, S.SALARY
-     Filter S.SALARY > AVG(T.SALARY)
-       Left outer join on NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))
-         Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT, TRAILING_SPACES(S.DEPT)
+     Filter S.DEPT = T.DEPT AND S.SALARY > CASE WHEN 1 IS NULL THEN NULL ELSE AVG(T.SALARY) END
+       Product
+         Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT
            Scan ANN.STAFF
-         Project S.DEPT, TRAILING_SPACES(S.DEPT), 1, AVG(T.SALARY)
-           Project S.DEPT, TRAILING_SPACES(S.DEPT), AVG(T.SALARY)
-             Aggregate group by [S.DEPT, TRAILING_SPACES(S.DEPT)] computing [AVG(T.SALARY)]
-               Left outer join on NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))
-                 Distinct
-                   Project S.DEPT, TRAILING_SPACES(S.DEPT)
+         Project T.DEPT, 1, AVG(T.SALARY)
+           Project T.DEPT, AVG(T.SALARY)
+             Project AVG(T.SALARY), T.DEPT
+               Project AVG(T.SALARY), T.DEPT
+                 Aggregate group by [T.DEPT] computing [AVG(T.SALARY)]
+                   Project T.ID, T.NAME, T.DEPT, T.SALARY, T.DEPT
                      Scan ANN.STAFF
-                 Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY, TRUE
-                   Filter T.DEPT = S.DEPT
-                     Product
-                       Distinct
-                         Project S.DEPT, TRAILING_SPACES(S.DEPT)
-                           Scan ANN.STAFF
-                       Scan ANN.STAFF
  -- physical:
  Project S.NAME
-   Filter S.SALARY > AVG(T.SALARY)
-     LeftOuterJoin NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))  (hashed on S.DEPT IS NOT DISTINCT FROM S.DEPT AND TRAILING_SPACES(S.DEPT) IS NOT DISTINCT FROM TRAILING_SPACES(S.DEPT))
-       Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT, TRAILING_SPACES(S.DEPT)
+   Filter S.SALARY > CASE WHEN 1 IS NULL THEN NULL ELSE AVG(T.SALARY) END
+     HashJoin S.DEPT = T.DEPT
+       Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT
          SeqScan ANN.STAFF  (rows=4, cost=3.8)
-       Project S.DEPT, TRAILING_SPACES(S.DEPT), 1, AVG(T.SALARY)
-         Project S.DEPT, TRAILING_SPACES(S.DEPT), AVG(T.SALARY)
-           Aggregate group by [S.DEPT, TRAILING_SPACES(S.DEPT)] computing [AVG(T.SALARY)]
-             LeftOuterJoin NOT (S.DEPT IS DISTINCT FROM S.DEPT) AND NOT (TRAILING_SPACES(S.DEPT) IS DISTINCT FROM TRAILING_SPACES(S.DEPT))  (hashed on S.DEPT IS NOT DISTINCT FROM S.DEPT AND TRAILING_SPACES(S.DEPT) IS NOT DISTINCT FROM TRAILING_SPACES(S.DEPT))
-               Distinct
-                 Project S.DEPT, TRAILING_SPACES(S.DEPT)
-                   SeqScan ANN.STAFF  (rows=4, cost=3.8)
-               Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY, TRUE
-                 Project S.DEPT, TRAILING_SPACES(S.DEPT), T.ID, T.NAME, T.DEPT, T.SALARY
-                   HashJoin T.DEPT = S.DEPT
-                     SeqScan ANN.STAFF  (rows=4, cost=3.6)
-                     Distinct
-                       Project S.DEPT, TRAILING_SPACES(S.DEPT)
-                         SeqScan ANN.STAFF  (rows=4, cost=3.8)
-(51 rows)
+       Project T.DEPT, 1, AVG(T.SALARY)
+         Project T.DEPT, AVG(T.SALARY)
+           Aggregate group by [T.DEPT] computing [AVG(T.SALARY)]
+             Project T.ID, T.NAME, T.DEPT, T.SALARY, T.DEPT
+               SeqScan ANN.STAFF  (rows=4, cost=3.6)
+(35 rows)
 ```
 
 Set functions of all the table's rows, read in morsels of 256 rows

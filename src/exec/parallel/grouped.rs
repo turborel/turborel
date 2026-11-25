@@ -39,7 +39,7 @@ use super::run::Morsels;
 use super::{Held, Limit};
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
-use crate::exec::batch::{Read, read_for};
+use crate::exec::batch::{Read, Told, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::table::Seed;
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
@@ -138,6 +138,17 @@ pub(super) fn is_one(plan: &Plan) -> bool {
 ///
 /// As reading the stream, or a set function, fails.
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
+    grouped_told(plan, (db, tx), degree, Vec::new())
+}
+
+/// \[DESIGN\] (RULES.md D1063) As `grouped`, the grouping's input told
+/// `told`, runtime filters of its columns a join above the part tells
+/// it: a group they drop gives no row the join keeps.
+///
+/// # Errors
+///
+/// As `grouped`.
+pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: Vec<Told>) -> Result<Held<RowIter>> {
     let (plan, having) = if let Plan::Filter { cond, input, .. } = plan { (&**input, Some(cond.clone())) } else { (plan, None) };
     let seed = db.functions.seed().clone();
     let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
@@ -150,7 +161,7 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resu
         return Err(broken("not a grouping run in parallel"));
     };
     let limit = Limit::of(db);
-    let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
+    let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, told)? else { return Ok(Held::GaveWay) };
     let mut grouping = grouping;
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     let grouping = Arc::new(grouping);

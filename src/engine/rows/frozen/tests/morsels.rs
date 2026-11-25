@@ -40,3 +40,31 @@ fn morsels_give_late_columns_as_their_places() {
     assert_eq!(late, early);
     assert!(early.iter().any(|r| r == "17 v17"), "{early:?}");
 }
+
+/// Verifies: [DESIGN] RULES.md D1052 a column store's split judges its
+/// table's zones once, as it is made, and each morsel reads of its tree's
+/// rows those of the zones its condition may match within its own row
+/// ids alone: of 9000 rows not yet frozen, in zones of 1024 row ids, a
+/// condition on the last thousand keys reads the last two zones' rows,
+/// whatever the morsels they fall in, and no morsel reads another's.
+#[test]
+fn a_split_judges_its_zones_once_for_every_morsel() {
+    let (_, files) = files();
+    let (table, _) = table(&files, 3600, 9000);
+    let last = Conjunction::of(Condition {
+        columns: vec![0],
+        probe: Probe::Compare { op: CompOp::Ge, value: Value::Exact(Decimal::new(8000, 0)) },
+    });
+    let read = |rows: usize| {
+        let split = Arc::clone(&table).split(NO_TRANSACTION, &[0], Some(&last), rows).unwrap();
+        let morsels = split.morsels();
+        let given: usize = (0..morsels).flat_map(|n| split.morsel_batches(n, &[]).unwrap()).map(|b| b.unwrap().rows).sum();
+        (morsels, given)
+    };
+    // The zones are kept from the first scan that asks them.
+    let _ = read(9000);
+    assert_eq!(read(9000), (1, 9000 - 7 * 1024), "one morsel, the zones of ids from 7168");
+    let (morsels, given) = read(500);
+    assert!(morsels > 9, "{morsels} morsels");
+    assert_eq!(given, 9000 - 7 * 1024, "the same rows by many morsels");
+}

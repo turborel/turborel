@@ -25,12 +25,14 @@ mod joined;
 mod judge;
 mod keyed;
 mod late;
+mod parted;
 mod project;
 mod runtime;
 mod shaped;
 mod stream;
 mod told;
 mod transfer;
+mod typed;
 
 use std::sync::Arc;
 
@@ -53,7 +55,7 @@ use super::{Runner, eval, failed, warn};
 use crate::db::State;
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
-use crate::functions::{Accumulator, Columnar, ColumnarKind};
+use crate::functions::Accumulator;
 use crate::logical::{AggCall, Expr};
 use crate::physical::Plan;
 use crate::storage::mask::index;
@@ -158,16 +160,18 @@ pub(super) fn aggregable(plan: &Plan, db: &State) -> bool {
     stream::untold(input) && read_of(plan, db).is_some()
 }
 
-/// \[DESIGN\] (RULES.md D600, D15) Whether `plan` is a grouping read by
-/// batches that takes a runtime filter of a grouping column to its input
-/// (`told.rs`): by some column, each set function COUNT, MIN or MAX, of
-/// every row or of a column, none of which can raise. SUM and AVG can
-/// overflow, so a group a filter dropped could have raised an error.
+/// \[DESIGN\] (RULES.md D600, D1062, D15) Whether `plan` is a grouping read
+/// by batches that takes a runtime filter of a grouping column to its
+/// input (`told.rs`): by some column, each set function of every row or
+/// of a column, and one that raises nothing whatever rows it is given,
+/// which COUNT, MIN and MAX are, and SUM and AVG of exact values whose sum
+/// the declared types keep within an exact number's digits
+/// (`typed::quiet`). Any other SUM or AVG can overflow, so a group a
+/// filter dropped could have raised an error.
 pub(super) fn filterable(plan: &Plan, db: &State) -> bool {
-    let Plan::Aggregate { groups, aggs, .. } = plan else { return false };
-    let kept = |a: &AggCall| matches!(a.func.0.columnar(), Some(Columnar(ColumnarKind::Count | ColumnarKind::Min | ColumnarKind::Max)));
+    let Plan::Aggregate { groups, aggs, input, .. } = plan else { return false };
     let taken = |r: Read| r.taken.iter().all(|t| matches!(t, Taken::Count | Taken::Column(_)));
-    !groups.is_empty() && aggs.iter().all(kept) && read_of(plan, db).is_some_and(taken)
+    !groups.is_empty() && aggs.iter().all(|a| typed::quiet(a, input, db)) && read_of(plan, db).is_some_and(taken)
 }
 
 /// The rows of the aggregation `plan`, one read by batches (`aggregable`).

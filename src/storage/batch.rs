@@ -11,6 +11,7 @@
 pub mod bound;
 mod gathered;
 mod held;
+mod joined;
 mod kinds;
 mod late;
 pub mod mask;

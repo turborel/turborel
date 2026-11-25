@@ -77,6 +77,7 @@ fn a_having_condition_is_judged_by_its_part() {
             "SELECT G, SUM(N), COUNT(*) FROM {t} GROUP BY G HAVING SUM(N) > 700",
             "SELECT G, COUNT(N) FROM {t} GROUP BY G HAVING SUM(N) > 1000000",
             "SELECT G, MAX(N) FROM {t} GROUP BY G HAVING COUNT(*) > 0",
+            "SELECT G, COUNT(*), SUM(N) FROM {t} WHERE N IS NULL OR K < 100 GROUP BY G HAVING NOT (SUM(N) > 100)",
             "SELECT G, MIN(K) FROM {t} WHERE K < 3000 GROUP BY G HAVING COUNT(N) < 5 AND MAX(N) > 90",
             "SELECT COUNT(*), SUM(N) FROM {t} HAVING COUNT(*) > 10",
             "SELECT COUNT(*) FROM {t} WHERE N < 0 HAVING COUNT(*) = 0",

@@ -207,7 +207,7 @@ fn mark_joins_switched_off_and_refused() {
     for q in [
         "SELECT K, (EXISTS (SELECT * FROM S WHERE S.K = R.K AND 10 / S.W > 1)) FROM R",
         "SELECT K, (V IN (SELECT W FROM S)) FROM R",
-        "SELECT K, (V IN (SELECT W - 1 FROM S WHERE S.K = R.K)) FROM R",
+        "SELECT K, (V IN (SELECT 10 / (W - 9) FROM S WHERE S.K = R.K)) FROM R",
         "SELECT K, CASE WHEN K > 1 THEN (V + 1 IN (SELECT W FROM S WHERE S.K = R.K)) ELSE FALSE END FROM R",
         "SELECT K, V FROM R WHERE EXISTS (SELECT * FROM S WHERE S.K = R.K)",
     ] {

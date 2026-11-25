@@ -15,12 +15,15 @@
 //!
 //! The subquery is then computed for values of the columns no outer row
 //! has, so no part of it may raise an error (RULES.md D15). Its set
-//! functions are COUNT, MAX and MIN alone (`pure::plan_raises`).
+//! functions are COUNT, MAX and MIN, and SUM and AVG of exact values whose
+//! sum the declared types keep within an exact number's digits
+//! (`pure::plan_raises`, RULES.md D1060).
 
 use super::Bound;
 use super::pure::plan_raises;
 use crate::functions::Registry;
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Subquery, and_all, plan_has_outer, split_and};
+use crate::optimizer::RuleContext;
 use crate::value::CompOp;
 
 /// A subquery's plan, its correlation pulled up, which gives its columns,
@@ -41,9 +44,9 @@ struct Pulled {
 /// `sub` unnested simply, if it can be, as a bound subquery with its key
 /// columns first; the keys are its outer expressions' values compared
 /// with them, as an equality compares them, a null matching none.
-pub(super) fn pulled(sub: &Subquery, functions: &Registry) -> Option<Bound> {
-    let pulled = pull(&sub.plan, functions)?;
-    if pulled.keys.is_empty() || plan_raises(&pulled.plan, functions) {
+pub(super) fn pulled(sub: &Subquery, ctx: &RuleContext<'_>) -> Option<Bound> {
+    let pulled = pull(&sub.plan, &ctx.db.functions)?;
+    if pulled.keys.is_empty() || plan_raises(&pulled.plan, ctx) {
         return None;
     }
     let width = pulled.plan.width();

@@ -88,6 +88,14 @@ impl Deferred {
         Deferred { reduced: true, unread: without(&self.unread, &read), bound, told: Vec::new() }
     }
 
+    /// \[DESIGN\] (RULES.md D1063) Of the input of runtime filters judged
+    /// of its batches, `columns` those they judge: those read, rows
+    /// dropped, as a filter keeps only rows its join may match, so the
+    /// columns no step reads before are decoded of those rows alone.
+    pub(in crate::exec) fn judged(&self, columns: &[usize]) -> Deferred {
+        Deferred { reduced: true, unread: without(&self.unread, columns), bound: self.bound.clone(), told: Vec::new() }
+    }
+
     /// Of a projection's input, `exprs` its expressions: a column one of
     /// them is, left unread if the projection's column is, as it is moved
     /// (`stream::pick`); every column any other reads read. A projection

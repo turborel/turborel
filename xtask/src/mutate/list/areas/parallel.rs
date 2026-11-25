@@ -5,8 +5,12 @@
 //! build order, a set operation's place left on its rows, a window's
 //! partitions not merged by their keys, a row lost at each morsel's
 //! start, an index range's last part lost, a grant of the whole free
-//! budget, a part's operators reserving the budget again, and a column
-//! store's scan by batch run in parallel.
+//! budget, a part's operators reserving the budget again, a column
+//! store's scan by batch run in parallel, a hash join's operand built
+//! of rows where it gives batches, one of the column store kept off the
+//! workers, a morsel's tree rows read of zones not judged, and a built
+//! operand's datetimes joined whatever their types or without their
+//! nulls.
 
 use super::super::{Mutation, Package};
 
@@ -18,11 +22,17 @@ const PLANNER: &str = "parallel::the_planner_marks_only_large_parts";
 const INDEX_RANGES: &str = "parallel::index_ranges_split_into_morsels";
 /// The unit test of work grants.
 const GRANTS: &str = "spill::grant::tests::grants_halve_the_free_budget";
+/// The unit test of a hash join's operand built by batch.
+const BUILT: &str = "exec::parallel::probe::tests::an_operand_that_gives_batches_is_built_of_its_vectors";
+/// The test of hash joins' built operands of the column store.
+const BUILDS: &str = "parallel::joins_build_by_batch";
+/// The unit test of vectors of words joined.
+const JOINED: &str = "storage::batch::joined::tests::datetimes_and_truth_values_stay_vectors_of_words";
 /// The unit test of grants inside a statement's grant.
 const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 13] = [
+pub const PARALLEL: [Mutation; 18] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -152,5 +162,55 @@ pub const PARALLEL: [Mutation; 13] = [
         replacement: "if false {",
         integration: &[],
         unit: &[COVERED],
+    },
+    Mutation {
+        name: "parallel-built-row-by-row",
+        package: Package::Core,
+        breaks: "a hash join's operand that gives batches is built of rows made one by one (D1050)",
+        file: "src/exec/parallel/probe.rs",
+        original: "layout(right, db).filter(|_| crate::exec::batched(db) && reads_by_batch(right, db))",
+        replacement: "layout(right, db).filter(|_| crate::exec::batched(db) && !reads_by_batch(right, db))",
+        integration: &[],
+        unit: &[BUILT],
+    },
+    Mutation {
+        name: "parallel-built-column-store-serial",
+        package: Package::Core,
+        breaks: "a hash join's built operand reading the column store stays on the statement's thread (D1051)",
+        file: "src/physical/parallel.rs",
+        original: "|rows| asked.by_rows(rows)",
+        replacement: "|rows| asked.degree(plan, rows)",
+        integration: &[BUILDS],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-morsel-zones-unjudged",
+        package: Package::Core,
+        breaks: "a column store's morsel reads its tree's rows of every zone, not those its split judged (D1052)",
+        file: "src/engine/rows/split.rs",
+        original: "(self.reader, part), what, self.zones_within(range))",
+        replacement: "(self.reader, part), what, vec![range])",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::morsels::a_split_judges_its_zones_once_for_every_morsel"],
+    },
+    Mutation {
+        name: "joined-datetimes-of-two-types",
+        package: Package::Core,
+        breaks: "datetimes of two types are joined as one vector of the first's type (D1053)",
+        file: "src/storage/batch/joined.rs",
+        original: "parts.iter().all(|&(column, _)| kind(column) == Some(first)).then_some(first)",
+        replacement: "Some(first)",
+        integration: &[],
+        unit: &[JOINED],
+    },
+    Mutation {
+        name: "joined-nulls-not-looked-for",
+        package: Package::Core,
+        breaks: "a joined vector of datetimes loses the nulls of a part that holds some (D1053)",
+        file: "src/storage/batch/joined.rs",
+        original: "Column::Datetimes(datetimes) => datetimes.nulls.is_some(),",
+        replacement: "Column::Datetimes(_) => false,",
+        integration: &[],
+        unit: &[JOINED],
     },
 ];

@@ -1,9 +1,9 @@
 //! \[DESIGN\] Runtime filters below operators run row by row (RULES.md
 //! D600): an index scan judges a filter and bounds its probe by it, an
 //! inner index join and an inner merge join take one to their operands,
-//! and a grouping whose set functions are COUNT, MIN and MAX takes one of
-//! a grouping column to its input, warning as it would of every row. The
-//! rows are those of the filters off, at degree 1 and 4.
+//! and a grouping whose set functions raise nothing (RULES.md D1062)
+//! takes one of a grouping column to its input, warning as it would of
+//! every row. The rows are those of the filters off, at degree 1 and 4.
 
 use turborel::db::{Database, Session};
 use turborel::error::SqlState;
@@ -59,7 +59,7 @@ fn row(rng: &mut Rng, k: usize) -> String {
 
 /// Queries whose filters go below an index scan, an index join, a merge
 /// join, a grouping and a semi join, of `{t}`, F or R: groupings of each
-/// set function that takes a filter and of SUM, which takes none, a join
+/// set function that takes a filter, SUM of an INTEGER column among them, a join
 /// by R's index of G, merge joins of L and M in K's order, IN and EXISTS,
 /// and NOT IN of a subquery with a null, which an antijoin's filter would
 /// change, and of one without.
@@ -118,22 +118,41 @@ fn given(a: &Session, sql: &str, label: &str) -> (u64, String) {
     (analyzed.operators.iter().filter(|o| o.label.starts_with(label)).map(|o| o.rows).sum(), analyzed.text)
 }
 
-/// Verifies: [DESIGN] RULES.md D600, D15: a grouping of COUNT(*) alone
-/// takes the filter of the few keys of D a filter of TAG leaves to its
-/// scan of F, so the scan gives the rows of those keys, where with the
-/// filters off it gives every row; a grouping of SUM, which can overflow,
-/// takes none, so its scan gives every row either way.
+/// Verifies: [DESIGN] RULES.md D600, D1062, D15: a grouping of COUNT(*)
+/// alone takes the filter of the few keys of D a filter of TAG leaves to
+/// its scan of F, so the scan gives the rows of those keys, where with the
+/// filters off it gives every row; a grouping of SUM of an INTEGER
+/// column declared NOT NULL, whose sum always fits and which eliminates
+/// no null, takes it to its scan too, and gives the sums it gives with
+/// the filters off, as it does under a projection of `0.5 * SUM(H)`,
+/// which the types prove fits; a grouping of SUM of a column of 38
+/// digits, which can overflow, takes none, so its scan gives every row
+/// either way.
 #[test]
 fn a_filter_reaches_the_scan_below_a_grouping() {
     let (_db, a) = tables(17);
+    exec(&a, "CREATE TABLE N (G INTEGER, H INTEGER NOT NULL) USING columnstore").unwrap();
+    exec(&a, "CREATE TABLE W (G INTEGER, H DECIMAL(38, 0) NOT NULL) USING columnstore").unwrap();
+    for table in ["N", "W"] {
+        exec(&a, &format!("INSERT INTO {table} SELECT G, COALESCE(H, 0) FROM F")).unwrap();
+    }
+    a.commit().unwrap();
     let counted = "SELECT X.G, X.C FROM (SELECT G, COUNT(*) AS C FROM F GROUP BY G) AS X JOIN D ON X.G = D.K WHERE D.TAG = 3";
-    let summed = "SELECT X.G, X.S FROM (SELECT G, SUM(H) AS S FROM F GROUP BY G) AS X JOIN D ON X.G = D.K WHERE D.TAG = 3";
-    let ((counted_on, plan), (summed_on, _)) = (given(&a, counted, "SeqScan A.F"), given(&a, summed, "SeqScan A.F"));
+    let summed =
+        |t: &str| format!("SELECT X.G, X.S FROM (SELECT G, SUM(H) AS S FROM {t} GROUP BY G) AS X JOIN D ON X.G = D.K WHERE D.TAG = 3");
+    let ((counted_on, plan), sums_on) = (given(&a, counted, "SeqScan A.F"), sorted(&a, &summed("N")));
+    let ((summed_on, summed_plan), (wide_on, _)) = (given(&a, &summed("N"), "SeqScan A.N"), given(&a, &summed("W"), "SeqScan A.W"));
+    // A projection of arithmetic the types prove fits passes the filter on.
+    let halved = summed("N").replace("SUM(H) AS S", "0.5 * SUM(H) AS S");
+    let (halved_on, halved_plan) = given(&a, &halved, "SeqScan A.N");
     exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
     let (counted_off, _) = given(&a, counted, "SeqScan A.F");
     assert_eq!(counted_off, 6000, "{plan}");
     assert!(counted_on < 600, "F gave {counted_on} of\n{plan}");
-    assert_eq!(summed_on, 6000, "SUM takes no filter");
+    assert!(summed_on < 600, "N gave {summed_on} of\n{summed_plan}");
+    assert_eq!(sums_on, sorted(&a, &summed("N")), "the sums with the filters off");
+    assert!(halved_on < 600, "N gave {halved_on} of\n{halved_plan}");
+    assert_eq!(wide_on, 6000, "SUM of 38 digits takes no filter");
 }
 
 /// Verifies: [DESIGN] RULES.md D600 [ISO/IEC 9075-2:2023 §10.9 GR4b]: a
@@ -159,4 +178,36 @@ fn a_grouping_told_a_filter_warns_as_of_every_row() {
         rows(&a, sql).unwrap();
         assert_eq!(a.warning(), None, "filters {filters}, no null");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D1063, D15 [ISO/IEC 9075-2:2023 §10.9
+/// GR4b]: a grouping run in parallel whose SUM is of a column declared
+/// NOT NULL takes the filter of the few keys of D to its pipeline, so it
+/// makes the groups of those keys alone, where with the filters off it
+/// makes every group, and gives the same sums; one whose SUM is of a
+/// column that may hold a null takes none, and warns of the null of a
+/// row the filter would have dropped, with the filters on as off.
+#[test]
+fn a_filter_reaches_a_grouping_run_in_parallel() {
+    let (_db, a) = tables(31);
+    exec(&a, "CREATE TABLE N (G INTEGER, H INTEGER NOT NULL) USING columnstore").unwrap();
+    exec(&a, "INSERT INTO N SELECT G, COALESCE(H, 0) FROM F").unwrap();
+    exec(&a, "UPDATE F SET H = 1 WHERE H IS NULL").unwrap();
+    exec(&a, "INSERT INTO F VALUES (90001, 150, NULL)").unwrap();
+    a.commit().unwrap();
+    for set in ["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"] {
+        exec(&a, set).unwrap();
+    }
+    let summed =
+        |t: &str| format!("SELECT X.G, X.S FROM (SELECT G, SUM(H) AS S FROM {t} GROUP BY G) AS X JOIN D ON X.G = D.K WHERE D.TAG = 3");
+    let ((groups_on, plan), sums_on) = (given(&a, &summed("N"), "Aggregate"), sorted(&a, &summed("N")));
+    assert!(plan.contains("Parallel"), "{plan}");
+    rows(&a, &summed("F")).unwrap();
+    assert_eq!(a.warning(), SqlState::parse("01003"), "filters on");
+    exec(&a, "SET EXECUTOR.RUNTIME_FILTERS = 'OFF'").unwrap();
+    let (groups_off, _) = given(&a, &summed("N"), "Aggregate");
+    assert_eq!(sums_on, sorted(&a, &summed("N")), "the sums with the filters off");
+    assert!(groups_on <= 6 && groups_off > 100, "{groups_on} groups told, {groups_off} untold, of\n{plan}");
+    rows(&a, &summed("F")).unwrap();
+    assert_eq!(a.warning(), SqlState::parse("01003"), "filters off");
 }

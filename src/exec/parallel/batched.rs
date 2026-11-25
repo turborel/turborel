@@ -106,7 +106,8 @@ fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
             Step::Filter(cond) => deferred.filtered(cond),
             Step::Project(exprs) => deferred.projected(exprs),
             Step::Probe(_) | Step::Outer(_) | Step::Semi(..) => Deferred::default(),
-            Step::Runtime(..) | Step::Count(_) => deferred,
+            Step::Runtime(told) => deferred.judged(&told.iter().map(|t| t.column).collect::<Vec<_>>()),
+            Step::Count(_) => deferred,
         };
     }
     deferred.late_of(scanned)

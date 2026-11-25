@@ -273,6 +273,7 @@ mod null_ordering;
 mod numeric_functions;
 mod order_by;
 mod ordered_joins;
+mod outer_rejection;
 mod outer_steps;
 mod pages;
 mod parallel;

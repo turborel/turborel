@@ -1,9 +1,11 @@
 //! \[DESIGN\] The built operand of a hash join run in parallel (RULES.md
 //! D292, D368): its rows read by its morsels on up to the degree's threads
 //! if it is a part run in parallel, each morsel's gathered into a batch,
-//! then joined in morsel order into one batch and put in a join's table
-//! (`batch/joined/shared.rs`), which every morsel of the probing pipeline
-//! then reads at once, as no thread writes it again. Leis et al.,
+//! else by batch on the statement's thread if it gives batches (RULES.md
+//! D1050), else row by row; then joined in order into one batch and put
+//! in a join's table (`batch/joined/shared.rs`), which every morsel of
+//! the probing pipeline then reads at once, as no thread writes it again.
+//! Leis et al.,
 //! "Morsel-Driven Parallelism" (2014), §4.2, build one table of every row;
 //! the table is put together by the statement's thread, a pass over the
 //! hashes, so no insertion is atomic, a thing the core cannot make without
@@ -22,7 +24,7 @@ use super::run::Morsels;
 use super::{Held, Limit};
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{SharedTable, TABLE_ROW_BYTES};
+use crate::exec::batch::{SharedTable, TABLE_ROW_BYTES, layout, reads_by_batch, whole_batches};
 use crate::exec::{Runner, Seed, execute};
 use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Row};
@@ -93,6 +95,11 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit
     {
         return parallel_built(pipeline, keys, (db, tx), (p.degree, limit));
     }
+    // An operand that gives batches is read by batch, as the serial join
+    // reads it (RULES.md D1050).
+    if let Some(shape) = layout(right, db).filter(|_| crate::exec::batched(db) && reads_by_batch(right, db)) {
+        return batch_built(right, shape, keys, (db, tx), limit);
+    }
     let mut rows = Vec::new();
     for read in execute(right.clone(), db, tx) {
         let row = read?;
@@ -105,6 +112,41 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit
     let parts = vec![batch_of(&rows, width)];
     let shared =
         SharedTable::of(parts, ((0..width).collect(), width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
+    Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
+}
+
+/// \[DESIGN\] (RULES.md D1050) The operand `right` of a hash join on
+/// `keys`, one that gives batches of `columns` of rows `width` wide, read
+/// by batch on the statement's thread as the serial join reads it
+/// (`stream::whole_batches`): its scans judge the conditions told them
+/// over their vectors and decode late the columns of the rows kept alone,
+/// and each batch's kept rows are held as vectors of their kinds, no row
+/// made of them. Given way if they outgrow `limit`.
+///
+/// # Errors
+///
+/// As reading the operand fails.
+fn batch_built(
+    right: &Plan,
+    (columns, width): (Vec<usize>, usize),
+    keys: &[JoinKey],
+    (db, tx): (&Db, TxId),
+    limit: &Limit,
+) -> Result<Held<Arc<Table>>> {
+    let mut parts = Vec::new();
+    for kept in whole_batches(right.clone(), db, tx)? {
+        let (batch, rows) = kept?;
+        let places = crate::storage::sel::places_of(rows, batch.rows);
+        if places.is_empty() {
+            continue;
+        }
+        let part = Batch::joined(vec![(batch, places)]);
+        if !limit.take(held_bytes(&part)) {
+            return Ok(Held::GaveWay);
+        }
+        parts.push(part);
+    }
+    let shared = SharedTable::of(parts, (columns, width), keys, (db.functions.seed().clone(), crate::exec::batch::dense_wanted(db)))?;
     Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
 }
 
@@ -204,11 +246,78 @@ fn parallel_built(
     Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared) })))
 }
 
-// Unit tests: a key's partition (RULES.md R-TEST-1).
+// Unit tests: a key's partition, and an operand built by batch (RULES.md
+// R-TEST-1, R-TEST-8).
 #[cfg(test)]
 mod tests {
-    use super::{PARTS, part_of};
-    use crate::exec::Seed;
+    use super::{Held, Limit, PARTS, built, part_of};
+    use crate::db::Database;
+    use crate::exec::{Db, Seed};
+    use crate::logical::{Cond, Expr};
+    use crate::physical::{JoinKey, Plan};
+    use crate::value::{CompOp, Decimal, Value};
+
+    /// A whole number, as a constant.
+    fn number(n: i64) -> Expr {
+        Expr::Const(Value::Exact(Decimal::new(i128::from(n), 0)))
+    }
+
+    /// The rows of table U of schema A whose K is at least 100.
+    fn filtered_scan() -> Plan {
+        let scan = Plan::SeqScan {
+            table: crate::catalog::QualifiedName { auth: "A".into(), ident: "U".into() },
+            columns: vec![0, 1],
+            rows: 0,
+            cost: 0.0_f64,
+            order: Vec::new(),
+            backward: false,
+            most: None,
+            located: false,
+        };
+        let cond = Cond::Compare(Expr::Column(0), CompOp::Ge, number(100));
+        Plan::Filter { cond, detail: String::new(), est: 0.0_f64, of_read: false, input: Box::new(scan) }
+    }
+
+    /// The rows `plan` builds on its first column in `db`, and whether
+    /// their table is direct, as one of a vector of integers alone is
+    /// (RULES.md D601); none if it gave way.
+    fn built_of(db: &Database, plan: &Plan) -> Option<(usize, bool)> {
+        let state = Db::from(db.snapshot().unwrap());
+        let keys = [JoinKey { left: 0, right: 0, nulls: false }];
+        match built(plan, &keys, (&state, crate::txn::NO_TRANSACTION), &Limit::of(&state)).unwrap() {
+            Held::Kept(table) => Some((table.shared.rows(), table.shared.is_direct())),
+            Held::GaveWay => None,
+        }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1050: a hash join's operand that is no
+    /// part run in parallel is built of its batches' vectors, the rows its
+    /// filter keeps alone, so keys dense in their span get a direct table
+    /// (D601), which vectors of values never do; one past the work area
+    /// gives way.
+    ///
+    /// Decision: batches are on, the operand gives batches, and its tables
+    /// read by batch. Each alone sends it to the rows it gives one by one:
+    /// EXECUTOR.BATCHES off, and an operand of values, which gives no
+    /// batches; an operand whose tables do not read by batch is the
+    /// grouping of `parallel::joins_build_by_batch`.
+    #[test]
+    fn an_operand_that_gives_batches_is_built_of_its_vectors() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE U (K INTEGER, N INTEGER)").unwrap();
+        let a = db.session("A");
+        let rows: Vec<String> = (0_i32..4_000_i32).map(|k| format!("({k}, {})", k % 7_i32)).collect();
+        a.run(&format!("INSERT INTO U VALUES {}", rows.join(", "))).unwrap();
+        a.commit().unwrap();
+        assert_eq!(built_of(&db, &filtered_scan()), Some((3_900, true)), "by batch, the kept rows alone");
+        let values = Plan::Values { rows: (0_i64..300_i64).map(|k| vec![number(k)]).collect(), detail: String::new() };
+        assert_eq!(built_of(&db, &values), Some((300, false)), "no batches of values");
+        db.set_setting("EXECUTOR.BATCHES", &Value::Char("OFF".into())).unwrap();
+        assert_eq!(built_of(&db, &filtered_scan()), Some((3_900, false)), "batches off");
+        db.set_setting("EXECUTOR.BATCHES", &Value::Char("ON".into())).unwrap();
+        db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(65_536, 0))).unwrap();
+        assert_eq!(built_of(&db, &filtered_scan()), None, "past the work area");
+    }
 
     /// Verifies: [DESIGN] RULES.md D357: a key's partition is the same each
     /// time a query's seed is asked it, so its morsels agree, and keys

@@ -429,8 +429,12 @@ fn in_order(plan: &Plan) -> bool {
         | Plan::WorkTable { .. }
         | Plan::Transition { .. } => true,
         // A pipeline run in parallel gives its batches in its morsels'
-        // order (`parallel/batches.rs`), as its plan alone would.
-        Plan::Parallel(p) => !crate::exec::parallel::pipelined(&p.input) || in_order(&p.input),
+        // order (`parallel/batches.rs`), as its plan alone would; a
+        // grouping by hash run in parallel gives its groups in none, as
+        // it does alone (RULES.md D1063).
+        Plan::Parallel(p) => {
+            super::parted::grouping_of(plan).map_or_else(|| !crate::exec::parallel::pipelined(&p.input) || in_order(&p.input), in_order)
+        }
     }
 }
 
