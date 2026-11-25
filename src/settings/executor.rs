@@ -86,7 +86,7 @@ pub(super) fn definitions() -> [Definition; 6] {
         defined(
             ("EXECUTOR.RUNTIME_FILTERS", Kind::Choice(SWITCHES), text(ON)),
             SESSION,
-            "Whether a hash join, once it has built its right operand, tells the scan of its left operand the least and greatest of its keys and filters the rows read by a Bloom filter of them: ON; or not, OFF, as to compare the two. Its rows are the same either way.",
+            "Whether a hash join, once it has built its right operand, tells the scan of its left operand the least and greatest of its keys and filters the rows read by a Bloom filter of them, and a probe of a table built by many threads past a thread's share of the cache asks that filter first: ON; or not, OFF, as to compare the two. Its rows are the same either way.",
         ),
     ]
 }
