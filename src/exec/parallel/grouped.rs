@@ -41,7 +41,7 @@ use crate::error::{Result, SqlState};
 use crate::exec::Db;
 use crate::exec::batch::{Read, Told, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
-use crate::exec::table::Seed;
+use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
 use crate::functions::Accumulator;
 use crate::logical::{AggCall, Cond, Truth};
@@ -112,6 +112,15 @@ impl Grouping {
             }
         });
         failed.map_or(Ok(groups), Err)
+    }
+
+    /// \[DESIGN\] (RULES.md D1111) The groups of `table`, finished, that
+    /// its HAVING condition is true of, or all of none, as `kept` keeps
+    /// them: the condition judged of each group's row before the group
+    /// takes a row of its own.
+    fn kept_of(&self, table: &GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+        let Some(cond) = &self.having else { return table.finished() };
+        table.finished_if(|row| Ok(eval_cond(cond, row, runner)? == Truth::True))
     }
 
     /// The grouping values of `row`.

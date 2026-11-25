@@ -198,6 +198,9 @@ pub(super) struct Lane {
     nulls: Vec<bool>,
     /// What its values hold apart from themselves (`spill::heap_bytes`).
     heap: usize,
+    /// The groups its vector is given room for when its first value
+    /// tells its type.
+    room: usize,
 }
 
 impl Lane {
@@ -271,6 +274,7 @@ impl Lane {
         }
         if let Data::Unset = self.data {
             self.data = Data::of(cell, self.nulls.len());
+            self.reserve_data(self.room);
         }
         if !self.data.push(cell) {
             self.widened();
@@ -280,6 +284,45 @@ impl Lane {
             self.heap = self.heap.saturating_add(values.last().map_or(0, crate::spill::heap_bytes));
         }
         self.nulls.push(false);
+    }
+
+    /// \[DESIGN\] (RULES.md D1110) Appends the values at `places` of
+    /// `other` as new groups': integers of its scale in one loop, any
+    /// other a value at a time.
+    fn extend(&mut self, other: &Lane, places: &[u32]) {
+        self.reserve(other, places.len());
+        if let (Data::Ints { units, scale }, Data::Ints { units: theirs, scale: other_scale }) = (&mut self.data, &other.data)
+            && scale == other_scale
+        {
+            units.extend(places.iter().map(|&i| theirs.get(crate::storage::mask::index(i)).copied().unwrap_or(0)));
+            self.nulls.extend(places.iter().map(|&i| other.is_null(crate::storage::mask::index(i))));
+            return;
+        }
+        for &i in places {
+            self.push(other.cell(crate::storage::mask::index(i)));
+        }
+    }
+
+    /// Room for `more` groups more: a lane of no group yet takes the
+    /// type of `like`, of integers, so its vector is made once.
+    fn reserve(&mut self, like: &Lane, more: usize) {
+        self.nulls.reserve(more);
+        if let (Data::Unset, Data::Ints { scale, .. }, true) = (&self.data, &like.data, self.nulls.is_empty()) {
+            self.data = Data::Ints { units: Vec::new(), scale: *scale };
+        }
+        self.reserve_data(more);
+    }
+
+    /// Room for `more` values more in its vector, of a type.
+    fn reserve_data(&mut self, more: usize) {
+        match &mut self.data {
+            Data::Ints { units, .. } => units.reserve(more),
+            Data::Floats(numbers) => numbers.reserve(more),
+            Data::Datetimes(datetimes) => datetimes.reserve(more),
+            Data::Bools(bools) => bools.reserve(more),
+            Data::Texts { ends, .. } | Data::Values { ends, .. } => ends.reserve(more),
+            Data::Unset => {}
+        }
     }
 
     /// Turns the lane into values, each group's as it was.
@@ -383,6 +426,12 @@ impl Keys {
         Keys { lanes: (0..width).map(|_| Lane::default()).collect() }
     }
 
+    /// As `new`, each lane with room for `room` groups once its first
+    /// value tells its type.
+    pub(super) fn with_room(width: usize, room: usize) -> Keys {
+        Keys { lanes: (0..width).map(|_| Lane { nulls: Vec::with_capacity(room), room, ..Lane::default() }).collect() }
+    }
+
     /// How many columns.
     pub(super) fn width(&self) -> usize {
         self.lanes.len()
@@ -401,9 +450,29 @@ impl Keys {
         }
     }
 
+    /// Appends the keys at `places` of `other` as new groups', a lane
+    /// at a time.
+    pub(super) fn extend(&mut self, other: &Keys, places: &[u32]) {
+        for (lane, theirs) in self.lanes.iter_mut().zip(&other.lanes) {
+            lane.extend(theirs, places);
+        }
+    }
+
+    /// Room for `more` groups more, in lanes as `like`'s.
+    pub(super) fn reserve(&mut self, like: &Keys, more: usize) {
+        for (lane, theirs) in self.lanes.iter_mut().zip(&like.lanes) {
+            lane.reserve(theirs, more);
+        }
+    }
+
     /// Group `g`'s grouping values.
     pub(in crate::exec) fn values(&self, g: usize) -> Row {
         self.lanes.iter().map(|lane| lane.value(g)).collect()
+    }
+
+    /// Appends group `g`'s grouping values to `row`.
+    pub(super) fn values_into(&self, g: usize, row: &mut Row) {
+        row.extend(self.lanes.iter().map(|lane| lane.value(g)));
     }
 
     /// Keeps the first `len` groups.

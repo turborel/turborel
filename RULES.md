@@ -698,6 +698,9 @@ verification approach DO-178C expects (§8).
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
+| D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
+| D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
+| D1112 | A grouping over a LEFT outer join groups the join's right operand first by its keys |
 
 ### The project
 
@@ -19001,6 +19004,80 @@ which would stop every reader and writer of the table for as long as the
 mark takes. A scan in row id order, a morsel's by row and a scan in the
 groups' order merge the tree's entries with the groups' rows by row id
 and never read the bits, so they were not at fault.
+
+#### D1110. A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room
+
+A grouping run in parallel groups each morsel in a table of its own and
+merges the morsels' groups by partition (D293, D356). Each group was
+merged alone. Its key was read as a cell and compared and appended by
+its kind, and each set function's state was merged by its kind, group
+after group. Each morsel's table and each partition's grew a vector a
+group at a time, and a morsel's groups were split among the partitions
+into a vector a partition. Of a grouping of many groups, as one by an
+order's key over its line items, the merge and the allocator took more
+time than grouping the rows did.
+
+A partition now merges a morsel's groups a column at a time
+(`exec/table/made.rs`). Each group is looked up by the hash it came
+with. A morsel's groups are of distinct keys, so those not found are
+all new, and they are appended lane by lane, integers in one loop, and
+then placed. Each set function's states are then merged in one loop,
+the kind of the two columns and their scale compared once
+(`exec/table/states/typed/merged.rs`). Columns of different kinds, and
+accumulators, merge group by group as before. A table placed by keyed
+hashes (D357) makes its new groups one by one, and one whose probe
+grows long as new groups are placed turns keyed with every group
+placed.
+
+A morsel's table is made with room for the groups the morsel last
+grouped made, so its vectors and slots are made once. A partition's
+table is given room for every group of the wave it merges. The places
+of a morsel's groups are kept partition after partition in one vector,
+counted and then placed, in place of a vector a partition. None of
+this changes a group, its number or the order the groups are given in.
+
+#### D1111. A HAVING condition judged by its grouping's part is judged of a group before the group takes a row
+
+A part that judges its grouping's HAVING condition (D1073) finished
+every group into a row of its own and then dropped the rows the
+condition was not true of. Of many groups few of which are kept, the
+rows made and freed cost more than judging them. Each group's row is
+now made in the room of one row, the condition is judged of it there,
+and only a group kept takes a row of its own (`exec/table.rs`). The
+groups kept, their rows and their order are as before.
+
+#### D1112. A grouping over a LEFT outer join groups the join's right operand first by its keys
+
+A grouping by the left operand's columns over a LEFT outer join, as the
+count of each customer's orders, read every pair the join made, and the
+join held every row of its right operand. The rule
+`group_before_outer_join` (`optimizer/pregrouped.rs`) now groups the
+right operand first, by its columns of the join's equalities, and
+computes each set function of each of those groups. The join then
+holds a row a key, a left row matches one group at most, and the
+grouping above merges what the groups below computed: MAX and MIN
+their greatest and least, COUNT their sum. A projection above gives a
+count of 0 where the sum is null, of a left row no group matched, in
+COUNT's type.
+
+The rule takes a join whose condition is equalities of a column of
+each operand alone, and set functions that are COUNT, MAX or MIN of a
+column of the right operand declared to hold no null, neither DISTINCT
+nor filtered. The right operand is a table's rows, as they are or
+filtered by a condition that cannot raise. So the grouping below warns
+of no null, and the grouping above warns of the null of a left row no
+group matched, as the function did of that row before. Nothing that
+could raise is evaluated of a row it was not before (D15). MAX and MIN
+are taken of exact numbers alone. COUNT(*), which counts a left row
+nothing matched, SUM and AVG, whose sums of parts could pass a bound
+their whole does not, and every other shape are left as they were.
+
+Grouping the right operand first costs a row grouped for each of its
+rows. It spares the join every row beyond one a key, and the grouping
+above every row beyond one a left row. So the rule rewrites only where
+the right operand's estimated rows less its estimated keys outnumber
+the left operand's rows. Without statistics a column's distinct values
+are taken as its table's rows (D370), so the rule then leaves the plan.
 
 ## 2. Project layout
 
