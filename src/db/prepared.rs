@@ -469,7 +469,7 @@ impl Session {
     }
 
     /// [§17.9 GR5a, GR5f] `values`, one for each of `p`'s parameters, each
-    /// cast to its type as the cursor opens (RULES.md D1093). A plan made
+    /// cast to its type as the cursor opens (RULES.md D1160). A plan made
     /// with the values casts them as it is made, but a plan kept reads
     /// them where they are and casts one only as it reads it, which may be
     /// at a FETCH, so whether a value that does not cast raises at OPEN

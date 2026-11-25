@@ -690,7 +690,7 @@ verification approach DO-178C expects (§8).
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
-| D1093 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
+| D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 
 ### The project
 
@@ -18773,7 +18773,7 @@ its header unread, and of a group whose rows are every id of its range
 in order reckons a run's places from its ids
 (`engine/rows/frozen/sampled.rs`).
 
-#### D1093. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
+#### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
 A value given for a `?` is cast to the parameter's type [ISO/IEC
 9075:1992 §17.9 GR5f]. A plan made with the values casts each as it is

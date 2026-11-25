@@ -266,7 +266,7 @@ fn prepared_statements_are_refused_saying_why() {
     assert_eq!(s.execute_prepared(&w, &[int(1)]).unwrap().sqlcode(), 0, "values right, it runs");
 }
 
-/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.9 GR5f] RULES.md D1093: a
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §17.9 GR5f] RULES.md D1160: a
 /// value CAST cannot make of its parameter's type raises CAST's error at
 /// OPEN, by the executor and by a direct range read alike, whether the
 /// query's plan is made with its values, as at its first opening, or kept

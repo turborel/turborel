@@ -115,7 +115,7 @@ pub const RANGE_READS: [Mutation; 11] = [
     Mutation {
         name: "open-casts-no-value",
         package: Package::Core,
-        breaks: "a prepared cursor's values are not cast as it opens, so one of a plan kept that does not cast raises at FETCH (D1093)",
+        breaks: "a prepared cursor's values are not cast as it opens, so one of a plan kept that does not cast raises at FETCH (D1160)",
         file: "src/db/prepared.rs",
         original: "                conformed(value.clone(), &to)?;",
         replacement: "                drop(conformed(value.clone(), &to));",
