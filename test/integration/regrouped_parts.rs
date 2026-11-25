@@ -29,7 +29,7 @@ fn tables() -> (Database, Session) {
     let null_or = |null: bool, v: i64| if null { "NULL".to_owned() } else { v.to_string() };
     for table in ["C", "R"] {
         let values: Vec<String> = (0_i64..7000)
-            .map(|k| format!("({k}, {}, {}, {})", null_or(k % 41 == 0, k * 7 % 50), k % 7, null_or(k % 13 == 0, k / 7 % 10)))
+            .map(|k| format!("({k}, {}, {}, {})", null_or(k % 41 == 0, k * 7 % 50), k % 7, null_or(k % 13 == 0, k.div_euclid(7) % 10)))
             .collect();
         a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
     }
@@ -50,7 +50,7 @@ const TOGETHER: [&str; 4] =
     ["SET EXECUTOR.BATCHES = 'ON'", "SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"];
 
 /// The rows of `sql` run alone, its rows run in parallel, and its plan
-/// then.
+/// then; the rows run in parallel by batch and by rows alike.
 fn both(s: &Session, sql: &str) -> (Rows, Rows, String) {
     for set in ALONE {
         exec(s, set).unwrap();
@@ -60,7 +60,12 @@ fn both(s: &Session, sql: &str) -> (Rows, Rows, String) {
         exec(s, set).unwrap();
     }
     let shown = s.physical_plan(sql, &Params::new()).unwrap_or_else(|e| panic!("{sql}: {e}"));
-    (alone, rows(s, sql), shown)
+    let together = rows(s, sql);
+    // Its morsels read a row at a time, its groups made of rows.
+    exec(s, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
+    assert_eq!(rows(s, sql), together, "{sql}, its morsels read by rows");
+    exec(s, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+    (alone, together, shown)
 }
 
 /// Whether `shown`, a plan, has a part run in parallel whose top is two
