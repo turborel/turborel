@@ -50,10 +50,11 @@ fn found(s: &Session) -> (usize, usize, Vec<String>) {
     (count(s, "SELECT K FROM T"), count(s, "SELECT K FROM T WHERE K = 5"), rows(s, "SELECT SUM(A), SUM(C) FROM T").unwrap())
 }
 
-/// Whether every row of T is in a group: its bytes not estimated.
+/// Whether every row of T is in a group: none of its columns' values in
+/// its tree's rows (COLUMN_STORAGE, RULES.md D1165).
 fn all_frozen(s: &Session) -> bool {
-    let sql = "SELECT BYTES_ESTIMATED FROM INFORMATION_SCHEMA.TABLE_STATISTICS WHERE TABLE_NAME = 'T'";
-    rows(s, sql).unwrap() == ["NO"]
+    let sql = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'T' AND ENCODING = 'ROW'";
+    rows(s, sql).unwrap() == ["0"]
 }
 
 /// Verifies: [X3.135-1986 §4.16, §8.7 GR1c]; [EXTENSION] RULES.md D533:

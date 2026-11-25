@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 14] = [
+pub const RANGE_READS: [Mutation; 15] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -151,5 +151,15 @@ pub const RANGE_READS: [Mutation; 14] = [
         replacement: "                next = next.saturating_add(0);",
         integration: &[],
         unit: &["storage::batch::late::tests::rows_kept_in_order_are_decoded_of_their_places_alone"],
+    },
+    Mutation {
+        name: "tree-pages-first-child",
+        package: Package::Core,
+        breaks: "a tree's pages leave out each level-one node's first child, so a table's bytes are shown short (D1165)",
+        file: "src/engine/tree/pages.rs",
+        original: "                    pages = pages.saturating_add(u64::try_from(node.len()).unwrap_or(u64::MAX).saturating_add(1));",
+        replacement: "                    pages = pages.saturating_add(u64::try_from(node.len()).unwrap_or(u64::MAX));",
+        integration: &[],
+        unit: &["engine::tree::tests::pages::a_trees_pages_are_those_it_frees"],
     },
 ];

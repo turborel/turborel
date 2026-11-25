@@ -65,6 +65,7 @@ mod load;
 mod merge;
 mod near;
 mod node;
+mod pages;
 mod pin;
 mod placed;
 mod probe;

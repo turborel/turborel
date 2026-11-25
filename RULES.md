@@ -716,6 +716,7 @@ verification approach DO-178C expects (§8).
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
 | D1163 | A zone settled visible to every reader is saved so, and opens settled |
 | D1164 | A start that changes nothing records no catalog image |
+| D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 
 ### The project
 
@@ -19459,6 +19460,28 @@ The settings a database is started with, as a server's configuration
 gives them, are set again at each start, and each was logged, so the log
 moved on and the close recorded an image. A setting set to the value it
 already has is no longer logged (`db/settings.rs`).
+
+#### D1165. What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted
+
+TABLE_STATISTICS showed a table's bytes as its frozen groups' pages plus
+its tree's rows times their mean width, so a table never analyzed, of
+either store, showed none. Nothing showed what a column takes, or how
+its chunks were encoded, so a table taking ten times the bytes it might
+could not be told apart by column.
+
+A tree's bytes are now its pages, counted (`BLinkTree::pages`): its
+nodes above the leaves are read, each level by its right links, and its
+leaves counted as the level above names them, none read. The view
+INFORMATION_SCHEMA.COLUMN_STORAGE (`system/column_storage.rs`) has a row
+of each column and each way its values are kept. Of a column store's
+groups, it is the chunks of one encoding: their count, rows, bytes
+encoded and the bytes of the pages they take. Each chunk's kind and
+length are read from the chunk itself (`rows/sizes.rs`), so groups any
+build wrote show them, and no group's format changes; reading the view
+reads every group's pages. Of a tree's rows, of either store, it is ROW:
+the rows, and their number times the column's mean width the table's
+statistics last measured. TABLE_STATISTICS reads no chunk
+(`TableStorage::sizes`, asked without the columns).
 
 ## 2. Project layout
 

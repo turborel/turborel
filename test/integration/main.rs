@@ -38,6 +38,7 @@ mod collation_usage;
 mod collations;
 mod collection;
 mod column_statistics;
+mod column_storage;
 mod commit_restore;
 mod commit_visibility;
 mod common;

@@ -353,8 +353,8 @@ impl TableStorage for RowTable {
         self.counted.live.load(Ordering::Acquire)
     }
 
-    fn sizes(&self) -> Option<crate::storage::TableSizes> {
-        self.measured()
+    fn sizes(&self, by_column: bool) -> Option<crate::storage::TableSizes> {
+        self.measured(by_column)
     }
 
     /// A row of the tree costs 0.8, up to 1 as all its columns are read; a

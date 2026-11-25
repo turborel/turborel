@@ -583,3 +583,6 @@ mod probed;
 
 // Reads that find their leaf through the inner nodes' copies (RULES.md D955).
 mod by_copies;
+
+// The pages a tree takes, counted (RULES.md D1165).
+mod pages;
