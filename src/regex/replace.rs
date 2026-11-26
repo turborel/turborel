@@ -189,6 +189,20 @@ fn span<F: FnMut(Emit<'_>) -> Result<()>>(f: &mut F, from: usize, (a, b): (usize
     if b > a { f(Emit::Span(from.saturating_add(a), from.saturating_add(b))) } else { Ok(()) }
 }
 
+impl Replacement {
+    /// \[DESIGN\] (RULES.md D1188) Gives `f` what replaces the match
+    /// `found` of a text, its spans in characters of that text, without
+    /// the match being searched again as a string of its own: for a match
+    /// `Regex::matches_alone` says is the match of that string too.
+    ///
+    /// # Errors
+    ///
+    /// As `f` fails.
+    pub fn of_match<F: FnMut(Emit<'_>) -> Result<()>>(&self, found: &Captures, mut f: F) -> Result<()> {
+        self.pieces.iter().try_for_each(|piece| substituted(&mut f, 0, piece, found))
+    }
+}
+
 impl super::Searcher<'_> {
     /// As `Regex::replace_in`.
     ///

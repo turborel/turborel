@@ -21,7 +21,7 @@ use crate::functions::{Arg, ScalarFunction};
 use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::regex::{Ascii, Captures, Emit, LobText, Regex, Replacement, Searcher, Text, zero_length};
-use crate::storage::{Column, Texts};
+use crate::storage::{Column, Mask, Texts};
 use crate::value::lob::{CHUNK_OCTETS, LobBuilder, LobKind, MAX_LOB_LENGTH, TempLobs};
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
 
@@ -149,20 +149,48 @@ impl Translate {
     }
 
     /// `eval_batch`'s work: each of the first `rows` of `subjects`
-    /// translated as `operands` ask, a null of a null.
+    /// translated as `operands` ask, a null of a null, made as a vector
+    /// of texts one after another, no value made of a subject or of what
+    /// it becomes.
     fn of_texts(&self, operands: [&Value; 7], subjects: &Texts, rows: usize) -> Result<Column> {
         let Some((regex, asked)) = self.asked(operands)? else { return Ok(Column::Values(vec![Value::Null; rows])) };
         let (mut searcher, mut with) = (regex.searcher(), None);
-        let mut made = Vec::with_capacity(rows);
+        let (mut made, mut ends, mut nulls) = (String::new(), Vec::with_capacity(rows), Mask::none(rows));
         for n in 0..rows {
-            let subject = subjects.get(n).map_or(Value::Null, |t| Value::Char(t.into()));
-            made.push(asked.of(&subject, (&mut searcher, &mut with), None)?);
+            let given = match subjects.get(n) {
+                Some(subject) => asked.of_text(subject, (&mut searcher, &mut with), &mut made)?,
+                None => false,
+            };
+            if !given {
+                nulls.set(n);
+            }
+            ends.push(made.len());
         }
-        Ok(Column::Values(made))
+        Ok(Column::Texts(Texts::new(made, ends, nulls.any().then_some(nulls))))
     }
 }
 
+/// Which matches a TRANSLATE_REGEX is asked to replace.
+enum Chosen {
+    /// The occurrence is null: the result is \[GR9b iv 2 A\].
+    Null,
+    /// An occurrence less than 1: the subject as it is.
+    Itself,
+    /// These.
+    Of(Which),
+}
+
 impl Asked<'_> {
+    /// Which matches are replaced, as ALL or the occurrence say.
+    fn chosen(&self) -> Result<Chosen> {
+        if text(self.every)? == Some(kw::ALL) {
+            return Ok(Chosen::Of(Which::All));
+        }
+        // [GR9b iv 2 A]
+        let Some(occurrence) = whole(Some(self.occurrence))? else { return Ok(Chosen::Null) };
+        Ok(usize::try_from(occurrence).ok().filter(|o| *o >= 1).map_or(Chosen::Itself, |o| Chosen::Of(Which::Nth(o))))
+    }
+
     /// \[GR9\] `subject` translated: null if it is, or if the start
     /// position is not of it; else it with the match, or each match from
     /// the last, replaced, found by `searcher`, the replacement read into
@@ -177,31 +205,35 @@ impl Asked<'_> {
         let Some(counted) = Subject::new(subject, self.units)? else { return Ok(Value::Null) };
         // [GR9b ii]
         let Some(at) = counted.start(self.start)? else { return Ok(Value::Null) };
-        let which = if text(self.every)? == Some(kw::ALL) {
-            Which::All
-        } else {
-            // [GR9b iv 2 A]
-            let Some(occurrence) = whole(Some(self.occurrence))? else { return Ok(Value::Null) };
-            let Some(occurrence) = usize::try_from(occurrence).ok().filter(|o| *o >= 1) else { return Ok(counted.value().clone()) };
-            Which::Nth(occurrence)
+        let which = match self.chosen()? {
+            Chosen::Null => return Ok(Value::Null),
+            Chosen::Itself => return Ok(subject.clone()),
+            Chosen::Of(which) => which,
         };
         let mut job = Job { searcher, at, which, replacement: &self.replacement, with };
-        match &counted.body {
-            Body::Chars(chars) => {
-                let mut out = Chars { chars, out: String::new() };
-                job.run(chars.as_slice(), &mut out)?;
-                within_most(out.out)
+        if let Body::Lob(lob) = &counted.body {
+            let mut out = Built { text: lob, builder: LobBuilder::new(LobKind::Character, temp), chars: 0 };
+            job.run(lob, &mut out)?;
+            return Ok(Value::Lob(out.builder.finish()?));
+        }
+        let mut out = String::new();
+        job.put(&counted.body, &mut out)?;
+        Ok(Value::Char(out.into()))
+    }
+
+    /// \[GR9\] (RULES.md D1188) As `of`, of the character string
+    /// `subject` of a vector of them, what it becomes put after `out`:
+    /// false, and nothing put, if the result is null.
+    fn of_text(&self, subject: &str, (searcher, with): (&mut Searcher<'_>, &mut Option<Replacement>), out: &mut String) -> Result<bool> {
+        let counted = Subject::of_text(subject, self.units)?;
+        let Some(at) = counted.start(self.start)? else { return Ok(false) };
+        match self.chosen()? {
+            Chosen::Null => Ok(false),
+            Chosen::Itself => {
+                out.push_str(subject);
+                Ok(true)
             }
-            Body::Ascii(ascii) => {
-                let mut out = Octets { ascii: *ascii, out: String::new() };
-                job.run(ascii, &mut out)?;
-                within_most(out.out)
-            }
-            Body::Lob(lob) => {
-                let mut out = Built { text: lob, builder: LobBuilder::new(LobKind::Character, temp), chars: 0 };
-                job.run(lob, &mut out)?;
-                Ok(Value::Lob(out.builder.finish()?))
-            }
+            Chosen::Of(which) => Job { searcher, at, which, replacement: &self.replacement, with }.put(&counted.body, out).map(|()| true),
         }
     }
 }
@@ -234,6 +266,23 @@ trait Out {
 }
 
 impl Job<'_, '_> {
+    /// Puts after `out` the character string `body` with the matches
+    /// chosen replaced, if what is put is no longer than the longest
+    /// string.
+    ///
+    /// # Errors
+    ///
+    /// SQLSTATE 22001 if it is longer (IL047); as `run`.
+    fn put(&mut self, body: &Body<'_>, out: &mut String) -> Result<()> {
+        let from = out.len();
+        match body {
+            Body::Chars(chars) => self.run(chars.as_slice(), &mut Chars { chars, out })?,
+            Body::Ascii(ascii) => self.run(ascii, &mut Octets { ascii: *ascii, out })?,
+            Body::Lob(_) => return fail(Code::Api, "[DESIGN] a character large object's TRANSLATE_REGEX is made as one, not as a string"),
+        }
+        within_most(out.get(from..).unwrap_or_default())
+    }
+
     /// [GR9b iii, iv 2 B] Puts on `out` `text` with the matches chosen
     /// replaced, front to back, which gives what replacing them from the
     /// last does, as they do not overlap.
@@ -275,19 +324,24 @@ impl Job<'_, '_> {
         }
         let Some(with) = self.with.as_ref() else { return Ok(()) };
         out.span(*done, start)?;
-        self.searcher.replace_in(text, (start, end), with, |piece| match piece {
+        let put = |piece: Emit<'_>| match piece {
             Emit::Text(t) => out.text(t),
             Emit::Span(a, b) => out.span(a, b),
-        })?;
+        };
         *done = end;
-        Ok(())
+        // The match searched again as a string of its own only where that
+        // may find other groups (RULES.md D1188).
+        if self.searcher.regex().matches_alone(text.len(), (start, end)) {
+            return with.of_match(mv, put);
+        }
+        self.searcher.replace_in(text, (start, end), with, put)
     }
 }
 
 /// A result made as a string.
 struct Chars<'a> {
     chars: &'a [char],
-    out: String,
+    out: &'a mut String,
 }
 
 impl Out for Chars<'_> {
@@ -304,7 +358,7 @@ impl Out for Chars<'_> {
 /// A result made as a string, of a subject of ASCII read where it lies.
 struct Octets<'a> {
     ascii: Ascii<'a>,
-    out: String,
+    out: &'a mut String,
 }
 
 impl Out for Octets<'_> {
@@ -366,15 +420,21 @@ impl Out for Built<'_, '_> {
     }
 }
 
-/// `out`, if no longer than the longest string.
+/// Whether `made`, a string a TRANSLATE_REGEX made, is no longer than the
+/// longest string.
 ///
 /// # Errors
 ///
 /// SQLSTATE 22001 if it is longer (IL047).
-fn within_most(out: String) -> Result<Value> {
-    let n = out.chars().count();
-    if u32::try_from(n).is_ok_and(|n| n <= TRANSLATED_LENGTH) {
-        return Ok(Value::Char(out.into()));
+fn within_most(made: &str) -> Result<()> {
+    // Its octets are at least its characters, so few octets need no count.
+    let within = |n: usize| u32::try_from(n).is_ok_and(|n| n <= TRANSLATED_LENGTH);
+    if within(made.len()) {
+        return Ok(());
+    }
+    let n = made.chars().count();
+    if within(n) {
+        return Ok(());
     }
     fail_with(
         Code::Data,

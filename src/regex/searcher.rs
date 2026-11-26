@@ -19,7 +19,7 @@
 //! automaton first only while at least half of the last window found
 //! none. A search that asks only whether there is a match always asks it.
 
-use super::{Captures, Matcher, Regex, Text, backtrack, bounded, dfa, pike};
+use super::{Ascii, Captures, Matcher, Regex, Text, backtrack, bounded, dfa, pike};
 use crate::error::Result;
 
 /// Searches of a regular expression, and its automaton, if it has one and
@@ -29,11 +29,20 @@ pub struct Searcher<'r> {
     pub(super) dfa: Option<dfa::Dfa>,
     /// What its searches for captures found, of the window being counted.
     pub(super) found: Found,
+    /// What the matcher that marks keeps from one search to the next.
+    pub(super) kept: bounded::Scratch,
 }
 
-/// \[DESIGN\] The searches for captures a searcher counts before it
-/// decides again whether the automaton is asked first: enough to tell a
-/// half from a few, few enough to follow a vector's texts as they change.
+/// \[DESIGN\] (RULES.md D1188) The searches for captures a searcher counts
+/// before it decides again whether the automaton is asked first. The
+/// share of them that found none is known from n searches to within
+/// 1/(2√n), its standard error near one half: of 64, one sixteenth, so a
+/// share under three eighths or over five eighths, two errors from the
+/// half that decides, is taken for the other side of it about once in
+/// forty windows, and between those the two ways cost nearly the same.
+/// A window is one thirty-second of a vector's rows
+/// (`storage::BATCH_ROWS`), so what the first window of a vector costs by
+/// asking unasked is within a few hundredths of the vector's searches.
 const WINDOW: u32 = 64;
 
 /// How many searches for captures of the window being counted there were,
@@ -69,6 +78,19 @@ impl Searcher<'_> {
     /// The expression searched for.
     pub fn regex(&self) -> &Regex {
         self.regex
+    }
+
+    /// As `Regex::is_match`: a string of ASCII alone read where it lies.
+    ///
+    /// # Errors
+    ///
+    /// As `Regex::is_match`.
+    pub fn is_match(&mut self, text: &str) -> Result<bool> {
+        if let Some(ascii) = Ascii::of(text) {
+            return self.is_match_in(&ascii);
+        }
+        let chars: Vec<char> = text.chars().collect();
+        self.is_match_in(chars.as_slice())
     }
 
     /// As `Regex::is_match_in`.
@@ -154,7 +176,7 @@ impl Searcher<'_> {
         }
         let slots = match regex.matcher(end, from) {
             Matcher::Backtrack => backtrack::search(&regex.program, text, from, regex.caseless.then_some(&regex.table)),
-            Matcher::Bounded(positions) => bounded::search(&regex.program, text, (from, positions), capture),
+            Matcher::Bounded(positions) => bounded::search(&regex.program, text, (from, positions), capture, &mut self.kept),
             Matcher::Pike => pike::search(&regex.program, text, from, capture),
         }?;
         if capture {
@@ -163,3 +185,8 @@ impl Searcher<'_> {
         Ok(slots)
     }
 }
+
+// Unit tests: a searcher against the first matchers over a corpus
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

@@ -20995,11 +20995,16 @@ and texts from every starting position, with captures and without.
   captured, so a program with one never runs here
   (`Regex::matcher`, tested by
   `it_is_given_programs_of_no_back_reference_and_texts_within_its_marks`).
-  The marks are a bit each, `MARKS_MOST` of them at most, from a sweep of
-  `bench/regex.rs` at five budgets. At every length of text a budget
-  admitted, this matcher ran several times as fast as the matcher of
-  threads, to the largest budget swept, so the budget bounds what a
-  search holds. Past it the matcher of threads runs.
+  The marks are a bit each, `MARKS_MOST` of them at most. A sweep of
+  `bench/regex.rs` at five budgets found no length of text at which the
+  matcher of threads ran a text faster, to the largest budget swept, so
+  the budget is of what a search holds and is derived from that. It is
+  the octets the matcher of threads takes for its two lists of threads
+  of the longest program, what they captured not counted, so a search
+  here never holds more than a search there may. Past it the matcher of
+  threads runs. A program whose first instruction is `^` of the whole
+  string is tried from the string's start alone, as a way from any
+  later start fails at that instruction.
 - `regex/dfa.rs` is an automaton made as texts are read (Thompson, 1968).
   A state is the ordered list of threads at a position, cut after the
   first that matches, and whether a match was found before it. The state
@@ -21009,8 +21014,10 @@ and texts from every starting position, with captures and without.
   wildcard of the flag `s`, any character but a CR before an LF [ISO/IEC
   9075-2:2023 §9.28 GR9a i], reads a CR before an LF as a character of
   its own. A program with `^` or `$` of each line, or a back-reference,
-  has no automaton. Past `STATES_MOST` states it gives up and the search
-  goes on without it.
+  has no automaton. Its states' steps, keys and threads are counted in
+  octets, and past `OCTETS_MOST`, as many as a search's marks may take,
+  it gives up and the search goes on without it. An automaton that still
+  meets new states there follows its texts no faster than the matchers.
 - `regex/searcher.rs` puts them together for text after text. A search
   that asks only whether there is a match asks the automaton. A search
   for captures runs the matcher that marks, which reads no further than
@@ -21019,24 +21026,60 @@ and texts from every starting position, with captures and without.
   one that does not. On the bench those balance where about half the
   texts have no match, so the searcher counts what a window of its
   searches found and asks the automaton first only while at least half
-  found none.
+  found none. The window is 64 searches. A share is known from n
+  searches to within 1/(2√n) near one half, one sixteenth of 64, so a
+  share two such errors from the half is taken for the other side about
+  once in forty windows, and nearer the half the two ways cost nearly
+  the same. It is one thirty-second of a vector's rows, so the first
+  window of a vector, which asks unasked, is a few hundredths of its
+  searches.
 
 The automaton's states are worth keeping only across texts, and a scalar
 function's call is given one row and nothing to keep them in. So they
-live in a call over a vector (D363). TRANSLATE_REGEX has one, taken when
-its subject is a vector of texts and its other operands are constants.
-It compiles the pattern, reads the replacement and makes the searcher
-once for the vector. No state is kept in the function, in the thread or
-in the session. A search of one text alone makes no automaton, which
-would be made only to be dropped.
+live in a searcher, which a call over a vector makes for the vector
+(D363), with the marks, the captures and the forks left to try of the
+matcher that marks, which a search clears and uses again. TRANSLATE_REGEX
+has such a call, taken when its subject is a vector of texts and its
+other operands are constants, and LIKE_REGEX has one, taken when its
+value is a vector of texts and its pattern and flag are constants. Each
+compiles the pattern and makes the searcher once for the vector, and
+TRANSLATE_REGEX reads the replacement once. No state is kept in the
+function, in the thread or in the session. A search of one text alone
+makes no automaton, which would be made only to be dropped. A call over
+a vector that fails gives way to the calls of each row, which raise what
+a row raises (D363).
+
+TRANSLATE_REGEX replaces a match as fn:replace replaces the match as a
+string of its own [ISO/IEC 9075-2:2023 §9.29], which was a second search
+of every match. That search finds the same groups where the match is the
+whole subject, which is that string, and where no instruction of the
+program reads beside the character it matches, no `^`, no `$`, no
+wildcard that looks for an LF after a CR and no back-reference. The way
+that matched then reads the same characters in both, and every way
+preferred to it failed on characters the string has too. So
+`Regex::matches_alone` says which matches are replaced from their own
+groups, and only the others are searched again. `(^a)|(a)` after a `b`
+is one of the others. It matches `a` by its second group and that `a`
+alone by its first.
 
 A subject whose characters are all ASCII's is matched where it lies, its
 octets its characters (`regex::Ascii`), so no vector of characters is
 made of it.
 
-LIKE_REGEX and the other regular expression functions take the matcher
-that marks and the text in place through the same `Regex` methods, and
-have no call over vectors yet, so no automaton.
+OCCURRENCES_REGEX, POSITION_REGEX and SUBSTRING_REGEX take the matcher
+that marks and the text in place through the same `Regex` methods, each
+call of a row a search of one text alone.
+
+The first matchers stay, and a search falls to them where the new ones
+do not hold. A program with a back-reference runs on the matcher that
+counts its steps and has no automaton. One with `^` or `$` of each line
+has no automaton. A text whose marks would pass `MARKS_MOST` runs on the
+matcher of threads. A corpus of several hundred patterns made of atoms,
+quantifiers, alternation, groups, anchors and back-references under the
+flags, in every text of at most three characters of two letters, CR, LF
+and a letter of two octets, from every position, holds a searcher kept
+across the texts to the first matchers
+(`over_a_corpus_a_searcher_finds_what_the_first_matchers_find`).
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 

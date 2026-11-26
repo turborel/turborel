@@ -25,18 +25,29 @@
 //! The marks are a bit of each instruction at each position. A text and a
 //! program whose product is past `MARKS_MOST` bits run on `pike.rs`.
 
-use super::compile::{Inst, Program};
-use super::pike::Slots;
-use super::text::{Text, line_end, line_start, one};
+use super::compile::{Inst, MAX_INSTRUCTIONS, Program};
+use super::pike::{Slots, Thread};
+use super::text::{Lines, Text, line_end, line_start, one};
 use crate::error::Result;
 
-/// \[DESIGN\] (RULES.md D1188) The most marks a search keeps, a bit each,
-/// half a mebibyte of them. From a sweep of `bench/regex.rs` at five
-/// budgets from `1 << 14`: at every length of text a budget admitted, the
-/// matcher that marks ran several times as fast as the matcher of threads
-/// ran the same text, to the largest budget swept, this one. So the budget
-/// bounds what a search holds, not where the matcher stops paying.
-pub(super) const MARKS_MOST: usize = 1 << 22;
+/// \[DESIGN\] (RULES.md D1188) The most marks a search keeps, a bit each:
+/// as many octets as the threads of the matcher of threads take for the
+/// longest program, its two lists of `MAX_INSTRUCTIONS` threads each,
+/// what they captured not counted. So a search here never holds more
+/// than a search there may, and the budget is of what a search holds: a
+/// sweep of `bench/regex.rs` found no length of text within it at which
+/// the matcher of threads ran the text faster.
+pub(super) const MARKS_MOST: usize = MARKS_OCTETS * OCTET;
+
+/// The octets of `MARKS_MOST` marks.
+pub(super) const MARKS_OCTETS: usize = LISTS * MAX_INSTRUCTIONS * size_of::<Thread>();
+
+/// The lists of threads the matcher of threads keeps, this position's and
+/// the next's.
+const LISTS: usize = 2;
+
+/// The bits of an octet.
+const OCTET: usize = 8;
 
 /// The bits of a word of marks.
 const WORD: usize = 64;
@@ -56,6 +67,16 @@ pub(super) fn positions(program: &Program, end: usize, from: usize) -> Option<us
     (program.insts.len().checked_mul(positions)? <= MARKS_MOST).then_some(positions)
 }
 
+/// \[DESIGN\] (RULES.md D1188) What a search keeps while it runs, kept by
+/// a searcher from one search to the next (`regex/searcher.rs`), so a
+/// search of a text takes no memory anew once one as long was searched.
+#[derive(Default)]
+pub(super) struct Scratch {
+    marks: Vec<u64>,
+    slots: Slots,
+    stack: Vec<Job>,
+}
+
 /// What a search reads and keeps.
 struct Search<'a, T: Text + ?Sized> {
     program: &'a Program,
@@ -63,9 +84,14 @@ struct Search<'a, T: Text + ?Sized> {
     from: usize,
     positions: usize,
     capture: bool,
-    marks: Vec<u64>,
-    slots: Slots,
-    stack: Vec<Job>,
+    kept: &'a mut Scratch,
+}
+
+/// Whether every match of `program` begins at the text's start: its first
+/// instruction after the one that keeps where the match begins is `^` of
+/// the whole string, so a way from any later start fails there.
+fn anchored(program: &Program) -> bool {
+    matches!(program.insts.get(1), Some(Inst::LineStart(Lines::Whole)))
 }
 
 /// The first match of `program`, which has no back-reference, in `text`
@@ -73,7 +99,9 @@ struct Search<'a, T: Text + ?Sized> {
 /// no character read past them: each slot of where its groups are if
 /// `capture`, else none of them, as `pike::search` gives them. Of fewer
 /// positions than the text has, the match is one known to end within
-/// them (`regex/dfa.rs`), so a way that reads past them is not it.
+/// them (`regex/dfa.rs`), so a way that reads past them is not it. A
+/// program whose matches all begin at the text's start is tried from
+/// there alone. What the search keeps is `kept`'s, left for the next.
 ///
 /// # Errors
 ///
@@ -83,19 +111,24 @@ pub(super) fn search<T: Text + ?Sized>(
     text: &T,
     (from, positions): (usize, usize),
     capture: bool,
+    kept: &mut Scratch,
 ) -> Result<Option<Slots>> {
-    let words = program.insts.len().saturating_mul(positions).div_ceil(WORD);
-    let slots = vec![None; if capture { program.slots } else { 0 }];
-    let mut s = Search { program, text, from, positions, capture, marks: vec![0; words], slots, stack: Vec::new() };
-    for start in from..from.saturating_add(positions) {
-        s.slots.fill(None);
-        s.stack.push(Job::Try(0, start));
-        while let Some(job) = s.stack.pop() {
+    let starts = if anchored(program) { usize::from(from == 0) } else { positions };
+    kept.marks.clear();
+    kept.marks.resize(program.insts.len().saturating_mul(positions).div_ceil(WORD), 0);
+    kept.slots.clear();
+    kept.slots.resize(if capture { program.slots } else { 0 }, None);
+    kept.stack.clear();
+    let mut s = Search { program, text, from, positions, capture, kept };
+    for start in from..from.saturating_add(starts) {
+        s.kept.slots.fill(None);
+        s.kept.stack.push(Job::Try(0, start));
+        while let Some(job) = s.kept.stack.pop() {
             match job {
                 Job::Restore(slot, old) => s.set(slot, old),
                 Job::Try(pc, at) => {
                     if s.run(pc, at)? {
-                        return Ok(Some(s.slots));
+                        return Ok(Some(s.kept.slots.clone()));
                     }
                 }
             }
@@ -106,7 +139,7 @@ pub(super) fn search<T: Text + ?Sized>(
 
 impl<T: Text + ?Sized> Search<'_, T> {
     fn set(&mut self, slot: usize, value: Option<usize>) {
-        if let Some(s) = self.slots.get_mut(slot) {
+        if let Some(s) = self.kept.slots.get_mut(slot) {
             *s = value;
         }
     }
@@ -117,7 +150,7 @@ impl<T: Text + ?Sized> Search<'_, T> {
         let bit = pc.saturating_mul(self.positions).saturating_add(at.saturating_sub(self.from));
         let (word, mask) =
             (bit.checked_div(WORD).unwrap_or(usize::MAX), 1_u64.checked_shl(u32::try_from(bit % WORD).unwrap_or(0)).unwrap_or(0));
-        let Some(marks) = self.marks.get_mut(word) else { return false };
+        let Some(marks) = self.kept.marks.get_mut(word) else { return false };
         let fresh = *marks & mask == 0;
         *marks |= mask;
         fresh
@@ -138,13 +171,13 @@ impl<T: Text + ?Sized> Search<'_, T> {
                 Inst::Match => return Ok(true),
                 Inst::Jump(to) => pc = *to,
                 Inst::Split(first, second) => {
-                    self.stack.push(Job::Try(*second, at));
+                    self.kept.stack.push(Job::Try(*second, at));
                     pc = *first;
                 }
                 Inst::Save(slot) => {
                     if self.capture {
-                        let old = self.slots.get(*slot).copied().flatten();
-                        self.stack.push(Job::Restore(*slot, old));
+                        let old = self.kept.slots.get(*slot).copied().flatten();
+                        self.kept.stack.push(Job::Restore(*slot, old));
                         self.set(*slot, Some(at));
                     }
                     pc = after;

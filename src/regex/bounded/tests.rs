@@ -73,9 +73,13 @@ pub(in crate::regex) const TEXTS: [&str; 19] = [
 /// groups captured and without, the matcher that marks finds what the
 /// matcher of threads finds: the same leftmost match, of the same
 /// preference among alternatives and quantifiers, each group's span the
-/// same, and none where it finds none.
+/// same, and none where it finds none; what it keeps from one search to
+/// the next, its marks among them, changes nothing a later search finds;
+/// and a program anchored at the string's start is tried from there
+/// alone, one anchored at each line's from every start.
 #[test]
 fn it_finds_what_the_matcher_of_threads_finds() {
+    let mut kept = Scratch::default();
     for (pattern, flag) in PATTERNS {
         let regex = Regex::new(pattern, flag).unwrap();
         for text in TEXTS {
@@ -83,7 +87,7 @@ fn it_finds_what_the_matcher_of_threads_finds() {
             for from in 0..=chars.len() {
                 let reads = positions(&regex.program, chars.len(), from).unwrap();
                 for capture in [true, false] {
-                    let ours = search(&regex.program, chars.as_slice(), (from, reads), capture).unwrap();
+                    let ours = search(&regex.program, chars.as_slice(), (from, reads), capture, &mut kept).unwrap();
                     let theirs = pike::search(&regex.program, chars.as_slice(), from, capture).unwrap();
                     assert_eq!(ours, theirs, "{pattern:?} under {flag:?} in {text:?} from {from}, capture {capture}");
                 }
@@ -92,7 +96,7 @@ fn it_finds_what_the_matcher_of_threads_finds() {
                 if let Some(end) = theirs.as_ref().and_then(|slots| slots[1]) {
                     let within = positions(&regex.program, end, from).unwrap();
                     assert_eq!(
-                        search(&regex.program, chars.as_slice(), (from, within), true).unwrap(),
+                        search(&regex.program, chars.as_slice(), (from, within), true, &mut kept).unwrap(),
                         theirs,
                         "{pattern:?} {text:?} to {end}"
                     );
@@ -141,8 +145,8 @@ fn it_follows_each_instruction_at_a_position_once() {
     let regex = Regex::new("(a|aa)*c", "").unwrap();
     let chars: Vec<char> = "a".repeat(2000).chars().collect();
     let reads = positions(&regex.program, chars.len(), 0).unwrap();
-    assert_eq!(search(&regex.program, chars.as_slice(), (0, reads), true).unwrap(), None);
+    assert_eq!(search(&regex.program, chars.as_slice(), (0, reads), true, &mut Scratch::default()).unwrap(), None);
     let later: Vec<char> = "ababac".chars().collect();
-    let found = search(&Regex::new("(a)c", "").unwrap().program, later.as_slice(), (0, 7), true).unwrap();
+    let found = search(&Regex::new("(a)c", "").unwrap().program, later.as_slice(), (0, 7), true, &mut Scratch::default()).unwrap();
     assert_eq!(found, Some(vec![Some(4), Some(6), Some(4), Some(5)]));
 }

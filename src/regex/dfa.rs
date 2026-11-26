@@ -25,17 +25,23 @@
 //! 9075-2:2023 §9.28 GR9a i], so a CR before an LF is read as a character
 //! of its own, apart from every other CR. A program that asks more of a
 //! position, `^` and `$` of each line, has no automaton here, nor has one
-//! with a back-reference. Past `STATES_MOST` states the automaton gives up, and
-//! the search goes on without it.
+//! with a back-reference. Past `OCTETS_MOST` octets of states the automaton
+//! gives up, and the search goes on without it.
 
 use std::collections::BTreeMap;
 
+use super::bounded::MARKS_OCTETS;
 use super::compile::{Inst, Program};
 use super::text::{Lines, Text};
 use crate::error::Result;
 
-/// \[DESIGN\] (RULES.md D1188) The most states an automaton keeps.
-pub(super) const STATES_MOST: usize = 512;
+/// \[DESIGN\] (RULES.md D1188) The most octets an automaton's states
+/// take, their steps, their keys and their threads: as many as a search's
+/// marks may (`bounded::MARKS_OCTETS`), so the two things a searcher keeps
+/// are held to one bound, about a thousand states of a short program. An
+/// automaton that still meets new states there is following its texts no
+/// faster than the matchers do.
+pub(super) const OCTETS_MOST: usize = MARKS_OCTETS;
 
 /// The characters whose steps a state keeps: ASCII's, and after them a
 /// CR before an LF.
@@ -72,7 +78,7 @@ pub(super) enum Scan {
     None,
     /// A match, the one preferred ending here.
     Ends(usize),
-    /// Too many states: not known.
+    /// Too many octets of states: not known.
     GaveUp,
 }
 
@@ -100,6 +106,8 @@ pub(super) fn fits(program: &Program) -> bool {
 pub(super) struct Dfa {
     states: Vec<State>,
     found: BTreeMap<Key, u32>,
+    /// The octets its states take (`OCTETS_MOST`).
+    held: usize,
     /// Scratch of `closed`: the work left and the instructions met.
     stack: Vec<usize>,
     seen: Vec<bool>,
@@ -146,7 +154,7 @@ impl Dfa {
 
     /// The state `c` leads to from `state`, `crlf` whether it is a CR
     /// before an LF: `DEAD` if no thread is left and no start is tried
-    /// again; none past `STATES_MOST`.
+    /// again; none past `OCTETS_MOST`.
     fn step(&mut self, program: &Program, state: u32, (c, crlf): (char, bool)) -> Option<u32> {
         let ascii = usize::try_from(u32::from(c)).ok().filter(|&at| at < CR_BEFORE_LF);
         let slot = if crlf { Some(CR_BEFORE_LF) } else { ascii };
@@ -180,15 +188,19 @@ impl Dfa {
         Some(next)
     }
 
-    /// The state of `key`, made if not met before; none past `STATES_MOST`.
+    /// The state of `key`, made if not met before; none past `OCTETS_MOST`.
     fn state(&mut self, program: &Program, key: Key) -> Option<u32> {
         if let Some(&at) = self.found.get(&key) {
             return Some(at);
         }
-        if self.states.len() >= STATES_MOST {
+        let (threads, accepts) = self.closed(program, (&key.0, key.1), (key.2, false));
+        // Its key is kept twice, by the state and by where it is found.
+        let numbers = key.0.len().saturating_mul(2).saturating_add(threads.len());
+        let octets = size_of::<[u32; KEPT]>().saturating_add(numbers.saturating_mul(size_of::<u32>()));
+        self.held = self.held.saturating_add(octets);
+        if self.held > OCTETS_MOST {
             return None;
         }
-        let (threads, accepts) = self.closed(program, (&key.0, key.1), (key.2, false));
         let at = u32::try_from(self.states.len()).ok()?;
         self.found.insert(key.clone(), at);
         self.states.push(State { key, threads, accepts, next: Box::new([UNKNOWN; KEPT]) });

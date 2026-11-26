@@ -65,8 +65,8 @@ fn programs_that_ask_more_of_a_position_have_none() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D1188: an automaton past `STATES_MOST`
-/// states gives up, the searcher drops it, and the search goes on
+/// Verifies: [DESIGN] RULES.md D1188: an automaton past `OCTETS_MOST`
+/// octets of states gives up, the searcher drops it, and the search goes on
 /// without it to the same answers; robustness: a state number past the
 /// states is no state.
 #[test]

@@ -113,7 +113,7 @@ fn subjects() -> Column {
         ends.push(all.len());
         (all, ends)
     });
-    let nulls = crate::storage::Mask::from_bools(&[false, false, false, true, false, false, false]);
+    let nulls = Mask::from_bools(&[false, false, false, true, false, false, false]);
     Column::Texts(Texts::new(joined, ends, Some(nulls)))
 }
 
@@ -194,4 +194,24 @@ fn a_vector_call_gives_nulls_fails_or_gives_way_as_rows_do() {
     let failed = Translate::default().eval_batch(&over(&empty, &column), 3).unwrap().map(|_| Value::Null);
     assert_eq!(state(failed), state(Translate::default().call(&beside(&empty, chars(SUBJECTS[0])))));
     assert!(state(Translate::default().call(&beside(&empty, chars(SUBJECTS[0])))).is_some());
+}
+
+/// Verifies: [DESIGN] RULES.md D1188 [ISO/IEC 9075-2:2023 §9.29 GR9a]: a
+/// match is replaced as fn:replace replaces the match as a string of its
+/// own, whether it is searched again or replaced from its own groups:
+/// `(^a)|(a)` matches the `a` after `b` by its second group and that `a`
+/// alone by its first, so the first is what is put; a match that is the
+/// whole subject, and one of a pattern that reads nothing beside a
+/// character, give their own groups.
+#[test]
+fn a_match_is_replaced_as_the_match_alone_is() {
+    let temp = Temp::default();
+    let made = |subject: &str, pattern: &str, replacement: &str| {
+        format!("{:?}", translate(&temp, &chars(subject), (pattern, replacement), None).unwrap())
+    };
+    let wanted = |s: &str| format!("{:?}", chars(s));
+    assert_eq!(made("ba", "(^a)|(a)", "[$1|$2]"), wanted("b[a|]"));
+    assert_eq!(made("a", "(^a)|(a)", "[$1|$2]"), wanted("[a|]"));
+    assert_eq!(made("ba", "(c)|(a)", "[$1|$2]"), wanted("b[|a]"));
+    assert_eq!(made("http://www.a.test/b", "^https?://(www\\.)?([^/]+)/.*$", "$2"), wanted("a.test"));
 }

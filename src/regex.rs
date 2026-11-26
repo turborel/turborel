@@ -39,7 +39,7 @@ mod replace;
 mod text;
 pub(crate) mod unicode;
 
-use compile::{Program, compile};
+use compile::{Inst, Program, compile};
 use flags::{Flag, Flags};
 use parse::{parse, parse_schema};
 use unicode::Table;
@@ -73,6 +73,8 @@ pub struct Regex {
     back_references: bool,
     caseless: bool,
     literal: bool,
+    /// What its instructions read (`matches_alone`).
+    reads: Reads,
     table: Table,
 }
 
@@ -151,6 +153,7 @@ impl Regex {
         let parsed = parse(pattern, flags, &table, line_feeds)?;
         let program = compile(&parsed, flags)?;
         Ok(Regex {
+            reads: Reads::of(&program),
             program,
             groups: parsed.groups,
             back_references: parsed.back_references,
@@ -173,7 +176,8 @@ impl Regex {
         let table = Table::read()?;
         let parsed = parse_schema(pattern, &table)?;
         let program = compile(&parsed, Flags::default())?;
-        Ok(Regex { program, groups: parsed.groups, back_references: false, caseless: false, literal: false, table })
+        let reads = Reads::of(&program);
+        Ok(Regex { program, groups: parsed.groups, back_references: false, caseless: false, literal: false, reads, table })
     }
 
     /// How many groups capture [§9.28 GR8].
@@ -187,11 +191,7 @@ impl Regex {
     ///
     /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`.
     pub fn is_match(&self, text: &str) -> Result<bool> {
-        if let Some(ascii) = Ascii::of(text) {
-            return self.is_match_in(&ascii);
-        }
-        let chars: Vec<char> = text.chars().collect();
-        self.is_match_in(chars.as_slice())
+        self.once().is_match(text)
     }
 
     /// Whether `text`, or some substring of it, matches [F&O 3.1 §5.6.3].
@@ -282,6 +282,22 @@ impl Regex {
         Ok(seen)
     }
 
+    /// \[DESIGN\] (RULES.md D1188) Whether a match found at characters
+    /// `start` to `end` of a text of `len` is, with the same groups, the
+    /// one match of those characters searched as a string of their own,
+    /// as fn:replace searches them [ISO/IEC 9075-2:2023 §9.29]: if they
+    /// are the whole text, which is that string; or if no instruction
+    /// reads beside the character it matches, no `^`, no `$`, no wildcard
+    /// of the flag `s` that looks for an LF after a CR and no
+    /// back-reference, since the way that matched then reads the same
+    /// characters in both, and so does every way preferred to it, which
+    /// failed. The string has no match after it, as one of no characters
+    /// at its end would be one of the zero-length string, which
+    /// `replacement` refuses.
+    pub fn matches_alone(&self, len: usize, (start, end): (usize, usize)) -> bool {
+        (start == 0 && end == len) || self.reads == Reads::Characters
+    }
+
     /// \[DESIGN\] (RULES.md D61, D1188) Which matcher searches a text from
     /// `from` that reads no character at `end` or after: of a
     /// back-reference, the one that counts its steps, as no other matches
@@ -299,13 +315,46 @@ impl Regex {
     /// one: what a call over a vector of texts searches each with.
     pub fn searcher(&self) -> Searcher<'_> {
         let automaton = !self.back_references && dfa::fits(&self.program);
-        Searcher { regex: self, dfa: automaton.then(dfa::Dfa::default), found: searcher::Found::default() }
+        Searcher {
+            regex: self,
+            dfa: automaton.then(dfa::Dfa::default),
+            found: searcher::Found::default(),
+            kept: bounded::Scratch::default(),
+        }
     }
 
     /// Searches of it over one text, which would make an automaton only
     /// to drop it, so make none.
     pub fn once(&self) -> Searcher<'_> {
-        Searcher { regex: self, dfa: None, found: searcher::Found::default() }
+        Searcher { regex: self, dfa: None, found: searcher::Found::default(), kept: bounded::Scratch::default() }
+    }
+}
+
+/// What a program's instructions read of a text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reads {
+    /// Each the character it matches, and nothing else.
+    Characters,
+    /// One at least beside the character it matches: an assertion, the
+    /// wildcard that looks for an LF after a CR, or a back-reference.
+    Beside,
+}
+
+impl Reads {
+    /// What `program`'s instructions read.
+    fn of(program: &Program) -> Reads {
+        let beside = program.insts.iter().any(|inst| match inst {
+            Inst::LineStart(_) | Inst::LineEnd(_) | Inst::AnyButCrlf | Inst::BackRef(_) => true,
+            Inst::Char(_)
+            | Inst::Set(_)
+            | Inst::Split(..)
+            | Inst::Jump(_)
+            | Inst::Save(_)
+            | Inst::LoopEnter(_)
+            | Inst::LoopCheck(_)
+            | Inst::Match => false,
+        });
+        if beside { Reads::Beside } else { Reads::Characters }
     }
 }
 

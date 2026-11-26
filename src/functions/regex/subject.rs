@@ -56,7 +56,6 @@ pub(super) use on_text;
 /// A subject string, and the units its positions and lengths count.
 pub(super) struct Subject<'v> {
     pub(super) body: Body<'v>,
-    value: &'v Value,
     octets: bool,
 }
 
@@ -68,15 +67,11 @@ impl<'v> Subject<'v> {
     ///
     /// SQLCODE -910 of a large object that cannot be read as characters.
     pub(super) fn new(value: &'v Value, units: &Value) -> Result<Option<Subject<'v>>> {
-        let octets = match text(units)? {
-            Some(OCTETS) => true,
-            Some(CHARACTERS) => false,
-            Some(_) | None => return fail(Code::Api, "[DESIGN] a regular expression function was given units that are none"),
-        };
+        let octets = octets(units)?;
         let body = match value {
             Value::Null => return Ok(None),
             Value::Lob(lob) => Body::Lob(LobText::new(lob)?),
-            Value::Char(s) => Ascii::of(s).map_or_else(|| Body::Chars(s.chars().collect()), Body::Ascii),
+            Value::Char(s) => body_of(s),
             Value::Exact(_)
             | Value::Approx(_)
             | Value::DecFloat(_)
@@ -93,12 +88,17 @@ impl<'v> Subject<'v> {
             | Value::Extension(_)
             | Value::Xml(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
         };
-        Ok(Some(Subject { body, value, octets }))
+        Ok(Some(Subject { body, octets }))
     }
 
-    /// The subject as it was given.
-    pub(super) fn value(&self) -> &'v Value {
-        self.value
+    /// \[DESIGN\] (RULES.md D1188) `text`, a character string of a vector
+    /// of them, counted in `units`: as `new` of its value, no value made.
+    ///
+    /// # Errors
+    ///
+    /// As `new`.
+    pub(super) fn of_text(text: &'v str, units: &Value) -> Result<Subject<'v>> {
+        Ok(Subject { body: body_of(text), octets: octets(units)? })
     }
 
     /// Its characters.
@@ -170,6 +170,21 @@ impl<'v> Subject<'v> {
             Body::Lob(lob) => slice(lob.lob(), start, end).map(Value::Lob),
         }
     }
+}
+
+/// Whether `units`, a `<char length units>`, are octets.
+fn octets(units: &Value) -> Result<bool> {
+    match text(units)? {
+        Some(OCTETS) => Ok(true),
+        Some(CHARACTERS) => Ok(false),
+        Some(_) | None => fail(Code::Api, "[DESIGN] a regular expression function was given units that are none"),
+    }
+}
+
+/// The characters of the character string `s`: read where they lie if
+/// all are ASCII's (RULES.md D1188).
+fn body_of(s: &str) -> Body<'_> {
+    Ascii::of(s).map_or_else(|| Body::Chars(s.chars().collect()), Body::Ascii)
 }
 
 /// Characters `start` to `end` of `lob`.
