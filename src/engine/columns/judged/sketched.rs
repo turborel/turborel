@@ -15,7 +15,7 @@ use std::cell::Cell;
 use std::cmp::Ordering;
 
 use super::super::sketch::{Edges, NULL_CODE, Verdict, Verdicts};
-use super::{Pred, sorted, text_keeps};
+use super::{Against, Pred, sorted, text_keeps};
 
 /// \[DESIGN\] The most constants found by their address alone, past
 /// which they are found by a binary search of their texts.
@@ -38,8 +38,9 @@ pub(super) fn verdicts(edges: &Edges, pred: &Pred) -> Option<Verdicts> {
     out.set(NULL_CODE, if pred.of_null { Verdict::Keep } else { Verdict::Drop });
     for (code, bin) in edges.bins() {
         let mixed = Cell::new(false);
-        let order = |c: &str| {
-            let o = find(c).and_then(|place| bin.order(place));
+        let order = |c: Against<'_>| {
+            // Every constant is one `constants_of` gave, compared padded.
+            let o = if let Against::Padded(text) = c { find(text).and_then(|place| bin.order(place)) } else { None };
             mixed.set(mixed.get() || o.is_none());
             Some(o.unwrap_or(Ordering::Equal))
         };

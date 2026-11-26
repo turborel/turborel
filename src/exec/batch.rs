@@ -99,6 +99,9 @@ fn kept_row(batch: &Batch, at: usize, r: u32) -> Value {
 pub(in crate::exec) struct Read {
     pub(in crate::exec) taken: Vec<Taken>,
     pub(in crate::exec) groups: Vec<usize>,
+    /// Which grouping columns are grouped unpadded (`group::unpadded_keys`),
+    /// none if empty.
+    pub(in crate::exec) unpadded: Vec<bool>,
 }
 
 /// What each of `aggs` takes of a batch of `columns`, if each counts rows
@@ -126,7 +129,7 @@ fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
 /// set function as `taken` admits.
 pub(in crate::exec) fn read_for(groups: &[usize], aggs: &[AggCall], layout: &[usize]) -> Option<Read> {
     let at = groups.iter().map(|g| layout.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
-    Some(Read { taken: taken(aggs, layout)?, groups: at })
+    Some(Read { taken: taken(aggs, layout)?, groups: at, unpadded: Vec::new() })
 }
 
 /// What `plan` reads, if it is an aggregation read by batches: of a
@@ -134,13 +137,15 @@ pub(in crate::exec) fn read_for(groups: &[usize], aggs: &[AggCall], layout: &[us
 pub(super) fn read_of(plan: &Plan, db: &State) -> Option<Read> {
     let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan else { return None };
     // Batches key groups by their values, not by a collation's sort keys,
-    // and make none before their rows.
-    if !collations.is_empty() || !seeds.is_empty() {
+    // but those of a collation whose key is the text itself (RULES.md
+    // D1183), and make none before their rows.
+    if !seeds.is_empty() {
         return None;
     }
+    let unpadded = super::group::unpadded_keys(collations)?;
     let (columns, _) = layout(input, db)?;
     let at = groups.iter().map(|g| columns.iter().position(|c| c == g)).collect::<Option<Vec<_>>>()?;
-    Some(Read { taken: taken(aggs, &columns)?, groups: at })
+    Some(Read { taken: taken(aggs, &columns)?, groups: at, unpadded })
 }
 
 /// \[DESIGN\] The width of the rows of the DISTINCT `plan`, if it is a
@@ -466,11 +471,13 @@ mod tests {
 
     /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §7.13 GR2a] [DESIGN] an
     /// aggregation of a scan is read by batches unless it groups by a
-    /// collation or makes groups before any row, which batches do not.
+    /// collation that makes sort keys or makes groups before any row,
+    /// which batches do not.
     ///
-    /// Decision `!collations.is_empty() || !seeds.is_empty()`: neither
-    /// (batches) against seeds alone (rows) shows the seeds' condition;
-    /// collations alone (rows) shows the collations'.
+    /// Neither (batches) against seeds alone (rows) shows the seeds'
+    /// condition; a collation that makes keys alone (rows) shows the
+    /// collations', and one whose key is the text itself (batches) that it
+    /// is told apart (`group::unpadded_keys`).
     #[test]
     fn seeded_aggregations_are_not_batched() {
         let st = state();
@@ -509,6 +516,14 @@ mod tests {
         assert!(!aggregable(&aggregate(vec![Vec::new()], Vec::new()), &st));
         let case_insensitive = builtin().into_iter().find(|c| c.name() == CASE_INSENSITIVE).unwrap();
         let collated = CollationRef { collation: case_insensitive, pad: default_pad(CASE_INSENSITIVE) };
-        assert!(!aggregable(&aggregate(Vec::new(), vec![Some(collated)]), &st));
+        assert!(!aggregable(&aggregate(Vec::new(), vec![Some(collated.clone())]), &st));
+        // [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) A collation whose
+        // key is the text itself is grouped by batches, its column
+        // unpadded; beside another collation, by rows still.
+        let octets = crate::value::collation::unpadded_scalar();
+        let by_octets = aggregate(Vec::new(), vec![None, Some(octets.clone())]);
+        assert!(aggregable(&by_octets, &st));
+        assert_eq!(read_of(&by_octets, &st).map(|read| read.unpadded), Some(vec![false, true]));
+        assert!(!aggregable(&aggregate(Vec::new(), vec![Some(octets), Some(collated)]), &st));
     }
 }

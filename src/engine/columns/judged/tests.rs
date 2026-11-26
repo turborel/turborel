@@ -184,3 +184,81 @@ fn the_scan_judges_conjuncts_of_one_column() {
     assert_eq!(judgment.preds.iter().map(|p| p.column).collect::<Vec<_>>(), vec![0, 1]);
     assert!(Judgment::of(None, &types).is_empty());
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
+/// conjunct compared unpadded is judged by the scan over texts and a
+/// dictionary's entries by their octets, a prefix the less and a trailing
+/// space apart, alone and in an OR with a padded comparison; and no
+/// dictionary's order nor sketch takes such a constant.
+#[test]
+fn a_conjunct_unpadded_is_judged_by_octets() {
+    let told = |op: CompOp, text: &str| Conjunct::Unpadded { column: 0, op, octets: text.as_bytes().to_vec() };
+    assert!(judged_conjunct(&told(CompOp::Eq, "a")) && judged_conjunct(&Conjunct::Any(vec![told(CompOp::Eq, "a")])));
+    let words = ["a", "a ", "a\t", "", "ab"];
+    let values: Vec<Value> = (0..60).map(|n| if n % 7 == 6 { Value::Null } else { Value::Char(words[n % words.len()].into()) }).collect();
+    let nulls = Mask::from_bools(&(0_usize..60).map(|n| n % 7 == 6).collect::<Vec<_>>());
+    let text: String = values.iter().filter_map(|v| if let Value::Char(s) = v { Some(s.as_str()) } else { None }).collect();
+    let plain = Column::Texts(Texts::new(text, text_ends(&values), Some(nulls.clone())));
+    let entries = Arc::new(Texts::new(words.concat(), text_ends(&words.map(|w| Value::Char(w.into()))), None));
+    let coded = Coded { codes: (0..60).map(|n| u32::try_from(n % words.len()).unwrap()).collect(), entries };
+    let dictionary = Column::Texts(Texts::coded(coded, Some(nulls)));
+    let rows_where = |keeps: &dyn Fn(&str) -> bool| -> Vec<u32> {
+        (0..60_u32).filter(|&r| if let Value::Char(s) = &values[index(r)] { keeps(s) } else { false }).collect()
+    };
+    let either = Conjunct::Any(vec![told(CompOp::Eq, "a "), compare(CompOp::Eq, Value::Char("ab  ".into()))]);
+    let cases: [(Conjunct, Vec<u32>); 6] = [
+        (told(CompOp::Eq, "a"), rows_where(&|s| s == "a")),
+        (told(CompOp::Ne, ""), rows_where(&|s| !s.is_empty())),
+        (told(CompOp::Lt, "a "), rows_where(&|s| s.as_bytes() < b"a ".as_slice())),
+        (told(CompOp::Ge, "a\t"), rows_where(&|s| s.as_bytes() >= b"a\t".as_slice())),
+        (told(CompOp::Le, "a"), rows_where(&|s| s.is_empty() || s == "a")),
+        (either, rows_where(&|s| s == "a " || s == "ab")),
+    ];
+    for (conjunct, wanted) in &cases {
+        let pred = Pred { at: 0, column: 0, conjunct: conjunct.clone(), of_null: conjunct.matches_key(&[&Value::Null]) };
+        assert!(!pred.of_null);
+        for (what, column) in [("texts", &plain), ("a dictionary", &dictionary)] {
+            assert_eq!(pred.kept(column, None, &crate::kernels::Portable).as_ref(), Some(wanted), "{what}: {conjunct:?}");
+        }
+        let mut constants = Vec::new();
+        assert_eq!(sorted::constants_of(conjunct, &mut constants), None, "no order of a dictionary: {conjunct:?}");
+    }
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
+/// chunk coded by symbols compares each text with a constant's octets in
+/// place, unpadded, as the decoded text's octets order against it: of
+/// constants found, the same with spaces or a tab after, a prefix, the
+/// empty string and one past every text; codes ending in an escape
+/// compare as none.
+#[test]
+fn texts_coded_by_symbols_compare_unpadded() {
+    let texts: Vec<Value> = (0..300_u32)
+        .map(|k| Value::Char(format!("customer{k}@mail{}.example.com{}", k % 7, ["", "  ", "\t"][index(k % 3)]).into()))
+        .collect();
+    let fields = Fields::of(&TEXT, texts.iter().cloned()).unwrap();
+    let bytes = fields.chunk(&TEXT, 0, (fields.len(), true)).unwrap();
+    let chunk = Chunk::parse(&bytes).unwrap();
+    let Body::Fsst(symbols) = &chunk.body else { panic!("not coded by symbols") };
+    let constants = [
+        "customer10@mail3.example.com",
+        "customer7@mail0.example.com  ",
+        "customer7@mail0.example.com\t",
+        "customer",
+        "",
+        "zz",
+        "customer8@mail1.example.co",
+    ];
+    for (n, v) in texts.iter().enumerate() {
+        let Value::Char(s) = v else { continue };
+        for c in constants {
+            assert_eq!(symbols.compare_unpadded(n, c.as_bytes()), Some(s.as_bytes().cmp(c.as_bytes())), "{s:?} against {c:?}");
+        }
+    }
+    let mut bad = bytes.clone();
+    let last = bad.len() - 1;
+    bad[last] = 255;
+    let broken = Chunk::parse(&bad).unwrap();
+    let Body::Fsst(broken) = &broken.body else { panic!("not coded by symbols") };
+    assert_eq!(broken.compare_unpadded(299, b"customer299@mail5.example.com\t"), None, "an escape at the end");
+}

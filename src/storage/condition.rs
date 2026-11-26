@@ -123,6 +123,18 @@ pub enum Conjunct {
         /// The spans, least and greatest, ascending and apart.
         spans: Arc<[(Value, Value)]>,
     },
+    /// [ISO/IEC 9075-2:2023 §4.3.2, §8.2 GR3b] (RULES.md D1183) `column
+    /// <op> constant` of a character string under a collation of NO PAD
+    /// that orders strings as their octets do: the octets compared, a
+    /// prefix the less, no space padding either.
+    Unpadded {
+        /// The column.
+        column: usize,
+        /// The comparison operator.
+        op: CompOp,
+        /// The constant's octets.
+        octets: Vec<u8>,
+    },
 }
 
 impl Conjunct {
@@ -134,7 +146,8 @@ impl Conjunct {
             | Conjunct::In { column, .. }
             | Conjunct::NotIn { column, .. }
             | Conjunct::Dynamic { column, .. }
-            | Conjunct::Spans { column, .. } => vec![*column],
+            | Conjunct::Spans { column, .. }
+            | Conjunct::Unpadded { column, .. } => vec![*column],
             Conjunct::Any(each) => {
                 let mut columns: Vec<usize> = each.iter().flat_map(Conjunct::columns).collect();
                 columns.sort_unstable();
@@ -163,6 +176,10 @@ impl Conjunct {
             // Each of one column, the same.
             Conjunct::Any(each) => each.iter().any(|c| c.matches_key(key)),
             Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => true,
+            Conjunct::Unpadded { op, octets, .. } => key
+                .first()
+                .and_then(|v| if let Value::Char(s) = v { Some(s.as_bytes().cmp(octets)) } else { None })
+                .is_some_and(|o| op.holds(o)),
         }
     }
 
@@ -182,6 +199,7 @@ impl Conjunct {
             Conjunct::Any(each) => each.iter().any(|c| c.may_match(bounds)),
             Conjunct::Dynamic { column, threshold } => threshold.may_match(bounds.get(*column).and_then(Option::as_ref)),
             Conjunct::Spans { column, spans } => meets(spans, bounds.get(*column).and_then(Option::as_ref)),
+            Conjunct::Unpadded { column, op, octets } => unpadded_within(*op, bounds.get(*column).and_then(Option::as_ref), octets),
         }
     }
 }
@@ -198,6 +216,7 @@ impl Conjunct {
             Conjunct::Any(each) => each.iter().any(|c| c.may_match_range(range)),
             Conjunct::Dynamic { threshold, .. } => threshold.may_match(range),
             Conjunct::Spans { spans, .. } => meets(spans, range),
+            Conjunct::Unpadded { op, octets, .. } => unpadded_within(*op, range, octets),
             Conjunct::Condition(c) => {
                 let Some(&column) = c.columns.first() else { return true };
                 let mut bounds = vec![None; column.saturating_add(1)];
@@ -251,6 +270,21 @@ impl Conjunction {
 /// if they are one value, which is.
 fn one_of((least, greatest): &(Value, Value), values: &[Value]) -> bool {
     compare(least, greatest) == Some(Ordering::Equal) && values.iter().any(|v| compare(least, v) == Some(Ordering::Equal))
+}
+
+/// Whether a character string within `range`, its least and greatest as
+/// strings compare padded, may hold to `octets` by `op` compared unpadded.
+/// Equal octets are equal padded too, so an equality passes over a range
+/// the constant is outside; a string apart from the constant, below or
+/// above it unpadded may be equal, above or below it padded, as `'a'` is
+/// to `'a '` and to `'a'` and a tab, so no other comparison passes over
+/// one. A range of no value holds none.
+fn unpadded_within(op: CompOp, range: Option<&(Value, Value)>, octets: &[u8]) -> bool {
+    let Some(range) = range else { return false };
+    match op {
+        CompOp::Eq => std::str::from_utf8(octets).is_ok_and(|text| within(CompOp::Eq, range, &Value::Char(text.into()))),
+        CompOp::Ne | CompOp::Lt | CompOp::Le | CompOp::Gt | CompOp::Ge => true,
+    }
 }
 
 /// Whether a value within `range`, if any, may lie in one of `spans`,
@@ -381,5 +415,34 @@ mod tests {
         assert!(!told.may_match(&[None]) && !told.may_match_range(None), "no value not null");
         assert!(told.may_match_range(Some(&(n(55), n(56)))) && !told.may_match_range(Some(&(n(40), n(41)))));
         assert!(told.matches(&vec![n(25)]), "a row is judged by the join's filter");
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
+    /// conjunct compared unpadded matches a character string by its octets,
+    /// a prefix the less, never a null nor another value; and, a zone's
+    /// bounds being in the padded order, only an equality passes over a
+    /// range the constant is outside: of a range of `'a'` alone, below a
+    /// tab after `'a'`, apart from `'a '` and equal to `'a '` may all match
+    /// (regression: each would be passed over by the padded order), and a
+    /// range of no value holds none.
+    #[test]
+    fn an_unpadded_conjunct_matches_octets_and_passes_over_by_equality_alone() {
+        let told = |op: CompOp, text: &str| Conjunct::Unpadded { column: 0, op, octets: text.as_bytes().to_vec() };
+        let text = |s: &str| Value::Char(s.into());
+        assert!(told(CompOp::Eq, "a").matches_key(&[&text("a")]) && !told(CompOp::Eq, "a").matches_key(&[&text("a ")]));
+        assert!(told(CompOp::Lt, "a ").matches_key(&[&text("a")]) && told(CompOp::Lt, "a ").matches_key(&[&text("a\t")]));
+        assert!(told(CompOp::Gt, "a").matches_key(&[&text("a\t")]) && !told(CompOp::Ge, "a ").matches_key(&[&text("a")]));
+        assert!(!told(CompOp::Ne, "a").matches_key(&[&Value::Null]) && !told(CompOp::Ne, "a").matches_key(&[&n(1)]));
+        assert_eq!(told(CompOp::Le, "b").columns(), [0]);
+        let all_a = Some((text("a"), text("a")));
+        for (op, constant) in
+            [(CompOp::Lt, "a\t"), (CompOp::Le, "a\t"), (CompOp::Ne, "a "), (CompOp::Gt, ""), (CompOp::Ge, "a"), (CompOp::Eq, "a ")]
+        {
+            assert!(told(op, constant).may_match(std::slice::from_ref(&all_a)), "{op:?} {constant:?}");
+            assert!(told(op, constant).may_match_range(all_a.as_ref()), "{op:?} {constant:?}, a range");
+            assert!(!told(op, constant).may_match(&[None]), "{op:?} {constant:?}, no value");
+        }
+        assert!(!told(CompOp::Eq, "b").may_match(std::slice::from_ref(&all_a)) && !told(CompOp::Eq, "b").may_match_range(all_a.as_ref()));
+        assert!(!Conjunct::Unpadded { column: 0, op: CompOp::Eq, octets: vec![0xFF] }.may_match(std::slice::from_ref(&all_a)));
     }
 }
