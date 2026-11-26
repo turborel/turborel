@@ -312,14 +312,18 @@ impl Replication {
     /// \[EXTENSION\] Stops the node, before `db`, its database, closes:
     /// its transport ended, its driver halted, and the database deposed,
     /// so it serves no more and closes as a replica's does, logging
-    /// nothing (`Database::close`).
+    /// nothing (`Database::close`). The driver's turn in flight on its
+    /// job's thread is waited for first (`Driver::settle`, RULES.md
+    /// D1225): a promotion, a replay or an opening again it ends after
+    /// the database was deposed would leave it serving or following, and
+    /// its close would then ask the halted log for a checkpoint and fail.
     ///
     /// # Errors
     ///
     /// `Standby::depose`'s.
     pub fn stop(&self, db: &Database) -> Result<()> {
         self.transport.stop();
-        self.driver.halt(refused("the node stopped"));
+        self.driver.settle(refused("the node stopped"));
         db.depose()
     }
 }

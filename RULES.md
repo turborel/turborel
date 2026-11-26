@@ -761,6 +761,7 @@ verification approach DO-178C expects (§8).
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
 | D1205 | The unique index of a deferrable constraint is no key to the estimates |
+| D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 
 ### The project
 
@@ -20857,6 +20858,34 @@ hash or an index join, and the implied edges (D1204), so no query gave
 wrong rows. The rules that rewrite a query by a key read the
 constraints themselves and pass a deferrable one by (D1117, D1201,
 D1202).
+
+#### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
+
+A node stops before its database closes (D57). Its transport ends, its
+driver is halted, and its database is deposed, so it closes as a
+replica's does and logs nothing. The driver's turns run on its job's
+thread (D55), and a halt only made the next thing the driver took fail.
+A turn already carrying out what the database was asked went on, and
+what it ended after the stop undid the stop. A promotion ended left the
+database serving, and a replay or an opening again left it following.
+The close then took a checkpoint of a database serving or following,
+asked the halted log to log it or to let records go, and failed with the
+halt's own error (SQLCODE -910, "the node stopped"). This happened on a
+node stopped just as its group changed view, as when the primary beside
+it had stopped a moment before.
+
+`Driver::settle` halts the driver and then waits until no other thread
+is carrying out what the database is asked (`driver/effects.rs`). Each
+thing a turn asks begins by reading the driver's failure, so after the
+halt a turn asks nothing new, and the one in flight ends soon, since a
+sync it waits for fails with the halt too. `Replication::stop` settles
+the driver before it deposes the database, and nothing of the driver's
+changes the database after. Called from within a turn, `settle` does not
+wait for its own thread.
+
+A stop that returns an error, or a close refused after it, is therefore
+a defect and never the node's ordinary end, and a caller has no reason
+to pass over either.
 
 ## 2. Project layout
 
