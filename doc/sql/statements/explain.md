@@ -558,12 +558,12 @@ name, which the key decides
 ([Functionally dependent columns](../06-queries.md#functionally-dependent-columns)):
 
 ```sql
-CREATE TABLE DEPT (ID INTEGER PRIMARY KEY, NAME VARCHAR(10));
-CREATE TABLE EMP (ID INTEGER PRIMARY KEY, DEPT INTEGER NOT NULL, PAY INTEGER);
-INSERT INTO DEPT VALUES (1, 'north'), (2, 'south');
-INSERT INTO EMP VALUES (1, 1, 100), (2, 2, 200), (3, 2, 300);
+CREATE TABLE OFFICE (ID INTEGER PRIMARY KEY, NAME VARCHAR(10));
+CREATE TABLE HAND (ID INTEGER PRIMARY KEY, DEPT INTEGER NOT NULL, PAY INTEGER);
+INSERT INTO OFFICE VALUES (1, 'north'), (2, 'south');
+INSERT INTO HAND VALUES (1, 1, 100), (2, 2, 200), (3, 2, 300);
 COMMIT;
-EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) FROM DEPT D JOIN EMP E ON E.DEPT = D.ID GROUP BY D.ID, D.NAME;
+EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) FROM OFFICE D JOIN HAND E ON E.DEPT = D.ID GROUP BY D.ID, D.NAME;
 ```
 
 ```
@@ -579,8 +579,8 @@ OK
    Aggregate group by [D.ID, D.NAME] computing [SUM(E.PAY)]
      Filter E.DEPT = D.ID
        Product
-         Scan ANN.DEPT
-         Scan ANN.EMP
+         Scan ANN.OFFICE
+         Scan ANN.HAND
  -- rules: reduce_grouping_keys
  -- optimized:
  Project D.ID, D.NAME, SUM(E.PAY)
@@ -588,25 +588,25 @@ OK
      Aggregate group by [D.ID] computing [SUM(E.PAY), D.NAME]
        Filter E.DEPT = D.ID
          Product
-           Scan ANN.DEPT
-           Scan ANN.EMP
+           Scan ANN.OFFICE
+           Scan ANN.HAND
  -- physical:
  Project D.ID, D.NAME, SUM(E.PAY)
    Aggregate group by [D.ID] computing [SUM(E.PAY), D.NAME]
      Project D.ID, D.NAME, E.ID, E.DEPT, E.PAY
        HashJoin E.DEPT = D.ID
-         SeqScan ANN.EMP  (rows=3, cost=2.8)
-         SeqScan ANN.DEPT  (rows=2, cost=2.0)
+         SeqScan ANN.HAND  (rows=3, cost=2.8)
+         SeqScan ANN.OFFICE  (rows=2, cost=2.0)
 (23 rows)
 ```
 
 The department of the greatest pay, of the same tables. The rule
 fetch_dependents_late leaves the name out of the grouping and the sort,
-and reads it of DEPT by its key for the one row FETCH FIRST keeps. The
+and reads it of OFFICE by its key for the one row FETCH FIRST keeps. The
 rows are sorted again above that join:
 
 ```sql
-EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) AS PAID FROM DEPT D JOIN EMP E ON E.DEPT = D.ID
+EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) AS PAID FROM OFFICE D JOIN HAND E ON E.DEPT = D.ID
     GROUP BY D.ID, D.NAME ORDER BY PAID DESC FETCH FIRST 1 ROW ONLY;
 ```
 
@@ -620,8 +620,8 @@ EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) AS PAID FROM DEPT D JOIN EMP E ON E.DEPT
        Aggregate group by [D.ID, D.NAME] computing [SUM(E.PAY)]
          Filter E.DEPT = D.ID
            Product
-             Scan ANN.DEPT
-             Scan ANN.EMP
+             Scan ANN.OFFICE
+             Scan ANN.HAND
  -- rules: reduce_grouping_keys, fetch_dependents_late
  -- optimized:
  Sort SUM(E.PAY) DESC
@@ -635,22 +635,22 @@ EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) AS PAID FROM DEPT D JOIN EMP E ON E.DEPT
                  Aggregate group by [D.ID] computing [SUM(E.PAY)]
                    Filter E.DEPT = D.ID
                      Product
-                       Scan ANN.DEPT
-                       Scan ANN.EMP
-         Scan ANN.DEPT
+                       Scan ANN.OFFICE
+                       Scan ANN.HAND
+         Scan ANN.OFFICE
  -- physical:
  Sort SUM(E.PAY) DESC
    Project D.ID, D.NAME, SUM(E.PAY)
      HashJoin D.ID = D.ID
-       SeqScan ANN.DEPT  (rows=2, cost=2.0)
+       SeqScan ANN.OFFICE  (rows=2, cost=2.0)
        Limit fetch 1
          Sort SUM(E.PAY) DESC
            Project D.ID, SUM(E.PAY), D.ID
              Aggregate group by [D.ID] computing [SUM(E.PAY)]
                Project D.ID, D.NAME, E.ID, E.DEPT, E.PAY
                  HashJoin E.DEPT = D.ID
-                   SeqScan ANN.EMP  (rows=3, cost=2.8)
-                   SeqScan ANN.DEPT  (rows=2, cost=1.8)
+                   SeqScan ANN.HAND  (rows=3, cost=2.8)
+                   SeqScan ANN.OFFICE  (rows=2, cost=1.8)
 (38 rows)
 ```
 
