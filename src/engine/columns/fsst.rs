@@ -247,9 +247,39 @@ impl Symbols {
         Some((Symbols { words, lens, count }, next))
     }
 
-    /// Appends the text `codes` encode; none if they end in an escape, or
-    /// a code is of no symbol.
+    /// The bytes of the text `codes` encode; none if they end in an
+    /// escape, or a code is of no symbol.
+    fn decoded_len(&self, codes: &[u8]) -> Option<usize> {
+        let (mut len, mut rest) = (0_usize, codes.iter());
+        while let Some(&c) = rest.next() {
+            let bytes = if c == ESCAPE {
+                rest.next()?;
+                1
+            } else {
+                let code = usize::from(c);
+                if code >= self.count {
+                    return None;
+                }
+                usize::from(*self.lens.get(code)?)
+            };
+            len = len.checked_add(bytes)?;
+        }
+        Some(len)
+    }
+
+    /// Appends the text `codes` encode, its bytes reserved at once; none
+    /// if they end in an escape, or a code is of no symbol.
     pub(super) fn decode(&self, codes: &[u8], out: &mut Vec<u8>) -> Option<()> {
+        out.reserve(self.decoded_len(codes)?.saturating_add(LONGEST));
+        self.decode_reserved(codes, out)
+    }
+
+    /// \[DESIGN\] (RULES.md D1168) Appends the text `codes` encode to
+    /// `out`, which holds room for it and `LONGEST` bytes more: each code
+    /// a copy of a word of 8 bytes and a cut to its symbol's length, none
+    /// of which grows `out`. None if they end in an escape, or a code is
+    /// of no symbol.
+    fn decode_reserved(&self, codes: &[u8], out: &mut Vec<u8>) -> Option<()> {
         let mut rest = codes.iter();
         while let Some(&c) = rest.next() {
             if c == ESCAPE {
@@ -261,8 +291,9 @@ impl Symbols {
                 return None;
             }
             let (word, len) = (self.words.get(code)?, usize::from(*self.lens.get(code)?));
+            let end = out.len().saturating_add(len);
             out.extend_from_slice(word);
-            out.truncate(out.len().saturating_sub(LONGEST.saturating_sub(len)));
+            out.truncate(end);
         }
         Some(())
     }
@@ -375,30 +406,28 @@ impl<'a> Coded<'a> {
         self.symbols.compare_padded(self.codes.get(a..b)?, constant)
     }
 
-    /// The texts at positions `from` to `to`, pushed to `text` and where
-    /// each ends to `ends`, of those `null` says are not nulls: decoded one
-    /// after another, then checked UTF-8 at once, each one's end on a
-    /// character's boundary, so each is UTF-8 alone.
+    /// \[DESIGN\] (RULES.md D1168) The texts at positions `from` to `to`,
+    /// their bytes pushed to `text` and where each ends to `ends`, of those
+    /// `null` says are not nulls: the bytes of them all reserved at once,
+    /// then each decoded in place one after another. Whoever reads them
+    /// checks them UTF-8 once, each one's end on a character's boundary
+    /// (`scan.rs`), so no text is copied twice.
     pub(super) fn texts(
         &self,
         (from, to): (usize, usize),
-        (text, ends): (&mut String, &mut Vec<usize>),
+        (text, ends): (&mut Vec<u8>, &mut Vec<usize>),
         null: impl Fn(usize) -> bool,
     ) -> Option<()> {
-        let (base, mut decoded) = (text.len(), Vec::new());
+        let Some(last) = to.checked_sub(1).filter(|&last| last >= from) else { return Some(()) };
+        let (start, end) = (self.between(from)?.0, self.between(last)?.1);
+        text.reserve(self.symbols.decoded_len(self.codes.get(start..end)?)?.saturating_add(LONGEST));
         for n in from..to {
             if !null(n) {
                 let (a, b) = self.between(n)?;
-                self.symbols.decode(self.codes.get(a..b)?, &mut decoded)?;
+                self.symbols.decode_reserved(self.codes.get(a..b)?, text)?;
             }
-            ends.push(base.checked_add(decoded.len())?);
+            ends.push(text.len());
         }
-        let decoded = std::str::from_utf8(&decoded).ok()?;
-        let start = ends.len().checked_sub(to.checked_sub(from)?)?;
-        if !ends.get(start..)?.iter().all(|&end| decoded.is_char_boundary(end.checked_sub(base).unwrap_or(usize::MAX))) {
-            return None;
-        }
-        text.push_str(decoded);
         Some(())
     }
 }
@@ -451,6 +480,40 @@ mod tests {
         assert_eq!(Table::chosen(&bytes), table, "the same table");
         assert_eq!(round_trip(&Table::default(), b"no symbols"), b"no symbols", "every byte escaped");
         assert!(Table::chosen(&[]).symbols.is_empty(), "of no texts");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1168: a chunk's texts of a range are
+    /// decoded in place one after another, each value's bytes as it reads
+    /// alone, a null's none, where each ends given; of a range of none,
+    /// nothing; and texts are taken as UTF-8 only if each ends on a
+    /// character's boundary.
+    #[test]
+    fn a_range_of_texts_is_decoded_in_place() {
+        let all = texts(300);
+        let mut fields: Vec<Option<Vec<u8>>> = all.iter().map(|t| Some(t.clone().into_bytes())).collect();
+        fields.insert(5, None);
+        fields.insert(9, Some("héllo wörld ✓ 漢字".as_bytes().to_vec()));
+        fields.insert(10, Some(vec![0, 1, 9]));
+        let table = Table::chosen(&fields.iter().flatten().map(Vec::as_slice).collect::<Vec<_>>());
+        let mut chunk = Vec::new();
+        encode(&fields, &table, &mut chunk).unwrap();
+        let coded = Coded::parse(&chunk, fields.len(), None).unwrap();
+        let (mut text, mut ends) = (b"before".to_vec(), Vec::new());
+        coded.texts((3, 40), (&mut text, &mut ends), |n| fields.get(n).is_some_and(Option::is_none)).unwrap();
+        let mut at = b"before".len();
+        for (n, &end) in (3..40).zip(&ends) {
+            let field = fields.get(n).unwrap().clone().unwrap_or_default();
+            assert_eq!(text.get(at..end), Some(field.as_slice()), "value {n}");
+            assert_eq!(coded.text(n).unwrap(), field, "value {n} alone");
+            at = end;
+        }
+        assert_eq!(text.len(), at);
+        coded.texts((7, 7), (&mut text, &mut ends), |_| false).unwrap();
+        assert_eq!((text.len(), ends.len()), (at, 37), "a range of none");
+        let split = "漢".as_bytes().to_vec();
+        assert!(super::super::scan::checked_texts(split.clone(), vec![1, 3], None).is_none(), "an end within a character");
+        assert!(super::super::scan::checked_texts(split, vec![3], None).is_some());
+        assert!(super::super::scan::checked_texts(vec![0xff], vec![1], None).is_none(), "not UTF-8");
     }
 
     /// Verifies: [DESIGN] RULES.md D31, FSST: a table of too many symbols,

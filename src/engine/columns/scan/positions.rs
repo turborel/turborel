@@ -193,7 +193,7 @@ pub fn texts_at<S: Seal>(
     if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), positions)? {
         return Ok(Some(coded));
     }
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(positions.len()), Mask::default());
+    let (mut text, mut ends, mut nulls) = (Vec::new(), Vec::with_capacity(positions.len()), Mask::default());
     let mut rest = positions;
     for zone in zones {
         let end = zone.run.first.saturating_add(zone.run.rows);
@@ -220,7 +220,7 @@ pub fn texts_at<S: Seal>(
     if ends.len() != positions.len() {
         return Ok(None);
     }
-    Ok(Some(Texts::new(text, ends, nulls_of(nulls))))
+    Ok(super::checked_texts(text, ends, nulls_of(nulls)))
 }
 
 /// \[DESIGN\] The values at `positions` of a column whose chunks are

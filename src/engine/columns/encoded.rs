@@ -386,15 +386,16 @@ impl Body<'_> {
     }
 
     /// \[DESIGN\] The text of each value at positions `from` to `to`, a
-    /// character string written as it is, pushed to `text`, and where each
-    /// ends to `ends`, of those `null` says are not nulls (`Texts`), each
-    /// padded with spaces to `pad` characters if given, as a CHARACTER
-    /// string is read: none if the encoding is of fixed fields, a frame,
-    /// runs or decimals, or a value is not UTF-8.
+    /// character string written as it is, its bytes pushed to `text`, and
+    /// where each ends to `ends`, of those `null` says are not nulls
+    /// (`Texts`), each padded with spaces to `pad` characters if given, as
+    /// a CHARACTER string is read: none if the encoding is of fixed fields,
+    /// a frame, runs or decimals. Texts not padded are pushed as written,
+    /// and whoever reads them checks them UTF-8 once (RULES.md D1168).
     pub(super) fn texts(
         &self,
         (from, to): (usize, usize),
-        (text, ends): (&mut String, &mut Vec<usize>),
+        (text, ends): (&mut Vec<u8>, &mut Vec<usize>),
         (null, pad): (impl Fn(usize) -> bool, Option<usize>),
     ) -> Option<()> {
         if let Body::Fsst(coded) = self {
@@ -406,7 +407,7 @@ impl Body<'_> {
         }
         for n in from..to {
             if !null(n) {
-                padded(text, std::str::from_utf8(self.field(n)?).ok()?, pad);
+                pushed(text, self.field(n)?, pad)?;
             }
             ends.push(text.len());
         }
@@ -509,18 +510,32 @@ impl Body<'_> {
 fn varying_texts(
     (offsets, values): (&[u8], &[u8]),
     (from, to): (usize, usize),
-    (text, ends): (&mut String, &mut Vec<usize>),
+    (text, ends): (&mut Vec<u8>, &mut Vec<usize>),
     (null, pad): (impl Fn(usize) -> bool, Option<usize>),
 ) -> Option<()> {
     let Some(last) = to.checked_sub(1).filter(|&last| last >= from) else { return Some(()) };
     let (start, end) = (between(offsets, from)?.0, between(offsets, last)?.1);
-    let span = std::str::from_utf8(values.get(start..end)?).ok()?;
+    text.reserve(end.saturating_sub(start));
     for n in from..to {
         if !null(n) {
             let (a, b) = between(offsets, n)?;
-            padded(text, span.get(a.checked_sub(start)?..b.checked_sub(start)?)?, pad);
+            pushed(text, values.get(a..b)?, pad)?;
         }
         ends.push(text.len());
+    }
+    Some(())
+}
+
+/// \[DESIGN\] (RULES.md D1168) Pushes the bytes `field` holds to `text`:
+/// as written if `pad` is none, which whoever reads them checks UTF-8;
+/// else, UTF-8 checked here to count its characters, padded with spaces
+/// to `pad` characters, as `padded` pads it. None if it is to be padded
+/// and is not UTF-8.
+fn pushed(text: &mut Vec<u8>, field: &[u8], pad: Option<usize>) -> Option<()> {
+    text.extend_from_slice(field);
+    if let Some(length) = pad {
+        let count = if field.is_ascii() { field.len() } else { std::str::from_utf8(field).ok()?.chars().count() };
+        text.resize(text.len().saturating_add(length.saturating_sub(count)), b' ');
     }
     Some(())
 }

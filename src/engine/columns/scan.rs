@@ -414,7 +414,7 @@ pub fn texts<S: Seal>(
         return Ok(Some(coded));
     }
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(count), Mask::default());
+    let (mut text, mut ends, mut nulls) = (Vec::new(), Vec::with_capacity(count), Mask::default());
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
@@ -427,7 +427,15 @@ pub fn texts<S: Seal>(
     if ends.len() != count {
         return Ok(None);
     }
-    Ok(Some(Texts::new(text, ends, nulls_of(nulls))))
+    Ok(checked_texts(text, ends, nulls_of(nulls)))
+}
+
+/// \[DESIGN\] (RULES.md D1168) The texts whose bytes `text` holds, each
+/// ending where `ends` says, if they are UTF-8, checked once, and each
+/// ends on a character's boundary, so each is UTF-8 alone.
+pub(super) fn checked_texts(text: Vec<u8>, ends: Vec<usize>, nulls: Option<Mask>) -> Option<Texts> {
+    let text = String::from_utf8(text).ok()?;
+    ends.iter().all(|&end| text.is_char_boundary(end)).then(|| Texts::new(text, ends, nulls))
 }
 
 /// \[DESIGN\] Column `c`, of type `t`, of the rows at positions `from` to

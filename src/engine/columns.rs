@@ -327,7 +327,7 @@ impl<'a> Chunk<'a> {
     pub fn texts(
         &self,
         (from, to): (usize, usize),
-        (text, ends, nulls): (&mut String, &mut Vec<usize>, &mut Mask),
+        (text, ends, nulls): (&mut Vec<u8>, &mut Vec<usize>, &mut Mask),
         t: &DataType,
     ) -> Option<()> {
         if to > self.count {
