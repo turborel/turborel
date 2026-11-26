@@ -16,7 +16,7 @@ use std::sync::Arc;
 use super::super::stream::Kept;
 use crate::error::{Result, SqlError};
 use crate::kernels::Kernels;
-use crate::storage::{BATCH_ROWS, Batch, Column, NO_ROW, Picks, Row};
+use crate::storage::{BATCH_ROWS, Batch, Column, NO_ROW, Picks, Row, Texts, dictionaries};
 use crate::value::Value;
 
 /// The joined rows of a join of streams, as they are made, and the batches
@@ -35,6 +35,9 @@ pub(super) struct Out {
     /// The right operand held as vectors, if it is, and of each joined row
     /// not yet in a batch, its right row's place there, or `NO_ROW`.
     held: Option<(Arc<Batch>, Vec<u32>)>,
+    /// Of each vector of the right operand held, its texts as a dictionary
+    /// if they are made one (RULES.md D1099).
+    dictionaries: Vec<Option<Arc<Texts>>>,
     ready: VecDeque<Batch>,
     failed: Option<SqlError>,
     /// The kernels its integers are gathered on.
@@ -52,7 +55,7 @@ impl Out {
     pub(super) fn new(left_width: usize, right_columns: Vec<usize>, kernels: Arc<dyn Kernels>) -> Out {
         let right = right_columns.iter().map(|_| Vec::with_capacity(BATCH_ROWS)).collect();
         let left = Vec::with_capacity(BATCH_ROWS);
-        Out { left, right, left_width, right_columns, held: None, ready: VecDeque::new(), failed: None, kernels }
+        Out { left, right, left_width, right_columns, held: None, dictionaries: Vec::new(), ready: VecDeque::new(), failed: None, kernels }
     }
 
     /// No joined rows yet, of batches of `left_width` left vectors, then
@@ -60,6 +63,7 @@ impl Out {
     /// `kernels`.
     pub(super) fn over(left_width: usize, right: Arc<Batch>, kernels: Arc<dyn Kernels>) -> Out {
         let mut out = Out::new(left_width, Vec::new(), kernels);
+        out.dictionaries = dictionaries(&right);
         out.held = Some((right, Vec::with_capacity(BATCH_ROWS)));
         out
     }
@@ -99,7 +103,8 @@ impl Out {
         columns.extend(self.right.iter_mut().map(|v| Column::Values(std::mem::replace(v, Vec::with_capacity(BATCH_ROWS)))));
         if let Some((right, picks)) = &mut self.held {
             let picks_of = Picks::new(picks);
-            columns.extend(right.columns.iter().map(|c| c.gathered_by(&picks_of, kernels)));
+            let entries = |n: usize| self.dictionaries.get(n).and_then(Option::as_ref);
+            columns.extend(right.columns.iter().enumerate().map(|(n, c)| c.gathered_coded(&picks_of, entries(n), kernels)));
             drop(picks_of);
             picks.clear();
         }

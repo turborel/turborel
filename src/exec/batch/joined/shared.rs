@@ -32,7 +32,7 @@ use crate::error::Result;
 use crate::exec::table::{Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal, values_hash};
 use crate::kernels::Kernels;
 use crate::physical::JoinKey;
-use crate::storage::{Batch, Column, NO_ROW, Picks, Row};
+use crate::storage::{Batch, Column, NO_ROW, Picks, Row, Texts, dictionaries};
 use crate::value::{Value, key_equal};
 
 /// A hash join's right operand, built for a pipeline's morsels.
@@ -56,6 +56,9 @@ pub(in crate::exec) struct SharedTable {
     made: Filters,
     /// The kernels its pairs' integers are gathered on (RULES.md D1083).
     kernels: Arc<dyn Kernels>,
+    /// Of each of `right`'s vectors, its texts as a dictionary if they are
+    /// made one, gathered as codes of it (RULES.md D1099).
+    dictionaries: Vec<Option<Arc<Texts>>>,
 }
 
 /// The pairs of a probing batch not yet gathered: of each, its row of the
@@ -168,6 +171,7 @@ impl SharedTable {
     /// they were made with it.
     pub(in crate::exec) fn framed(frame: Frame, table: JoinTable, made: Filters) -> SharedTable {
         let Frame { right, columns, width, places, nulls, seed, keyed } = frame;
+        let dictionaries = dictionaries(&right);
         SharedTable {
             right,
             columns,
@@ -180,6 +184,7 @@ impl SharedTable {
             shown: None,
             made,
             kernels: Arc::new(crate::kernels::Portable),
+            dictionaries,
         }
     }
 
@@ -294,6 +299,11 @@ impl SharedTable {
     #[cfg(test)]
     pub(in crate::exec) fn parts(&self) -> usize {
         self.table.parts()
+    }
+
+    /// The dictionary of its vector at `a`, if it is made one.
+    fn entries(&self, a: usize) -> Option<&Arc<Texts>> {
+        self.dictionaries.get(a).and_then(Option::as_ref)
     }
 
     /// Whether its table is direct (RULES.md D601).
@@ -413,13 +423,13 @@ impl SharedTable {
             Some(at) => at.iter().filter_map(|&a| batch.columns.get(a)).collect(),
             None => batch.columns.iter().collect(),
         };
-        let rights: Vec<&Column> = match &self.shown {
-            Some(at) => at.iter().filter_map(|&a| self.right.columns.get(a)).collect(),
-            None => self.right.columns.iter().collect(),
+        let rights: Vec<(&Column, Option<&Arc<Texts>>)> = match &self.shown {
+            Some(at) => at.iter().filter_map(|&a| self.right.columns.get(a).map(|c| (c, self.entries(a)))).collect(),
+            None => self.right.columns.iter().enumerate().map(|(a, c)| (c, self.entries(a))).collect(),
         };
         let (of_left, of_right) = (Picks::new(&pairs.0), Picks::new(&pairs.1));
         let mut columns: Vec<Column> = lefts.iter().map(|c| c.gathered_by(&of_left, &*self.kernels)).collect();
-        columns.extend(rights.iter().map(|c| c.gathered_by(&of_right, &*self.kernels)));
+        columns.extend(rights.iter().map(|(c, entries)| c.gathered_coded(&of_right, *entries, &*self.kernels)));
         drop((of_left, of_right));
         pairs.0.clear();
         pairs.1.clear();

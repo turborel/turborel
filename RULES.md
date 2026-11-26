@@ -704,6 +704,7 @@ verification approach DO-178C expects (§8).
 | D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
 | D1095 | A probe of a table built for a pipeline locates its batch's rows before it pairs any, their first entries prefetched |
 | D1098 | A join hashes a vector of integers of scale 0 by a loop with no branch, the kernels' hash of words, as their buckets hash |
+| D1099 | A join keeps a vector of texts as codes of a dictionary: a built operand's parts of one, and a built operand's texts of no more rows than a batch |
 | D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
@@ -19261,6 +19262,49 @@ probed the other, a runtime filter and a Bloom filter (D369, D1087) all
 agree. A key of integers need not be one on both sides. The probe and
 build of a shared table pass the statement's kernels. Every other
 hashing passes none and takes the loop of words.
+
+#### D1099. A join keeps a vector of texts as codes of a dictionary: a built operand's parts of one, and a built operand's texts of no more rows than a batch
+
+A join gathered a vector of texts at its pairs by reading each row's
+text and copying it. It put the parts of its built operand together the
+same way, so a store's dictionary codes became texts at the first join.
+Every join above then read a row's end and its bytes at random from a
+vector that could hold millions of rows. A profile of TPC-H's ninth
+query put about a sixth of its last-level cache misses on those reads.
+They gathered a nation's name, of 25 values, from a built operand of
+three million rows.
+
+A vector of texts of a dictionary now keeps it (`storage/batch/coded.rs`).
+The parts of a built operand whose vectors are codes of one dictionary,
+the same entries for all, make a vector of their codes (`of_codes`), and
+parts of two dictionaries or of texts are put together as texts as
+before. A built operand of no more rows than a batch holds, 2,048, makes
+each vector of texts that is not coded a dictionary once as the table is
+made, each row an entry (`dictionaries`). A join gathers that
+vector as codes of it, a built row's code its row, a pick of none, past
+the end or of a null a null (`Column::gathered_coded`). Both the probe of
+a held operand (`batch/joined/pairs.rs`) and a shared table's
+(`batch/joined/shared.rs`) do so. A join above gathers four bytes a row
+of it, and puts its parts together as codes.
+
+Coded vectors were already given by a store's scan, and every reader of a
+batch's vectors reads them. Conditions, hashes, comparisons, groupings
+and sorts take each entry once, and none takes two codes for unequal
+texts. So entries that repeat a text, as a built operand's rows may, are
+read as a store's are, and a grouping by a name finds one group for each
+text (D1161).
+
+The bound is derived from the batch, not tuned. A reader of codes takes
+each entry once per batch, so entries no more than a batch's rows cost
+it no more than reading the batch's rows as texts would. A batch of codes
+is charged its entries as well as its codes, so entries no more than a
+full batch of the same texts keep the charge at that batch's plus four
+bytes a row. The dictionary a table makes is a copy of at most a batch of
+its texts, charged to no grant.
+
+A built operand of a row more is gathered as texts, as it was before, so
+past the bound a join costs what it did and never more. The step at the
+bound is the gain, not a loss.
 
 #### D1097. A fetch of a frozen row is priced by the number of columns it reads
 

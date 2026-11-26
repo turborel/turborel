@@ -51,7 +51,7 @@ const COLLATED: &str = "src/physical/collated.rs";
 /// The test of joins on computed keys.
 const COMPUTED: &str = "computed_keys::an_equality_of_computed_keys_is_a_hash_join";
 
-pub const JOIN_BUILD: [Mutation; 26] = [
+pub const JOIN_BUILD: [Mutation; 29] = [
     Mutation {
         name: "probe-units-reversed",
         package: Package::Core,
@@ -311,5 +311,35 @@ pub const JOIN_BUILD: [Mutation; 26] = [
         replacement: "",
         integration: &[],
         unit: &["exec::table::join::tests::integers_of_scale_zero_hash_as_their_buckets"],
+    },
+    Mutation {
+        name: "built-parts-codes-decoded",
+        package: Package::Core,
+        breaks: "parts of one dictionary are put together as their codes (D1099)",
+        file: "src/storage/batch/joined.rs",
+        original: "    if let Some(codes) = super::coded::of_codes(parts, rows, || nulls(parts)) {",
+        replacement: "    if let Some(codes) = None::<Column> {",
+        integration: &[],
+        unit: &["storage::batch::coded::tests::parts_of_one_dictionary_keep_their_codes"],
+    },
+    Mutation {
+        name: "coded-gather-nulls-unmarked",
+        package: Package::Core,
+        breaks: "a pick of none, past the end or of a null gathered as a code is null (D1099)",
+        file: "src/storage/batch/coded.rs",
+        original: "                if none {\n                    null.set(n);\n                }\n",
+        replacement: "",
+        integration: &[],
+        unit: &["storage::batch::coded::tests::small_built_texts_are_gathered_as_codes"],
+    },
+    Mutation {
+        name: "dictionary-unbounded",
+        package: Package::Core,
+        breaks: "only a built vector of texts of no more rows than a batch's is made a dictionary (D1099)",
+        file: "src/storage/batch/coded.rs",
+        original: "t.len() <= MOST_ENTRIES;",
+        replacement: "t.len() <= usize::MAX;",
+        integration: &[],
+        unit: &["storage::batch::coded::tests::small_built_texts_are_gathered_as_codes"],
     },
 ];
