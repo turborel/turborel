@@ -89,6 +89,13 @@ fn a_grouping_by_a_key_and_its_dependents_groups_by_the_key() {
     let shown = plan(&s, "SELECT K, N, A, COUNT(*) FROM PA GROUP BY K, N, A");
     let physical = shown.split("-- physical:").nth(1).unwrap_or_default();
     assert!(physical.contains("group by [PA.K] computing [COUNT(*), "), "{shown}");
+    let kept = plan(&s, "SELECT K, N, COUNT(*) FROM PA GROUP BY K, N HAVING COUNT(*) > 0");
+    let optimized = kept.split("-- optimized:").nth(1).and_then(|rest| rest.split("-- physical:").next()).unwrap_or_default();
+    let lines: Vec<&str> = optimized.lines().map(str::trim_start).collect();
+    let next_to = lines
+        .windows(2)
+        .any(|pair| pair.first().is_some_and(|l| l.starts_with("Filter")) && pair.get(1).is_some_and(|l| l.starts_with("Aggregate")));
+    assert!(next_to, "a HAVING condition stays next to its grouping: {kept}");
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §4.26.1, §4.26.3, §4.26.7, §7.13 GR2a];

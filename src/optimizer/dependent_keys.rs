@@ -24,13 +24,17 @@
 //! [§7.13 GR2a], is left, and one column at least is kept, as a grouping by
 //! none is one group even of no rows.
 //!
+//! A HAVING condition over the grouping is moved below the projection
+//! that puts the columns where they were, so it stays next to the
+//! grouping.
+//!
 //! The rule is a late one (`Optimizer::add_late`): the rules that move a
 //! HAVING condition of grouping columns into WHERE, or group below a join,
 //! read the grouping as written first.
 
 use super::{Rule, RuleContext};
 use crate::binder::{Known, group_value};
-use crate::logical::{Expr, LogicalPlan, plan_column_type};
+use crate::logical::{Cond, Expr, LogicalPlan, map_cond_columns, plan_column_type};
 use crate::value::DataType;
 use crate::value::collation::CollationRef;
 
@@ -48,6 +52,9 @@ impl Rule for ReduceGroupingKeys {
         REDUCE_GROUPING_KEYS
     }
     fn apply(&self, plan: &LogicalPlan, ctx: &RuleContext<'_>) -> Option<LogicalPlan> {
+        if let LogicalPlan::Filter { cond, input } = plan {
+            return having_below(cond, input);
+        }
         let LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } = plan else { return None };
         if groups.len() < TWO_COLUMNS || !seeds.is_empty() {
             return None;
@@ -79,6 +86,22 @@ impl Rule for ReduceGroupingKeys {
             LogicalPlan::Aggregate { groups: fewer, collations: kept_by, aggs: computed, seeds: Vec::new(), input: input.clone() };
         Some(LogicalPlan::Project { exprs, input: Box::new(grouped) })
     }
+}
+
+/// A HAVING condition `cond` over the projection that puts a grouping's
+/// columns where they were, moved below it, onto the grouping, so it is
+/// still judged with the grouping where that is run in parallel (RULES.md
+/// D1073). It is judged of the same groups, each column read where the
+/// projection took it from.
+fn having_below(cond: &Cond, input: &LogicalPlan) -> Option<LogicalPlan> {
+    let LogicalPlan::Project { exprs, input: grouped } = input else { return None };
+    if !matches!(&**grouped, LogicalPlan::Aggregate { .. }) {
+        return None;
+    }
+    let from = exprs.iter().map(|e| if let Expr::Column(c) = e { Some(*c) } else { None }).collect::<Option<Vec<usize>>>()?;
+    let moved = map_cond_columns(cond.clone(), &|c| from.get(c).copied().unwrap_or(c));
+    let kept = LogicalPlan::Filter { cond: moved, input: grouped.clone() };
+    Some(LogicalPlan::Project { exprs: exprs.clone(), input: Box::new(kept) })
 }
 
 /// Whether the `i`th of `groups` is grouped by its own values: by the
