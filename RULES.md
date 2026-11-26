@@ -756,6 +756,7 @@ verification approach DO-178C expects (§8).
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
+| D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -20600,9 +20601,45 @@ and no faster than before. Each is tested by
 window's partition and order, UNION, INTERSECT and EXCEPT, IN and a
 quantified comparison of a subquery, a comparison of rows, NULLIF and a
 simple CASE, GREATEST and LEAST, a grouping streamed in an index's order,
-a second grouping over a first run in parallel (`first_level`), and a
-range read of an index. A join's condition under a collation is not
+and a range read of an index. A second grouping over a first run in
+parallel was among them until D1184. A join's condition under a collation is not
 moved by the join order's search (`enumerate/extract.rs`), as before.
+
+#### D1184. A DISTINCT set function's pair of groupings under a collation of octets runs as one part
+
+A DISTINCT set function is computed by two groupings, one over the other
+(D340), and a part runs the pair whole, each partition's thread making
+both (D1113, D1123). `first_level` refused the pair if either grouping
+named a collation, so a query grouping by a column of a collation of NO
+PAD that orders strings as their octets do (D1183) ran its first grouping
+in parallel and its second above the part, a row at a time on the
+statement's thread, keyed by bytes made of each group.
+
+The pair is now a part's if each column of either grouping is by no
+collation or by one whose key is the text itself, and each column the
+second groups by is by the same in the first (`keyed_alike`). The rewrite
+gives the first the second's collations, so its pairs always agree. One
+written by hand whose second groups a column padded and whose first
+groups it unpadded, or the other way round, stays above the part, as does
+a pair under any other collation. The agreement is what keeps the
+partitions right. A partition's groups of the first are split by the
+first's own hashes of the second's columns (`Keys::hash_of`, by the
+seed's flags), so two groups that one group of the second takes are in
+one partition only if the first holds equal every string the second
+holds equal.
+
+The second grouping groups as its own collations say. Made in a table
+(D1123), it is handed the seed flagged by its own key's columns
+(`Seed::unpadded`), so its keys are hashed whole and compared by their
+octets. Made of rows, and of one that crosses the partitions (D1133),
+merged on the statement's thread, a group's key is `group_key`'s under
+its collations, the strings' octets, where it was the padded bytes
+before. A second that crosses the partitions takes any mix of the two
+kinds, since its groups are merged by its own keys whatever the
+partitions were split by.
+
+Nothing a query answers changes. `'a'` and `'a '` under such a collation
+were two groups before and are two groups now, counted by more threads.
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 
