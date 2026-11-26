@@ -218,7 +218,7 @@ pub const GROUPED_PARTS: [Mutation; 21] = [
         file: "src/exec/parallel/grouped/top.rs",
         original: "grouping.read.is_some() && plain &&",
         replacement: "grouping.read.is_some() &&",
-        integration: &["grouped_parts::a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups"],
+        integration: &["regrouped_parts::the_first_rows_of_a_sort_over_a_pair_are_the_second_groupings"],
         unit: &[],
     },
 ];

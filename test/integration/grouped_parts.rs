@@ -174,9 +174,8 @@ fn the_first_rows_of_a_sort_over_a_grouping_are_the_plans() {
 /// whose first rows are not taken from the tables gives the plan's rows
 /// too: one that asks the peers of its last row, which a group's first
 /// row's number would part; one over a HAVING condition, which the
-/// tables' groups are not yet judged by; one over a projection that
-/// computes a value; and one over a DISTINCT set function's two
-/// groupings.
+/// tables' groups are not yet judged by; and one over a projection that
+/// computes a value.
 #[test]
 fn a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups() {
     let (_db, a) = tables();
@@ -184,7 +183,6 @@ fn a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups() {
         "SELECT G, COUNT(*) FROM C GROUP BY G ORDER BY 2 DESC FETCH FIRST 3 ROWS WITH TIES",
         "SELECT G, COUNT(*) FROM C GROUP BY G HAVING COUNT(*) < 14 ORDER BY 2 DESC FETCH FIRST 5 ROWS ONLY",
         "SELECT G, COUNT(*) + 1 FROM C GROUP BY G ORDER BY 2 DESC FETCH FIRST 5 ROWS ONLY",
-        "SELECT G, COUNT(DISTINCT N) FROM C GROUP BY G ORDER BY 2 DESC FETCH FIRST 5 ROWS ONLY",
     ] {
         let (alone, together, _) = both(&a, sql);
         assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
