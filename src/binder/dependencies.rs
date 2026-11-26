@@ -19,9 +19,15 @@
 //! notes 68, 69], of a UNIQUE NULLS NOT DISTINCT of nullable columns, of
 //! the ordinality column of a collection derived table that reads columns
 //! before it, with them, and of a COALESCE of a column known not null.
+//!
+//! \[DESIGN\] A rewrite that groups by fewer columns (RULES.md D1201)
+//! asks for the strict ones alone (`Known::strict`, `strict.rs`), those
+//! that hold of values an expression may tell apart though they are not
+//! distinct.
 
 mod conditions;
 mod keys;
+mod strict;
 mod tables;
 #[cfg(test)]
 mod tests;
@@ -31,6 +37,7 @@ use std::collections::BTreeSet;
 
 use crate::db::State;
 use crate::logical::{Cond, Expr, LogicalPlan, SetOp, Unnest, expr_columns};
+use crate::value::DataType;
 use crate::value::collation::CollationRef;
 
 pub(super) use conditions::deterministic;
@@ -41,7 +48,7 @@ type Attrs = BTreeSet<usize>;
 
 /// What is known of the rows of a plan [§4.26.2].
 #[derive(Clone, Default)]
-pub(super) struct Known {
+pub(crate) struct Known {
     /// The attribute of each of its columns.
     columns: Vec<usize>,
     /// Its known functional dependencies, each A ↦ B, but the axiomatic.
@@ -65,6 +72,11 @@ pub(super) struct Known {
     pending: Vec<(Attrs, bool)>,
     /// Of a grouped table, the attributes of its grouping columns [§4.27].
     grouping: Option<Attrs>,
+    /// Whether only the strict dependencies are kept (`strict.rs`).
+    strict: bool,
+    /// Of the strict ones, the declared type of each attribute of a base
+    /// table's column.
+    types: Vec<(usize, DataType)>,
 }
 
 /// A walk of a plan: the database it reads, and the next attribute not
@@ -72,6 +84,8 @@ pub(super) struct Known {
 struct Walk<'a> {
     db: &'a State,
     next: Cell<usize>,
+    /// Whether only the strict dependencies are found (`strict.rs`).
+    strict: bool,
 }
 
 impl Walk<'_> {
@@ -84,19 +98,19 @@ impl Walk<'_> {
 
     /// Rows of `width` new columns, of which nothing is known.
     fn fresh(&self, width: usize) -> Known {
-        Known { columns: (0..width).map(|_| self.attribute()).collect(), ..Known::default() }
+        Known { columns: (0..width).map(|_| self.attribute()).collect(), strict: self.strict, ..Known::default() }
     }
 }
 
 impl Known {
     /// What is known of the rows of `plan`, of the database `db`.
     pub(super) fn of(db: &State, plan: &LogicalPlan) -> Known {
-        known(&Walk { db, next: Cell::new(0) }, plan)
+        known(&Walk { db, next: Cell::new(0), strict: false }, plan)
     }
 
     /// [§4.26.1] Whether the columns `determinants` determine the column
     /// `c`: whether its attribute is in the closure of theirs.
-    pub(super) fn determines(&self, determinants: &[usize], c: usize) -> bool {
+    pub(crate) fn determines(&self, determinants: &[usize], c: usize) -> bool {
         let start = determinants.iter().filter_map(|&d| self.attribute_of(d)).collect();
         self.attribute_of(c).is_some_and(|a| self.closure(start).contains(&a))
     }
@@ -149,7 +163,7 @@ impl Known {
         }
         let mut read = Vec::new();
         expr_columns(e, &mut read);
-        if let Some(from) = self.attributes_of(&read) {
+        if let Some(from) = self.attributes_of(&read).filter(|from| self.told_alike(from)) {
             self.depends(from, Attrs::from([a]));
         }
     }
@@ -162,6 +176,7 @@ impl Known {
         self.not_null.extend(other.not_null);
         self.nulled_with.extend(other.nulled_with);
         self.collations.extend(other.collations);
+        self.types.extend(other.types);
         self.pending.extend(self.keys.iter().cloned().chain(other.pending).chain(other.keys.iter().cloned()));
         self.keys.extend(other.keys);
         self.grouping = None;
@@ -257,7 +272,14 @@ fn of_node(w: &Walk<'_>, plan: &LogicalPlan) -> Known {
         LogicalPlan::Scan { table, names, .. } => tables::base_table(w, table, names.len()),
         LogicalPlan::Filter { cond, input } => known(w, input).filtered(cond).adopted(),
         LogicalPlan::Product { left, right } => known(w, left).beside(known(w, right)).keyed(false),
-        LogicalPlan::Aggregate { groups, aggs, seeds, input, .. } => grouped(w, known(w, input), groups, (aggs.len(), seeds.is_empty())),
+        LogicalPlan::Aggregate { groups, collations, aggs, seeds, input } => {
+            // Groups made by another collation than a column's own may be
+            // alike in it by its own, so strictly nothing is known of them.
+            if w.strict && !collations.is_empty() {
+                return w.fresh(plan.width());
+            }
+            grouped(w, known(w, input), groups, (aggs.len(), seeds.is_empty()))
+        }
         LogicalPlan::Project { exprs, input } => projected(w, known(w, input), exprs),
         // [§4.26.16] Rows of its input, once each or in order; or some of
         // them, as OFFSET and FETCH FIRST keep, of which all that holds of
@@ -305,7 +327,7 @@ fn grouped(w: &Walk<'_>, input: Known, groups: &[usize], (aggs, rowed): (usize, 
     columns.extend(&made);
     let primary = input.keys.iter().any(|(key, primary)| *primary && g.is_subset(key));
     let not_null = g.is_subset(&input.not_null);
-    let mut known = if rowed { Known { columns, ..input } } else { Known { columns, ..Known::default() } };
+    let mut known = if rowed { Known { columns, ..input } } else { Known { columns, strict: input.strict, ..Known::default() } };
     known.keys.clear();
     if rowed && (primary || not_null) {
         known.keys.push((g.clone(), primary));
@@ -376,6 +398,8 @@ fn unnested(w: &Walk<'_>, u: &Unnest<LogicalPlan>) -> Known {
     let mut known = known(w, &u.input);
     let own: Vec<usize> = (0..u.width()).map(|_| w.attribute()).collect();
     let fixed = u.collections.iter().all(deterministic) && u.outer.as_ref().is_none_or(conditions::deterministic_cond);
+    // Strictly none, as collections of rows not distinct may differ.
+    let fixed = fixed && !known.strict;
     if let Some(&ordinal) = own.last().filter(|_| u.ordinality && fixed) {
         let mut from: Attrs = known.columns.iter().copied().collect();
         from.insert(ordinal);

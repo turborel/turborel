@@ -265,7 +265,7 @@ fn source_of<'a>(batch: &'a Batch, take: &Taken, lane: Option<&'a Fed<'_>>) -> O
             Column::Floats(_) | Column::Texts(_) | Column::Datetimes(_) | Column::Bools(_) | Column::Late(_) => None,
         },
         (Taken::Expr(_), Some(Fed::Const(v))) => Some(Source::Const(v)),
-        (Taken::Expr(_), None) | (Taken::Count, _) => None,
+        (Taken::Expr(_), None) | (Taken::Count | Taken::Kept(_), _) => None,
     }
 }
 
@@ -307,7 +307,7 @@ fn counted(counts: &mut [i64], pending: &Pending, (batch, take, lane): (&Batch, 
         (Taken::Column(c), _) => Box::new(move |r, _| batch.cell(*c, r).is_null()),
         (Taken::Expr(_), Some(Fed::Made(column))) => Box::new(move |_, n| null_in(column, n)),
         (Taken::Expr(_), Some(Fed::Const(v))) => Box::new(move |_, _| v.is_null()),
-        (Taken::Expr(_), None) => return false,
+        (Taken::Expr(_), None) | (Taken::Kept(_), _) => return false,
     };
     let mut any = false;
     for ((r, n), &g) in rows.zip(&pending.groups) {

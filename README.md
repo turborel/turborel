@@ -38,6 +38,8 @@ behind it, and each can be replaced or added to.
 - Row and columnar storage, chosen per table, the columnar store's filters
   judged in place and its other columns decoded of the rows kept alone.
 - DISTINCT set functions computed by two groupings, read by batches.
+- Grouping columns a key decides carried, not grouped by, and read after
+  FETCH FIRST for the rows kept.
 - Groupings and DISTINCT streamed over rows in their keys' order, a group
   at a time, and FETCH FIRST's row goal passed through filters, joins and
   groupings to an ordered read.

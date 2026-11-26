@@ -111,7 +111,8 @@ fn whole(
                 continue;
             }
             Taken::Column(at) => columns.get(*at),
-            Taken::Expr(_) => None,
+            // An expression, or a value kept of a row, is of no summary.
+            Taken::Expr(_) | Taken::Kept(_) => None,
         };
         let Some((nulls, bounds)) = column else { continue };
         eliminated(*nulls > 0, runner);
