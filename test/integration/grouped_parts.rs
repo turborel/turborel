@@ -69,7 +69,8 @@ fn filtered_part(shown: &str) -> bool {
 /// order: of some groups, of none, of every group, of a null sum, which
 /// is not true of it, and of a grouping by no column, of one group even
 /// of no rows; and of one set function compared with a constant, judged
-/// of its value alone.
+/// of its value alone; and of few groups, whose sums and counts are fed
+/// by lanes where no value is null (D1120).
 #[test]
 fn a_having_condition_is_judged_by_its_part() {
     let (_db, a) = tables();
@@ -87,6 +88,8 @@ fn a_having_condition_is_judged_by_its_part() {
             "SELECT G, SUM(N) FROM {t} GROUP BY G HAVING 700 >= SUM(N)",
             "SELECT G, K, SUM(N) FROM {t} WHERE K < 900 GROUP BY G, K HAVING SUM(N) <> 7",
             "SELECT G, MAX(N) FROM {t} GROUP BY G HAVING MAX(N) = 99",
+            "SELECT G, AVG(N), SUM(N), COUNT(N), COUNT(*) FROM {t} WHERE G < 20 GROUP BY G HAVING COUNT(*) > 0",
+            "SELECT G, AVG(K), SUM(K), COUNT(*) FROM {t} WHERE G < 20 GROUP BY G HAVING COUNT(*) > 0",
         ] {
             let sql = shape.replace("{t}", table);
             let (alone, together, shown) = both(&a, &sql);
