@@ -9,7 +9,7 @@ use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail a copy by column or an import by
 /// jobs.
-pub const COPY_COLUMNS: [Mutation; 8] = [
+pub const COPY_COLUMNS: [Mutation; 9] = [
     Mutation {
         name: "copy-columns-gate",
         package: Package::Server,
@@ -59,6 +59,16 @@ pub const COPY_COLUMNS: [Mutation; 8] = [
         replacement: "            odd ^= q % 2 == 2;",
         integration: &[],
         unit: &["run::ranges::tests::a_record_split_between_jobs_is_found"],
+    },
+    Mutation {
+        name: "jobs-straddle-gate",
+        package: Package::Cli,
+        breaks: "a job commits its first batch before the quotes of the file's ranges are counted",
+        file: "cli/src/run/jobs.rs",
+        original: "        if self.gate.is_some_and(|(_, at)| self.read >= at) {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["run::jobs::tests::a_job_waits_for_the_verdict_before_a_commit"],
     },
     Mutation {
         name: "jobs-ctrl-c-cancels-each",

@@ -127,3 +127,16 @@ fn a_record_split_between_jobs_is_found() {
     let counted = befores(&early, &after, csv(false))[1];
     assert_eq!((counted.lines, counted.records), (4, 3), "the quoted line break is no record's end");
 }
+
+/// Verifies: [DESIGN] RULES.md D1148: quotes are counted whole however
+/// many a block holds, every byte a quote among them, and across reads.
+#[test]
+fn quotes_are_counted_whole() {
+    for (len, every) in [(0_usize, 1_usize), (254, 1), (255, 1), (256, 1), (70_000, 1), (70_000, 3), (1_000, 1_001)] {
+        let text: String = (0..len).map(|n| if n % every == 0 { '"' } else { 'x' }).collect();
+        let expected = u64::try_from(len.div_ceil(every)).unwrap();
+        assert_eq!(quotes_in(text.as_bytes()), expected, "{len} bytes, a quote every {every}");
+        let whole = Range { start: 0, end: u64::try_from(len).unwrap() };
+        assert_eq!(quotes(&mut Cursor::new(text.as_bytes()), whole).unwrap(), expected, "across reads");
+    }
+}

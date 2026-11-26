@@ -19,6 +19,7 @@ use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use turborel_client::agent::Connected;
@@ -43,29 +44,89 @@ const STOPPED: &str = "[DESIGN] stopped, as another job of the import failed";
 /// Why a job stopped at Ctrl-C.
 const CANCELLED: &str = "[DESIGN] cancelled, as Ctrl-C was pressed";
 
+/// Whether the file's ranges may be read as they are, told once their
+/// quotes are counted, beside the jobs (`counted`): or why not.
+#[derive(Default)]
+struct Verdict {
+    told: Mutex<Option<Result<(), String>>>,
+    ready: Condvar,
+}
+
+impl Verdict {
+    /// Tells `verdict` to every job waiting for it.
+    fn tell(&self, verdict: Result<(), String>) {
+        *self.told.lock().unwrap_or_else(PoisonError::into_inner) = Some(verdict);
+        self.ready.notify_all();
+    }
+
+    /// The verdict, once told.
+    fn wait(&self) -> Result<(), String> {
+        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(verdict) = told.as_ref() {
+                return verdict.clone();
+            }
+            told = self.ready.wait(told).unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
 /// A source a job reads, which gives no record once another job failed,
-/// or Ctrl-C was pressed.
+/// or Ctrl-C was pressed; nor, until the verdict on the ranges is told,
+/// the record whose reading would commit its first batch (`gate`).
 struct Stoppable<'a, R: Source> {
     source: R,
     stop: &'a AtomicBool,
     /// What hears Ctrl-C, and how many times it was pressed before.
     pressed: Option<(&'a Interrupts, u64)>,
+    /// The verdict, and how many records may be read before it is told.
+    gate: Option<(&'a Verdict, u64)>,
+    /// How many records it gave.
+    read: u64,
     /// Whether it gave none for another's failure.
     stopped: bool,
 }
 
+/// A source's failure of `message`.
+fn failed(message: &str) -> SourceError {
+    SourceError { position: Position::default(), message: message.to_owned() }
+}
+
 impl<R: Source> Stoppable<'_, R> {
-    /// Fails if Ctrl-C was pressed, or another job failed.
+    /// Fails if Ctrl-C was pressed, or another job failed; waits for the
+    /// verdict before a record its gate holds, failing as it says.
     fn go_on(&mut self) -> Result<(), SourceError> {
-        let fail = |message: &str| Err(SourceError { position: Position::default(), message: message.to_owned() });
         if self.pressed.is_some_and(|(interrupts, before)| interrupts.presses() != before) {
-            return fail(CANCELLED);
+            return Err(failed(CANCELLED));
         }
         if self.stop.load(Ordering::Relaxed) {
             self.stopped = true;
-            return fail(STOPPED);
+            return Err(failed(STOPPED));
+        }
+        if self.gate.is_some_and(|(_, at)| self.read >= at) {
+            self.passed()?;
         }
         Ok(())
+    }
+
+    /// Waits for the verdict, failing as it says; then holds no record.
+    fn passed(&mut self) -> Result<(), SourceError> {
+        if let Some((verdict, _)) = self.gate.take() {
+            verdict.wait().map_err(|why| failed(&why))?;
+        }
+        Ok(())
+    }
+
+    /// `read`, a record given or the end: the end only once the verdict
+    /// is told, as an import's last batch commits at the end.
+    fn given<T>(&mut self, read: Result<Option<T>, SourceError>) -> Result<Option<T>, SourceError> {
+        match read? {
+            Some(record) => {
+                self.read = self.read.saturating_add(1);
+                Ok(Some(record))
+            }
+            None => self.passed().map(|()| None),
+        }
     }
 }
 
@@ -76,7 +137,8 @@ impl<R: Source> Source for Stoppable<'_, R> {
 
     fn record(&mut self) -> Result<Option<Record>, SourceError> {
         self.go_on()?;
-        self.source.record()
+        let read = self.source.record();
+        self.given(read)
     }
 
     fn splits(&self) -> bool {
@@ -85,7 +147,8 @@ impl<R: Source> Source for Stoppable<'_, R> {
 
     fn record_into(&mut self, cells: &mut Cells) -> Result<Option<Position>, SourceError> {
         self.go_on()?;
-        self.source.record_into(cells)
+        let read = self.source.record_into(cells);
+        self.given(read)
     }
 }
 
@@ -113,6 +176,8 @@ struct Shared<'a> {
     into: &'a Import,
     stop: &'a AtomicBool,
     pressed: Option<(&'a Interrupts, u64)>,
+    /// The verdict on the ranges, if their quotes are counted.
+    verdict: Option<&'a Verdict>,
 }
 
 /// `position`, of a job's records, as of the file's: after the records
@@ -138,7 +203,12 @@ fn run(mut job: Job, shared: &Shared<'_>) -> (Done, Connected) {
             let range = file.take(job.range.end.saturating_sub(job.range.start));
             let input = BufReader::with_capacity(READ_BYTES, Cursor::new(shared.split.header.clone()).chain(range));
             let source = Delimited::new(input, shared.dialect.clone());
-            let mut source = Stoppable { source, stop: shared.stop, pressed: shared.pressed, stopped: false };
+            // [DESIGN] RULES.md D1148: a batch commits as its last record
+            // is read, so the record before which nothing has committed is
+            // held until the verdict; of a batch of all, the end.
+            let at = shared.into.batch.checked_sub(1).unwrap_or(u64::MAX);
+            let gate = shared.verdict.map(|verdict| (verdict, at));
+            let mut source = Stoppable { source, stop: shared.stop, pressed: shared.pressed, gate, read: 0, stopped: false };
             let mut rejected = Vec::new();
             let result = import::import(&mut job.connection, &mut source, shared.into, &mut |row| rejected.push(row));
             (result, rejected, source.stopped)
@@ -176,6 +246,15 @@ fn place(done: &mut [Done], path: &Path, split: &Split, written: Written) {
 /// order, and their connections.
 fn run_all(jobs: Vec<Job>, shared: &Shared<'_>) -> Vec<(Done, Option<Connected>)> {
     std::thread::scope(|scope| {
+        if let Some(verdict) = shared.verdict {
+            let (path, ranges) = (shared.path, &shared.split.ranges);
+            let counting = std::thread::Builder::new().name(format!("{THREAD}-quotes")).spawn_scoped(scope, move || {
+                verdict.tell(counted(path, ranges));
+            });
+            if counting.is_err() {
+                verdict.tell(Err("[DESIGN] the quotes of the file's ranges could not be counted".to_owned()));
+            }
+        }
         let started: Vec<_> = jobs
             .into_iter()
             .enumerate()
@@ -246,13 +325,35 @@ fn quotes_of(path: &Path, ranges: &[Range]) -> Result<Vec<u64>, String> {
     })
 }
 
-/// The ranges of the file at `path` for `jobs` jobs, read as `dialect`
-/// says.
+/// Whether the `ranges` of the file at `path` may be imported as they
+/// are: none after the first beginning within a quoted field.
 ///
 /// # Errors
 ///
-/// The file is standard input, or not a regular file, or cannot be read;
-/// a range would begin within a quoted field.
+/// `STRADDLES` if one does; the file cannot be read.
+fn counted(path: &Path, ranges: &[Range]) -> Result<(), String> {
+    if ranges::straddles(&quotes_of(path, ranges)?) { Err(ranges::STRADDLES.to_owned()) } else { Ok(()) }
+}
+
+/// The import of `done`, refused for `why` as its ranges cannot be read
+/// as they are: a job begun within a quoted field read what is no record,
+/// so the jobs' failures are not told, only their rows committed and
+/// rolled back.
+fn refused(done: &[Done], why: &str) -> ImportError {
+    let (committed, rolled_back) = done.iter().fold((0_u64, 0_u64), |(c, r), d| match &d.result {
+        Ok(imported) => (c.saturating_add(imported.rows), r),
+        Err(e) => (c.saturating_add(e.committed), r.saturating_add(e.rolled_back)),
+    });
+    ImportError { position: None, cause: Cause::Input(format!("[DESIGN] {why}")), committed, rolled_back }
+}
+
+/// The ranges of the file at `path` for `jobs` jobs, read as `dialect`
+/// says. Whether one begins within a quoted field is found beside the
+/// jobs (`counted`).
+///
+/// # Errors
+///
+/// The file is standard input, or not a regular file, or cannot be read.
 fn split_file(path: &Path, dialect: &Dialect, jobs: usize) -> Result<Split, String> {
     let unranged = || {
         "--jobs above 1 reads a file in ranges, and standard input, or a file that is not a regular one, cannot be: \
@@ -267,11 +368,7 @@ fn split_file(path: &Path, dialect: &Dialect, jobs: usize) -> Result<Split, Stri
     if !metadata.is_file() {
         return Err(unranged());
     }
-    let split = ranges::split(&mut { file }, metadata.len(), jobs, written(dialect))?;
-    if dialect.is_quoted() && split.ranges.len() > 1 && ranges::straddles(&quotes_of(path, &split.ranges)?) {
-        return Err(ranges::STRADDLES.to_owned());
-    }
-    Ok(split)
+    ranges::split(&mut { file }, metadata.len(), jobs, written(dialect))
 }
 
 /// How a file written as `dialect` says is, as its split needs it.
@@ -310,7 +407,9 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         if let Some(interrupts) = self.interrupts {
             interrupts.cancel_each(cancellers);
         }
-        let shared = Shared { path, split: &split, dialect, into, stop: &stop, pressed };
+        let counting = Verdict::default();
+        let verdict = (dialect.is_quoted() && split.ranges.len() > 1).then_some(&counting);
+        let shared = Shared { path, split: &split, dialect, into, stop: &stop, pressed, verdict };
         let (mut done, connections): (Vec<Done>, Vec<Option<Connected>>) = run_all(connected, &shared).into_iter().unzip();
         if let Some(interrupts) = self.interrupts {
             interrupts.cancel_by(self.connection.canceller());
@@ -320,6 +419,9 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             // The import is done; a session that does not end cleanly is
             // the server's to end.
             let _ = connection.terminate();
+        }
+        if let Some(Err(why)) = verdict.map(Verdict::wait) {
+            return self.imported(&shown, Err(refused(&done, &why)));
         }
         for row in done.iter().flat_map(|d| &d.rejected) {
             self.told(&format!("turborel: {shown}: {row}"));
@@ -372,7 +474,8 @@ mod tests {
         let (stop, interrupts) = (AtomicBool::new(false), Interrupts::default());
         interrupts.press();
         let source = Delimited::new(Cursor::new(b"1\n2\n3\n".to_vec()), Dialect::csv());
-        let mut job = Stoppable { source, stop: &stop, pressed: Some((&interrupts, interrupts.presses())), stopped: false };
+        let pressed = Some((&interrupts, interrupts.presses()));
+        let mut job = Stoppable { source, stop: &stop, pressed, gate: None, read: 0, stopped: false };
         assert!(job.record().unwrap().is_some(), "a press before it began");
         interrupts.press();
         assert_eq!(job.record().unwrap_err().message, CANCELLED);
@@ -381,5 +484,34 @@ mod tests {
         stop.store(true, Ordering::Relaxed);
         assert_eq!(job.record().unwrap_err().message, STOPPED);
         assert!(job.stopped);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1148: a job gives the records before
+    /// its gate at once, and the one at it, or the end, only once the
+    /// verdict on the ranges is told: failing as it says, else reading on.
+    #[test]
+    fn a_job_waits_for_the_verdict_before_a_commit() {
+        let stop = AtomicBool::new(false);
+        let job = |verdict: &'static Verdict, at: u64| {
+            let source = Delimited::new(Cursor::new(b"1\n2\n3\n".to_vec()), Dialect::csv());
+            Stoppable { source, stop: &stop, pressed: None, gate: Some((verdict, at)), read: 0, stopped: false }
+        };
+        let refused: &'static Verdict = Box::leak(Box::default());
+        refused.tell(Err(ranges::STRADDLES.to_owned()));
+        let mut held = job(refused, 2);
+        assert!(held.record().unwrap().is_some() && held.record().unwrap().is_some(), "before its gate");
+        assert_eq!(held.record().unwrap_err().message, ranges::STRADDLES);
+        let mut ended = job(refused, u64::MAX);
+        for _ in 0_u32..3 {
+            assert!(ended.record().unwrap().is_some());
+        }
+        assert_eq!(ended.record().unwrap_err().message, ranges::STRADDLES, "the end waits too");
+        let passed: &'static Verdict = Box::leak(Box::default());
+        let mut reads = job(passed, 0);
+        std::thread::scope(|scope| {
+            scope.spawn(|| passed.tell(Ok(())));
+            assert!(reads.record().unwrap().is_some(), "once told");
+        });
+        assert!(reads.gate.is_none() && reads.record().unwrap().is_some());
     }
 }

@@ -20257,12 +20257,15 @@ keep each job's records a run of the file's, so its groups hold
 neighbouring rows, as rows striped across jobs would not. Splitting
 reads only the header and, from each range's share of the bytes, up to
 the next line break, so the jobs begin at once: a pass over the file
-before them, one thread reading it to the last range's beginning, made
-the built-in import slower than as many split streams. Of CSV, each
-range's quotes are counted side by side, on a thread a range; a range
-begins within a quoted field just when the quotes before it are odd in
-number [RFC 4180 §2 rules 5-7], so that is found before any row is
-imported, and the import is refused saying to use one job. The lines
+before them, even on a thread a range, made the built-in import slower
+than as many split streams. Of CSV, each range's quotes are counted
+side by side, on a thread a range, beside the jobs; a range begins
+within a quoted field just when the quotes before it are odd in number
+[RFC 4180 §2 rules 5-7]. A batch commits as its last record is read, so
+each job reads that record of its first batch, or the end of a batch of
+all, only once the count is told: a range found to begin within a
+quoted field is found before any row is committed, and the import is
+refused saying to use one job, its jobs' failures not told. The lines
 and records before a range are counted only when a job tells a record,
 so it is told by its place in the whole file. Standard input and any
 file that is not a regular one cannot be read in ranges, and are

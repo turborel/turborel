@@ -308,7 +308,7 @@ committed are kept, as they are of an import on one connection.
 A range begins just after a line break. A CSV file whose quoted field
 holds a line break where the file would be split cannot be imported so,
 as neither job could read the record whole. The client finds this
-before it imports any row, and refuses the import, saying to use
+before any row is committed, and refuses the import, saying to use
 `--jobs 1`. Standard input, and any file that is not a regular one,
 cannot be read in ranges, so with `--jobs` above 1 it is refused. Each
 job's connection proves its user as the first did, by the password

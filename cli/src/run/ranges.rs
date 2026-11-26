@@ -9,9 +9,10 @@
 //! begin, up to the next line break: the jobs begin at once, and the file
 //! is read in their ranges side by side. Of CSV, a range that would begin
 //! within a quoted field, after a line break the field holds, is found
-//! before any row is imported, by the quotes of each range, counted side
-//! by side: a range begins within a quoted field just when the quotes
-//! before it are odd in number. That import fails, as a record split
+//! before any row is committed, by the quotes of each range, counted side
+//! by side and beside the jobs (`jobs.rs`): a range begins within a quoted
+//! field just when the quotes before it are odd in number. That import
+//! fails, as a record split
 //! between two jobs cannot be read whole by either: one job reads the
 //! file whole. The lines and records before a range are counted only
 //! when a record of a job is told, so it is told by its place in the
@@ -192,9 +193,19 @@ pub fn quotes<R: Read + Seek>(input: &mut R, range: Range) -> io::Result<u64> {
             return Ok(count);
         }
         let bytes = buffer.get(..n).unwrap_or_default();
-        // Each byte adds one or none: the count stays below the bytes read.
-        count = bytes.iter().fold(count, |sum, &b| sum.wrapping_add(u64::from(b == QUOTE)));
+        count = count.saturating_add(quotes_in(bytes));
     }
+}
+
+/// \[DESIGN\] How many quotes `bytes` holds: counted a block of at most
+/// `u8::MAX` bytes at a time into a byte, which cannot overflow, so the
+/// count runs many bytes to an instruction.
+fn quotes_in(bytes: &[u8]) -> u64 {
+    let block = usize::from(u8::MAX);
+    bytes.chunks(block).fold(0_u64, |sum, part| {
+        let found = part.iter().fold(0_u8, |n, &b| n.wrapping_add(u8::from(b == QUOTE)));
+        sum.saturating_add(u64::from(found))
+    })
 }
 
 /// [RFC 4180 §2 rules 5-7] Whether a range after the first begins within
