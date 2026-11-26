@@ -1,8 +1,7 @@
 //! \[DESIGN\] Row storage. "The physical representation of a value is implementor-defined" [X3.135-1986 §4.2], so
 //! how rows are kept is an extension point.
-//! A `StorageEngine` makes a `TableStorage` for each base table. An engine hands back rows by id, scans them,
-//! prices those operations, and declares what it can do inside a transaction. The planner, executor and
-//! transaction coordinator never know which engine they are talking to.
+//! A `StorageEngine` makes a `TableStorage` for each base table. An engine hands back rows by id, scans them, prices
+//! those operations, and declares what it can do inside a transaction. No planner or executor knows which it is.
 //!
 //! Every method takes `&self`: an engine guards its own state, which is the shape a thread-safe engine needs.
 //! Every data method takes the `TxId`, which is also the transaction's logical start timestamp, and commit hands
@@ -17,6 +16,7 @@ mod cost;
 mod engine;
 mod image;
 mod kept;
+pub mod lanes;
 mod loading;
 mod newest;
 mod options;

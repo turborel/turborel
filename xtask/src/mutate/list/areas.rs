@@ -19,6 +19,7 @@ mod commit_path;
 mod commit_stamps;
 mod compiled;
 mod conditions;
+mod copy_columns;
 mod cost_model;
 #[path = "count.rs"]
 mod count;
@@ -46,6 +47,7 @@ mod join_build;
 mod join_estimates;
 mod join_table;
 mod joins;
+mod lane_parse;
 mod late;
 mod load_limits;
 mod monitoring;
@@ -95,7 +97,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 34] {
+pub fn core() -> [&'static [Mutation]; 35] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -131,6 +133,7 @@ pub fn core() -> [&'static [Mutation]; 34] {
         &review_fixes::REVIEW_FIXES,
         &checkpoint_cost::CHECKPOINT_COST,
         &load_limits::LOAD_LIMITS,
+        &lane_parse::LANE_PARSE,
     ]
 }
 
@@ -303,8 +306,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
-/// debugger's and a morsel's memory's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 30] {
+/// debugger's, a morsel's memory's and a copy by column's last, as `last`
+/// holds no more.
+fn closing() -> [&'static [Mutation]; 31] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -336,6 +340,7 @@ fn closing() -> [&'static [Mutation]; 30] {
         &hot_rows::HOT_ROWS,
         &debugger::DEBUGGER,
         &morsel_memory::MORSEL_MEMORY,
+        &copy_columns::COPY_COLUMNS,
     ]
 }
 

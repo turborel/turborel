@@ -4,7 +4,28 @@ use super::encoded::{ALP, CONSTANT, DICTIONARY, FIXED, FRAME, FSST, RUNS, VARYIN
 use super::*;
 use crate::value::{Decimal, Spelled};
 
+mod pinned;
 mod truncated;
+
+/// The records of `fields`, a value's or none for a null each, end to end.
+pub(super) fn records_of(fields: &[Option<Vec<u8>>]) -> crate::storage::lanes::Records {
+    let mut records = crate::storage::lanes::Records { nulls: vec![0; fields.len().div_ceil(8)], ..Default::default() };
+    for (n, field) in fields.iter().enumerate() {
+        match field {
+            Some(f) => records.bytes.extend_from_slice(f),
+            None => records.nulls[n >> 3_u32] |= 1 << (n % 8),
+        }
+        records.ends.push(u32::try_from(records.bytes.len()).unwrap());
+    }
+    records
+}
+
+/// The records of `values`, of type `t`, each as `encode_record` writes
+/// it, end to end, as a load gives a column.
+pub(super) fn records(t: &DataType, values: &[Value]) -> crate::storage::lanes::Records {
+    let fields: Vec<Option<Vec<u8>>> = values.iter().map(|v| (!v.is_null()).then(|| t.encode_record(v).unwrap())).collect();
+    records_of(&fields)
+}
 
 fn int(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))

@@ -21,9 +21,12 @@ use super::Effects;
 use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::error::{Code, Result, Subject};
-use crate::logical::Cond;
+use crate::exec::{Heard, eval_cond};
+use crate::logical::{Cond, Truth, cond_columns};
 use crate::storage::Row;
+use crate::storage::lanes::Records;
 use crate::txn::Txn;
+use crate::value::Value;
 
 /// The checks of the rows of a table inserted together, made as each goes
 /// in.
@@ -102,10 +105,70 @@ impl RowsChecked<'_> {
         Ok(())
     }
 
+    /// \[DESIGN\] RULES.md D1148: whether every row of `columns`, the
+    /// table's columns each by its records, satisfies its NOT NULL
+    /// constraints and CHECKs, each by the columns it reads alone: a NOT
+    /// NULL by its column's nulls, a CHECK of each row by the values of the
+    /// columns it reads, the others null. False if one is broken, or the
+    /// table has a UNIQUE constraint, so the rows go in as rows, which
+    /// tells how.
+    ///
+    /// # Errors
+    ///
+    /// As a CHECK's condition, bound or evaluated.
+    pub(in crate::db) fn hold_by_column(&mut self, (st, tx): (&State, &Txn), columns: &[Records]) -> Result<bool> {
+        if self.unique {
+            return Ok(false);
+        }
+        for &c in &self.rows {
+            let holds = match &c.kind {
+                ConstraintKind::NotNull(at) => columns.get(*at).is_some_and(|r| r.nulls.iter().all(|b| *b == 0)),
+                ConstraintKind::Check { text, names, horizon, .. } => {
+                    let cond = st.bound(&self.desc.name, (c, (text, names, horizon)), &mut self.bound)?;
+                    checked_by_column(self.desc, (&cond, &Heard(tx.stop.warnings())), columns)?
+                }
+                ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => false,
+            };
+            if !holds {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Whether a row gone in needs a note for the statement's end: the
     /// table has UNIQUE constraints, and its key was not `alone`, the only
     /// entry of its unique indexes'.
     pub(in crate::db) fn needs_note(&self, alone: bool) -> bool {
         self.unique && !alone
     }
+}
+
+/// Whether `cond`, a CHECK of `desc`, is not false of any row of
+/// `columns`, each row made of the columns it reads alone, decoded, the
+/// others null.
+fn checked_by_column(desc: &TableDesc, (cond, heard): (&Cond, &Heard<'_>), columns: &[Records]) -> Result<bool> {
+    let mut read = Vec::new();
+    cond_columns(cond, &mut read);
+    read.sort_unstable();
+    read.dedup();
+    let mut row: Row = vec![Value::Null; desc.columns.len()];
+    for n in 0..columns.first().map_or(0, Records::len) {
+        for &at in &read {
+            let (Some(records), Some(column), Some(slot)) = (columns.get(at), desc.columns.get(at), row.get_mut(at)) else {
+                return Ok(false);
+            };
+            *slot = match records.record(n) {
+                None => Value::Null,
+                Some(field) => match column.data_type.decode_record(field) {
+                    Some(v) => v,
+                    None => return Ok(false),
+                },
+            };
+        }
+        if eval_cond(cond, &row, heard)? == Truth::False {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }

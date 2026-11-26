@@ -71,8 +71,13 @@ pub const PARAMETER_MODES: &str = "parameter-modes";
 /// is sent an Event, unasked, as that session pauses (RULES.md D1030).
 pub const DEBUGGER: &str = "debugger";
 
+/// \[DESIGN\] CopyColumns: a copy's rows by column, each cell its field's
+/// text, which the server parses straight into its column's type
+/// (RULES.md D1148).
+pub const COLUMNS: &str = "columns";
+
 /// Every capability of version 1, in the order of their bits.
-pub const ALL: [&str; 21] = [
+pub const ALL: [&str; 22] = [
     NOTICES,
     STATUS,
     DIAGNOSTICS,
@@ -94,6 +99,7 @@ pub const ALL: [&str; 21] = [
     DECLARED_TYPES,
     PARAMETER_MODES,
     DEBUGGER,
+    COLUMNS,
 ];
 
 /// \[DESIGN\] A set of capabilities, one bit for each of `ALL`.

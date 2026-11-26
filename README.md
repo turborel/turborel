@@ -81,8 +81,9 @@ behind it, and each can be replaced or added to.
   the delta, optional column imprints, column sketches of compressed
   texts, and sorted dictionaries judged by codes. COUNT(*), MIN and MAX
   come from the groups' directory and summaries.
-- Bulk loads by INSERT or copy that build empty indexes whole and, if
-  asked, write column store rows straight into frozen groups.
+- Bulk loads by INSERT or copy that build empty indexes whole and write
+  column store rows straight into frozen groups, sent by column and
+  parsed into each column's type with no row of values made.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)
   by dynamic programming, DPccp and DPhyp, outer joins reordered where
   sound, hash, merge and index joins chosen with the order, adaptive to
@@ -256,7 +257,8 @@ behind it, and each can be replaced or added to.
 - Columns renamed in place, without copying their rows, and tables renamed.
 - A column's NOT NULL set or dropped and its data type widened, the rows
   checked or copied a row at a time.
-- Import and export of CSV and tab-separated files through the client, large objects as their values.
+- Import and export of CSV and tab-separated files through the client, large objects as their values,
+  one file imported over several connections in contiguous ranges.
 - Prepared CALLs that describe each `?` with its parameter's mode, through the API, DESCRIBE and the protocol.
 - Procedure parameters with default values, taken by DEFAULT, by arguments left out or by names not named.
 - A command-line client with line editing, completion, describe commands,

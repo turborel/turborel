@@ -6,6 +6,7 @@
 
 use crate::error::Result;
 use crate::memory::Reservation;
+use crate::storage::lanes::Records;
 use crate::storage::{Row, RowId};
 use crate::txn::TxId;
 
@@ -45,6 +46,18 @@ pub trait Loading {
     ///
     /// Writing the group fails.
     fn insert_group(&self, tx: TxId, rows: &[Row], whole: bool) -> Result<Option<Loaded>>;
+
+    /// As `insert_group`, of rows given by column (RULES.md D1148): of each
+    /// column of the table, in order, its values as their type writes them
+    /// in a record. None, too, if it takes no group so.
+    ///
+    /// # Errors
+    ///
+    /// Writing the group fails.
+    fn insert_records(&self, tx: TxId, columns: &[Records], whole: bool) -> Result<Option<Loaded>> {
+        let _ = (tx, columns, whole);
+        Ok(None)
+    }
 
     /// Redoes the group of a committed load whose log record holds
     /// `extent`, of rows from `first`, unless a group of its range is there

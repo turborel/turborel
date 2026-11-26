@@ -244,6 +244,7 @@ async fn welcome(wire: &mut Wire, (peer, present): (&Peer, &Present), services: 
         | Request::ChangeUser { .. }
         | Request::CopyIn { .. }
         | Request::CopyData(_)
+        | Request::CopyColumns(_)
         | Request::CopyEnd { .. }
         | Request::Debug(_)
         | Request::Terminate => Err(broken("[DESIGN] a connection begins with Hello, or Cancel")),
