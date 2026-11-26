@@ -16,6 +16,7 @@ use std::sync::atomic::Ordering;
 use super::super::RowTable;
 use super::super::options::Columns;
 use super::extents::{SEGMENT_BYTES, Segment};
+use super::records::Batch;
 use crate::disk::block::{BlockFile, BlockOptions};
 use crate::disk::block::{DEFAULT_MAX_BLOCK, HEADER_LEN};
 use crate::disk::encoding::Pipeline;
@@ -27,7 +28,7 @@ use crate::engine::columns::scan::rows;
 use crate::error::Result;
 use crate::hash::HashFunction;
 use crate::memory::Reservation;
-use crate::storage::{Row, RowId};
+use crate::storage::RowId;
 use crate::sync::{lock_builtin, read};
 use crate::txn::TxId;
 
@@ -72,13 +73,13 @@ impl RowTable {
         }
     }
 
-    /// Writes the group of `rows`, given `ids`, sorted as `columns` says,
+    /// Writes the group of `batch`, given `ids`, sorted as `columns` says,
     /// as an extent, appended to `tx`'s segment: the group, its entry's
     /// summary and the extent; none if the table has no segments.
-    pub(super) fn extent_from(&self, tx: TxId, (ids, rows): (Vec<RowId>, &[Row]), columns: &Columns) -> Result<Option<Made>> {
+    pub(super) fn extent_from(&self, tx: TxId, (ids, batch): (Vec<RowId>, Batch<'_>), columns: &Columns) -> Result<Option<Made>> {
         let Some((place, _)) = self.frozen.extents.placed() else { return Ok(None) };
         let sink = Sink::new(place.hash())?;
-        let group = self.group_from(&Pages { sink: Some(&sink), ..self.group_pages()? }, ids, rows, columns)?;
+        let group = self.group_from(&Pages { sink: Some(&sink), ..self.group_pages()? }, ids, batch, columns)?;
         let header = *group.header.first().ok_or_else(|| super::super::corrupt("a group has no header"))?;
         let extent = sink.finish((group.first, group.last, group.rows), header)?;
         // A group too large for one record of the log is written to pages.
@@ -142,7 +143,7 @@ impl RowTable {
         let all: Vec<usize> = (0..types.len()).collect();
         let rows = rows(&group, &held, types, &all, (0, group.rows))?;
         let columns = (*read(&self.frozen.columns)?).unwrap_or_default();
-        let written = self.group_from(&self.group_pages()?, ids, &rows, &columns)?;
+        let written = self.group_from(&self.group_pages()?, ids, Batch::Rows(&rows), &columns)?;
         let pages = written.pages();
         let entry = self.entry_of(written)?;
         self.publish_entry((None, Some((entry, pages))), Vec::new())

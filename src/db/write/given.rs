@@ -15,7 +15,7 @@ use crate::storage::Row;
 
 /// Whether `stmt` inserts one row whose values are its dynamic parameters,
 /// each once, in order: an INSERT rows may be given.
-fn of_parameters(stmt: &InsertStatement) -> bool {
+pub(super) fn of_parameters(stmt: &InsertStatement) -> bool {
     let InsertSource::Query(query) = &stmt.source else { return false };
     let QueryExpression::Values(rows) = query.as_ref() else { return false };
     let [row] = rows.as_slice() else { return false };

@@ -22,6 +22,7 @@ use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::lexer::{Tok, Token, delim, lex};
 use turborel::params::Load;
 use turborel::storage::Row;
+use turborel::storage::lanes::Lanes;
 use turborel::value::{DataType, Value, assign};
 use turborel_protocol::{Completed, broken};
 
@@ -54,6 +55,8 @@ struct Insert {
     /// The types of its parameters, each its column's.
     types: Vec<DataType>,
     waiting: Vec<Row>,
+    /// The rows sent by column waiting for a batch (RULES.md D1148).
+    lanes: Lanes,
     /// The rows inserted, or waiting, so far.
     rows: u64,
     /// The rows an execution takes: `BATCH`, or a group's once the load
@@ -116,7 +119,7 @@ fn prepared(session: &Session, table: &str, columns: &[String]) -> Result<Insert
     };
     let one = session.prepare(&insert_text(&table, &columns))?;
     let types = one.inputs().iter().map(|t| t.clone().data_type()).collect();
-    Ok(Insert { one, types, waiting: Vec::with_capacity(BATCH), rows: 0, batch: BATCH })
+    Ok(Insert { one, types, waiting: Vec::with_capacity(BATCH), lanes: Lanes::default(), rows: 0, batch: BATCH })
 }
 
 /// `row`, the copy's `n`th from 1, its values assigned to `types`: refused
@@ -159,6 +162,16 @@ impl Copy {
         }
     }
 
+    /// Takes the rows `lanes` holds by column (RULES.md D1148), as `rows`
+    /// takes them; thrown away once the copy failed.
+    pub(super) fn columns(&mut self, session: &Session, lanes: &Lanes) {
+        let Ok(insert) = &mut self.insert else { return };
+        let failed = insert.take_lanes(session, lanes).err();
+        if let Some(e) = failed {
+            self.insert = Err(e);
+        }
+    }
+
     /// Ends the copy: its last rows inserted and its savepoint released, a
     /// Complete of its rows; else, or if `abandon`, everything it did
     /// undone, its failure, or a Complete of none.
@@ -186,6 +199,10 @@ impl Copy {
 impl Insert {
     /// Takes `rows`: each full batch inserted.
     fn take(&mut self, session: &Session, rows: Vec<Row>) -> Result<()> {
+        if self.lanes.rows > 0 {
+            let lanes = std::mem::take(&mut self.lanes);
+            self.insert_lanes(session, lanes, Load::Going)?;
+        }
         for row in rows {
             self.rows = self.rows.saturating_add(1);
             let n = self.rows;
@@ -195,6 +212,40 @@ impl Insert {
             }
         }
         Ok(())
+    }
+
+    /// Takes the rows `lanes` holds by column: each full batch inserted,
+    /// after any rows sent as rows before them.
+    fn take_lanes(&mut self, session: &Session, lanes: &Lanes) -> Result<()> {
+        if !self.waiting.is_empty() {
+            self.insert_waiting(session, Load::Going)?;
+        }
+        self.lanes.append(lanes)?;
+        self.rows = self.rows.saturating_add(u64::try_from(lanes.rows).unwrap_or(u64::MAX));
+        while self.lanes.rows >= self.batch {
+            let batch = self.lanes.split_front(self.batch);
+            self.insert_lanes(session, batch, Load::Going)?;
+        }
+        Ok(())
+    }
+
+    /// Inserts the rows of `lanes`, the first of those waiting, part `load`
+    /// of the copy's load: by column, by one execution; tried again as
+    /// rows, a row at a time, if it fails, to name the row that fails.
+    fn insert_lanes(&mut self, session: &Session, lanes: Lanes, load: Load) -> Result<()> {
+        let held = u64::try_from(self.lanes.rows.saturating_add(lanes.rows)).unwrap_or(u64::MAX);
+        let first = self.rows.saturating_sub(held);
+        let lanes = std::sync::Arc::new(lanes);
+        if session.execute_prepared_lanes(&self.one, std::sync::Arc::clone(&lanes), load).is_ok() {
+            self.batch = session.load_rows().map_or(BATCH, |grouped| grouped.max(BATCH));
+            return Ok(());
+        }
+        for (at, row) in (1_u64..).zip(lanes.to_rows()?) {
+            let n = first.saturating_add(at);
+            let row = assigned(row, &self.types, n).map_err(|e| e.with_detail(format!("row {n} of the copy")))?;
+            session.execute_prepared(&self.one, &row).map_err(|e| e.with_detail(format!("row {n} of the copy")))?;
+        }
+        if load == Load::Ending { session.execute_prepared_rows(&self.one, &[], load).map(drop) } else { Ok(()) }
     }
 
     /// Inserts the rows waiting, part `load` of the copy's load: together
@@ -217,7 +268,11 @@ impl Insert {
     /// Inserts the rows still waiting, ending the copy's load (RULES.md
     /// D532): by an execution of none, if none is.
     fn flush(&mut self, session: &Session) -> Result<()> {
-        self.insert_waiting(session, Load::Ending)
+        if self.lanes.rows == 0 {
+            return self.insert_waiting(session, Load::Ending);
+        }
+        let rest = std::mem::take(&mut self.lanes);
+        self.insert_lanes(session, rest, Load::Ending)
     }
 }
 

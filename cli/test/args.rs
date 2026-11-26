@@ -164,21 +164,21 @@ fn a_socket_is_reached_on_unix_and_a_pipe_on_windows() {
 /// Verifies: [DESIGN] RULES.md D59: `--import` names a file whose rows are
 /// imported, in turn with the statements named, into the table `--table`
 /// names, as CSV unless `--format` says tab-separated, any case, with the
-/// header, delimiter, batch and skipping named; null written as `--null`
-/// says. By default: CSV, no header, 1000 rows a batch, stopping at a bad
-/// row.
+/// header, delimiter, batch, skipping and jobs named (RULES.md D1148);
+/// null written as `--null` says. By default: CSV, no header, 1000 rows a
+/// batch, stopping at a bad row, one job.
 #[test]
 fn imports_are_named() {
     let line = ["-c", "SELECT 1", "--import", "a.tsv", "--table", "X.T", "--format", "TSV", "--header", "--delimiter", ";"];
-    let more = ["--batch", "5", "--skip-bad-rows", "--null", "NULL", "--import", "b.tsv"];
+    let more = ["--batch", "5", "--skip-bad-rows", "--null", "NULL", "--import", "b.tsv", "--jobs", "4"];
     let options = parsed(&[&line[..], &more[..]].concat(), &[("USER", "u")]).unwrap();
     let inputs = [Input::Command("SELECT 1".into()), Input::Import(PathBuf::from("a.tsv")), Input::Import(PathBuf::from("b.tsv"))];
     assert_eq!(options.inputs, inputs);
     let dialect = Dialect::tsv().with_delimiter(';').unwrap().with_header().with_null("NULL");
     let into = Import { table: "X.T".into(), batch: 5, skip: true };
-    assert_eq!(options.import, Some(Importing { into, dialect }));
+    assert_eq!(options.import, Some(Importing { into, dialect, jobs: 4 }));
     let plain = parsed(&["--import", "a.csv", "--table", "T", "--format", "csv"], &[("USER", "u")]).unwrap();
-    assert_eq!(plain.import, Some(Importing { into: Import::into("T"), dialect: Dialect::csv().with_null("") }));
+    assert_eq!(plain.import, Some(Importing { into: Import::into("T"), dialect: Dialect::csv().with_null(""), jobs: 1 }));
     assert_eq!(Import::into("T").batch, 1000);
     assert_eq!(parsed(&[], &[("USER", "u")]).unwrap().import, None);
 }
@@ -186,15 +186,22 @@ fn imports_are_named() {
 /// Verifies: [DESIGN] RULES.md D59: an import's command line that is wrong
 /// is refused, saying why: no table; an import's options without one; a
 /// format not known; a delimiter not one character, or a quote; a batch
-/// not a number.
+/// not a number; jobs not a number above 0 (RULES.md D1148).
 #[test]
 fn a_wrong_import_is_refused() {
     let wrong = |line: &[&str]| parsed(line, &[("USER", "u")]).unwrap_err();
     assert_eq!(wrong(&["--import", "a.csv"]), "--import needs the table its rows go into: --table NAME");
-    let without = "--table, --format, --header, --delimiter, --batch and --skip-bad-rows are of an import: name --import FILE too";
-    for alone in
-        [&["--table", "T"][..], &["--format", "csv"], &["--header"], &["--delimiter", ";"], &["--batch", "1"], &["--skip-bad-rows"]]
-    {
+    let without = "--table, --format, --header, --delimiter, --batch, --skip-bad-rows and --jobs are of an import: name --import FILE too";
+    let alones = [
+        &["--table", "T"][..],
+        &["--format", "csv"],
+        &["--header"],
+        &["--delimiter", ";"],
+        &["--batch", "1"],
+        &["--skip-bad-rows"],
+        &["--jobs", "2"],
+    ];
+    for alone in alones {
         assert_eq!(wrong(alone), without, "{alone:?}");
     }
     let import = ["--import", "a.csv", "--table", "T"];
@@ -204,4 +211,6 @@ fn a_wrong_import_is_refused() {
     assert_eq!(with(&["--delimiter", ""]), "--delimiter is one character, not \"\"");
     assert!(with(&["--delimiter", "\""]).starts_with("[DESIGN] a delimiter is one ASCII character"));
     assert_eq!(with(&["--batch", "many"]), "many is no number of rows");
+    assert_eq!(with(&["--jobs", "0"]), "0 is no number of jobs: 1 or more");
+    assert_eq!(with(&["--jobs", "x"]), "x is no number of jobs: 1 or more");
 }

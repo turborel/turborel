@@ -2,6 +2,7 @@
 //! turn with the statements named, what each did said, its failures told
 //! (RULES.md D59).
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use turborel::db::Database;
@@ -28,7 +29,7 @@ fn file(scratch: &Scratch, name: &str, text: &str) -> PathBuf {
 /// An import into T, as CSV with a header, stopping at a bad row unless
 /// `skip`.
 fn into_t(skip: bool) -> Importing {
-    Importing { into: Import { skip, ..Import::into("T") }, dialect: Dialect::csv().with_header() }
+    Importing { into: Import { skip, ..Import::into("T") }, dialect: Dialect::csv().with_header(), jobs: 1 }
 }
 
 /// Verifies: [DESIGN] RULES.md D59: a file's rows are imported in turn
@@ -136,4 +137,42 @@ fn uuids_are_imported_and_shown() {
                  919108f7-52d1-4320-9bac-f847db4148a8 | a\n\
                  (2 rows)\n";
     assert_eq!(run.out, format!("OK, 2 rows imported, 1 skipped\n{shown}"));
+}
+
+/// Verifies: [DESIGN] RULES.md D1148: with `--jobs`, a file is imported
+/// over that many connections at once, the rows said those of every job,
+/// each row once; a bad row in a later range is told by its record and
+/// line in the whole file; a quoted line break where the file is split,
+/// and standard input, are refused before any row, saying to use one job.
+#[test]
+fn a_file_is_imported_by_jobs() {
+    let (_db, server) = served();
+    let scratch = Scratch::new("cli-import-jobs");
+    let text = (1..=900_u32).fold("K,S\n".to_owned(), |mut text, k| {
+        writeln!(text, "{k},s{}", k % 7).unwrap();
+        text
+    });
+    let rows = file(&scratch, "rows.csv", &text);
+    let mut given = options(&server, vec![Input::Import(rows), command("SELECT COUNT(*), SUM(K) FROM T")]);
+    given.import = Some(Importing { jobs: 4, ..into_t(false) });
+    let run = ran(&given, "", false);
+    assert!(run.succeeded, "{}", run.err);
+    assert!(run.out.starts_with("OK, 900 rows imported\n"), "{}", run.out);
+    assert!(run.out.contains("405450"), "each row once: {}", run.out);
+    let bad = text.replace("\n850,s3\n", "\n850,toolong\n");
+    let emptied = [command("DELETE FROM T"), command("COMMIT"), Input::Import(file(&scratch, "bad.csv", &bad))];
+    let mut failing = options(&server, emptied.to_vec());
+    failing.import = Some(Importing { into: Import { batch: 0, ..Import::into("T") }, jobs: 3, ..into_t(false) });
+    let run = ran(&failing, "", false);
+    assert!(!run.succeeded);
+    assert!(run.err.contains(": record 850, line 851: SQLCODE -301 (SQLSTATE 22001)"), "{}", run.err);
+    let quoted: String = format!("K,S\n1,\"{}\"\n2,b\n", "a\n".repeat(400));
+    let mut straddling = options(&server, vec![Input::Import(file(&scratch, "quoted.csv", &quoted))]);
+    straddling.import = Some(Importing { jobs: 2, ..into_t(false) });
+    let run = ran(&straddling, "", false);
+    assert!(run.err.contains("import it with --jobs 1"), "{}", run.err);
+    let mut standard = options(&server, vec![Input::Import(PathBuf::from("/dev/stdin"))]);
+    standard.import = Some(Importing { jobs: 2, ..into_t(false) });
+    let run = ran(&standard, "", false);
+    assert!(run.err.contains("standard input") || run.err.contains("cannot read"), "{}", run.err);
 }

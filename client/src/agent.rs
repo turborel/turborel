@@ -103,6 +103,18 @@ impl<C: Connector> Agent<C> {
             .ok_or_else(|| exception(SqlState::CONNECTION_DOES_NOT_EXIST, "[DESIGN] the current connection is gone"))
     }
 
+    /// \[DESIGN\] RULES.md D1148: a connection to the default server, as
+    /// the connector's user, held apart from the agent's: for work beside
+    /// the current connection's, as a job of an import over several
+    /// connections at once.
+    ///
+    /// # Errors
+    ///
+    /// As `Connector::connect`'s.
+    pub fn spare(&mut self) -> Result<Connected> {
+        self.connector.connect(None, None)
+    }
+
     /// The current connection, if there is one, to read what its server
     /// last told it.
     pub fn current_connection(&self) -> Option<&Connected> {

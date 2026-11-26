@@ -38,6 +38,7 @@ impl Counted {
             | Work::Describe(_)
             | Work::CopyIn { .. }
             | Work::CopyData(_)
+            | Work::CopyColumns(_)
             | Work::Debug(_) => Counted::Uncounted,
         }
     }

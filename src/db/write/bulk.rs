@@ -31,6 +31,7 @@ use crate::index::{Index, Key};
 use crate::log::record::{group_record_head, insert_rows_record};
 use crate::params::Load;
 use crate::spill::row_bytes;
+use crate::storage::lanes::Records;
 use crate::storage::{Loaded, Row, RowId, TableStorage};
 use crate::txn::{Txn, Undo, UndoEntry};
 use crate::value::{DataType, Value};
@@ -191,10 +192,81 @@ impl State {
 }
 
 /// Whether `desc` qualifies for extents (RULES.md D1147): no constraint
-/// but NOT NULL, and no column of a large object.
+/// but NOT NULL and CHECKs that read no other table (D1148), and no
+/// column of a large object.
 fn qualifies(desc: &TableDesc) -> bool {
     let lob = |c: &ColumnDesc| matches!(c.data_type, DataType::Lob { .. });
-    desc.constraints.iter().all(|c| matches!(c.kind, ConstraintKind::NotNull(_))) && !desc.columns.iter().any(lob)
+    let own = |c: &crate::catalog::ConstraintDesc| match &c.kind {
+        ConstraintKind::NotNull(_) => true,
+        ConstraintKind::Check { reads, .. } => reads.is_empty(),
+        ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => false,
+    };
+    desc.constraints.iter().all(own) && !desc.columns.iter().any(lob)
+}
+
+impl Together<'_> {
+    /// Whether its table qualifies for extents (RULES.md D1147).
+    pub(in crate::db) fn qualifies(&self) -> bool {
+        self.qualifies
+    }
+}
+
+impl State {
+    /// \[DESIGN\] RULES.md D1148: puts the rows `columns` holds, the
+    /// columns of the table of `together` each by its records, in its
+    /// storage as one group, if its load writes groups of as many rows or
+    /// more and the storage takes them so, and logs it: its extent as its record, else its rows,
+    /// decoded, as `stored_together` logs rows. Their ids, in order; none
+    /// if the group was not written, so the rows go in as rows.
+    ///
+    /// # Errors
+    ///
+    /// As `prepare_write`, `Loading::insert_records` and logging.
+    pub(in crate::db) fn insert_records(&self, tx: &Txn, together: &Together<'_>, columns: &[Records]) -> Result<Option<Vec<RowId>>> {
+        let count = columns.first().map_or(0, Records::len);
+        // A group takes as many rows as its load's groups do at most, as rows given are split.
+        let fits = together.grouped.filter(|&most| count <= most);
+        let Some(loading) = fits.and_then(|_| together.storage.loading()) else { return Ok(None) };
+        self.prepare_write(tx, together.table)?;
+        let _gate = self.tx.gate.enter();
+        let Some(loaded) = loading.insert_records(tx.id, columns, together.indexes.is_empty())? else { return Ok(None) };
+        if !together.logs {
+            return Ok(Some(loaded.ids));
+        }
+        let table = together.table;
+        if let Some(extent) = &loaded.extent {
+            let span = (loaded.ids.first().copied().unwrap_or_default(), loaded.ids.last().copied().unwrap_or_default());
+            let head = group_record_head(tx.id, (table, self.generation_of(table)), span, extent.len());
+            tx.log_parts(&[&head, extent], u64::try_from(loaded.ids.len()).unwrap_or(u64::MAX))?;
+            return Ok(Some(loaded.ids));
+        }
+        let rows = self.decoded_rows(table, columns)?;
+        let mut from = 0;
+        while let Some(rest) = rows.get(from..).filter(|r| !r.is_empty()) {
+            let taken = record_rows(rest);
+            let made = loaded.ids.get(from..from.saturating_add(taken)).unwrap_or_default();
+            let record = insert_rows_record(tx.id, (table, self.generation_of(table)), made, rest.get(..taken).unwrap_or_default());
+            tx.log_encoded(&record, u64::try_from(made.len()).unwrap_or(u64::MAX))?;
+            from = from.saturating_add(taken);
+        }
+        Ok(Some(loaded.ids))
+    }
+
+    /// The rows of `columns`, the columns of `table` each by its records,
+    /// each value decoded.
+    fn decoded_rows(&self, table: &QualifiedName, columns: &[Records]) -> Result<Vec<Row>> {
+        let desc = self.catalog.table(table).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {table} does not exist")))?;
+        let bad = || SqlError::new(Code::Corrupt, format!("[DESIGN] a record of a load into {table} does not decode"));
+        (0..columns.first().map_or(0, Records::len))
+            .map(|n| {
+                desc.columns
+                    .iter()
+                    .zip(columns)
+                    .map(|(c, r)| r.record(n).map_or(Ok(Value::Null), |f| c.data_type.decode_record(f).ok_or_else(bad)))
+                    .collect()
+            })
+            .collect()
+    }
 }
 
 /// Adds the entries of `rows`, of row ids `ids`, to the index of `ix`, in

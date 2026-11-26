@@ -11,7 +11,8 @@
 //! applied with the others, and a carried value replaced; of D1202, a
 //! column fetched late that something above the grouping reads, of a
 //! table whose key is not determined or whatever the fetch reads, and the
-//! rows not sorted again.
+//! rows not sorted again; of D1172, a COUNT of a column that may hold a
+//! null or a COUNT DISTINCT taken to count rows.
 
 use super::super::{Mutation, Package};
 
@@ -30,8 +31,11 @@ const FETCHED_LATE: &str = "rewrites::late_fetch::carried_columns_are_fetched_fo
 /// The test of columns that stay carried.
 const KEPT_CARRIED: &str = "rewrites::late_fetch::carried_columns_every_group_needs_stay_carried";
 
+/// The test of COUNT of values never null.
+const COUNTED: &str = "rewrites::counted_rows::counts_of_values_never_null_count_rows";
+
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 34] = [
+pub const REWRITES: [Mutation; 36] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -370,6 +374,26 @@ pub const REWRITES: [Mutation; 34] = [
         original: "let null = Expr::Warned(Box::new(Expr::Column(part)), SqlState::NULL_VALUE_ELIMINATED);",
         replacement: "let null = Expr::Column(part);",
         integration: &["rewrites::pregrouped::a_grouping_by_a_key_of_the_left_is_a_projection"],
+        unit: &[],
+    },
+    Mutation {
+        name: "counted-rows-of-nulls",
+        package: Package::Core,
+        breaks: "COUNT of a column counts rows only of a column known to hold no null (RULES.md D1172)",
+        file: "src/optimizer/counted_rows.rs",
+        original: "            Some(Expr::Column(c)) => never_null(input, *c, catalog, 0),",
+        replacement: "            Some(Expr::Column(c)) => *c < input.width(),",
+        integration: &[COUNTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "counted-rows-distinct",
+        package: Package::Core,
+        breaks: "COUNT DISTINCT counts its distinct values, never its rows (RULES.md D1172)",
+        file: "src/optimizer/counted_rows.rs",
+        original: "a.func.0.name() == kw::COUNT && !a.distinct && a.distribution.is_none()",
+        replacement: "a.func.0.name() == kw::COUNT && a.distribution.is_none()",
+        integration: &[COUNTED],
         unit: &[],
     },
 ];

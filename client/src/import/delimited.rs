@@ -22,8 +22,9 @@ use std::io::{BufRead, Read};
 
 use turborel::value::Value;
 
-use super::{Heading, Position, Record, Source, SourceError};
+use super::{Cells, Heading, Position, Record, Source, SourceError};
 
+mod cells;
 #[cfg(test)]
 mod tests;
 
@@ -108,6 +109,17 @@ impl Dialect {
     #[must_use]
     pub fn with_max_record(self, bytes: usize) -> Dialect {
         Dialect { max_record: bytes, ..self }
+    }
+
+    /// Whether its fields may be enclosed in quotes, so a line break may
+    /// be within a field.
+    pub fn is_quoted(&self) -> bool {
+        self.quoted
+    }
+
+    /// Whether its first record names the fields.
+    pub fn has_header(&self) -> bool {
+        self.header
     }
 }
 
@@ -340,5 +352,31 @@ impl<R: BufRead> Source for Delimited<R> {
         let values =
             fields.into_iter().map(|f| if !f.quoted && f.text == *null { Value::Null } else { Value::Char(f.text.into()) }).collect();
         Ok(Some(Record { values, position: Position { record: number, line: Some(line) } }))
+    }
+
+    fn splits(&self) -> bool {
+        true
+    }
+
+    fn record_into(&mut self, cells: &mut Cells) -> Result<Option<Position>, SourceError> {
+        self.header()?;
+        if self.done {
+            return Ok(None);
+        }
+        let number = self.records.saturating_add(1);
+        let position = Position { record: number, line: Some(self.lines.saturating_add(1)) };
+        let read =
+            self.raw().and_then(|more| if more { cells::split_into(&self.bytes, &self.dialect, cells).map(|()| true) } else { Ok(false) });
+        match read {
+            Ok(more) => {
+                self.done = !more;
+                self.records = if more { number } else { self.records };
+                Ok(more.then_some(position))
+            }
+            Err(message) => {
+                self.done = true;
+                Err(SourceError { position, message })
+            }
+        }
     }
 }

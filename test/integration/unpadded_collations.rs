@@ -299,3 +299,76 @@ fn the_rest_compare_sort_keys_unpadded() {
     assert_eq!(rows(&b, "SELECT V FROM UQ ORDER BY S").unwrap(), ["1", "3", "2"]);
     assert_eq!(rows(&b, "SELECT COUNT(*) FROM (SELECT S FROM UQ GROUP BY S) AS Q").unwrap(), ["3"]);
 }
+
+/// Whether `shown`, a plan, has a part run in parallel whose top is two
+/// groupings, one over the other.
+fn pair_in_a_part(shown: &str) -> bool {
+    let lines: Vec<&str> = shown.lines().map(str::trim_start).collect();
+    lines.windows(3).any(|w| w[0].starts_with("Parallel") && w[1].starts_with("Aggregate") && w[2].starts_with("Aggregate"))
+}
+
+/// The rows whose S is `g`, by their numbers.
+fn of(g: &str) -> impl Iterator<Item = usize> + '_ {
+    (0..ROWS).filter(move |&k| s_of(k) == Some(g))
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2, §10.9 GR7b i]
+/// (RULES.md D1184) a DISTINCT set function beside a grouping column under
+/// a collation of NO PAD by octets: its two groupings run as one part in
+/// parallel, and `'a'`, `'a '` and a tab after `'a'` are three groups, each
+/// counting its own rows' values, as the plan run alone gives them; by
+/// batches and a row at a time, of both stores; with a set function no
+/// batch reads, whose second grouping is made of rows; of nearly unique
+/// strings a space apart; over a projection of the first's groups; and a
+/// count of the groups' counts, which crosses the partitions. A padded
+/// column beside it is still one group of the two.
+#[test]
+fn a_distinct_set_function_s_pair_groups_unpadded_10_9() {
+    let (_db, a) = tables();
+    // K less its remainder by 21 is one value of each 21 rows, as `k / 21`
+    // is here: a quotient of exact numbers keeps a scale, so is not it.
+    let distinct = |g: &str, by: usize| of(g).map(|k| k.div_euclid(by)).collect::<std::collections::HashSet<_>>().len();
+    let mut counted: Vec<String> = STRINGS.iter().map(|g| format!("[{g}],{}", distinct(g, 21))).collect();
+    counted.sort();
+    let mut both: Vec<String> =
+        STRINGS.iter().map(|g| format!("[{g}],{},{}", distinct(g, 21), of(g).filter(|k| k % 2 == 0).count())).collect();
+    both.sort();
+    // Each U, how many remainders by 3 its rows' K have, and its rows.
+    let mut of_u: std::collections::BTreeMap<String, (std::collections::BTreeSet<usize>, usize)> = std::collections::BTreeMap::new();
+    for k in 0..ROWS {
+        let held = of_u.entry(u_of(k)).or_default();
+        held.0.insert(k % 3);
+        held.1 += 1;
+    }
+    let mut by_string: Vec<(String, usize, usize)> = of_u.into_iter().map(|(u, (set, rows))| (u, set.len(), rows)).collect();
+    by_string.sort_by_key(|(u, n, _)| format!("{u},{n}"));
+    for degree in [1, 4] {
+        exec(&a, &format!("SET EXECUTOR.DEGREE = {degree}")).unwrap();
+        exec(&a, "SET EXECUTOR.MORSEL_ROWS = 256").unwrap();
+        exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 0").unwrap();
+        let by_s = "SELECT '[' || S || ']', COUNT(DISTINCT K - MOD(K, 21)) FROM {t} WHERE S IS NOT NULL GROUP BY S";
+        assert_eq!(of_both(&a, by_s), counted, "degree {degree}");
+        assert_eq!(pair_in_a_part(&physical(&a, &by_s.replace("{t}", "C"))), degree > 1, "degree {degree}");
+        let filtered = "SELECT '[' || S || ']', COUNT(DISTINCT K - MOD(K, 21)), COUNT(*) FILTER (WHERE MOD(K, 2) = 0) FROM {t} WHERE S IS NOT NULL GROUP BY S";
+        assert_eq!(of_both(&a, filtered), both, "degree {degree}");
+        // Many pairs of strings a space apart, so some share a partition.
+        // The argument is no key of the table, so the pair is made.
+        let by_u = "SELECT U, COUNT(DISTINCT MOD(K, 3)) FROM {t} GROUP BY U";
+        assert_eq!(of_both(&a, by_u), by_string.iter().map(|(u, n, _)| format!("{u},{n}")).collect::<Vec<_>>(), "degree {degree}");
+        assert_eq!(pair_in_a_part(&physical(&a, &by_u.replace("{t}", "C"))), degree > 1, "degree {degree}");
+        let by_rows = "SELECT U, COUNT(DISTINCT MOD(K, 3)), COUNT(*) FILTER (WHERE K >= 0) FROM {t} GROUP BY U";
+        let with_rows: Vec<String> = by_string.iter().map(|(u, n, rows)| format!("{u},{n},{rows}")).collect();
+        assert_eq!(of_both(&a, by_rows), with_rows, "degree {degree}");
+        // A projection between the two: the second groups by its own key.
+        let over = "SELECT '[' || T || ']', COUNT(*) FROM (SELECT SUBSTRING(S FROM 1 FOR 2) AS T, N FROM (SELECT S, N FROM (SELECT S, K - MOD(K, 21) AS N FROM {t} WHERE S IS NOT NULL) AS P GROUP BY S, N) AS Q) AS W GROUP BY T";
+        assert_eq!(of_both(&a, over), counted, "degree {degree}");
+        let crossing = "SELECT COUNT(*) FROM (SELECT N, COUNT(*) AS M FROM (SELECT S, COUNT(*) AS N FROM {t} WHERE S IS NOT NULL GROUP BY S) AS Q GROUP BY N) AS W";
+        let sizes = STRINGS.iter().map(|g| of(g).count()).collect::<std::collections::HashSet<_>>().len();
+        assert_eq!(of_both(&a, crossing), [sizes.to_string()], "degree {degree}");
+        let padded = of_both(
+            &a,
+            "SELECT COUNT(*) FROM (SELECT P, COUNT(DISTINCT K - MOD(K, 21)) AS N FROM {t} WHERE P IS NOT NULL GROUP BY P) AS Q",
+        );
+        assert_eq!(padded, ["5"], "degree {degree}");
+    }
+}
