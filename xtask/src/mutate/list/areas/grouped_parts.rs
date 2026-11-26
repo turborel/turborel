@@ -3,12 +3,13 @@
 //! D1073, D1113): the groups a part keeps, the conditions a part takes,
 //! the filters a grouping that takes none is told, a grouping over
 //! another that a part makes whole, and one that crosses its partitions,
-//! merged by the statement's thread (D1133).
+//! merged by the statement's thread (D1133), and the second grouping of
+//! a pair made in a table of the first's groups given as a batch (D1123).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 15] = [
+pub const GROUPED_PARTS: [Mutation; 18] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -158,5 +159,35 @@ pub const GROUPED_PARTS: [Mutation; 15] = [
         replacement: "return None;",
         integration: &[],
         unit: &["exec::parallel::grouped::tests::a_having_of_one_set_function_and_a_constant_is_judged_of_its_value"],
+    },
+    Mutation {
+        name: "given-lane-loses-nulls",
+        package: Package::Core,
+        breaks: "a table's groups given as a batch lose the nulls of a lane of integers, a null key read as 0 (RULES.md D1123)",
+        file: "src/exec/table/keys/columns.rs",
+        original: "Column::Ints(Ints::new(units, scale, nulls)),",
+        replacement: "Column::Ints(Ints::new(units, scale, None)),",
+        integration: &["regrouped_parts::distinct_set_functions_are_regrouped_by_their_part"],
+        unit: &["exec::table::given::tests::groups_given_as_a_batch_hold_what_their_rows_hold"],
+    },
+    Mutation {
+        name: "second-group-numbered-anew",
+        package: Package::Core,
+        breaks: "a second grouping made in a table numbers its groups alike, so the partitions' groups come in no order (RULES.md D1123)",
+        file: "src/exec/parallel/grouped/second.rs",
+        original: "Key::Row(&batch, &read.groups, n), number);",
+        replacement: "Key::Row(&batch, &read.groups, n), number.min(0));",
+        integration: &["regrouped_parts::a_second_grouping_made_in_a_table_gives_the_plans_groups"],
+        unit: &[],
+    },
+    Mutation {
+        name: "given-in-any-order",
+        package: Package::Core,
+        breaks: "a table tells its groups in the order of their first rows whatever their numbers (RULES.md D1123)",
+        file: "src/exec/table/given.rs",
+        original: "self.firsts.is_sorted()",
+        replacement: "self.firsts.len() < usize::MAX",
+        integration: &[],
+        unit: &["exec::table::given::tests::a_table_tells_whether_its_groups_are_in_first_row_order"],
     },
 ];

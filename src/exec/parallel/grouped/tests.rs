@@ -48,6 +48,6 @@ fn a_having_of_one_set_function_and_a_constant_is_judged_of_its_value() {
         table.found_or_made(hash_values(&grouping.seed, &key), Key::Values(&key), 0);
         let runner = Runner::new(&Db::of(&st), crate::txn::NO_TRANSACTION);
         assert!(table.finished_if(|_| Ok(true)).is_ok(), "{sql}: a table of two is finished by rows");
-        assert!(grouping.kept_of(&table, &runner).is_err(), "{sql}: judged of the value alone");
+        assert!(grouping.kept_of(table, &runner).is_err(), "{sql}: judged of the value alone");
     }
 }
