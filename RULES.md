@@ -717,6 +717,7 @@ verification approach DO-178C expects (§8).
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
 | D1122 | The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change |
 | D1123 | The second grouping of a pair is made in the executor's table, of the first's groups given as a batch |
+| D1124 | The first rows of a sort over a grouping run in parallel are taken from its partitions' tables |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19629,6 +19630,42 @@ result. Any other pair, and a
 pipeline read a row at a time, is grouped again of rows as before
 (`regrouped.rs`). The batch is made only as the last wave finishes a
 partition, so what the part holds and when it gives way are unchanged.
+
+#### D1124. The first rows of a sort over a grouping run in parallel are taken from its partitions' tables
+
+A sort of which only the first rows are asked for (D379), over a
+grouping run in parallel, read every group back. Each partition's thread
+made a row of values of each of its groups, the statement's thread
+merged the partitions' rows in the order of their first rows, and the
+sort kept its few. Of a grouping of many groups nearly all of that work,
+and all of the memory the rows took, which no grant was charged, was for
+rows the sort dropped.
+
+Each partition's thread now takes the first rows from its own table
+(`exec/parallel/grouped/top.rs`). The table gives its groups as a batch
+(D1123), the columns the projection over the grouping names in its
+order, and each group's first row's number as a column after them. The
+thread keeps that batch's first rows under the sort's keys and then the
+number, as a sort run in parallel keeps a morsel's
+(`sort::first_of_morsel`), so only those are made rows. The statement's
+thread sorts the partitions' rows the same way, gives the first asked
+for, and leaves the number out.
+
+The plan run alone sorts the groups stably, in the order of their first
+rows, so of two groups of equal keys the one whose first row came
+earlier comes first. The number as the last key orders any two groups
+so, in whatever partitions they are. The rows given and their order are
+therefore the plan's.
+
+It does so of a grouping by hash, alone at the top of its part, whose
+groups are made by batch, under a projection of its columns alone or
+none. A sort that asks the peers of its last row (WITH TIES) is not
+taken so, as the number would part groups that are peers. Neither is one
+over a HAVING condition, a projection that computes a value, DISTINCT or
+a pair of groupings (D1113); the sort reads those groups as before. A
+grouping whose groups are made of rows gives its groups in order, which
+are projected and sorted. A part that gives way is grouped alone and its
+rows projected and sorted, the part not tried again.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 

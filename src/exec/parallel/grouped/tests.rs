@@ -15,7 +15,7 @@ fn grouping_of(a: &Session, sql: &str) -> (Arc<crate::db::State>, Grouping) {
     let LogicalPlan::Aggregate { groups, aggs, .. } = *input else { panic!("a grouping: {sql}") };
     let spec = Spec { groups, collations: Vec::new(), aggs, seeds: Vec::new() };
     let seed = st.functions.seed().clone();
-    (st, Grouping { spec, having: Some(cond), distinct: false, read: None, seed, outer: None })
+    (st, Grouping { spec, having: Some(cond), distinct: false, read: None, seed, outer: None, top: None })
 }
 
 /// Verifies: [DESIGN] (RULES.md D1135) a part judges its HAVING condition
