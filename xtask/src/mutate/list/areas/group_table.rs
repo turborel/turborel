@@ -6,7 +6,8 @@
 //! groups' first rows, its morsels of few groups merged on the statement's
 //! thread, of the column store too, grouped by runs, its exchange weighed
 //! by the optimizer's groups; and EXCEPT and INTERSECT counted in a table
-//! (D358, D359).
+//! (D358, D359); and a grouping's partitions held in the spill past its
+//! grant, written and read back as they were (D1226).
 
 use super::super::{Mutation, Package};
 
@@ -24,8 +25,22 @@ const SET_COUNTS: &str = "set_tables::set_operations_keep_what_their_counts_say"
 /// The columns of states against their accumulators.
 const STATES: &str = "exec::table::states::tests::columns_of_states_are_their_accumulators";
 
+/// A grouping in parallel whose partitions go to the spill past its grant.
+const SPILLED: &str = "spilled_groups::partitions_past_the_grant_are_spilled_by_their_threads";
+
+/// A grouping in parallel spilled past its grant in its one area, given
+/// way to in two.
+const SPILLED_AREA: &str = "spilled_groups::a_grouping_spilled_holds_its_partitions_in_one_area";
+
+/// Groups of every kind of state read back from the spill against those
+/// written.
+const SPILLED_MERGE: &str = "exec::table::made::written::tests::groups_read_back_finish_as_those_written";
+
+/// Columns of states of every kind read back from the spill bit for bit.
+const SPILLED_STATES: &str = "exec::table::states::typed::written::tests::every_column_of_states_is_read_back_as_written";
+
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 20] = [
+pub const GROUP_TABLE: [Mutation; 26] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -111,8 +126,8 @@ pub const GROUP_TABLE: [Mutation; 20] = [
         package: Package::Core,
         breaks: "the statement thread's table of few groups goes to the partitions' last wave",
         file: "src/exec/parallel/grouped/waves.rs",
-        original: "        if !self.flushed()? {\n            return Ok(Held::GaveWay);\n        }\n        finished_wave",
-        replacement: "        finished_wave",
+        original: "        if !self.flushed()? {\n            return Ok(Held::GaveWay);\n        }\n        let Some(spilled)",
+        replacement: "        let Some(spilled)",
         integration: &[FEW_MANY],
         unit: &[],
     },
@@ -225,5 +240,65 @@ pub const GROUP_TABLE: [Mutation; 20] = [
         replacement: "entry",
         integration: &[],
         unit: &["exec::batch::groups::coded::tests::rows_grouped_by_their_codes_make_the_groups_of_their_texts"],
+    },
+    Mutation {
+        name: "spilled-groups-give-way",
+        package: Package::Core,
+        breaks: "partitions past the grant give way to a grouping a row at a time, the threads' work dropped (RULES.md D1226)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "    fn spilled_all(&mut self) -> Result<bool> {\n",
+        replacement: "    fn spilled_all(&mut self) -> Result<bool> {\n        if self.spilled.is_none() {\n            return Ok(false);\n        }\n",
+        integration: &[SPILLED, SPILLED_AREA],
+        unit: &[],
+    },
+    Mutation {
+        name: "spilled-split-by-the-same-bits",
+        package: Package::Core,
+        breaks: "a spilled partition past the grant is split at every level by the bits that chose it, so all of it falls in one part again and the grouping gives way at the depth (RULES.md D1226)",
+        file: "src/exec/parallel/grouped/waves/spilled.rs",
+        original: "u32::try_from(level.saturating_add(1)).unwrap_or(u32::MAX)",
+        replacement: "0_u32",
+        integration: &[SPILLED_AREA],
+        unit: &[],
+    },
+    Mutation {
+        name: "spilled-firsts-as-hashes",
+        package: Package::Core,
+        breaks: "groups read back from the spill take their hashes for their first rows (RULES.md D1226)",
+        file: "src/exec/table/made/written.rs",
+        original: "        words(&self.firsts, out);",
+        replacement: "        words(&self.hashes, out);",
+        integration: &[],
+        unit: &[SPILLED_MERGE],
+    },
+    Mutation {
+        name: "spilled-key-float-sign",
+        package: Package::Core,
+        breaks: "an approximate key read back from the spill loses its sign, -0 read as 0 (RULES.md D1226)",
+        file: "src/exec/table/keys/written.rs",
+        original: "out.put_u64(at(numbers, g, 0.0_f64).to_bits())",
+        replacement: "out.put_u64(at(numbers, g, 0.0_f64).abs().to_bits())",
+        integration: &[],
+        unit: &["exec::table::keys::written::tests::every_lane_is_read_back_as_written"],
+    },
+    Mutation {
+        name: "spilled-sum-small-part",
+        package: Package::Core,
+        breaks: "an approximate sum read back from the spill loses the part of its values below 2^-900 (RULES.md D1226)",
+        file: "src/exec/table/states/typed/written.rs",
+        original: "                    out.put_u64(small.to_bits());",
+        replacement: "                    out.put_u64(0.0_f64.to_bits());",
+        integration: &[],
+        unit: &[SPILLED_STATES],
+    },
+    Mutation {
+        name: "spilled-finished-unnumbered",
+        package: Package::Core,
+        breaks: "a spilled part's finished groups are written without their first rows' numbers, so the merge gives them by partition, not in the order of their first rows (RULES.md D1226)",
+        file: "src/exec/parallel/grouped/waves/spilled.rs",
+        original: "            run.push(&numbered(n, &row, &lobs))?;",
+        replacement: "            run.push(&numbered(0, &row, &lobs))?;",
+        integration: &[SPILLED],
+        unit: &[],
     },
 ];

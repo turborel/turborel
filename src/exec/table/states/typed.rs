@@ -20,6 +20,7 @@ use crate::value::{DataType, Decimal, Value};
 
 mod few;
 mod merged;
+mod written;
 
 use super::super::Pending;
 use super::{Boxed, columns_of};

@@ -19,7 +19,7 @@
 //! the last row under the sort's own keys, which the number would part,
 //! so such a sort reads the grouping's rows as before.
 
-use super::{Grouping, Ordered};
+use super::{Given, Grouping, Ordered};
 use crate::error::Result;
 use crate::exec::sort::first_of_morsel;
 use crate::exec::table::GroupTable;
@@ -124,15 +124,23 @@ pub(super) fn fits(grouping: &Grouping) -> bool {
 }
 
 impl Top {
-    /// [X3.135-1986 §8.3 GR3b] The first rows asked, of `runs`: of a
-    /// grouping that took them from its tables (`fits`), the partitions'
+    /// [X3.135-1986 §8.3 GR3b] The first rows asked, of `runs` and the
+    /// runs `given` back from the spill: of a grouping that took them from its tables (`fits`), the partitions'
     /// first rows; of any other, its groups in the order of their first
     /// rows, projected and sorted as the plan run alone sorts them.
-    pub(super) fn given(&self, from_tables: bool, runs: Vec<Vec<(u64, Row)>>) -> RowIter {
+    ///
+    /// # Errors
+    ///
+    /// As reading back the runs `given` from the spill fails.
+    pub(super) fn given(&self, from_tables: bool, (runs, given): (Vec<Vec<(u64, Row)>>, Vec<Given>)) -> Result<RowIter> {
         if from_tables {
-            return self.of_all(runs.into_iter().flatten().map(|group| group.1).collect());
+            let mut rows: Vec<Row> = runs.into_iter().flatten().map(|group| group.1).collect();
+            for group in given.into_iter().flatten() {
+                rows.push(group?.1);
+            }
+            return Ok(self.of_all(rows));
         }
-        self.of_rows(Box::new(Ordered::of(runs)))
+        Ok(self.of_rows(Box::new(Ordered::of(runs, given)?)))
     }
 
     /// [X3.135-1986 §8.3 GR3b] The first rows asked, of `rows`, the
