@@ -90,6 +90,8 @@ pub struct LikePattern {
     specs: Vec<Spec>,
     /// Its pieces between `%`s, if it has no `_` (RULES.md D1074).
     pieces: Option<pieces::Pieces>,
+    /// Its machine over bytes, once made (RULES.md D1122).
+    machined: codes::Machined,
 }
 
 impl LikePattern {
@@ -101,7 +103,7 @@ impl LikePattern {
     pub fn new(pattern: &str, escape: Option<char>) -> Result<LikePattern> {
         let specs = specifiers(pattern, escape)?;
         let pieces = pieces::Pieces::of(&specs);
-        Ok(LikePattern { specs, pieces })
+        Ok(LikePattern { specs, pieces, machined: codes::Machined::default() })
     }
 
     /// [X3.135-1986 §5.14 GR5] Whether `value` matches it: of a pattern

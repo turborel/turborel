@@ -29,6 +29,7 @@
 //! is the first piece alone, which the value must be exactly.
 
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
 use super::LikePattern;
 use super::pieces::Pieces;
@@ -36,21 +37,43 @@ use super::pieces::Pieces;
 /// The code an escaped byte follows, as the tables of symbols write it.
 pub const ESCAPE: u8 = 255;
 
-/// \[DESIGN\] A pattern's machine made for one table of symbols.
-#[derive(Debug, Clone)]
-pub struct CodeMatcher {
+/// \[DESIGN\] A pattern's machine over bytes, made once for the pattern
+/// (`LikePattern::on_codes`), of which each table's is made.
+#[derive(Debug)]
+pub struct ByteMachine {
     /// Of each state, the state after each byte.
     by_byte: Vec<u16>,
-    /// Of each state, the state after each code's symbol.
-    by_code: Vec<u16>,
-    /// The codes the table has symbols for.
-    codes: usize,
     /// The state a value starts in.
     start: u16,
     /// Of each state: 0 to go on, 1 if a value ending there matches, 2 if
     /// any value reaching it matches, 3 if none does.
     ends: Vec<u8>,
 }
+
+/// \[DESIGN\] A pattern's machine made for one table of symbols.
+#[derive(Debug, Clone)]
+pub struct CodeMatcher {
+    /// The pattern's machine over bytes.
+    bytes: Arc<ByteMachine>,
+    /// Of each state, the state after each code's symbol.
+    by_code: Vec<u16>,
+    /// The codes the table has symbols for.
+    codes: usize,
+}
+
+/// The machine over bytes of a pattern, made the first time a table asks
+/// for it and shared by the pattern's copies; none of a pattern with `_`
+/// or of too many states. Two patterns alike are alike whatever theirs.
+#[derive(Debug, Clone, Default)]
+pub struct Machined(Arc<OnceLock<Option<Arc<ByteMachine>>>>);
+
+impl PartialEq for Machined {
+    fn eq(&self, _: &Machined) -> bool {
+        true
+    }
+}
+
+impl Eq for Machined {}
 
 /// A state of the machine, before it is numbered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -165,10 +188,10 @@ impl Machine<'_> {
     }
 }
 
-impl CodeMatcher {
-    /// The machine of `pieces` for a table of `symbols`, each code's bytes
-    /// by its place; none if it has more states than a table holds.
-    fn of(pieces: &Pieces, symbols: &[&[u8]]) -> Option<CodeMatcher> {
+impl ByteMachine {
+    /// The machine of `pieces`; none if it has more states than a table
+    /// holds.
+    fn of(pieces: &Pieces) -> Option<ByteMachine> {
         let machine = Machine {
             first: pieces.first.as_bytes(),
             between: pieces.between.iter().map(|f| (f.bytes(), failures(f.bytes()))).collect(),
@@ -180,50 +203,69 @@ impl CodeMatcher {
         }
         let places: HashMap<State, u16> = states.iter().zip(0_u16..).map(|(&s, n)| (s, n)).collect();
         let number = |s: State| places.get(&s).copied().unwrap_or(0);
-        let mut by_byte = Vec::with_capacity(states.len().saturating_mul(256));
-        let mut by_code = Vec::with_capacity(states.len().saturating_mul(symbols.len()));
-        for &state in &states {
-            by_byte.extend((0..=u8::MAX).map(|b| number(machine.step(state, b))));
-            by_code.extend(symbols.iter().map(|bytes| number(bytes.iter().fold(state, |s, &b| machine.step(s, b)))));
-        }
+        let by_byte = states
+            .iter()
+            .flat_map(|&state| (0..=u8::MAX).map(move |b| (state, b)))
+            .map(|(state, b)| number(machine.step(state, b)))
+            .collect();
         let ends = states.iter().map(|&s| machine.end(s)).collect();
-        Some(CodeMatcher { by_byte, by_code, codes: symbols.len(), start: number(machine.settled(State::Prefix(0))), ends })
+        Some(ByteMachine { by_byte, start: number(machine.settled(State::Prefix(0))), ends })
+    }
+
+    /// The state after `b` from `state`.
+    fn next(&self, state: usize, b: u8) -> Option<u16> {
+        self.by_byte.get(state.saturating_mul(256).saturating_add(usize::from(b))).copied()
+    }
+}
+
+impl CodeMatcher {
+    /// The machine of `bytes` for a table of `symbols`, each code's bytes
+    /// by its place: each code's step that of its symbol's bytes in turn.
+    fn of(bytes: Arc<ByteMachine>, symbols: &[&[u8]]) -> CodeMatcher {
+        let mut by_code = Vec::with_capacity(bytes.ends.len().saturating_mul(symbols.len()));
+        for state in 0..bytes.ends.len() {
+            by_code.extend(symbols.iter().map(|symbol| {
+                symbol.iter().try_fold(state, |s, &b| bytes.next(s, b).map(usize::from)).and_then(|s| u16::try_from(s).ok()).unwrap_or(0)
+            }));
+        }
+        CodeMatcher { bytes, by_code, codes: symbols.len() }
     }
 
     /// [X3.135-1986 §5.14 GR5] Whether the value `codes` write matches the
     /// pattern; none if they end in an escape or a code is of no symbol,
     /// which the value's decoding then reports.
     pub fn matches(&self, codes: &[u8]) -> Option<bool> {
-        let mut state = usize::from(self.start);
+        let mut state = usize::from(self.bytes.start);
         let mut rest = codes.iter();
         while let Some(&c) = rest.next() {
-            match self.ends.get(state) {
+            match self.bytes.ends.get(state) {
                 Some(2) => return Some(true),
                 Some(3) => return Some(false),
                 _ => {}
             }
             let next = if c == ESCAPE {
-                let b = *rest.next()?;
-                self.by_byte.get(state.saturating_mul(256).saturating_add(usize::from(b)))
+                self.bytes.next(state, *rest.next()?)
             } else {
                 let code = usize::from(c);
                 if code >= self.codes {
                     return None;
                 }
-                self.by_code.get(state.saturating_mul(self.codes).saturating_add(code))
+                self.by_code.get(state.saturating_mul(self.codes).saturating_add(code)).copied()
             };
-            state = usize::from(*next?);
+            state = usize::from(next?);
         }
-        Some(matches!(self.ends.get(state), Some(1 | 2)))
+        Some(matches!(self.bytes.ends.get(state), Some(1 | 2)))
     }
 }
 
 impl LikePattern {
     /// Its machine for a table of `symbols`, each code's bytes by its
-    /// place (RULES.md D1122): none of a pattern with `_`, which is
-    /// matched of the decoded values.
+    /// place (RULES.md D1122): its machine over bytes made once, each
+    /// table's of it; none of a pattern with `_`, which is matched of the
+    /// decoded values.
     pub fn on_codes(&self, symbols: &[&[u8]]) -> Option<CodeMatcher> {
-        CodeMatcher::of(self.pieces.as_ref()?, symbols)
+        let bytes = self.machined.0.get_or_init(|| self.pieces.as_ref().and_then(ByteMachine::of).map(Arc::new)).clone()?;
+        Some(CodeMatcher::of(bytes, symbols))
     }
 }
 
