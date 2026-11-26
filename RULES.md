@@ -20230,7 +20230,10 @@ is the lesser regret there too (D386). A hash join's table is sized by
 the rows it is given, never by the estimate, and one that outgrows its
 work area is partitioned (D38). So an estimate a hundred times low builds
 the larger operand and costs a slower join, with no memory granted on
-its word and no wrong result.
+its word and no wrong result. An index join weighed at the margin's
+times the estimate is exposed past it. Of rows a hundred times the
+estimate it makes a hundred times the probes, where the margin weighed
+eight.
 
 ## 2. Project layout
 
