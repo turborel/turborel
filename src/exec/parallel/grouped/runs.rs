@@ -48,7 +48,7 @@ impl Run {
             Run::Columns(batch, firsts) => {
                 let mut held = Some((batch, firsts.into_iter().enumerate()));
                 Box::new(std::iter::from_fn(move || {
-                    let next = held.as_mut().and_then(|(batch, firsts)| firsts.next().map(|(g, first)| (first, row_of(batch, g))));
+                    let next = held.as_mut().and_then(|(groups, left)| left.next().map(|(g, first)| (first, row_of(groups, g))));
                     if next.is_none() {
                         held = None;
                     }
