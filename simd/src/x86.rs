@@ -19,6 +19,7 @@ use crate::Level;
 mod alp;
 mod bloom;
 mod distance;
+mod find;
 mod hash;
 mod select;
 mod sum;
@@ -316,4 +317,14 @@ const REGISTER: u64 = 0xFFFF_FFFF;
 fn crc32c_sse42(register: u32, data: &[u8]) -> u32 {
     let word = |r: u32, w: u64| u32::try_from(_mm_crc32_u64(u64::from(r), w) & REGISTER).unwrap_or_default();
     crate::crc::crc32c_by(word, register, data)
+}
+
+/// `Kernels::find_bytes`: 32 or 64 places a step on AVX2 or AVX-512, each
+/// marked by its first and last byte (RULES.md D1119).
+pub(crate) fn find_bytes(isa: Isa, haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    match isa {
+        Isa::Portable | Isa::Sse2 => portable::find::find_bytes(haystack, needle),
+        Isa::Avx2 => find::find_avx2(haystack, needle),
+        Isa::Avx512 => find::find_avx512(haystack, needle),
+    }
 }

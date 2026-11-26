@@ -159,9 +159,18 @@ fn batches_grow_to_their_most() {
 /// vectors' bytes: integers' and numbers' 8 bytes each and their nulls'
 /// words,
 /// values as rows count them, texts their bytes and ends, a store's
-/// dictionary its codes and entries.
+/// dictionary its codes and entries, nulls none until their values are
+/// made.
+///
+/// Regression test: nulls once counted as many values, so a join's built
+/// operand whose columns were mostly given null (RULES.md D1167) outgrew
+/// its work area and was partitioned row by row.
 #[test]
 fn batches_count_the_bytes_their_vectors_hold() {
+    let nulls = Column::nulls(3_usize);
+    assert_eq!(Column::bytes(&nulls), 0_usize);
+    assert_eq!(nulls.values().len(), 3_usize);
+    assert_eq!(Column::bytes(&nulls), 3_usize * size_of::<Value>());
     let ints = Column::Ints(Ints::new(vec![1_i64, 2_i64], 0_u32, Some(vec![false, true].into())));
     assert_eq!(Column::bytes(&ints), 24_usize);
     assert_eq!(Column::bytes(&Column::Floats(Floats::new(vec![1.0_f64], None))), 8_usize);

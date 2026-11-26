@@ -117,3 +117,28 @@ fn other_set_functions_stay_above_and_a_raising_projection_gives_way() {
     assert_eq!(alone, Err(turborel::error::Code::Data), "a group of 8 rows divides by zero");
     assert_eq!(alone, together, "{raising}");
 }
+
+/// Verifies: [EXTENSION] (RULES.md D1133, D378) EXPLAIN ANALYZE of a
+/// grouping crossing the partitions of another, projections counted
+/// between the two, runs the part and gives the rows the query gives,
+/// each projection counted with a row a group of the first: of one
+/// projection and of two.
+#[test]
+fn an_analyzed_crossing_counts_its_projections() {
+    let (_db, a) = tables();
+    for set in TOGETHER {
+        exec(&a, set).unwrap();
+    }
+    for sql in [
+        "SELECT X.M, COUNT(*) FROM (SELECT G, CAST(CASE WHEN SUM(N) IS NULL THEN 0 ELSE SUM(N) END AS NUMERIC(18,0)) AS M FROM C GROUP BY G) AS X GROUP BY X.M",
+        "SELECT Y.P, COUNT(*) FROM (SELECT X.G, X.M + 1 AS P FROM (SELECT G, COUNT(*) AS M FROM C GROUP BY G) AS X) AS Y GROUP BY Y.P",
+    ] {
+        let found = rows(&a, sql).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+        let analyzed = a.analyzed(sql, &Params::new()).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+        assert_eq!(analyzed.rows, u64::try_from(found.len()).unwrap_or(u64::MAX), "{}", analyzed.text);
+        let below_top = analyzed.operators.iter().skip_while(|o| !o.label.starts_with("Aggregate")).skip(1);
+        let between = below_top.take_while(|o| !o.label.starts_with("Aggregate"));
+        let projections: Vec<u64> = between.filter(|o| o.label.starts_with("Project")).map(|o| o.rows).collect();
+        assert!(!projections.is_empty() && projections.iter().all(|&n| n == 900), "{}", analyzed.text);
+    }
+}

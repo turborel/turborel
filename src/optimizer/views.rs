@@ -176,7 +176,7 @@ mod tests {
     fn applied(rule: &dyn Rule, cond: Cond, node: impl Fn(Box<LogicalPlan>) -> LogicalPlan) -> Option<LogicalPlan> {
         let st = State::with_builtins(Box::new(MemoryCatalog::default()));
         let plan = LogicalPlan::Filter { cond, input: Box::new(node(scan())) };
-        rule.apply(&plan, &RuleContext { db: &st })
+        rule.apply(&plan, &RuleContext { db: &st, seen: &crate::physical::Seen::default() })
     }
 
     /// Verifies: [DESIGN] RULES.md D35, `PushFilterThroughProject`: a filter

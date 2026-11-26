@@ -1,7 +1,8 @@
 //! Unit tests of the join estimates from keys and bounds (RULES.md D384,
 //! D385): a join on a composite key, on a referential constraint, the
 //! bound of an equality to a key, bounds never below the true rows, and
-//! the pairs' corrections giving one answer for every order of a set.
+//! the pairs' corrections giving one answer for every order of a set,
+//! and a guessed column bounded by a declared key of its class (D1157).
 
 use super::Estimates;
 use super::joins::Classes;
@@ -203,4 +204,54 @@ fn a_table_changed_since_its_pass_keeps_its_bound() {
     let pairs = count(&s, "SELECT COUNT(*) FROM P A, P B WHERE A.SZ = B.SZ AND A.PK = 7");
     let (_, joined) = card(&s, "SELECT * FROM P A, P B WHERE A.SZ = B.SZ AND A.PK = 7");
     assert!(joined >= pairs, "bound {joined} below {pairs}");
+}
+
+/// The rows of customers, 1,500, and suppliers, 100, joined on their
+/// nation within the class that equates it with the nations' key, the
+/// nations' NK declared as `declared`, without statistics.
+fn paired_through(declared: &str) -> f64 {
+    let db = Database::new();
+    db.set_job_policy(crate::threads::JobPolicy::Manual).unwrap();
+    db.schema(&format!(
+        "CREATE SCHEMA AUTHORIZATION G
+           CREATE TABLE N (NK INTEGER {declared})
+           CREATE TABLE C (CK INTEGER NOT NULL, NK INTEGER NOT NULL)
+           CREATE TABLE S (SK INTEGER NOT NULL, NK INTEGER NOT NULL)"
+    ))
+    .unwrap();
+    let s = db.session("G");
+    let rows = |n: i32| (0_i32..n).map(|i| format!("({i}, {})", i % 25_i32)).collect::<Vec<_>>().join(", ");
+    s.run(&format!("INSERT INTO N VALUES {}", (0_i32..25_i32).map(|i| format!("({i})")).collect::<Vec<_>>().join(", "))).unwrap();
+    s.run(&format!("INSERT INTO C VALUES {}", rows(1_500_i32))).unwrap();
+    s.run(&format!("INSERT INTO S VALUES {}", rows(100_i32))).unwrap();
+    s.commit().unwrap();
+    let (st, _) = s.optimized("SELECT * FROM N").unwrap();
+    let leaves: Vec<crate::logical::LogicalPlan> =
+        ["C", "S", "N"].iter().map(|t| s.optimized(&format!("SELECT * FROM {t}")).unwrap().1).collect();
+    let leaves: Vec<&crate::logical::LogicalPlan> = leaves.iter().collect();
+    let member = |rel: usize, column: usize, distinct: f64| super::composite::Member { rel, column, distinct };
+    let class = vec![vec![member(0, 1, 1_500.0_f64), member(1, 1, 100.0_f64), member(2, 0, 25.0_f64)]];
+    let classes = Estimates::new(&st).keyed_classes(&leaves, &class);
+    1_500.0_f64 * 100.0_f64 * classes.fraction(|r| r < 2)
+}
+
+/// Verifies: [DESIGN] RULES.md D1157: without statistics, a column taken
+/// as a key, of its table's rows, is counted of no more values than a key
+/// NOT NULL its class equates, declared alone by a PRIMARY KEY or a
+/// UNIQUE: customers and suppliers paired on the nation their class
+/// equates with the 25 nations' key are estimated at a twenty-fifth of
+/// their product, not at the suppliers' rows. A UNIQUE of a column that
+/// may be null bounds nothing.
+///
+/// Regression test (R-TEST-7): customers and suppliers of one nation,
+/// joined through the nations before any statistics, were paired first,
+/// their pair estimated at the suppliers' rows.
+#[test]
+fn a_guessed_column_is_bounded_by_a_declared_key_of_its_class() {
+    for declared in ["NOT NULL PRIMARY KEY", "NOT NULL UNIQUE"] {
+        let rows = paired_through(declared);
+        assert!(close(rows, 6_000.0_f64), "{declared}: a twenty-fifth of the product: {rows}");
+    }
+    let rows = paired_through("UNIQUE");
+    assert!(close(rows, 100.0_f64), "a key that may be null bounds nothing: {rows}");
 }

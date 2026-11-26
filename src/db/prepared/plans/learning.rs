@@ -13,7 +13,7 @@ use super::Physical;
 use super::grown::Learnt;
 use crate::catalog::QualifiedName;
 use crate::db::State;
-use crate::physical::{Plan, prepared_plan, same_shape};
+use crate::physical::{Plan, Seen, prepared_plan, same_shape};
 
 /// \[DESIGN\] The executions in a row whose plans, made with their values
 /// and with their slots, must have one shape before the one with slots is
@@ -54,18 +54,19 @@ impl Learning {
     /// learned, reading `reads`, measured from them as they are in `st`
     /// (`grown.rs`), its scalar calls prepared (RULES.md D610); nothing,
     /// once learning fails, until a table it reads drifts, or of a plan
-    /// that cannot be kept.
-    pub(super) fn kept(self, reads: &Arc<[QualifiedName]>, st: &State) -> Physical {
+    /// that cannot be kept. Its tables are measured as the execution that
+    /// planned it saw them, `seen` (RULES.md D1089).
+    pub(super) fn kept(self, reads: &Arc<[QualifiedName]>, (st, seen): (&State, &Seen)) -> Physical {
         match self.outcome() {
             Learned::Kept(plan) => {
-                let learnt = Learnt::of(st, reads, &plan);
+                let learnt = Learnt::of((st, seen), reads, &plan);
                 match prepared_plan(*plan, crate::optimizer::prepared::budget(st)) {
                     Ok(kept) => Physical::Fixed(Arc::new(kept), Arc::clone(reads), Some(learnt)),
                     Err(_) => Physical::Varies(None),
                 }
             }
             Learned::Learning(learning) => Physical::Learning(learning),
-            Learned::Stopped => Physical::Varies(Some(Learnt::rows(st, reads))),
+            Learned::Stopped => Physical::Varies(Some(Learnt::rows((st, seen), reads))),
         }
     }
 
@@ -135,7 +136,7 @@ mod tests {
     #[test]
     fn a_plan_is_kept_once_learned_and_learning_stops_after_enough_runs() {
         let st = State::with_builtins(Box::new(crate::catalog::MemoryCatalog::default()));
-        let kept = |l: Learning| format!("{:?}", l.kept(&Arc::from(Vec::new()), &st));
+        let kept = |l: Learning| format!("{:?}", l.kept(&Arc::from(Vec::new()), (&st, &Seen::default())));
         assert!(kept(learned(LEARNED_RUNS, LEARNED_RUNS)).starts_with("Fixed"));
         assert!(kept(learned(LEARNED_RUNS - 1, LEARNED_RUNS)).starts_with("Learning"), "one too few in a row");
         let planless = Learning { last: None, agreed: LEARNED_RUNS, runs: LEARNED_RUNS };

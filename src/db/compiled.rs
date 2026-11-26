@@ -14,7 +14,7 @@ use crate::exec::is_table_access;
 use crate::logical::{LogicalPlan, fixed_outer};
 use crate::optimizer::{INLINE_FUNCTIONS, MARK_JOINS, SEMI_JOINS, UNNEST_SUBQUERIES, plugged};
 use crate::params::Params;
-use crate::physical::{PhysicalPlanner, Plan};
+use crate::physical::{PhysicalPlanner, Plan, Seen};
 use crate::value::Value;
 
 /// A cursor's specification bound and planned: its columns, its bound plan
@@ -32,15 +32,27 @@ pub(super) struct Compiled {
 
 /// Optimize a logical plan and choose its physical plan, to run.
 pub(super) fn plan(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    planned(st, logical, PhysicalPlanner::new(st), None)
+    plan_seen((st, &Seen::default()), logical)
+}
+
+/// As `plan`, of a statement that sees its tables' statistics as `seen`
+/// throughout, its other plannings too (RULES.md D1089).
+pub(super) fn plan_seen((st, seen): (&State, &Seen), logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
+    planned((st, seen), logical, PhysicalPlanner::new(st), None)
 }
 
 /// As `plan`, of a plan whose rows are a table's, read with their ids to
 /// change them: its subqueries left nested and its functions invoked, so
 /// the plan stays an access to that table (RULES.md D318).
 pub(super) fn plan_rows(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    let (optimized, trace) = plugged::optimize(st, logical, (None, ROW_ACCESS_OFF));
-    let physical = PhysicalPlanner::new(st).plan(&optimized);
+    rows_seen((st, &Seen::default()), logical)
+}
+
+/// As `plan_rows`, of a statement that sees its tables' statistics as
+/// `seen` (RULES.md D1089).
+fn rows_seen((st, seen): (&State, &Seen), logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
+    let (optimized, trace) = plugged::optimize((st, seen), logical, (None, ROW_ACCESS_OFF));
+    let physical = PhysicalPlanner::new(st).plan_seeing(&optimized, Some(seen));
     (optimized, trace, physical)
 }
 
@@ -53,33 +65,39 @@ pub(super) fn plan_rows(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&
 /// be, as `plan_rows` plans it. A subquery's outer references to a
 /// routine's variables are replaced by their slots first (`fixed_outer`).
 pub(super) fn plan_written(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
+    written_seen((st, &Seen::default()), logical)
+}
+
+/// As `plan_written`, of a statement that sees its tables' statistics as
+/// `seen` throughout, its other plannings too (RULES.md D1089).
+pub(super) fn written_seen((st, seen): (&State, &Seen), logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
     let logical = fixed_outer(logical);
-    let (optimized, trace) = plugged::optimize(st, logical.clone(), (None, WRITTEN_ACCESS_OFF));
-    let physical = PhysicalPlanner::new(st).plan(&optimized);
+    let (optimized, trace) = plugged::optimize((st, seen), logical.clone(), (None, WRITTEN_ACCESS_OFF));
+    let physical = PhysicalPlanner::new(st).plan_seeing(&optimized, Some(seen));
     if is_table_access(&physical) {
         return (optimized, trace, physical);
     }
     match located::located(optimized) {
         Some(found) => {
-            let planned = PhysicalPlanner::new(st).plan(&found);
+            let planned = PhysicalPlanner::new(st).plan_seeing(&found, Some(seen));
             (found, trace, planned)
         }
-        None => plan_rows(st, logical),
+        None => rows_seen((st, seen), logical),
     }
 }
 
 /// As `plan_written`, its paths chosen by `values` and its `?`s left
 /// slots, as `plan_slotted` plans a query (RULES.md D422), a probe taking
 /// an expression of them that can raise too (D793).
-pub(super) fn plan_written_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
+pub(super) fn plan_written_slotted((st, seen): (&State, &Seen), logical: LogicalPlan, values: &[Value]) -> Plan {
     let logical = fixed_outer(logical);
-    let (optimized, _) = plugged::optimize(st, logical.clone(), (None, WRITTEN_ACCESS_OFF));
-    let physical = PhysicalPlanner::slotted_raising(st, values).plan(&optimized);
+    let (optimized, _) = plugged::optimize((st, seen), logical.clone(), (None, WRITTEN_ACCESS_OFF));
+    let physical = PhysicalPlanner::slotted_raising(st, values).plan_seeing(&optimized, Some(seen));
     if is_table_access(&physical) {
         return physical;
     }
-    let found = located::located(optimized).unwrap_or_else(|| plugged::optimize(st, logical, (None, ROW_ACCESS_OFF)).0);
-    PhysicalPlanner::slotted_raising(st, values).plan(&found)
+    let found = located::located(optimized).unwrap_or_else(|| plugged::optimize((st, seen), logical, (None, ROW_ACCESS_OFF)).0);
+    PhysicalPlanner::slotted_raising(st, values).plan_seeing(&found, Some(seen))
 }
 
 /// The rules a plan of a table's rows read with their ids is optimized
@@ -94,34 +112,38 @@ const WRITTEN_ACCESS_OFF: &[&str] = &[MARK_JOINS, UNNEST_SUBQUERIES, INLINE_FUNC
 /// As `plan`, an extension's optimizer rule skipped raising its warning
 /// to `heard` (RULES.md D277).
 pub(super) fn plan_heard(st: &State, logical: LogicalPlan, heard: Option<&Warnings>) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    planned(st, logical, PhysicalPlanner::new(st), heard)
+    planned((st, &Seen::default()), logical, PhysicalPlanner::new(st), heard)
 }
 
 /// As `plan`, of a prepared statement's plan with its slots: its paths
 /// chosen by `values`, one execution's, its probes holding the slots, so
-/// that another execution may fill them (`physical/kept.rs`).
-pub(super) fn plan_slotted(st: &State, logical: LogicalPlan, values: &[Value]) -> Plan {
-    planned(st, logical, PhysicalPlanner::slotted(st, values), None).2
+/// that another execution may fill them (`physical/kept.rs`). The
+/// statement sees its tables' statistics as `seen`, as it saw them
+/// planning with its values (RULES.md D1089).
+pub(super) fn plan_slotted((st, seen): (&State, &Seen), logical: LogicalPlan, values: &[Value]) -> Plan {
+    planned((st, seen), logical, PhysicalPlanner::slotted(st, values), None).2
 }
 
 /// As `plan`, to show: each operator of the physical plan described, as
 /// EXPLAIN shows it (`physical/shown.rs`).
 fn described(st: &State, logical: LogicalPlan) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    planned(st, logical, PhysicalPlanner::describing(st), None)
+    planned((st, &Seen::default()), logical, PhysicalPlanner::describing(st), None)
 }
 
 /// `logical` optimized, by the built-in rules and the extensions', the
-/// rules that fired, and the physical plan `planner` chooses for it.
+/// rules that fired, and the physical plan `planner` chooses for it, each
+/// step seeing the tables' statistics as `seen` (RULES.md D1089).
 fn planned(
-    st: &State,
+    (st, seen): (&State, &Seen),
     logical: LogicalPlan,
     planner: PhysicalPlanner<'_>,
     heard: Option<&Warnings>,
 ) -> (LogicalPlan, Vec<&'static str>, Plan) {
-    let (optimized, trace) = plugged::optimize(st, logical, (heard, &[]));
+    let (optimized, trace) = plugged::optimize((st, seen), logical, (heard, &[]));
     // [DESIGN] the parts worth running in parallel marked (RULES.md D291),
     // then predicate transfer over the chains outside them (RULES.md D665).
-    let physical = crate::physical::transferred(st, crate::physical::parallel(st, planner.plan(&optimized)));
+    let physical = planner.plan_seeing(&optimized, Some(seen));
+    let physical = crate::physical::transferred(st, seen, crate::physical::parallel(st, seen, physical));
     (optimized, trace, physical)
 }
 

@@ -324,7 +324,9 @@ a phase of predicate transfer reads the three tables first, the
 suppliers in Oslo filtering the offers by a Bloom filter of their keys
 and those offers the parts, so each join is given only the rows that
 can match (PLANNER.PREDICATE_TRANSFER). Its line tells the chain's
-tables and the filters it makes:
+tables and the filters it makes. The offers' suppliers and the
+suppliers' keys are read by their join alone, so the projection over it
+gives them as NULL and the join above carries no copy of them:
 
 ```sql
 CREATE TABLE SUPPLIERS (ID INTEGER PRIMARY KEY, CITY VARCHAR(20));
@@ -371,11 +373,12 @@ OK
    Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
      HashJoin PARTS.ID = OFFERS.PART  (join order by DPccp: (PARTS (OFFERS SUPPLIERS)))
        SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
-       HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
-         SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
-         Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
-           SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
-(28 rows)
+       Project OFFERS.PART, NULL, OFFERS.PRICE, NULL, SUPPLIERS.CITY
+         HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
+           SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
+           Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
+             SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
+(29 rows)
 ```
 
 A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
@@ -430,7 +433,7 @@ OK
  Project S.NAME
    Filter S.SALARY > CASE WHEN 1 IS NULL THEN NULL ELSE AVG(T.SALARY) END
      HashJoin S.DEPT = T.DEPT
-       Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT
+       Project NULL, S.NAME, NULL, S.SALARY, S.DEPT
          SeqScan ANN.STAFF  (rows=4, cost=3.8)
        Project T.DEPT, 1, AVG(T.SALARY)
          Project T.DEPT, AVG(T.SALARY)
@@ -547,6 +550,108 @@ OK
  Project E.ID, E.PAY
    SeqScan ANN.EMP  (rows=3, cost=3.0)
 (12 rows)
+```
+
+Each department's pay, grouped by the department's key and its name.
+The rule reduce_grouping_keys groups by the key alone and carries the
+name, which the key decides
+([Functionally dependent columns](../06-queries.md#functionally-dependent-columns)):
+
+```sql
+CREATE TABLE OFFICE (ID INTEGER PRIMARY KEY, NAME VARCHAR(10));
+CREATE TABLE HAND (ID INTEGER PRIMARY KEY, DEPT INTEGER NOT NULL, PAY INTEGER);
+INSERT INTO OFFICE VALUES (1, 'north'), (2, 'south');
+INSERT INTO HAND VALUES (1, 1, 100), (2, 2, 200), (3, 2, 300);
+COMMIT;
+EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) FROM OFFICE D JOIN HAND E ON E.DEPT = D.ID GROUP BY D.ID, D.NAME;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project D.ID, D.NAME, SUM(E.PAY)
+   Aggregate group by [D.ID, D.NAME] computing [SUM(E.PAY)]
+     Filter E.DEPT = D.ID
+       Product
+         Scan ANN.OFFICE
+         Scan ANN.HAND
+ -- rules: reduce_grouping_keys
+ -- optimized:
+ Project D.ID, D.NAME, SUM(E.PAY)
+   Project D.ID, D.NAME, SUM(E.PAY)
+     Aggregate group by [D.ID] computing [SUM(E.PAY), D.NAME]
+       Filter E.DEPT = D.ID
+         Product
+           Scan ANN.OFFICE
+           Scan ANN.HAND
+ -- physical:
+ Project D.ID, D.NAME, SUM(E.PAY)
+   Aggregate group by [D.ID] computing [SUM(E.PAY), D.NAME]
+     Project D.ID, D.NAME, E.ID, E.DEPT, E.PAY
+       HashJoin E.DEPT = D.ID
+         SeqScan ANN.HAND  (rows=3, cost=2.8)
+         SeqScan ANN.OFFICE  (rows=2, cost=2.0)
+(23 rows)
+```
+
+The department of the greatest pay, of the same tables. The rule
+fetch_dependents_late leaves the name out of the grouping and the sort,
+and reads it of OFFICE by its key for the one row FETCH FIRST keeps. The
+rows are sorted again above that join:
+
+```sql
+EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) AS PAID FROM OFFICE D JOIN HAND E ON E.DEPT = D.ID
+    GROUP BY D.ID, D.NAME ORDER BY PAID DESC FETCH FIRST 1 ROW ONLY;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Limit fetch 1
+   Sort SUM(E.PAY) DESC
+     Project D.ID, D.NAME, SUM(E.PAY)
+       Aggregate group by [D.ID, D.NAME] computing [SUM(E.PAY)]
+         Filter E.DEPT = D.ID
+           Product
+             Scan ANN.OFFICE
+             Scan ANN.HAND
+ -- rules: reduce_grouping_keys, fetch_dependents_late
+ -- optimized:
+ Sort SUM(E.PAY) DESC
+   Project D.ID, D.NAME, SUM(E.PAY)
+     Filter D.ID = D.ID
+       Product
+         Limit fetch 1
+           Sort SUM(E.PAY) DESC
+             Project D.ID, SUM(E.PAY), D.ID
+               Project D.ID, SUM(E.PAY), D.ID
+                 Aggregate group by [D.ID] computing [SUM(E.PAY)]
+                   Filter E.DEPT = D.ID
+                     Product
+                       Scan ANN.OFFICE
+                       Scan ANN.HAND
+         Scan ANN.OFFICE
+ -- physical:
+ Sort SUM(E.PAY) DESC
+   Project D.ID, D.NAME, SUM(E.PAY)
+     HashJoin D.ID = D.ID
+       SeqScan ANN.OFFICE  (rows=2, cost=2.0)
+       Limit fetch 1
+         Sort SUM(E.PAY) DESC
+           Project D.ID, SUM(E.PAY), D.ID
+             Aggregate group by [D.ID] computing [SUM(E.PAY)]
+               Project D.ID, D.NAME, E.ID, E.DEPT, E.PAY
+                 HashJoin E.DEPT = D.ID
+                   SeqScan ANN.HAND  (rows=3, cost=2.8)
+                   SeqScan ANN.OFFICE  (rows=2, cost=1.8)
+(38 rows)
 ```
 
 A join of SALES and PARTS, run on one thread. Each row of SALES probes
