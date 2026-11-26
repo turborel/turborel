@@ -58,7 +58,9 @@ impl Typed {
     ///
     /// SQLCODE -901 if the bytes are not such states, or not of `agg`.
     pub(in crate::exec::table) fn read(reader: &mut Reader<'_>, len: usize, agg: &AggCall) -> Result<Typed> {
-        let template = Typed::of(agg.func.0.columnar().map(|c| c.0), &agg.result);
+        // A part's column is its function's (RULES.md D1186).
+        let own = || Typed::of(agg.func.0.columnar().map(|c| c.0), &agg.result);
+        let template = super::super::parts::column_of(agg).or_else(own);
         match (reader.u8()?, template) {
             (COUNT, Some(Typed::Count(_))) => Ok(Typed::Count(counts(reader, len)?)),
             (EXACT, Some(Typed::Exact(Exact { kind, result, .. }))) => {

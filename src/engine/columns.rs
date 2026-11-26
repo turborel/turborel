@@ -226,18 +226,19 @@ impl<'a> Chunk<'a> {
     /// \[DESIGN\] Its values at positions `from` to `to`, character strings
     /// of type `t`, as text pushed to `text` and where each ends to `ends`,
     /// a CHARACTER string padded as it is read, and whether each is null to
-    /// `nulls` (`encoded::Body::texts`): none if `t` is not a character
-    /// string type or its encoding does not hold them as text.
+    /// `nulls` (`encoded::Body::texts`), judged UTF-8 by `kernels`: none if
+    /// `t` is not a character string type or its encoding does not hold
+    /// them as text.
     pub fn texts(
         &self,
         (from, to): (usize, usize),
         (text, ends, nulls): (&mut String, &mut Vec<usize>, &mut Mask),
-        t: &DataType,
+        (t, kernels): (&DataType, &dyn crate::kernels::Kernels),
     ) -> Option<()> {
         if to > self.count {
             return None;
         }
-        self.body.texts((from, to), (text, ends), (|n| self.is_null(n), padding(t)?))?;
+        self.body.texts((from, to), (text, ends), (|n| self.is_null(n), padding(t)?, kernels))?;
         self.nulls_of((from, to), nulls);
         Some(())
     }

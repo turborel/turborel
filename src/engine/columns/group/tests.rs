@@ -16,6 +16,7 @@ use crate::value::{CompOp, Decimal, Spelled};
 
 mod records;
 mod truncated;
+mod wanted;
 
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
 const TEXT: DataType = DataType::varying(100);
@@ -62,8 +63,8 @@ fn written(pages: &Pages<'_, Plain>, (first, step): (u64, u64), count: i128) -> 
     assert_eq!((group.first, group.last, group.rows), (first, *ids.last().unwrap(), u32::try_from(count).unwrap()));
     assert_eq!(group.row_ids(pages).unwrap(), ids);
     let parts = |zones: &Vec<Zone>| zones.iter().map(|z| z.parts.len()).sum::<usize>();
-    assert!(count < 1000 || group.columns.iter().all(|zones| parts(zones) > 1), "columns span parts");
-    assert!(count < 1000 || group.columns.iter().any(|zones| zones.len() > 1), "a column spans pages");
+    assert!(count < 1000 || group.columns.iter().flatten().all(|zones| parts(zones) > 1), "columns span parts");
+    assert!(count < 1000 || group.columns.iter().flatten().any(|zones| zones.len() > 1), "a column spans pages");
     for n in [0_usize, 1, 999, ids.len().saturating_sub(1)].into_iter().filter(|&n| n < ids.len()) {
         let at = group.position(pages, ids[n]).unwrap().unwrap();
         assert_eq!(usize::try_from(at).unwrap(), n);
@@ -101,15 +102,16 @@ fn groups_read_back() {
     for (first, step) in [(100_u64, 1_u64), (7, 3)] {
         let group = written(&pages, (first, step), 4000);
         assert_eq!(group.ids.is_empty(), step == 1, "ids kept only if not every one");
-        let back = read(&pages, group.header[0], &TYPES).unwrap();
+        let back = read(&pages, group.header[0], &TYPES, None).unwrap();
         assert_eq!(
             (back.first, back.last, back.rows, back.ids.clone(), back.header.clone()),
             (group.first, group.last, group.rows, group.ids.clone(), group.header.clone())
         );
-        let bounds =
-            |g: &Group| g.columns.iter().flatten().map(|z| (z.run, z.nulls, format!("{:?} {:?}", z.bounds, z.parts))).collect::<Vec<_>>();
+        let bounds = |g: &Group| {
+            g.columns.iter().flatten().flatten().map(|z| (z.run, z.nulls, format!("{:?} {:?}", z.bounds, z.parts))).collect::<Vec<_>>()
+        };
         assert_eq!(bounds(&back), bounds(&group));
-        assert!(group.pages().len() > group.header.len());
+        assert!(group.pages().unwrap().len() > group.header.len());
     }
 }
 
@@ -118,7 +120,7 @@ fn groups_read_back() {
 /// matches among them, and fewer than all.
 fn two_columns_keep_the_parts_the_first_may_match(group: &Group, pages: &Pages<'_, Plain>) {
     let two = Condition { columns: vec![0, 2], probe: Probe::Prefix { equal: vec![int(1)], then: None } };
-    let of_two = candidates(group, Some(&Conjunction::of(two.clone())));
+    let of_two = candidates(group, Some(&Conjunction::of(two.clone()))).unwrap();
     let all = rows(group, pages, &TYPES, &[0, 1, 2], (0, 4000)).unwrap();
     for (n, _) in all.iter().enumerate().filter(|(_, r)| two.matches(r)) {
         let at = u32::try_from(n).unwrap();
@@ -152,7 +154,7 @@ fn scans_skip_chunks_a_condition_cannot_match() {
         columns: vec![2],
         probe: Probe::Range { equal: Vec::new(), low: Box::new((CompOp::Ge, int(10))), high: Box::new((CompOp::Le, int(11))) },
     };
-    let runs = candidates(&group, Some(&Conjunction::of(between.clone())));
+    let runs = candidates(&group, Some(&Conjunction::of(between.clone()))).unwrap();
     let read: u32 = runs.iter().map(|(from, to)| to.saturating_sub(*from)).sum();
     // The parts holding them, of 1,024 rows each: rows 1,000 to 1,199 lie
     // in the first two, though a chunk of runs holds thousands of rows.
@@ -161,30 +163,31 @@ fn scans_skip_chunks_a_condition_cannot_match() {
         runs.iter().flat_map(|&run| rows(&group, &pages, &TYPES, &[0, 2], run).unwrap()).filter(|r| between.matches(r)).collect();
     assert_eq!(found.len(), 200);
     assert!(found.iter().all(|r| r[1].is_null()), "a column not asked for is null");
-    assert_eq!(candidates(&group, None), vec![(0, 4000)]);
+    assert_eq!(candidates(&group, None).unwrap(), vec![(0, 4000)]);
     two_columns_keep_the_parts_the_first_may_match(&group, &pages);
     let none = Condition { columns: vec![2], probe: Probe::Compare { op: CompOp::Gt, value: int(100) } };
-    assert!(candidates(&group, Some(&Conjunction::of(none))).is_empty(), "no chunk may match");
+    assert!(candidates(&group, Some(&Conjunction::of(none))).unwrap().is_empty(), "no chunk may match");
     // Of two conditions, the chunks both may match: K below 1,050 keeps
     // the runs of 10 and 11 that begin before it.
     let below = Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Lt, value: int(1050) } };
-    let both_runs = candidates(&group, Some(&Conjunction(vec![Conjunct::Condition(between.clone()), Conjunct::Condition(below.clone())])));
+    let both_runs =
+        candidates(&group, Some(&Conjunction(vec![Conjunct::Condition(between.clone()), Conjunct::Condition(below.clone())]))).unwrap();
     let first: u32 = both_runs.iter().map(|(from, to)| to.saturating_sub(*from)).sum();
     assert!(first > 0 && first < read, "fewer than of one alone: {first} of {read}");
     assert!(both_runs.iter().all(|&(from, _)| from < 1050), "{both_runs:?}");
     let above = Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Gt, value: int(3000) } };
     assert!(
-        candidates(&group, Some(&Conjunction(vec![Conjunct::Condition(between), Conjunct::Condition(above)]))).is_empty(),
+        candidates(&group, Some(&Conjunction(vec![Conjunct::Condition(between), Conjunct::Condition(above)]))).unwrap().is_empty(),
         "no chunk both may match"
     );
-    assert_eq!(candidates(&group, Some(&Conjunction(Vec::new()))), vec![(0, 4000)], "no condition");
+    assert_eq!(candidates(&group, Some(&Conjunction(Vec::new()))).unwrap(), vec![(0, 4000)], "no condition");
     // K has no null: IS NULL keeps no chunk, IS NOT NULL every one; IN of
     // two groups' values keeps their parts, each value's in at most two.
     let null = |not| Conjunction(vec![Conjunct::Null { column: 0, not }]);
-    assert!(candidates(&group, Some(&null(false))).is_empty(), "no null");
-    assert_eq!(candidates(&group, Some(&null(true))), vec![(0, 4000)]);
+    assert!(candidates(&group, Some(&null(false))).unwrap().is_empty(), "no null");
+    assert_eq!(candidates(&group, Some(&null(true))).unwrap(), vec![(0, 4000)]);
     let listed = Conjunction(vec![Conjunct::In { column: 2, values: vec![int(10), int(30)] }]);
-    let kept: u32 = candidates(&group, Some(&listed)).iter().map(|(from, to)| to.saturating_sub(*from)).sum();
+    let kept: u32 = candidates(&group, Some(&listed)).unwrap().iter().map(|(from, to)| to.saturating_sub(*from)).sum();
     assert!((200..4000).contains(&kept), "the parts of the 200 rows of 10 and 30, not all: {kept}");
 }
 
@@ -211,7 +214,7 @@ fn a_top_bound_skips_chunks_past_it() {
     let group = written(&pages, (1, 1), 4000);
     let read = |t: &Arc<Threshold>| {
         let told = Conjunction(vec![Conjunct::Dynamic { column: 0, threshold: Arc::clone(t) }]);
-        candidates(&group, Some(&told)).iter().map(|(from, to)| to.saturating_sub(*from)).sum::<u32>()
+        candidates(&group, Some(&told)).unwrap().iter().map(|(from, to)| to.saturating_sub(*from)).sum::<u32>()
     };
     let ascending = Arc::new(Threshold::new(false));
     assert_eq!(read(&ascending), 4000, "no bound yet");
@@ -221,7 +224,7 @@ fn a_top_bound_skips_chunks_past_it() {
     ascending.raise(&int(-1));
     assert_eq!(read(&ascending), 0, "below the least");
     let told = Conjunction(vec![Conjunct::Dynamic { column: 0, threshold: Arc::clone(&ascending) }]);
-    assert!(!Summary::of(&group, group.header[0]).may_match(Some(&told)), "the group ruled out");
+    assert!(!Summary::of(&group, group.header[0]).unwrap().may_match(Some(&told)), "the group ruled out");
     let descending = Arc::new(Threshold::new(true));
     descending.raise(&int(3500));
     let from = read(&descending);
@@ -252,12 +255,12 @@ fn what_groups_refuse() {
     let wrong = vec![vec![Value::Char("x".into()), Value::Null, int(1)]];
     assert!(Group::write(&pages, &TYPES, (&[1], &wrong), (&[], &[], &[])).is_err(), "not of its types");
     let group = written(&pages, (1, 1), 10);
-    assert_eq!(read(&pages, group.header[0], &TYPES[..2]).err().map(|e| e.code), Some(Code::Corrupt), "other columns");
+    assert_eq!(read(&pages, group.header[0], &TYPES[..2], None).err().map(|e| e.code), Some(Code::Corrupt), "other columns");
     let mut written_pages = Vec::new();
     let other = put_chain(&pages, &[9, 1, 2], &mut written_pages).unwrap();
-    assert_eq!(read(&pages, other[0], &TYPES).err().map(|e| e.code), Some(Code::Corrupt), "another format");
+    assert_eq!(read(&pages, other[0], &TYPES, None).err().map(|e| e.code), Some(Code::Corrupt), "another format");
     let short = put_chain(&pages, &[GROUP_FORMAT, 1, 2], &mut written_pages).unwrap();
-    assert_eq!(read(&pages, short[0], &TYPES).err().map(|e| e.code), Some(Code::Corrupt), "cut short");
+    assert_eq!(read(&pages, short[0], &TYPES, None).err().map(|e| e.code), Some(Code::Corrupt), "cut short");
     pages.free(&written_pages);
 }
 
@@ -293,7 +296,7 @@ fn groups_of_rows_out_of_order_read_back() {
         assert_eq!(group.position(&pages, ids[n]).unwrap(), Some(u32::try_from(n).unwrap()));
     }
     assert_eq!(group.position(&pages, 4100).unwrap(), None);
-    let back = read(&pages, group.header[0], &TYPES).unwrap();
+    let back = read(&pages, group.header[0], &TYPES, None).unwrap();
     assert_eq!((back.ids.clone(), back.by_id.clone()), (group.ids.clone(), group.by_id.clone()));
     assert_eq!(back.order, vec![1, 0], "the columns its rows are sorted by");
 }
@@ -328,12 +331,12 @@ fn groups_skip_parts_by_their_filters() {
     let ids: Vec<RowId> = (1..=4000_u64).collect();
     let all: Vec<Row> = (0..4000).map(row).collect();
     let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[0, 1], &[])).unwrap();
-    assert_eq!(group.blooms(), vec![0, 1]);
-    let filters = group.columns[0].iter().flat_map(|z| &z.parts).filter_map(|p| p.filter).count();
-    assert_eq!(filters, group.columns[0].iter().map(|z| z.parts.len()).sum::<usize>(), "one of each part");
-    let back = read(&pages, group.header[0], &TYPES).unwrap();
-    assert_eq!(back.blooms(), vec![0, 1], "read back");
-    assert!(group.pages().len() > written(&pages, (1, 1), 4000).pages().len(), "on pages of their own");
+    assert_eq!(group.blooms().unwrap(), vec![0, 1]);
+    let filters = group.zones(0).unwrap().unwrap().iter().flat_map(|z| &z.parts).filter_map(|p| p.filter).count();
+    assert_eq!(filters, group.zones(0).unwrap().unwrap().iter().map(|z| z.parts.len()).sum::<usize>(), "one of each part");
+    let back = read(&pages, group.header[0], &TYPES, None).unwrap();
+    assert_eq!(back.blooms().unwrap(), vec![0, 1], "read back");
+    assert!(group.pages().unwrap().len() > written(&pages, (1, 1), 4000).pages().unwrap().len(), "on pages of their own");
     let equal = |column: usize, value: Value| {
         let c = Condition { columns: vec![column], probe: Probe::Compare { op: CompOp::Eq, value } };
         read_candidates(&group, &pages, Some(&Conjunction::of(c))).unwrap()
@@ -347,10 +350,10 @@ fn groups_skip_parts_by_their_filters() {
     assert!(count_of(&read_candidates(&group, &pages, Some(&listed)).unwrap()) <= PART_ROWS * 2, "two parts");
     let range = Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Gt, value: int(10) } };
     let by_range = Conjunction::of(range);
-    assert_eq!(read_candidates(&group, &pages, Some(&by_range)).unwrap(), candidates(&group, Some(&by_range)), "not an equality");
+    assert_eq!(read_candidates(&group, &pages, Some(&by_range)).unwrap(), candidates(&group, Some(&by_range)).unwrap(), "not an equality");
     let unfiltered = Condition { columns: vec![2], probe: Probe::Compare { op: CompOp::Eq, value: int(7) } };
     let of_two = Conjunction::of(unfiltered);
-    assert_eq!(read_candidates(&group, &pages, Some(&of_two)).unwrap(), candidates(&group, Some(&of_two)), "no filters");
+    assert_eq!(read_candidates(&group, &pages, Some(&of_two)).unwrap(), candidates(&group, Some(&of_two)).unwrap(), "no filters");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, a group's summary: written as a
@@ -376,7 +379,7 @@ fn summaries_read_back() {
     let group =
         Group::write(&pages, &TYPES, (&(1..=4000_u64).collect::<Vec<_>>(), &(0..4000).map(row).collect::<Vec<_>>()), (&[1], &[0], &[]))
             .unwrap();
-    let summary = Summary::of(&group, group.header[0]);
+    let summary = Summary::of(&group, group.header[0]).unwrap();
     let mut bytes = Vec::new();
     put_summary(&mut bytes, &summary, &TYPES).unwrap();
     put_summary(&mut bytes, &summary, &TYPES).unwrap();
@@ -428,14 +431,14 @@ fn pax_groups_read_back_as_columns_do() {
     };
     let pax = Pages { pax: true, ..columns };
     let (by_columns, hybrid) = (written(&columns, (100, 1), 4000), written(&pax, (100, 1), 4000));
-    assert!(hybrid.pax && !by_columns.pax && read(&pax, hybrid.header[0], &TYPES).unwrap().pax);
-    for (zones, others) in hybrid.columns.iter().zip(hybrid.columns.iter().skip(1)) {
+    assert!(hybrid.pax && !by_columns.pax && read(&pax, hybrid.header[0], &TYPES, None).unwrap().pax);
+    for (zones, others) in hybrid.columns.iter().flatten().zip(hybrid.columns.iter().flatten().skip(1)) {
         let place = |z: &Zone| (z.run.first, z.run.rows, z.run.page);
         assert_eq!(zones.iter().map(place).collect::<Vec<_>>(), others.iter().map(place).collect::<Vec<_>>(), "a page a range of rows");
     }
-    let pages = hybrid.pages();
+    let pages = hybrid.pages().unwrap();
     assert!(pages.windows(2).all(|w| w[0] != w[1]), "each page once");
-    assert_eq!(pages.len(), hybrid.columns[0].len() + hybrid.header.len());
+    assert_eq!(pages.len(), hybrid.zones(0).unwrap().unwrap().len() + hybrid.header.len());
     let read_all = |g: &Group, p: &Pages<'_, Plain>| rows(g, p, &TYPES, &[0, 1, 2], (0, 4000)).unwrap();
     assert_eq!(format!("{:?}", read_all(&hybrid, &pax)), format!("{:?}", read_all(&by_columns, &columns)));
     let between = Condition {
@@ -455,6 +458,9 @@ fn pax_groups_read_back_as_columns_do() {
     let long: Vec<Row> = (0..40).map(|n| vec![int(n), text(n), int(n)]).collect();
     let ids: Vec<RowId> = (1..=40).collect();
     let group = Group::write(&small, &TYPES, (&ids, &long), (&[], &[], &[])).unwrap();
-    assert!(group.columns[1].iter().any(|z| z.run.len == 0) && group.columns[1].iter().any(|z| z.run.len > 0), "apart and together");
+    assert!(
+        group.zones(1).unwrap().unwrap().iter().any(|z| z.run.len == 0) && group.zones(1).unwrap().unwrap().iter().any(|z| z.run.len > 0),
+        "apart and together"
+    );
     assert_eq!(format!("{:?}", rows(&group, &small, &TYPES, &[0, 1, 2], (0, 40)).unwrap()), format!("{long:?}"));
 }

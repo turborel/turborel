@@ -244,3 +244,8 @@ fn crc32c_crc(register: u32, data: &[u8]) -> u32 {
 pub(crate) fn find_bytes(_isa: Isa, haystack: &[u8], needle: &[u8]) -> Option<usize> {
     portable::find::find_bytes(haystack, needle)
 }
+
+/// `Kernels::utf8`: by the portable body (RULES.md D1175).
+pub(crate) fn utf8(_isa: Isa, bytes: &[u8]) -> Option<&str> {
+    std::str::from_utf8(bytes).ok()
+}

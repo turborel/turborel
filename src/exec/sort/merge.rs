@@ -329,7 +329,7 @@ mod tests {
         for column in &columns {
             let rows: Vec<Row> = (0_i128..60_i128).map(|n| vec![column(n), int(n % 3_i128), int(n)]).collect();
             for (descending, nulls_first) in [(false, false), (false, true), (true, false), (true, true)] {
-                let first = SortKey { column: 0, descending, nulls_first };
+                let first = SortKey { column: 0, descending, nulls_first, octets: false };
                 for keys in [vec![first], vec![first, SortKey::new(1, SortOrder::of(!descending, None))]] {
                     let (once, twice, whole) = merged(&keys, &rows, 7);
                     assert_eq!(format!("{once:?}"), format!("{whole:?}"), "{keys:?}");

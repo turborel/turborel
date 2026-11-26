@@ -23,6 +23,7 @@ mod find;
 mod hash;
 mod select;
 mod sum;
+mod utf8;
 pub(crate) mod xxh3;
 
 /// \[DESIGN\] The instructions a `Simd` runs on: made only by `isa`, of a
@@ -326,5 +327,14 @@ pub(crate) fn find_bytes(isa: Isa, haystack: &[u8], needle: &[u8]) -> Option<usi
         Isa::Portable | Isa::Sse2 => portable::find::find_bytes(haystack, needle),
         Isa::Avx2 => find::find_avx2(haystack, needle),
         Isa::Avx512 => find::find_avx512(haystack, needle),
+    }
+}
+
+/// `Kernels::utf8`: 32 bytes a step on AVX2, which AVX-512's level has
+/// too (RULES.md D1175).
+pub(crate) fn utf8(isa: Isa, bytes: &[u8]) -> Option<&str> {
+    match isa {
+        Isa::Portable | Isa::Sse2 => std::str::from_utf8(bytes).ok(),
+        Isa::Avx2 | Isa::Avx512 => utf8::utf8_avx2(bytes),
     }
 }

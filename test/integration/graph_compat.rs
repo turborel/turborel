@@ -9,8 +9,8 @@ use turborel::db::{Database, Session};
 
 mod cypher_clauses;
 mod front_ends;
+mod identity;
 mod match_forms;
-mod oracle;
 mod reachability;
 
 /// Schema A of people as node tables and who befriends whom, Alice to
@@ -127,7 +127,7 @@ fn last_node_joins_paths_10_1() {
 /// Verifies: [EXTENSION] [GS §10.1]: OR and NOT around MATCH, an edge alias written
 /// twice, and a quantifier outside SHORTEST_PATH.
 #[test]
-fn match_beyond_sql_server_10_1() {
+fn match_under_or_and_not_10_1() {
     let (_db, s) = people();
     let either = "SELECT DISTINCT p.name, q.name FROM person p, person q, friend_of f \
                   WHERE (MATCH(p-(f)->q) OR MATCH(q-(f)->p)) AND p.name = 'Bob'";

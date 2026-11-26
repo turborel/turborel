@@ -94,6 +94,7 @@ pub fn contract(kernels: &dyn Kernels) {
     distances(kernels);
     crc32c(kernels);
     finding(kernels);
+    utf8s(kernels);
 }
 
 /// Checks the hashes of texts `kernels` makes against XXH3-64 of each
@@ -458,4 +459,81 @@ fn finding(kernels: &dyn Kernels) {
     let mut late = b"abcab".repeat(40);
     late.extend_from_slice(b"abcabd");
     assert_eq!(kernels.find_bytes(&late, b"abcabd"), Some(200));
+}
+
+/// Places of two to four bytes among others: either side of a lane's and
+/// a step's edges, of the first, second and third steps.
+const PLACES: [usize; 14] = [0, 1, 13, 14, 15, 16, 29, 30, 31, 32, 33, 63, 64, 95];
+
+/// Third and fourth bytes tried: either side of each range a byte of a
+/// character may take.
+const LATER: [u8; 10] = [0x00, 0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0, 0xFF];
+
+/// Checks that `kernels` judge `bytes` as `str::from_utf8` does, the
+/// text compared as bytes, so a text wrongly judged is never printed.
+fn same(kernels: &dyn Kernels, bytes: &[u8]) {
+    let ok = std::str::from_utf8(bytes).is_ok().then_some(bytes);
+    assert_eq!(kernels.utf8(bytes).map(str::as_bytes), ok, "{bytes:02X?}");
+}
+
+/// `bytes` at `at` of 99 bytes of `a`.
+fn among(at: usize, bytes: &[u8]) -> Vec<u8> {
+    let mut all = vec![b'a'; 99];
+    all[at..at + bytes.len()].copy_from_slice(bytes);
+    all
+}
+
+/// Checks `lead`, of three or four bytes, and `second` after it, with
+/// each of `LATER` third and, of a lead of four, each fourth.
+fn leads(kernels: &dyn Kernels, [lead, second]: [u8; 2]) {
+    for third in LATER {
+        same(kernels, &among(15, &[lead, second, third]));
+        same(kernels, &among(30, &[lead, second, third]));
+        let fourths = LATER.into_iter().filter(|_| lead >= 0xF0);
+        for (fourth, at) in fourths.flat_map(|fourth| [13, 14, 29, 30, 31].map(|at| (fourth, at))) {
+            same(kernels, &among(at, &[lead, second, third, fourth]));
+        }
+    }
+}
+
+/// Checks the UTF-8 `kernels` judge (RULES.md D1175) against
+/// `str::from_utf8`: of text of characters of one to four bytes, from
+/// every place of a step to every length past three steps, cut within
+/// characters among them; of every pair of bytes, and every lead of three
+/// and four bytes with every second byte and a few third and fourth, at
+/// places on and across a lane's and a step's edges; of text with one
+/// byte changed at each place; and of bytes of no structure.
+fn utf8s(kernels: &dyn Kernels) {
+    let text = "aé€😀b z\u{7FF}\u{800}\u{FFFF}\u{10000}\u{10FFFF}".repeat(8);
+    let bytes = text.as_bytes();
+    for start in 0..32 {
+        for end in start..bytes.len().min(start + 110) {
+            same(kernels, &bytes[start..end]);
+        }
+    }
+    for first in 0..=u8::MAX {
+        for second in 0..=u8::MAX {
+            for at in PLACES {
+                same(kernels, &among(at, &[first, second]));
+            }
+        }
+    }
+    for lead in 0xE0..=0xF4_u8 {
+        for second in 0..=u8::MAX {
+            leads(kernels, [lead, second]);
+        }
+    }
+    for at in 0..bytes.len().min(200) {
+        for changed in [0x00, b'a', 0x80, 0xBF, 0xC0, 0xC2, 0xE0, 0xED, 0xEF, 0xF0, 0xF4, 0xF5, 0xFF] {
+            let mut bytes = bytes[..200].to_vec();
+            bytes[at] = changed;
+            same(kernels, &bytes);
+        }
+    }
+    for len in 0..300 {
+        same(kernels, &pattern(len, 11));
+        let high: Vec<u8> = pattern(len, 3).iter().map(|b| b & 0x7F).collect();
+        same(kernels, &high);
+    }
+    assert_eq!(kernels.utf8(bytes).map(str::as_bytes), Some(bytes));
 }

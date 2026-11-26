@@ -450,8 +450,7 @@ WKT is read in any case, with decimal and exponent coordinates. A
 MULTIPOINT's members are in parentheses, `MULTIPOINT ((1 2), (3 4))`.
 WKB is read in either byte order, mixed orders within a collection too,
 and written little-endian. POINT EMPTY is written in WKB as a pair of
-NaN coordinates, the convention of
-[GEOS](https://libgeos.org/specifications/wkb/), and no other
+NaN coordinates, and no other
 coordinate may be infinite or NaN.
 
 Neither form carries the SRID, so a value is exported with ST_SRID
