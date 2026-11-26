@@ -97,9 +97,9 @@ fn the_first_groups_given_are_whole() {
     let (_db, a) = tables();
     for (table, parallel) in [("C", false), ("C", true), ("R", false), ("R", true)] {
         if parallel {
-            together(&a)
+            together(&a);
         } else {
-            alone(&a)
+            alone(&a);
         }
         for (shape, least) in SHAPES {
             let sql = shape.replace("{t}", table);
@@ -150,9 +150,9 @@ fn a_grouping_not_asked_for_fewer_gives_whole_groups() {
     let (_db, a) = tables();
     for parallel in [false, true] {
         if parallel {
-            together(&a)
+            together(&a);
         } else {
-            alone(&a)
+            alone(&a);
         }
         for sql in [
             "SELECT G, COUNT(*) FROM C GROUP BY G HAVING COUNT(*) > 13",
@@ -192,7 +192,7 @@ fn a_grouping_that_could_raise_reads_every_row() {
             let last = k >= 2998;
             format!(
                 "({k}, {}, {}, {}, {})",
-                k / 2,
+                k.div_euclid(2),
                 if last { "NULL".into() } else { k.to_string() },
                 i64::from(!last),
                 if last { &big } else { "1" }
@@ -204,9 +204,9 @@ fn a_grouping_that_could_raise_reads_every_row() {
     db.maintain().unwrap();
     for parallel in [false, true] {
         if parallel {
-            together(&a)
+            together(&a);
         } else {
-            alone(&a)
+            alone(&a);
         }
         let nulls = "SELECT G, SUM(N) FROM W GROUP BY G FETCH FIRST 3 ROWS ONLY";
         assert_eq!(rows(&a, nulls).map(|r| r.len()), Ok(3), "{nulls}");
