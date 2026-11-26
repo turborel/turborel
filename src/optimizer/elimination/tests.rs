@@ -93,7 +93,8 @@ fn applied(exprs: Vec<Expr>, input: LogicalPlan) -> Option<LogicalPlan> {
     let mut catalog = MemoryCatalog::default();
     catalog.create_schema("S", "S", vec![keyed, table("Q", Vec::new())]);
     let st = State::with_builtins(Box::new(catalog));
-    EliminateJoins.apply(&LogicalPlan::Project { exprs, input: Box::new(input) }, &RuleContext { db: &st })
+    EliminateJoins
+        .apply(&LogicalPlan::Project { exprs, input: Box::new(input) }, &RuleContext { db: &st, seen: &crate::physical::Seen::default() })
 }
 
 fn scan(ident: &str) -> LogicalPlan {

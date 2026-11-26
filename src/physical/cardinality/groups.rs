@@ -82,6 +82,6 @@ impl Estimates<'_> {
         let indexes = db.catalog.indexes(table);
         let ix = indexes.iter().find(|ix| !ix.is_collated() && !db.building.contains(&ix.name) && exact(&ix.columns))?;
         let found = std::sync::Arc::clone(db.index_of(&ix.name).ok()?);
-        db.distinct_keys(table, &*found)
+        self.seen().table_keys(db, (table, &ix.name), &*found)
     }
 }

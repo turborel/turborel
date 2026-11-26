@@ -696,6 +696,7 @@ verification approach DO-178C expects (§8).
 | D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
 | D1086 | An equality of an expression of each operand's columns is a hash join on the keys computed once a row |
 | D1087 | A probe of a join table past a thread's share of the cache is screened by its key's Bloom filter, and a semi join of many held keys filters its right |
+| D1089 | A statement's planning reads each table's statistics, rows and index keys once, and every step of it reads them so |
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
@@ -18993,6 +18994,38 @@ reasoning that the scan's comparison costs as much as the probe it
 spares. Past the cache that probe is a read from memory, so it now
 tells the scan its filter of a range and a Bloom filter whatever the
 number of its keys.
+
+### Planning statistics
+
+#### D1089. A statement's planning reads each table's statistics, rows and index keys once, and every step of it reads them so
+
+The maintenance thread gathers a table's statistics whenever they are
+due (D35), so they may appear between two readings of one statement.
+One planning's estimator asked each table's once (D370), but other
+steps of the same statement asked the state afresh. The optimizer's
+rule that groups an outer join's right operand first (D1112) made an
+estimator for each of the three estimates it weighs. The marking of
+parallel parts asked whether a grouping's columns are counted (D355),
+predicate transfer asked the distinct values of each step's column
+(D667), and a prepared statement's plan learned recorded which of its
+tables had statistics only after it was planned (D839). A table
+gathered in between was weighed with statistics by one step and without
+by another, and a plan made with the defaults was kept as if made with
+the statistics, so it was not learned again once they were known.
+
+Each statement now plans through one snapshot
+(`physical/cardinality/seen.rs`). It asks a table's statistics and rows,
+and an index's distinct keys, the first time a step wants them and keeps
+them for every step after. The optimizer's rules read them through their
+context, and the physical planner's estimator, the marking of parallel
+parts, predicate transfer and the measure of a plan learned read them
+too. An execution of a prepared statement that plans with its values and
+with its slots plans both through one snapshot, so the two plans it
+compares are made of one state, and the plan it keeps is measured from
+what they saw. Statistics gathered after the snapshot asked are seen by
+the statement's next planning, and a plan kept without them is learned
+again then (D839). A subquery planned as the statement runs plans
+through a snapshot of its own.
 
 ### Column store reads
 

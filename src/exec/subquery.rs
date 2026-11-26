@@ -395,8 +395,9 @@ impl Runner {
 
     /// The rows of `plan`, optimized and planned.
     fn run(&self, plan: LogicalPlan) -> RowIter {
-        let (optimized, _) = self.db.optimizer.optimize(plan, &RuleContext { db: &self.db });
-        execute(PhysicalPlanner::new(&self.db).plan(&optimized), &self.db, self.tx)
+        let seen = crate::physical::Seen::default();
+        let (optimized, _) = self.db.optimizer.optimize(plan, &RuleContext { db: &self.db, seen: &seen });
+        execute(PhysicalPlanner::new(&self.db).plan_seeing(&optimized, Some(&seen)), &self.db, self.tx)
     }
 
     /// The rows of `subquery`, at `at`, by key, once it ran

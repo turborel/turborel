@@ -88,6 +88,9 @@ pub const DEFAULT_MAX_PASSES: usize = 64;
 pub struct RuleContext<'a> {
     /// The database state, read-only.
     pub db: &'a State,
+    /// The statistics, rows and index keys of the statement optimized, as
+    /// its planning sees them throughout (RULES.md D1089).
+    pub(crate) seen: &'a crate::physical::Seen,
 }
 
 /// \[DESIGN\] A rewrite of the logical plan.

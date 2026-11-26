@@ -330,7 +330,7 @@ fn the_stock_level_query_with_slots_probes_stock() {
     let values = [int(1), int(1), int(5001), int(5001), int(1), int(15)];
     let st = db.snapshot().unwrap();
     let made = super::super::super::compiled::plan(&st, filled(slotted.clone(), &values).unwrap()).2.explain();
-    let plan = super::super::super::compiled::plan_slotted(&st, slotted, &values).explain();
+    let plan = super::super::super::compiled::plan_slotted((&st, &Seen::default()), slotted, &values).explain();
     assert!(plan.contains("IndexNestedLoop T.STOCK") && !plan.contains("HashJoin"), "{plan}");
     let join = |text: &str| text.lines().find(|l| l.contains("IndexNestedLoop")).map(str::to_owned);
     assert_eq!(join(&plan), join(&made), "its join costed as with its values");

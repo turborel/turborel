@@ -54,7 +54,7 @@ use crate::error::Result;
 use crate::exec::Slots;
 use crate::logical::{LogicalPlan, filled};
 use crate::params::Params;
-use crate::physical::{Kept as KeptPhysical, keepable, prepared_plan};
+use crate::physical::{Kept as KeptPhysical, Seen, keepable, prepared_plan};
 use crate::settings::Own;
 use crate::sync::write;
 use crate::value::Value;
@@ -469,10 +469,10 @@ impl Keeping<'_> {
     /// As `written`.
     fn learn_write(&self, w: Arc<BoundWrite>, was: Learning, slots: Slots) -> Result<Written> {
         let values = &*slots;
-        let (_, _, plan) = super::super::plan_written(self.st, filled(w.rows.clone(), values)?);
-        let reads: Arc<[QualifiedName]> = w.rows.tables().into();
-        let learned = was.after(&plan, super::super::plan_written_slotted(self.st, w.rows.clone(), values));
-        let physical = learned.kept(&reads, self.st);
+        let (seen, reads): (Seen, Arc<[QualifiedName]>) = (Seen::default(), w.rows.tables().into());
+        let (_, _, plan) = super::super::written_seen((self.st, &seen), filled(w.rows.clone(), values)?);
+        let learned = was.after(&plan, super::super::plan_written_slotted((self.st, &seen), w.rows.clone(), values));
+        let physical = learned.kept(&reads, (self.st, &seen));
         self.keep(|k| k.physical = physical)?;
         Written::slotted(w, Some((plan, reads)), slots)
     }
@@ -485,10 +485,10 @@ impl Keeping<'_> {
     ///
     /// As `physical`.
     fn learn(&self, (columns, logical): (Vec<OutColumn>, LogicalPlan), was: Learning, values: &[Value]) -> Result<Opened> {
-        let (optimized, _, plan) = super::super::plan(self.st, filled(logical.clone(), values)?);
+        let seen = Seen::default();
+        let (optimized, _, plan) = super::super::plan_seen((self.st, &seen), filled(logical.clone(), values)?);
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
-        let learned = was.after(&plan, super::super::plan_slotted(self.st, logical, values));
-        let physical = learned.kept(&reads, self.st);
+        let physical = was.after(&plan, super::super::plan_slotted((self.st, &seen), logical, values)).kept(&reads, (self.st, &seen));
         self.keep(|k| k.physical = physical)?;
         Ok((columns, Run::Plan(Box::new(plan)), reads, None))
     }

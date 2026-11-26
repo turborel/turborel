@@ -86,7 +86,7 @@ fn the_local_fixpoint_reaches_the_same_plan() {
     let s = db.session("O");
     for sql in QUERIES {
         let (st, bound) = s.bound_plan(sql).unwrap();
-        let ctx = RuleContext { db: &st };
+        let ctx = RuleContext { db: &st, seen: &crate::physical::Seen::default() };
         let (local, trace) = st.optimizer.optimize(bound.clone(), &ctx);
         let (restarted_plan, passes) = restarted(&st.optimizer, bound, &ctx);
         assert_eq!(unnumbered(&format!("{local:?}")), unnumbered(&format!("{restarted_plan:?}")), "{sql}");
@@ -111,7 +111,7 @@ fn rewriting_a_node_again_takes_fewer_passes() {
     let (mut local, mut restarting_passes) = (0_usize, 0_usize);
     for sql in QUERIES {
         let (st, bound) = s.bound_plan(sql).unwrap();
-        let ctx = RuleContext { db: &st };
+        let ctx = RuleContext { db: &st, seen: &crate::physical::Seen::default() };
         let on: Vec<&dyn Rule> = st.optimizer.rules.iter().map(|r| &*r.rule).collect();
         let (mut plan, mut budget, mut trace) = (bound.clone(), usize::MAX, Vec::new());
         for _ in 0..super::DEFAULT_MAX_PASSES {
@@ -169,7 +169,7 @@ fn plan_of(depth: usize) -> LogicalPlan {
 fn rules_undoing_each_other_end_within_the_budget() {
     let db = Database::new();
     let st = db.snapshot().unwrap();
-    let ctx = RuleContext { db: &st };
+    let ctx = RuleContext { db: &st, seen: &crate::physical::Seen::default() };
     let plan = plan_of(40);
     let (forth, back) = (Flip(true), Flip(false));
     let on: [&dyn Rule; 2] = [&forth, &back];
