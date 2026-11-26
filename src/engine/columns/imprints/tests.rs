@@ -107,6 +107,8 @@ fn imprints_never_leave_out_a_matching_row() {
         pax: false,
         imprints: true,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     for (s, shape) in SHAPES.into_iter().enumerate() {
         let all: Vec<Row> = (0..ROWS).map(|n| row(n, shape)).collect();
@@ -187,6 +189,8 @@ fn conjuncts_are_ordered_narrowest_first() {
         pax: false,
         imprints: true,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let all: Vec<Row> = (0..ROWS).map(|n| row(n, SHAPES[1])).collect();
     let ids: Vec<RowId> = (1..=u64::try_from(ROWS).unwrap()).collect();

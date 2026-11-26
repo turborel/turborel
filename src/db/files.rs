@@ -18,6 +18,7 @@
 //!                    opens
 //! plugins/           plug-ins' own files (`files/plugins.rs`), a
 //!                    directory each, as written or shadowed as declared
+//! groups/            the segments loads write groups to (`extents.rs`)
 //! ```
 //!
 //! Older row versions go to a log of their own on disk, so a long-running
@@ -80,7 +81,7 @@ use crate::value::Value;
 
 mod reopening;
 mod running;
-use reopening::undo_log;
+use reopening::{segment_place, undo_log};
 
 const DATA: &str = "data";
 /// The directory of the spill areas' files (`spill.rs`).
@@ -538,9 +539,8 @@ impl Database {
         // Its batches written kept in memory within a share of the budget
         // (RULES.md D746).
         let undo = UndoStore::batched(undo_log(place)?, place.options.undo_batch).in_budget(&st.memory)?;
-        let files = TableFiles::over(Arc::clone(&pool), file, undo).shadowed(Arc::clone(&place.shadows));
-        // The column store's tables in the row store's files, which its
-        // checkpoints keep (RULES.md D31).
+        let files = TableFiles::over(Arc::clone(&pool), file, undo).shadowed(Arc::clone(&place.shadows)).segmented(segment_place(place)?);
+        // The column store's tables in the row store's files, which its checkpoints keep (RULES.md D31).
         self.register_engine(Box::new(RowStore::columns(files.clone(), TableOptions::default())))?;
         self.register_engine(Box::new(RowStore::new(files, TableOptions::default())))?;
         self.register_index_method(Box::new(BTreeMethod::new(Arc::clone(&pool), file)))?;

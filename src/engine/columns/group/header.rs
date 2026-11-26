@@ -2,7 +2,7 @@
 //! `group.rs` describes it.
 
 use super::super::sketch::Edges;
-use super::summary::{Overall, Summary};
+use super::summary::{Overall, Placed, Summary};
 use super::{Filter, GROUP_FORMAT, Group, Pages, Part, Run, Seal, Zone, corrupt, count32, read_chain};
 use crate::disk::pager::PageId;
 use crate::error::Result;
@@ -249,7 +249,8 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }
-    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, edges, sketched: named, sketches, header })
+    let place = (pages.file, pages.base);
+    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, edges, sketched: named, sketches, header, place })
 }
 
 /// Appends `summary`, its columns of `types`, as a table's directory holds
@@ -268,6 +269,11 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
 /// large.
 pub fn put_summary(out: &mut Vec<u8>, summary: &Summary, types: &[DataType]) -> Result<()> {
     put_u64(out, summary.header.0);
+    // [DESIGN] RULES.md D1146: its segment, 0 for none, its base and length.
+    let placed = summary.extent.map_or([0; 3], |p| [p.segment, p.base, p.length]);
+    for n in placed {
+        put_u64(out, n);
+    }
     put_u64(out, summary.first);
     put_u64(out, summary.last);
     put_u32(out, summary.rows);
@@ -292,14 +298,17 @@ pub fn read_summaries(bytes: &[u8], types: &[DataType]) -> Result<Vec<Summary>> 
     let mut r = Reader(bytes);
     let mut out = Vec::new();
     while !r.0.is_empty() {
-        let (header, first, last, rows) = (PageId(r.u64()?), r.u64()?, r.u64()?, r.u32()?);
+        let header = PageId(r.u64()?);
+        let (segment, base, length) = (r.u64()?, r.u64()?, r.u64()?);
+        let extent = (segment != 0).then_some(Placed { segment, base, length });
+        let (first, last, rows) = (r.u64()?, r.u64()?, r.u32()?);
         let (order, blooms, sketched) = (r.places()?, r.places()?, r.places()?);
         let pax = r.layout()?;
         if r.count()? != types.len() {
             return Err(corrupt("its summary's columns are not its table's"));
         }
         let columns = types.iter().map(|t| Ok(Overall { nulls: r.u32()?, bounds: r.bounds(t)? })).collect::<Result<Vec<_>>>()?;
-        out.push(Summary { header, first, last, rows, order, blooms, sketched, pax, columns });
+        out.push(Summary { header, first, last, rows, order, blooms, sketched, pax, columns, extent });
     }
     Ok(out)
 }

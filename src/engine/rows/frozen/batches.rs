@@ -159,8 +159,8 @@ impl Batched {
             return Ok(true);
         }
         let shadowed = self.entries_in(&entry)?;
-        let pages = self.table.group_pages()?;
         let group = self.table.group_of(&entry)?;
+        let pages = self.table.pages_for(&group)?;
         // Its row ids read only to tell the rows the tree shadows.
         let ids = if shadowed.is_empty() { Vec::new() } else { group.row_ids(&pages)? };
         let vector = u32::try_from(VECTOR_ROWS).unwrap_or(u32::MAX);
@@ -280,7 +280,9 @@ impl Batched {
                 return Ok(Some(batch));
             }
             if let Some(run) = self.runs.pop_front() {
-                self.ahead.step(&self.table.group_pages()?);
+                if let Some((group, _, _)) = &self.group {
+                    self.ahead.step(&self.table.pages_for(group)?);
+                }
                 match self.run_batch(run)? {
                     Some(batch) => return Ok(Some(batch)),
                     None => continue,

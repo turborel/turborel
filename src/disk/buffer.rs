@@ -77,6 +77,8 @@ pub struct Key {
 enum Source {
     Pages(Arc<Pager>),
     Blocks(Arc<BlockFile>),
+    /// A block file its owner holds, read while it does (RULES.md D1146).
+    Held(std::sync::Weak<BlockFile>),
 }
 
 /// The counters of a pool, for the heuristics above it (RULES.md D30).

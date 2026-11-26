@@ -37,6 +37,25 @@ pub fn text_at<'t>((text, ends): (&'t [u8], &[usize]), n: usize) -> &'t [u8] {
     bytes.get(..kept).unwrap_or_default()
 }
 
+/// The bytes of the `n`th text of `text` ending at `ends`, whole; none
+/// past the end.
+#[inline]
+pub fn whole_at<'t>((text, ends): (&'t [u8], &[usize]), n: usize) -> &'t [u8] {
+    let start = n.checked_sub(1).and_then(|p| ends.get(p)).copied().unwrap_or(0);
+    ends.get(n).and_then(|&end| text.get(start..end)).unwrap_or_default()
+}
+
+/// Appends to `out` the hash of each text at `sel`, or of all, of `text`
+/// ending at `ends`, whole, its trailing spaces among its bytes, by
+/// `seeded`.
+#[inline]
+pub fn hash_texts_unpadded((text, ends): (&[u8], &[usize]), seeded: &Seeded, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+    match sel {
+        Some(sel) => out.extend(sel.iter().map(|&r| seeded.bytes(whole_at((text, ends), index(r))))),
+        None => out.extend((0..ends.len()).map(|n| seeded.bytes(whole_at((text, ends), n)))),
+    }
+}
+
 /// Appends to `out` the hash of each text at `sel`, or of all, of `text`
 /// ending at `ends`, by `seeded`.
 #[inline]

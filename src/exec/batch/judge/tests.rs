@@ -444,3 +444,65 @@ fn judged_alike(units: &[i64], nulls: Option<Mask>) {
         }
     }
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
+/// comparison of a column marked with a collation of NO PAD by octets is
+/// judged over the column's vector, no key made: either way round, an OR
+/// of them each so; one marked with a padded collation is not judged so.
+#[test]
+fn a_comparison_unpadded_is_judged_over_texts_in_place() {
+    let octets = crate::value::collation::unpadded_scalar();
+    let key = |e: Expr| Expr::SortKey(Box::new(e), octets.clone());
+    let constant = |s: &str| Expr::Const(Value::Binary(crate::value::Binary::of(s.as_bytes())));
+    let (judged, rest) = split(&compare(key(Expr::Column(3)), CompOp::Ne, constant("")), &[2, 3]);
+    let [Judged::Unpadded(1, CompOp::Ne, constant_octets)] = judged.as_slice() else { panic!("not judged unpadded: {judged:?}") };
+    assert!(constant_octets.is_empty() && rest.is_none());
+    let (flipped, _) = split(&compare(constant("a "), CompOp::Lt, key(Expr::Column(2))), &[2, 3]);
+    assert!(matches!(flipped.as_slice(), [Judged::Unpadded(0, CompOp::Gt, _)]), "{flipped:?}");
+    let either = or(compare(key(Expr::Column(2)), CompOp::Eq, constant("a")), compare(key(Expr::Column(2)), CompOp::Eq, constant("b")));
+    let (any, _) = split(&either, &[2]);
+    let [Judged::Any(each)] = any.as_slice() else { panic!("not an OR judged over vectors: {any:?}") };
+    assert!(matches!(each.as_slice(), [Judged::Unpadded(..), Judged::Unpadded(..)]), "{each:?}");
+    let padded = crate::value::collation::CollationRef { pad: crate::value::collation::Pad::Space, ..octets.clone() };
+    let (other, _) = split(&compare(Expr::SortKey(Box::new(Expr::Column(2)), padded), CompOp::Eq, constant("a")), &[2]);
+    assert!(!matches!(other.as_slice(), [Judged::Unpadded(..)]), "{other:?}");
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
+/// comparison judged unpadded keeps, of texts and of a dictionary's, the
+/// rows whose octets hold to the constant's: a prefix below, a trailing
+/// space apart, a tab after `'a'` above it, a null never; of every row and
+/// of rows given; and of values the same, a number never.
+#[test]
+fn a_comparison_unpadded_keeps_rows_by_their_octets() {
+    let words = ["a", "a ", "a\t", "", "ab"];
+    let (mut text, mut ends) = (String::new(), Vec::new());
+    for w in words {
+        text.push_str(w);
+        ends.push(text.len());
+    }
+    ends.push(text.len());
+    let mut nulls = vec![false; words.len()];
+    nulls.push(true);
+    let texts = crate::storage::Texts::new(text.clone(), ends.clone(), Some(nulls.clone().into()));
+    let entries = Arc::new(crate::storage::Texts::new(text, ends, None));
+    let coded = crate::storage::Texts::coded(crate::storage::Coded { codes: vec![0, 1, 2, 3, 4, 0], entries }, Some(nulls.into()));
+    let all: Vec<u32> = rows_of(0..6);
+    for (op, against, wanted) in [
+        (CompOp::Eq, "a", vec![0_u32]),
+        (CompOp::Ne, "a", vec![1, 2, 3, 4]),
+        (CompOp::Lt, "a ", vec![0, 2, 3]),
+        (CompOp::Le, "a", vec![0, 3]),
+        (CompOp::Gt, "a", vec![1, 2, 4]),
+        (CompOp::Ge, "a\t", vec![1, 2, 4]),
+        (CompOp::Ne, "", vec![0, 1, 2, 4]),
+    ] {
+        let j = Judged::Unpadded(0, op, against.as_bytes().to_vec());
+        assert_eq!(texts::kept(&j, &texts, Some(&all), &Portable).as_ref(), Some(&wanted), "{j:?}");
+        assert_eq!(texts::kept(&j, &texts, None, &Portable).as_ref(), Some(&wanted), "{j:?}, every row");
+        assert_eq!(texts::kept(&j, &coded, Some(&all), &Portable).as_ref(), Some(&wanted), "{j:?}, coded");
+        let by_values: Vec<u32> = all.iter().copied().filter(|&n| j.keeps(&texts.values()[index(n)])).collect();
+        assert_eq!(by_values, wanted, "{j:?}, of values");
+        assert!(!j.keeps(&number(1)), "a number");
+    }
+}

@@ -40,7 +40,7 @@ impl LateSource for FrozenLate {
     /// The chunks the last decoding opened read again, or, if another
     /// thread decodes at once, opened anew.
     fn decode(&self, column: usize, positions: &[u32]) -> Result<Column> {
-        let pages = self.table.group_pages()?;
+        let pages = self.table.pages_for(&self.group)?;
         let Some(t) = self.table.format.types().get(column) else { return Ok(Column::from(vec![Value::Null; positions.len()])) };
         let mut prepared = self.prepared.lock().ok().and_then(|mut held| held.take()).unwrap_or_default();
         let decoded = column_at(&self.group, (&pages, &mut prepared), (column, t), positions);

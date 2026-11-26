@@ -298,6 +298,34 @@ impl Symbols {
         }
         Some(rest.find(|&&k| k != PAD).map_or(Ordering::Equal, |k| PAD.cmp(k)))
     }
+
+    /// [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) The order of the text
+    /// `codes` encode against `constant`, neither padded, a prefix the
+    /// less, as a collation of NO PAD that orders strings as their octets
+    /// do compares them: each symbol's bytes compared with the constant's
+    /// in place, the first that differs deciding, so no text is decoded.
+    /// None if the codes end in an escape, or a code is of no symbol.
+    pub(super) fn compare_unpadded(&self, codes: &[u8], constant: &[u8]) -> Option<Ordering> {
+        let (mut codes, mut rest) = (codes.iter(), constant.iter());
+        while let Some(&c) = codes.next() {
+            let bytes = if c == ESCAPE {
+                std::slice::from_ref(codes.next()?)
+            } else {
+                let code = usize::from(c);
+                if code >= self.count {
+                    return None;
+                }
+                self.words.get(code)?.get(..usize::from(*self.lens.get(code)?))?
+            };
+            for &b in bytes {
+                let Some(&k) = rest.next() else { return Some(Ordering::Greater) };
+                if b != k {
+                    return Some(b.cmp(&k));
+                }
+            }
+        }
+        Some(if rest.next().is_some() { Ordering::Less } else { Ordering::Equal })
+    }
 }
 
 /// The byte a string is padded with as it is compared: a space.
@@ -366,6 +394,13 @@ impl<'a> Coded<'a> {
         let mut text = Vec::new();
         self.symbols.decode(self.codes.get(a..b)?, &mut text)?;
         Some(text)
+    }
+
+    /// The order of value `n` against `constant`, as
+    /// `Symbols::compare_unpadded` gives it.
+    pub(super) fn compare_unpadded(&self, n: usize, constant: &[u8]) -> Option<Ordering> {
+        let (a, b) = self.between(n)?;
+        self.symbols.compare_unpadded(self.codes.get(a..b)?, constant)
     }
 
     /// \[DESIGN\] (RULES.md D360) The order of value `n` against

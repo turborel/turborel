@@ -258,6 +258,9 @@ pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: 
     let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, told)? else { return Ok(Held::GaveWay) };
     let mut grouping = grouping;
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
+    if let Some(read) = &grouping.read {
+        grouping.seed = grouping.seed.unpadded(&read.unpadded);
+    }
     let grouping = Arc::new(grouping);
     let mut runs = if grouping.read.is_some() {
         let Held::Kept(runs) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
@@ -397,17 +400,19 @@ fn pieces_bytes(made: &[Piece]) -> usize {
 /// pipeline read `by` batch, if it reads them so: of DISTINCT, every
 /// column of batches holding every column of the rows; else its grouping
 /// columns and set functions as a grouping by batch reads them, no seed
-/// nor collation among them.
+/// among them, nor a collation but one whose key is the text itself
+/// (RULES.md D1183).
 fn read_of(grouping: &Grouping, by: &ByBatch) -> Option<Read> {
     if grouping.distinct {
         let whole = by.layout.iter().copied().eq(0..by.width);
         return whole.then(|| read_for(&by.layout, &[], &by.layout)).flatten();
     }
     let spec = &grouping.spec;
-    if !spec.seeds.is_empty() || !spec.collations.is_empty() {
+    if !spec.seeds.is_empty() {
         return None;
     }
-    read_for(&spec.groups, &spec.aggs, &by.layout)
+    let unpadded = super::super::group::unpadded_keys(&spec.collations)?;
+    read_for(&spec.groups, &spec.aggs, &by.layout).map(|read| Read { unpadded, ..read })
 }
 
 /// The number of the first row of morsel `m`: after the seeds, numbered

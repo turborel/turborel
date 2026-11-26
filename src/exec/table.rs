@@ -132,7 +132,7 @@ impl GroupTable {
     pub(in crate::exec) fn new(width: usize, aggs: &[AggCall], seed: &Seed, limit: usize) -> GroupTable {
         GroupTable {
             aggs: aggs.to_vec(),
-            keys: Keys::new(width),
+            keys: Keys::new(width).of_seed(seed),
             hashes: Vec::new(),
             firsts: Vec::new(),
             states: aggs.iter().map(States::of).collect(),
@@ -152,7 +152,7 @@ impl GroupTable {
     /// it made, grows no vector a group at a time.
     pub(in crate::exec) fn with_room(width: usize, aggs: &[AggCall], seed: &Seed, room: usize) -> GroupTable {
         let mut table = GroupTable::new(width, aggs, seed, usize::MAX);
-        table.keys = Keys::with_room(width, room);
+        table.keys = Keys::with_room(width, room).of_seed(seed);
         table.hashes.reserve(room);
         table.firsts.reserve(room);
         table.states.iter_mut().for_each(|states| states.reserve(room));
@@ -171,7 +171,7 @@ impl GroupTable<()> {
     pub(in crate::exec) fn of_keys(width: usize, seed: &Seed) -> GroupTable<()> {
         GroupTable {
             aggs: Vec::new(),
-            keys: Keys::new(width),
+            keys: Keys::new(width).of_seed(seed),
             hashes: Vec::new(),
             firsts: Vec::new(),
             states: (),

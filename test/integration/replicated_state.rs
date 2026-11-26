@@ -16,6 +16,7 @@ use turborel::files::FileOwner;
 use turborel::index::BTreeMethod;
 use turborel::log::record::{KINDS, REPLICATED, Record};
 use turborel::log::{FileLog, FileLogOptions, Log, Lsn};
+use turborel::params::Load;
 use turborel::value::Value;
 use turborel::value::lob::Lob;
 use turborel::value::types::TypeRegistry;
@@ -70,7 +71,7 @@ struct Writer {
 /// For every kind of record, a statement that writes it. Records that are
 /// not synced as written (an abort record) are followed by a commit, whose
 /// sync makes them durable.
-const WRITERS: [Writer; 25] = [
+const WRITERS: [Writer; 26] = [
     Writer { kind: 1, run: |db| committed(db, &["INSERT INTO T VALUES (100, 'new')"]) },
     Writer { kind: 2, run: |db| committed(db, &["UPDATE T SET V = 'changed' WHERE K = 1"]) },
     Writer { kind: 3, run: |db| committed(db, &["DELETE FROM T WHERE K = 2"]) },
@@ -184,7 +185,24 @@ const WRITERS: [Writer; 25] = [
             committed(db, &rows);
         },
     },
+    Writer { kind: 27, run: group_loaded },
 ];
+
+/// A group a load writes straight to a segment of a table of the column
+/// store of no index (RULES.md D1146).
+fn group_loaded(db: &Database) {
+    committed(
+        db,
+        &["CREATE TABLE G (K INTEGER NOT NULL, V INTEGER) USING columnstore \
+           WITH (COLUMNSTORE.GROUP_ROWS = 4096, COLUMNSTORE.LOAD = 'GROUPS')"],
+    );
+    let s = db.session("APP");
+    let p = s.prepare("INSERT INTO G (K, V) VALUES (?, ?)").unwrap();
+    let given: Vec<Vec<Value>> = (0..4096_i64).map(|k| vec![number(k), number(k % 7)]).collect();
+    s.execute_prepared_rows(&p, &given, Load::Going).unwrap();
+    s.execute_prepared_rows(&p, &[], Load::Ending).unwrap();
+    s.commit().unwrap();
+}
 
 /// Table `name` of a CLOB, its row one of 300000 characters, more than a
 /// chunk.

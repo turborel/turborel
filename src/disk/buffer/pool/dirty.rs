@@ -168,6 +168,7 @@ impl BufferPool {
         match self.source(file)? {
             Source::Pages(pager) => pager.sync(durability),
             Source::Blocks(blocks) => blocks.sync(durability),
+            Source::Held(held) => held.upgrade().map_or(Ok(()), |blocks| blocks.sync(durability)),
         }
     }
 }

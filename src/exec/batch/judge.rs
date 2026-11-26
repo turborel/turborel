@@ -3,7 +3,9 @@
 //! (`exec/eval.rs`), each keeping the rows it is true of; and the rest, judged
 //! of the rows they keep, each made a row. Judged so: a column compared with a
 //! constant; a column IS NULL or IS NOT NULL; a column IN, or NOT IN, a list
-//! of constants; a column LIKE a constant pattern, split once, or LIKE a
+//! of constants; a column compared with a constant unpadded, as a collation
+//! of NO PAD that orders strings as their octets do compares them, the
+//! column's text read in place (RULES.md D1183); a column LIKE a constant pattern, split once, or LIKE a
 //! column's pattern, or ESCAPE a column's character, each pattern split once
 //! for the statement (`judge/likes.rs`); and any other conjunct of columns
 //! the batch holds, no subquery in it, compiled once and evaluated a vector
@@ -30,7 +32,7 @@ use crate::kernels::Kernels;
 use likes::Operand;
 use std::sync::{Arc, OnceLock};
 
-use crate::logical::{Cond, Expr, InSet, Truth, compared_with_constant, in_list};
+use crate::logical::{Cond, Expr, InSet, Truth, compared_unpadded, compared_with_constant, in_list};
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
 use crate::storage::{Batch, Column, Mask, Sel};
@@ -52,6 +54,9 @@ pub(super) enum Judged {
     /// [X3.135-1986 §5.14] the column LIKE a constant pattern, split once;
     /// none if a null pattern or escape makes it unknown of every row.
     Like(usize, Option<LikePattern>),
+    /// [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) the column compared
+    /// with a constant's octets unpadded, a prefix the less.
+    Unpadded(usize, CompOp, Vec<u8>),
     /// [X3.135-1986 §5.14] the column LIKE a pattern not a constant, a
     /// column's or a constant, ESCAPE one if given (`judge/likes.rs`).
     LikeOf(usize, Operand, Option<Operand>),
@@ -74,7 +79,7 @@ impl Judged {
     /// that raises an error of one; such a LIKE matched by `subqueries`.
     fn kept(&self, batch: &Batch, over: Option<&[u32]>, subqueries: &dyn Subqueries, kernels: &dyn Kernels) -> Option<Vec<u32>> {
         let at = match self {
-            Judged::Compare(at, ..) | Judged::IsNull(at, _) | Judged::In(at, ..) | Judged::Like(at, _) => *at,
+            Judged::Compare(at, ..) | Judged::IsNull(at, _) | Judged::In(at, ..) | Judged::Like(at, _) | Judged::Unpadded(at, ..) => *at,
             Judged::Any(disjuncts) => return kinds::any(disjuncts, batch, over, (subqueries, kernels)),
             Judged::Truth(program, _) => return program.kept(batch, over, (subqueries, kernels)),
             Judged::LikeOf(at, pattern, escape) => {
@@ -116,6 +121,14 @@ impl Judged {
             Judged::Like(_, pattern) => {
                 if let (Some(pattern), Value::Char(s)) = (pattern, v) {
                     pattern.matches(s)
+                } else {
+                    false
+                }
+            }
+            // [ISO/IEC 9075-2:2023 §4.3.2] unknown of a null.
+            Judged::Unpadded(_, op, octets) => {
+                if let Value::Char(s) = v {
+                    op.holds(s.as_bytes().cmp(octets))
                 } else {
                     false
                 }
@@ -201,7 +214,13 @@ impl Judging {
                 // time of the rows kept; or the batch judged whole so.
                 None => match judged {
                     Judged::Truth(_, conjunct) => self.by_rows(conjunct, batch, &places(over, batch.rows), runner)?,
-                    Judged::Compare(..) | Judged::IsNull(..) | Judged::In(..) | Judged::Like(..) | Judged::LikeOf(..) | Judged::Any(_) => {
+                    Judged::Compare(..)
+                    | Judged::IsNull(..)
+                    | Judged::In(..)
+                    | Judged::Like(..)
+                    | Judged::LikeOf(..)
+                    | Judged::Any(_)
+                    | Judged::Unpadded(..) => {
                         return self.by_rows(&self.whole, batch, &places(rows, batch.rows), runner).map(Sel::of);
                     }
                 },
@@ -337,6 +356,7 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
         | Cond::Match { .. }
         | Cond::Value(_) => compared_with_constant(cond)
             .and_then(|(c, op, v)| Some(Judged::Compare(place(c)?, op, v.clone())))
+            .or_else(|| compared_unpadded(cond).and_then(|(c, op, octets)| Some(Judged::Unpadded(place(c)?, op, octets.to_vec()))))
             .or_else(|| vectored(cond, columns)),
     };
     match found {

@@ -230,7 +230,7 @@ mod tests {
                 AggCall { func, arg, distinct: false, result, filter: None, distribution: None, label: name.into() }
             })
             .collect();
-        let read = Read { taken: vec![Taken::Count, Taken::Column(1)], groups: vec![0] };
+        let read = Read { taken: vec![Taken::Count, Taken::Column(1)], groups: vec![0], unpadded: Vec::new() };
         let made: Vec<Result<Kept>> = keys
             .iter()
             .zip(selected)

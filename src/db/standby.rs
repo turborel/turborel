@@ -173,6 +173,7 @@ fn scope(record: &Record) -> Scope {
         // commits; outside one, at once (`Database::definition_at`).
         Change::Insert { .. }
         | Change::InsertRows { .. }
+        | Change::GroupLoaded(_)
         | Change::Update { .. }
         | Change::Delete { .. }
         | Change::StatementUndone { .. }

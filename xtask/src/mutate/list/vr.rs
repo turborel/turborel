@@ -12,7 +12,7 @@ const LOST_JOURNAL: &str = "recovery::a_replica_losing_its_journal_recovers_from
 const RECONFIGURATION_SWEEP: &str = "reconfigure::groups_reconfigure_through_faults_and_converge";
 
 /// The mutations of replication, in the order they run.
-pub const VR: [Mutation; 14] = [
+pub const VR: [Mutation; 15] = [
     Mutation {
         name: "vr-ack-before-durable",
         package: Package::Replication,
@@ -154,6 +154,16 @@ pub const VR: [Mutation; 14] = [
         original: "            PIECE_OF if self.image.is_some() && self.export != Some(export) => self.restart()?,",
         replacement: "            PIECE_OF if self.image.is_some() && self.export != Some(export) && false => self.restart()?,",
         integration: &["transfer::whole_files_cross_a_request_at_a_time"],
+        unit: &[],
+    },
+    Mutation {
+        name: "driver-settle-waits-for-no-turn",
+        package: Package::Replication,
+        breaks: "a driver settled returns while its turn in flight still changes the database (RULES.md D1225)",
+        file: "replication/src/driver/effects.rs",
+        original: "while applying.is_some_and(|by| by != me) {",
+        replacement: "while applying.is_some_and(|by| by == me) {",
+        integration: &["driver::a_driver_settled_waits_for_its_turn_in_flight"],
         unit: &[],
     },
 ];

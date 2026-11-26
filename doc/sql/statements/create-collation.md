@@ -68,6 +68,12 @@ CREATE COLLATION gives one of them another name and pad characteristic. Under
 PAD SPACE a shorter string compares as if extended with spaces. Under NO PAD
 it compares as a prefix, so `'a'` is less than `'a '`.
 
+A collation made from UCS_BASIC or SQL_TEXT with NO PAD compares strings by
+their bytes alone. A column of it is filtered, grouped and searched for its
+MIN and MAX as its text is stored, with no sort key made, as a column of no
+collation is. Only its equalities and IN pass over stored data by the least
+and greatest values kept of it, since those are kept in the padded order.
+
 A literal, parameter or CAST takes the collation of the column it is compared
 with. Two columns of different collations need COLLATE. A foreign key's
 columns have the collation of those they reference.

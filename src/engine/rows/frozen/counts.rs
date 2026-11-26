@@ -57,7 +57,8 @@ impl Grouped {
         if shadowed.is_empty() {
             return Ok(rows);
         }
-        let ids = self.table.group_of(entry)?.row_ids(&self.table.group_pages()?)?;
+        let group = self.table.group_of(entry)?;
+        let ids = group.row_ids(&self.table.pages_for(&group)?)?;
         let replaced = ids.iter().filter(|id| shadowed.binary_search(id).is_ok()).count();
         Ok(rows.saturating_sub(as_count(replaced)).saturating_add(seen))
     }

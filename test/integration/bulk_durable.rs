@@ -1,7 +1,8 @@
 //! \[DESIGN\] A load's committed rows outlive the database's end (RULES.md
-//! D25, D36, D533, D1143): of a table of the row store, and of the column
-//! store loading through its tree or straight to groups, by one session
-//! and by several at once, each load's last batch short of a group. A
+//! D25, D36, D533, D1143, D1146): of a table of the row store, and of the
+//! column store loading through its tree or straight to groups, on pages
+//! or, of a table of no index, as extents of segments, by one session and
+//! by several at once, each load's last batch short of a group. A
 //! clean close keeps every committed row, whatever LOG.DURABILITY is; so
 //! does a crash after a checkpoint; a crash with no checkpoint keeps
 //! every commit synced, under DATA and FULL, and under NONE either all of
@@ -25,12 +26,15 @@ use crate::log_sync::last_segment;
 const ROWS: i64 = 9_192;
 
 /// The tables loaded: of the row store, and of the column store in groups
-/// of 4096 rows through its tree or straight to groups.
-const TABLES: [&str; 3] = [
+/// of 4096 rows through its tree or straight to groups, the last of no
+/// index, so its groups go to segments.
+const TABLES: [&str; 4] = [
     "CREATE TABLE T (K INTEGER PRIMARY KEY, A INTEGER NOT NULL)",
     "CREATE TABLE T (K INTEGER PRIMARY KEY, A INTEGER NOT NULL) USING columnstore \
      WITH (COLUMNSTORE.GROUP_ROWS = 4096, COLUMNSTORE.LOAD = 'TREE')",
     "CREATE TABLE T (K INTEGER PRIMARY KEY, A INTEGER NOT NULL) USING columnstore \
+     WITH (COLUMNSTORE.GROUP_ROWS = 4096, COLUMNSTORE.LOAD = 'GROUPS')",
+    "CREATE TABLE T (K INTEGER NOT NULL, A INTEGER NOT NULL) USING columnstore \
      WITH (COLUMNSTORE.GROUP_ROWS = 4096, COLUMNSTORE.LOAD = 'GROUPS')",
 ];
 
@@ -45,6 +49,9 @@ enum End {
     CheckpointCrashed,
     /// A failure of the system, the log cut to its last sync.
     Crashed,
+    /// As `Crashed`, each segment's unsynced extents torn: half of what
+    /// was written past its last sync kept.
+    CrashedTorn,
 }
 
 /// The database in `dir` of `fs`, opened, its background work done only
@@ -105,24 +112,44 @@ fn after(table: &str, streams: i64, durability: &str, end: End) -> Vec<usize> {
         db.close().unwrap();
     }
     drop(db);
-    if matches!(end, End::Crashed | End::CheckpointCrashed) {
+    if matches!(end, End::Crashed | End::CheckpointCrashed | End::CrashedTorn) {
         faults.cut_to_synced(&last_segment(&dir));
+        crashed_segments(&faults, &dir, end == End::CrashedTorn);
     }
     kept(&opened(&fs, &dir), streams)
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D36, D533, D1143: every committed row of
-/// a load, of each kind of table and by one session or several, is kept
-/// by a clean close, with a checkpoint before or not, and by a crash after
-/// a checkpoint, under each LOG.DURABILITY; by a crash with none, under
-/// DATA and FULL; under NONE, all of a load's rows or none.
+/// Cuts each segment of the database in `dir` to its last sync, as a
+/// failure of the system leaves it; if `torn`, half of what was written
+/// past it kept, a torn extent at its end.
+fn crashed_segments(faults: &Faults, dir: &Path, torn: bool) {
+    let Ok(listed) = std::fs::read_dir(dir.join("groups")) else { return };
+    for path in listed.map(|e| e.unwrap().path()) {
+        let written = std::fs::read(&path).unwrap();
+        faults.cut_to_synced(&path);
+        let synced = usize::try_from(std::fs::metadata(&path).unwrap().len()).unwrap();
+        let lost = written.get(synced..).unwrap_or_default();
+        if torn && !lost.is_empty() {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(&lost[..lost.len() >> 1]).unwrap();
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D36, D533, D1143, D1146: every
+/// committed row of a load, of each kind of table and by one session or
+/// several, is kept by a clean close, with a checkpoint before or not, and
+/// by a crash after a checkpoint, under each LOG.DURABILITY; by a crash
+/// with none, its segments cut to their syncs or torn, under DATA and
+/// FULL; under NONE, all of a load's rows or none.
 ///
 /// Decision `image.clean && oldest >= log.end()` at reopen: the groups of
 /// loads stored as made by a transaction open kept (D1143), else a clean
 /// close loses a load's groups written since they last settled.
 #[test]
 fn a_loads_committed_rows_outlive_the_end_of_the_database() {
-    let ends = [End::Closed, End::CheckpointClosed, End::CheckpointCrashed, End::Crashed];
+    let ends = [End::Closed, End::CheckpointClosed, End::CheckpointCrashed, End::Crashed, End::CrashedTorn];
     let cases = TABLES.iter().flat_map(|&table| {
         [1_i64, 3].into_iter().flat_map(move |streams| {
             ["NONE", "DATA", "FULL"]
@@ -133,7 +160,7 @@ fn a_loads_committed_rows_outlive_the_end_of_the_database() {
     for (table, streams, durability, end) in cases {
         let found = after(table, streams, durability, end);
         let case = format!("{table} by {streams} under {durability}, {end:?}");
-        if durability == "NONE" && end == End::Crashed {
+        if durability == "NONE" && matches!(end, End::Crashed | End::CrashedTorn) {
             assert!(found.iter().all(|&n| n == 0 || n == 9_192), "{case}: {found:?}, a load kept in part");
         } else {
             assert_eq!(found, vec![9_192_usize; usize::try_from(streams).unwrap()], "{case}");

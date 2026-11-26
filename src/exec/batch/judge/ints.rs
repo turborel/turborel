@@ -59,7 +59,7 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, over: Option<&[u32]>, kernels: 
             let equal = |u: i64| scaled_list.iter().any(|&(f, c)| i128::from(u).checked_mul(f) == Some(c));
             Some(filtered(&|u| if *not { !has_null && !equal(u) } else { equal(u) }))
         }
-        Judged::Like(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
+        Judged::Like(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) | Judged::Unpadded(..) => None,
     }
 }
 
