@@ -68,11 +68,11 @@ fn each_ask_of_a_zone_makes_an_opened_tables_wanted() {
     assert!(table.zones.ranges(None) == [(0, None)] && table.zones.share(&equal(0, 5)) > 0.0_f64);
     assert!(!table.zones.asked() && !table.maintenance_due(), "none of these asks");
     assert!(!table.visible_to_all(ids[0]) && table.maintenance_due(), "whether a row is visible");
-    let table = open();
-    assert_eq!(table.zones.settled().0, 0);
-    assert!(table.maintenance_due(), "a count");
-    let table = open();
-    assert!(table.zones.visible_share() < 1.0_f64 && table.maintenance_due(), "an index-only read weighed");
+    let counted = open();
+    assert_eq!(counted.zones.settled().0, 0);
+    assert!(counted.maintenance_due(), "a count");
+    let weighed = open();
+    assert!(weighed.zones.visible_share() < 1.0_f64 && weighed.maintenance_due(), "an index-only read weighed");
 }
 
 /// Verifies: [DESIGN] RULES.md D1212, D31: the zones summed up before a
@@ -103,4 +103,19 @@ fn a_sum_up_saved_is_resumed_once_asked_again() {
     let made = warmed(RowTable::create(&files, &TYPES, TableOptions::default()).unwrap());
     made.insert(NO_TRANSACTION, row(1)).unwrap();
     assert!(made.zones.asked() && made.maintenance_due(), "made warm: wanted as written");
+}
+
+/// Verifies: [DESIGN] RULES.md D1212: the end of a transaction that read
+/// alone is told of an ask once: not of a table opened no zone of which
+/// was asked for, once after the first ask, and not again. MC/DC of the
+/// telling (R-TEST-8): asked or not, told already or not.
+#[test]
+fn an_ask_is_told_once_to_the_end_of_a_transaction() {
+    let files = files();
+    let (meta, ids) = saved_unknown(&files, 1);
+    let table = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
+    assert!(!table.asked_maintenance(), "none asked for");
+    assert!(reads(&table, &equal(0, 5), ids[0]));
+    assert!(table.asked_maintenance(), "asked: told");
+    assert!(!table.asked_maintenance() && table.maintenance_due(), "told once, due still");
 }

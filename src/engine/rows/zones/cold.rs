@@ -35,7 +35,8 @@
 //! A table opened has its zones due summed up and settled only once one
 //! is asked for after it opens, by what warms a cold table (RULES.md
 //! D1212): the table notes the first ask, the transaction that asked
-//! notes it for maintenance as it ends, and until then the maintenance
+//! notes it for maintenance as it ends, one that read alone by asking
+//! the table once (`take_ask`), and until then the maintenance
 //! thread is not asked for, so a start does no pass over a table nothing
 //! reads. An ask after the first reads the note and writes nothing.
 
@@ -63,6 +64,15 @@ impl Zones {
     /// up or settle its zones.
     pub(in crate::engine::rows) fn asked(&self) -> bool {
         self.asked.load(Ordering::Acquire)
+    }
+
+    /// Whether a zone was asked for and no end of a transaction was told
+    /// yet: told from now on. The end of a transaction that read alone
+    /// asks, and notes the table for maintenance, as no collection of
+    /// garbage does for it; once told it reads two flags and writes
+    /// nothing (RULES.md D1212).
+    pub(in crate::engine::rows) fn take_ask(&self) -> bool {
+        self.asked() && !self.told.load(Ordering::Acquire) && !self.told.swap(true, Ordering::AcqRel)
     }
 
     /// Notes the table opened, its zones read as saved: none asked for

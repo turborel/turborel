@@ -168,6 +168,8 @@ pub(super) struct Zones {
     /// Whether a zone was asked for since the table was made or opened:
     /// until one is, a table opened has none summed up (RULES.md D1212).
     asked: AtomicBool,
+    /// Whether the end of a transaction was told of the ask (`take_ask`).
+    told: AtomicBool,
     /// The table's row ids given so far: one past them.
     given: Arc<AtomicU64>,
     /// The versions superseded while the table was cold, not yet collected.
@@ -288,6 +290,7 @@ impl Zones {
             unknown_below: AtomicU64::new(0),
             warm: AtomicBool::new(false),
             asked: AtomicBool::new(false),
+            told: AtomicBool::new(false),
             given: Arc::default(),
             owed: Live::new(),
             stale: AtomicUsize::new(0),

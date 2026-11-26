@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of zone maintenance, in the order they run.
-pub const ZONES: [Mutation; 20] = [
+pub const ZONES: [Mutation; 22] = [
     Mutation {
         name: "zone-stale-inside",
         package: Package::Core,
@@ -211,5 +211,25 @@ pub const ZONES: [Mutation; 20] = [
         replacement: "        self.warm_cold();",
         integration: &[],
         unit: &["engine::rows::zones::asked::each_ask_of_a_zone_makes_an_opened_tables_wanted"],
+    },
+    Mutation {
+        name: "zone-ask-untold",
+        package: Package::Core,
+        breaks: "zone maintenance: a transaction that read alone does not note the table whose zones it asked, so they wait for a write",
+        file: "src/txn/end.rs",
+        original: "            if participant.storage.asked_maintenance() {",
+        replacement: "            if participant.storage.asked_maintenance() && false {",
+        integration: &["zones_due::a_table_opened_is_summed_up_only_once_its_zones_are_asked_for"],
+        unit: &[],
+    },
+    Mutation {
+        name: "zone-ask-told-again",
+        package: Package::Core,
+        breaks: "zone maintenance: every commit of a transaction that read a table asked notes it again, a lock taken at each",
+        file: "src/engine/rows/zones/cold.rs",
+        original: "        self.asked() && !self.told.load(Ordering::Acquire) && !self.told.swap(true, Ordering::AcqRel)",
+        replacement: "        self.asked()",
+        integration: &[],
+        unit: &["engine::rows::zones::asked::an_ask_is_told_once_to_the_end_of_a_transaction"],
     },
 ];

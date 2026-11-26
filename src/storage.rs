@@ -473,28 +473,24 @@ pub trait TableStorage: Send + Sync {
         Box::new(std::iter::empty())
     }
     /// What finds this table again when the database is opened
-    /// (`StorageEngine::open_table`), kept in the catalog; meaningful only to
-    /// the engine. Default: nothing.
+    /// (`StorageEngine::open_table`), kept in the catalog; meaningful only to the engine. Default: nothing.
     fn locator(&self) -> Vec<u8> {
         Vec::new()
     }
     /// \[EXTENSION\] The table was dropped [ISO/IEC 9075:1992 §11.18 GR2]:
     /// once the last reference to it goes, it is not read or written again,
     /// and may then release its storage. Until then, readers of earlier
-    /// snapshots may still read it. Default: nothing, for a table that
-    /// holds only memory.
+    /// snapshots may still read it. Default: nothing, for a table that holds only memory.
     fn discard(&self) {}
     /// \[EXTENSION\] The table's options that change in place
     /// (`Rebuild::No`) changed: `desc` holds them now (RULES.md D41).
     /// Called once the change is published, never with a change that needs
     /// a rebuild; such options tune the storage and change no result, so a
-    /// table that cannot take one at once may take it when it is next made
-    /// or opened. Default: nothing, for a table with no such options.
+    /// table that cannot take one at once may take it when it is next made or opened. Default: nothing, for a table with no such options.
     fn reconfigure(&self, _desc: &TableDesc) {}
     /// Makes row `id` hold `row`, or be absent if `None`, whatever it holds
     /// now: how recovery replays and undoes logged changes, so applying the
-    /// same change twice is as applying it once. Default: through `get`,
-    /// `update`, `restore` and `delete`, outside any transaction.
+    /// same change twice is as applying it once. Default: through `get`, `update`, `restore` and `delete`, outside any transaction.
     ///
     /// # Errors
     ///
@@ -529,6 +525,11 @@ pub trait TableStorage: Send + Sync {
     fn maintenance_due(&self) -> bool {
         false
     }
+    /// \[DESIGN\] Whether a read made maintenance wanted that no end of a transaction was told yet: told once, to the end of the transaction
+    /// that read, which changes nothing and so asks nothing else, and should cost a load or two (RULES.md D1212). Default: no.
+    fn asked_maintenance(&self) -> bool {
+        false
+    }
     /// Whether its statistics are due and a plan read them since their last pass (RULES.md D473). Default: no.
     fn statistics_wanted(&self) -> bool {
         false
@@ -561,8 +562,7 @@ pub trait TableStorage: Send + Sync {
         Ok(())
     }
     /// \[DESIGN\] Keeps object `id` of `body` as the log recorded it
-    /// (`keep_lobs`), if it does not hold it: recovery replays it
-    /// (RULES.md D25, D79).
+    /// (`keep_lobs`), if it does not hold it: recovery replays it (RULES.md D25, D79).
     ///
     /// # Errors
     ///

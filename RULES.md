@@ -21112,9 +21112,14 @@ count of its rows, or a plan weighing an index-only read, the asks that
 warm a cold table (D868). The zones of a table opened are wanted by the
 maintenance thread only once one was asked for (`rows/zones/summed.rs`),
 as its statistics are gathered only once a plan read them (D473). The
-transaction that asked notes the table as it ends, as it notes one it
-warmed, and the thread sums the zones up from then on, 64 a call, with
-the rests of D771. What it summed up is saved by each checkpoint as
+end of the transaction that asked notes the table for maintenance. One
+that wrote notes it as it leaves the table for collection, as before.
+One that read alone has no collection, so its commit asks each table it
+read whether a read asked (`TableStorage::asked_maintenance`), which a
+table answers yes once. Before, a table that a read alone had warmed
+(D868) was not summed up until a write to it committed or the database
+was opened again. The thread sums the zones up from then on, 64 a
+call, with the rests of D771. What it summed up is saved by each checkpoint as
 before, so a table closed part summed up goes on from there once asked
 again. A zone saved settled visible opens so (D1163), asked or not.
 
@@ -21125,7 +21130,9 @@ writes do, and leaves them due until one is asked for.
 `Database::maintain` sums up every table's zones now, asked or not, so
 a program that wants a database settled before it is used, or copied,
 calls it. An ask after the first reads one flag and writes nothing, so
-a read by an index, which asks of each row, costs what it did.
+a read by an index, which asks of each row, costs what it did. The
+commit of a transaction that read alone reads one flag of each table it
+read, two of one asked, and writes one once a table.
 
 A load into an empty table of the row store does not begin warm, though
 its zones would then be known as its rows are written and no pass
