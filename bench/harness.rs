@@ -46,6 +46,7 @@ use turborel::hash::crc::{CRC32_ISCSI, Crc};
 
 pub mod geometry;
 pub mod mixed;
+pub mod results;
 
 /// Timed runs of each measurement, after one untimed warm-up.
 pub const RUNS: usize = 5;

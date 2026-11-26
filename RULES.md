@@ -773,6 +773,7 @@ verification approach DO-178C expects (§8).
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
+| D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
@@ -20778,7 +20779,10 @@ pair of octets and every lead of three and four with every second octet
 at each place on and across a lane's and a step's edges, of text cut
 within its characters, and of octets of no structure. A column's texts
 read by the varying fields, an FSST chunk, a constant or a dictionary
-are judged by the set the table opened with (D570).
+are judged by the set the table opened with (D570). A dictionary's
+entries, made text as its chunk is opened, are judged once from the
+first entry's start to the last's end, each entry then a slice of them,
+as the varying fields are (D1131).
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
@@ -21254,6 +21258,94 @@ its word and no wrong result. An index join weighed at the margin's
 times the estimate is exposed past it. Of rows a hundred times the
 estimate it makes a hundred times the probes, where the margin weighed
 eight.
+
+#### D1215. A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more
+
+Without ORDER BY the order of a query expression's rows is
+implementation-dependent [ISO/IEC 9075-2:2023 §7.17 GR5a] (US036), and
+OFFSET and FETCH FIRST remove and keep rows by that order [GR6, GR7d
+ii]. So of a grouping under them any of its rows answer, as long as each
+is a row of the grouped table, a whole group with its set functions of
+every row of it [§7.13 GR2b]. A grouping by hash made every group of
+its input all the same, and the limit over it took the first few and
+dropped the rest, so a statement asking ten groups of a table of many
+millions of them built and merged a table of them all.
+
+The limit already tells a sort or an ordered scan how many of its first
+rows are asked for, through projections that raise nothing and through
+a part run in parallel (`exec/limit/bounded.rs`). It now asks a
+grouping it reaches the same way for that many groups, OFFSET's count
+added to FETCH FIRST's (`Plan::Aggregate`'s `first`). A sort between
+them is told instead, and a filter, as a HAVING condition is, stops the
+count, since the condition is judged of whole groups and the first
+groups met may not be the ones it keeps. The count is a permission. A
+grouping that ignores it gives every group and the limit keeps the
+first, so each path that is not taught it stays right.
+
+A row passed over is one no General Rule judges of the answer given,
+yet evaluating it could have raised an exception or a warning, which
+D15 does not let a plan lose. So a grouping is asked only if it is read
+by batch, groups by some column, makes no group before its rows as
+grouping sets do, is not streamed, and each set function counts rows or
+takes a column and raises nothing whatever rows it is given, as D1063
+asks of a grouping a join's runtime filter is told
+(`exec/batch/first.rs`). A set function of a column that may hold a null
+is refused too, as a null eliminated is a warning [§10.9 GR7a]. A
+DISTINCT or filtered set function is not read by batch, and an
+expression as argument is evaluated of every row, so neither is asked.
+
+What a physical plan says it can raise (`Plan::can_raise`, D552) is left
+as it is, every SUM and AVG taken as raising, since it reads no declared
+type. The test above reads them (`exec/batch/typed.rs`, D1060), so a
+grouping whose SUM is of exact values that cannot pass its range is
+asked all the same, and the limit over it, which reads on for an
+exception, finds no group more to read.
+
+Run alone (`exec/batch/groups.rs`), the grouping makes groups until it
+holds as many as asked for, then finds each row's group among them or
+passes the row over. Every row of a group it holds reaches it, so each
+group is whole. If a group is written past the work area before that
+many are held, nothing is passed over from then on, as a row passed over
+could be of a group already written.
+
+Run in parallel (`exec/parallel/grouped/first.rs`), no morsel may keep
+the first keys it meets, as another morsel would keep others and a
+group would lack the rows of the morsels that dropped it. The
+statement's thread first groups the first morsel by its keys alone and
+keeps the first groups made, as many as asked for. Of each grouping
+column it makes a runtime filter of the kept groups' values, as a hash
+join makes of its built keys (D369), a null among them matching a null,
+and the grouping's input is told them as D1063 tells a join's. The
+scans skip what the filters' ranges exclude, and each morsel drops the
+rows a filter excludes before the grouping reads them. A filter drops
+no row whose value it was made of, so every row of a kept group is
+grouped. A row every column of which passes, though no kept group has
+its key, makes one group more, whole as well, which the limit drops.
+
+The kept groups are the ones the part gives first when nothing is
+fixed. A group is numbered by its first row, morsel then place, and
+groups are given in that order (D293). The kept groups' first rows are
+in the first morsel, before the first row of any other group there and
+before every row of a later morsel. The first morsel is the first
+morsel of the first scan the pipeline reads, whatever filter is over
+it. That these are also the groups the plan run alone gives is true
+where the scan run alone reads its rows in the morsels' order, which
+this decision does not rely on. Any groups are an answer.
+
+Nothing is fixed, and the part runs as before, when the first morsel
+makes fewer groups than asked for, when the input is not scans under
+filters and projections, whose pipeline is made twice at no cost, or
+when EXECUTOR.RUNTIME_FILTERS is off. The first morsel is read twice.
+Telling a part over a join, and choosing the groups from later morsels
+when a filter empties the first, are left out.
+
+Tests in `test/integration/first_groups.rs`: the groups given are whole
+groups of the grouping, of each count, alone and in parallel, of both
+stores; a part gives the groups of its first rows, the null group whole;
+HAVING, grouping sets, a DISTINCT set function and a sort give whole
+groups; a null eliminated, a sum past its range and a division by zero
+in a later group are raised still; and groups past the work area are
+whole. Mutations in `xtask/src/mutate/list/areas/first_groups.rs`.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 

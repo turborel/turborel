@@ -479,14 +479,20 @@ impl Body<'_> {
 
     /// \[DESIGN\] Of a dictionary, its entries' text, each padded to `pad`
     /// characters if given, as `texts` pads: none if the encoding is not a
-    /// dictionary, or an entry is not UTF-8.
-    pub(super) fn entry_texts(&self, pad: Option<usize>) -> Option<Entries> {
+    /// dictionary, or an entry is not UTF-8. The octets from the first
+    /// entry's start to the last's end are judged UTF-8 once by `kernels`,
+    /// each entry then a slice of them, as `varying_texts` judges fields
+    /// (RULES.md D1131, D1175).
+    pub(super) fn entry_texts(&self, pad: Option<usize>, kernels: &dyn Kernels) -> Option<Entries> {
         let Body::Dictionary { offsets, entries, .. } = self else { return None };
         let count = offsets.len().checked_div(WORD)?.checked_sub(1)?;
         let mut held = Entries { text: String::new(), ends: Vec::with_capacity(count) };
+        let Some(last) = count.checked_sub(1) else { return Some(held) };
+        let (start, end) = (between(offsets, 0)?.0, between(offsets, last)?.1);
+        let span = kernels.utf8(entries.get(start..end)?)?;
         for e in 0..count {
             let (from, to) = between(offsets, e)?;
-            padded(&mut held.text, std::str::from_utf8(entries.get(from..to)?).ok()?, pad);
+            padded(&mut held.text, span.get(from.checked_sub(start)?..to.checked_sub(start)?)?, pad);
             held.ends.push(held.text.len());
         }
         Some(held)

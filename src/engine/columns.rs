@@ -245,15 +245,15 @@ impl<'a> Chunk<'a> {
 
     /// \[DESIGN\] Of a dictionary, its entries and the entry of each of
     /// `positions` pushed to `coded`, and whether each is null to `nulls`
-    /// (`encoded::Body::coded`), as `texts` gives those of type `t`: none
-    /// if its encoding is not a dictionary.
+    /// (`encoded::Body::coded`), as `texts` gives those of type `t`, judged
+    /// by `kernels`: none if its encoding is not a dictionary.
     pub fn coded(
         &self,
         positions: &[usize],
         (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Mask),
-        t: &DataType,
+        (t, kernels): (&DataType, &dyn crate::kernels::Kernels),
     ) -> Option<()> {
-        self.coded_with(positions, (text, ends, codes, nulls), &self.body.entry_texts(padding(t)?)?)
+        self.coded_with(positions, (text, ends, codes, nulls), &self.body.entry_texts(padding(t)?, kernels)?)
     }
 
     /// As `coded`, its entries' text `entries`, read once for the runs of
