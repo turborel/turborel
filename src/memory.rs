@@ -61,6 +61,9 @@ pub struct MemoryBudget {
     /// The bytes of its standing reservations, held while the database is
     /// open, as its buffer pools (RULES.md D683).
     standing: AtomicUsize,
+    /// The bytes its standing reservations are planned at: each at the
+    /// bound it stands up to, else at its bytes (RULES.md D1159).
+    planned: AtomicUsize,
     /// What holds each reservation, and its bytes, in the shard its
     /// number picks.
     held: [Shard; SHARDS],
@@ -75,6 +78,7 @@ impl MemoryBudget {
             limit: AtomicUsize::new(limit),
             reserved: AtomicUsize::new(0),
             standing: AtomicUsize::new(0),
+            planned: AtomicUsize::new(0),
             held: std::array::from_fn(|_| Mutex::new(BTreeMap::new())),
             next: AtomicU64::new(0),
         })
@@ -114,6 +118,13 @@ impl MemoryBudget {
         self.standing.load(Ordering::Acquire)
     }
 
+    /// The bytes its standing reservations are planned at
+    /// (`Reservation::stand_up_to`): what the planner takes them as, the
+    /// same however much a growing one holds now (RULES.md D1159).
+    pub fn planned(&self) -> usize {
+        self.planned.load(Ordering::Acquire)
+    }
+
     /// Makes `limit` its limit, for the reservations made after.
     pub fn set_limit(&self, limit: usize) {
         self.limit.store(limit, Ordering::Release);
@@ -131,7 +142,7 @@ impl MemoryBudget {
         if let Some(shard) = self.shard(id) {
             lock_builtin(shard).insert(id, Arc::clone(&held));
         }
-        Ok(Reservation { budget: Arc::clone(self), bytes, held, id })
+        Ok(Reservation { budget: Arc::clone(self), bytes, bound: None, held, id })
     }
 
     /// Counts `bytes` more reserved, for `what`, if they fit its limit, or
@@ -226,6 +237,9 @@ impl Host {
 pub struct Reservation {
     budget: Arc<MemoryBudget>,
     bytes: usize,
+    /// The bytes it is planned at while it stands, if fixed
+    /// (`stand_up_to`); else its bytes.
+    bound: Option<usize>,
     /// Its entry in the budget's list, shared with it.
     held: Arc<Held>,
     /// Its number in the budget's list.
@@ -273,6 +287,18 @@ impl Reservation {
     pub fn stand(&mut self) {
         if !self.held.standing.swap(true, Ordering::AcqRel) {
             self.budget.standing.fetch_add(self.bytes, Ordering::AcqRel);
+            self.budget.planned.fetch_add(self.bytes, Ordering::AcqRel);
+        }
+    }
+
+    /// \[DESIGN\] (RULES.md D1159) Stands as `stand` does, one that grows
+    /// and shrinks with the work, planned at `bound`, the most it may
+    /// hold, whatever it holds now.
+    pub fn stand_up_to(&mut self, bound: usize) {
+        if !self.held.standing.swap(true, Ordering::AcqRel) {
+            self.bound = Some(bound);
+            self.budget.standing.fetch_add(self.bytes, Ordering::AcqRel);
+            self.budget.planned.fetch_add(bound, Ordering::AcqRel);
         }
     }
 
@@ -282,6 +308,10 @@ impl Reservation {
         if self.held.standing.load(Ordering::Acquire) {
             self.budget.standing.fetch_add(bytes, Ordering::AcqRel);
             self.budget.standing.fetch_sub(self.bytes, Ordering::AcqRel);
+            if self.bound.is_none() {
+                self.budget.planned.fetch_add(bytes, Ordering::AcqRel);
+                self.budget.planned.fetch_sub(self.bytes, Ordering::AcqRel);
+            }
         }
         self.bytes = bytes;
         self.held.bytes.store(bytes, Ordering::Relaxed);
@@ -296,6 +326,7 @@ impl Drop for Reservation {
         self.budget.reserved.fetch_sub(self.bytes, Ordering::AcqRel);
         if self.held.standing.load(Ordering::Acquire) {
             self.budget.standing.fetch_sub(self.bytes, Ordering::AcqRel);
+            self.budget.planned.fetch_sub(self.bound.unwrap_or(self.bytes), Ordering::AcqRel);
         }
     }
 }

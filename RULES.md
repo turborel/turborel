@@ -745,6 +745,7 @@ verification approach DO-178C expects (§8).
 | D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
 | D1157 | A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone |
 | D1158 | A plan asking for a table's first statistics while the maintenance thread gathers them waits for that pass |
+| D1159 | A plan costs its spills at the grant of a statement running alone |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -20245,6 +20246,32 @@ runs. A plan asking for the first statistics during it waits for the
 pass and is given what it gathered. Plans that find statistics never
 take the lock, so later passes do not hold them up
 (`engine/rows/stats.rs`).
+
+#### D1159. A plan costs its spills at the grant of a statement running alone
+
+The planner costs what an operator spills past its grant (D651), and took
+the grant as the executor would give it at that moment (D683). That is
+half of what the grants' share has free, after the grants other
+statements hold and after the standing reservations. Two things moved it
+that have nothing to do with the statement. Every grant held beside it
+halved it, so a grouping of sixty thousand rows was hashed over a scan
+when planned alone and streamed over its key's index in order when
+planned beside two others. The kept undo is a standing reservation that
+grows and shrinks with the writes (D746), so the same statement on an
+idle database was costed at a grant that depended on what had run
+before. One query was planned two ways, and a benchmark run and its
+rerun could time different plans.
+
+The planner now costs at the grant a statement running alone would be
+given. No grant is taken as held, and each standing reservation is taken
+at the bound it may grow to, a buffer pool at its bytes and the kept
+undo at its share of the budget (`Reservation::stand_up_to`,
+`MemoryBudget::planned`). The plan then depends on the settings alone,
+and EXPLAIN shows the plan the statement runs. The executor still takes
+what is free when an operator starts (`spill/grant.rs`), and spills or
+gives way as it must. So beside other statements an operator may spill
+more than it was costed for. That was chosen over a plan that changes
+with its neighbours.
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 

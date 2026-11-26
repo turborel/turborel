@@ -46,8 +46,9 @@ impl Kept {
     /// The budget's, if it refuses even an empty reservation.
     pub(super) fn in_budget(budget: &Arc<MemoryBudget>) -> Result<Kept> {
         let mut reservation = budget.reserve(0, KEPT_WHAT)?;
-        // Held while the database is open, as a buffer pool is.
-        reservation.stand();
+        // Held while the database is open, as a buffer pool is, and planned
+        // at its bound, whatever the writes keep now (RULES.md D1159).
+        reservation.stand_up_to(budget.limit().checked_div(KEPT_SHARE).unwrap_or(0));
         Ok(Kept { budget: Some((Arc::clone(budget), reservation)), ..Kept::none() })
     }
 

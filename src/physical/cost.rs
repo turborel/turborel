@@ -8,6 +8,8 @@ pub(crate) mod parallel;
 pub(crate) mod runtime;
 pub(crate) mod spill;
 #[cfg(test)]
+mod alone_tests;
+#[cfg(test)]
 mod tests;
 
 use crate::error::{Code, Result, fail};
