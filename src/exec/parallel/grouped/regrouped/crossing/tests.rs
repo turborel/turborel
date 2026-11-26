@@ -29,19 +29,23 @@ fn counted(spec: &Spec, rows: u64) -> Vec<u8> {
     out
 }
 
-/// The groups the crossing gives, of 8 partitions each giving groups of
-/// keys 0 to 3999, partition `p`'s group of key `k` first at row
-/// `p * 10000 + k` of `p + 1` rows, kept at MEMORY.WORK_BYTES `work`: in
-/// the order of their firsts, and whether any came from the spill.
+/// The groups the crossing gives, of 32 partitions each giving the groups
+/// of the keys of 0 to 3999 whose rest of 8 is its own number's, so each
+/// key's group comes of four, partition `p`'s group of key `k` first at
+/// row `p * 10000 + k` of `p + 1` rows, kept at MEMORY.WORK_BYTES `work`:
+/// in the order of their firsts, and whether any came from the spill.
+/// Each partition's groups are fewer than the smallest grant holds, so
+/// some are held before the rest pass it.
 fn merged_at(work: i128) -> (Vec<String>, bool) {
     let db = Database::new();
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(work, 0))).unwrap();
     let state = Db::from(db.snapshot().unwrap());
     let runner = Runner::new(&state, crate::txn::NO_TRANSACTION);
     let (spec, crossing) = (spec(), Crossing::new(Vec::new()));
-    for p in 0_u64..8 {
-        let groups =
-            (0_u64..4000).map(|k| (p.saturating_mul(10_000).saturating_add(k), vec![exact(k)], vec![counted(&spec, p.saturating_add(1))]));
+    for p in 0_u64..32 {
+        let groups = (0_u64..4000)
+            .filter(|k| k.rem_euclid(8) == p.rem_euclid(8))
+            .map(|k| (p.saturating_mul(10_000).saturating_add(k), vec![exact(k)], vec![counted(&spec, p.saturating_add(1))]));
         crossing.add(&spec, groups.collect(), &runner).unwrap();
     }
     let (held, given) = crossing.merged(&spec, Ok).unwrap().unwrap();
@@ -66,6 +70,6 @@ fn groups_past_the_grant_merge_as_those_held() {
     assert!(!spilled_held, "held in memory at the default grant");
     assert!(spilled, "in the spill past the smallest grant");
     assert_eq!(held.len(), 4000);
-    assert!(held.first().is_some_and(|g| g.contains("36")), "{:?}: 36 rows, the first first row 0", held.first());
+    assert!(held.first().is_some_and(|g| g.contains("52")), "{:?}: 1 + 9 + 17 + 25 rows, the first first row 0", held.first());
     assert_eq!(small, held);
 }
