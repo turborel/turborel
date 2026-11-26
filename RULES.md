@@ -736,6 +736,7 @@ verification approach DO-178C expects (§8).
 | D1164 | A start that changes nothing records no catalog image |
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
+| D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 
 ### The project
 
@@ -20004,6 +20005,25 @@ pages.
 A count is now exact to 2^53 and the nearest `f64` past it, its high and
 low words each converted. The ceiling of an estimate is the most a
 count holds only of one reaching it.
+
+#### D1200. The groups of far more values than rows are the rows, the formula computed without its power
+
+The groups n rows fall into by columns of D distinct combinations are
+D(1 - (1 - 1/D)^n) (D370). The power was computed by its logarithm and
+taken from 1. Once D passes 2^53 times n the power is nearer 1 than a
+number tells, the difference is nothing, and the groups were clamped to
+one. A grouping by seven columns of a customer, their distinct counts
+multiplied to about 10^30, was estimated at one group where it made
+381,105, and every choice above it was made for one row.
+
+The difference is now computed whole, as -expm1(n ln(1 - 1/D)), which
+keeps the digits of a value near nothing (`cardinality/groups.rs`). Its
+limits are the formula's. One value gives one group, since the logarithm
+is then negative infinity and the difference 1. As many values as rows
+give 1 - 1/e of them. Far more values than rows give the rows, each
+meeting a value of its own. A product of distinct counts past every
+number is taken as the greatest one, so the formula never multiplies
+nothing by infinity. The result stays within one group and n.
 
 ## 2. Project layout
 

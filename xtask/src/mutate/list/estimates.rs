@@ -1,9 +1,9 @@
 //! The mutations of the one estimator (RULES.md R-TEST-9, D370-D372): the
 //! floor of one row lost, Cardenas' formula taken as the lesser of the
-//! rows and the values, the whole table taken as a sample, an index's
-//! sketch ignored, an outer join's preserved rows lost, lineage stopped at
-//! a grouping, a table joined with itself taken as one relation, and the
-//! optimizer's local fixpoint lost.
+//! rows and the values, its power rounded to 1, the whole table taken as a
+//! sample, an index's sketch ignored, an outer join's preserved rows lost,
+//! lineage stopped at a grouping, a table joined with itself taken as one
+//! relation, and the optimizer's local fixpoint lost.
 
 use super::super::{Mutation, Package};
 
@@ -16,7 +16,7 @@ const LINEAGE_FILE: &str = "src/physical/cardinality/lineage.rs";
 
 /// Mechanisms of the estimator and the rule driver whose removal must fail
 /// their tests.
-pub const ESTIMATES: [Mutation; 8] = [
+pub const ESTIMATES: [Mutation; 9] = [
     Mutation {
         name: "estimates-one-row-floor",
         package: Package::Core,
@@ -32,10 +32,20 @@ pub const ESTIMATES: [Mutation; 8] = [
         package: Package::Core,
         breaks: "n rows of D values are taken to meet min(n, D) of them, not D(1 - (1 - 1/D)^n)",
         file: GROUPS_FILE,
-        original: "(d * (1.0_f64 - missed)).clamp(1.0_f64, n)",
+        original: "(d * met).clamp(1.0_f64, n)",
         replacement: "d.clamp(1.0_f64, n)",
         integration: &[],
         unit: &["physical::cardinality::tests::cardenas_at_its_boundaries"],
+    },
+    Mutation {
+        name: "estimates-cardenas-power-rounded",
+        package: Package::Core,
+        breaks: "rows drawn from far more values than a number tells from 1 are estimated to meet one of them",
+        file: GROUPS_FILE,
+        original: "let met = -((-1.0_f64 / d).ln_1p() * n).exp_m1();",
+        replacement: "let met = 1.0_f64 - ((-1.0_f64 / d).ln_1p() * n).exp();",
+        integration: &[],
+        unit: &["physical::cardinality::tests::cardenas_of_values_past_a_number_s_digits"],
     },
     Mutation {
         name: "estimates-whole-table-sampled",

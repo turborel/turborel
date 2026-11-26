@@ -143,6 +143,26 @@ fn cardenas_at_its_boundaries() {
     assert!(cardenas(10.0, f64::NAN).abs() < f64::EPSILON);
 }
 
+/// Verifies: [DESIGN] RULES.md D1200, R-TEST-7: Cardenas' formula of far
+/// more values than rows gives the rows, each meeting a value of its own.
+/// A regression test: (1 - 1/D)^n rounded to 1 once D passed 2^53 times n,
+/// so a grouping by several wide columns, their distinct counts multiplied
+/// to 10^30, was estimated at one group of 381,105. Values as many as the
+/// rows meet 1 - 1/e of them, and a product past every number is the
+/// greatest one.
+#[test]
+fn cardenas_of_values_past_a_number_s_digits() {
+    let n = 1_147_084.0_f64;
+    for d in [1e17_f64, 1e30_f64, 1e300_f64, f64::MAX, f64::INFINITY] {
+        let met = cardenas(d, n);
+        assert!(met <= n && met > n * 0.999_f64, "{d} values, {n} rows: {met}");
+    }
+    assert!((cardenas(n, n) / n - 0.632_12_f64).abs() < 1e-4_f64, "as many values as rows");
+    assert!((cardenas(f64::NAN, n) - 1.0_f64).abs() < 1e-9_f64, "no count of values is one value");
+    assert!((cardenas(1e30_f64, 1.0_f64) - 1.0_f64).abs() < 1e-9_f64, "one row meets one");
+    assert!((cardenas(2.0_f64, 2.0_f64) - 1.5_f64).abs() < 1e-12_f64, "two rows of two values");
+}
+
 /// A generator of fixed seed (R-TEST-5): xorshift.
 struct Seeded(u64);
 
