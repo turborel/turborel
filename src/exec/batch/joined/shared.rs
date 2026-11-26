@@ -117,7 +117,7 @@ impl Frame {
     /// How its keys are hashed for a hashed table or a runtime filter;
     /// given as numbers to a direct table if `direct` (RULES.md D601).
     pub(in crate::exec) fn hashing(&self, direct: bool) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct, kernels: None }
     }
 
     /// The runtime filter of its key `k`, if it has one (RULES.md D369).
@@ -304,13 +304,13 @@ impl SharedTable {
 
     /// How it hashes its keys.
     fn hashing(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct() }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct(), kernels: Some(&*self.kernels) }
     }
 
     /// How it hashes its keys for a hashed table or a runtime filter,
     /// never as a direct table's numbers (RULES.md D601).
     fn hashed(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct: false }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: false, kernels: Some(&*self.kernels) }
     }
 
     /// The columns of the rows of a batch that probed it, of left batches

@@ -703,6 +703,7 @@ verification approach DO-178C expects (§8).
 | D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
 | D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
 | D1095 | A probe of a table built for a pipeline locates its batch's rows before it pairs any, their first entries prefetched |
+| D1098 | A join hashes a vector of integers of scale 0 by a loop with no branch, the kernels' hash of words, as their buckets hash |
 | D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
@@ -19226,6 +19227,33 @@ found by its key and makes no first pass.
 
 A prefetch names only a value of its slice, a place past the end passed
 by, so a kernel cannot be asked of an address that is not the program's.
+
+#### D1098. A join hashes a vector of integers of scale 0 by a loop with no branch, the kernels' hash of words, as their buckets hash
+
+A join hashed each integer of a key's vector one at a time (D368). It
+checked the row for a null, widened the units to 128 bits, looked up the
+power of 10 of the scale, made the nearest `f64` by `MAGIC` and divided
+it by that power, then hashed the bits as a word. A profile of TPC-H's
+ninth query put about a twelfth of its cycles on hashing keys, almost
+all of them integers of scale 0.
+
+A vector of scale 0 is now hashed in two loops with no branch
+(`table/join/keys.rs`, `integers_hashed`). The first makes each row's
+`f64` by `MAGIC`, which is exact below 2^51 in magnitude and is the
+nearest `f64` the bucket gives, and notes whether any row is that wide.
+The second hashes the bits as words on the statement's kernels
+(`Kernels::hash_i64`), the XXH3-64 of 8 bytes that `Seed::word` gives,
+seeded alike (`Seed::word_seed`). Without kernels it hashes each by
+`Seed::word`, and for a direct table (D601) it gives the bits. A null is
+then given a null's hash and marked a miss unless nulls match
+(`nulls_marked`). A vector holding a value of 2^51 or more is hashed as
+before, as is one of another scale.
+
+Every hash is the one the bucket gives, so a table built one way and
+probed the other, a runtime filter and a Bloom filter (D369, D1087) all
+agree. A key of integers need not be one on both sides. The probe and
+build of a shared table pass the statement's kernels. Every other
+hashing passes none and takes the loop of words.
 
 #### D1097. A fetch of a frozen row is priced by the number of columns it reads
 

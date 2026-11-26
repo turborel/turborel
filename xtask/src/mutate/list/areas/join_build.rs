@@ -51,7 +51,7 @@ const COLLATED: &str = "src/physical/collated.rs";
 /// The test of joins on computed keys.
 const COMPUTED: &str = "computed_keys::an_equality_of_computed_keys_is_a_hash_join";
 
-pub const JOIN_BUILD: [Mutation; 24] = [
+pub const JOIN_BUILD: [Mutation; 26] = [
     Mutation {
         name: "probe-units-reversed",
         package: Package::Core,
@@ -291,5 +291,25 @@ pub const JOIN_BUILD: [Mutation; 24] = [
         replacement: "            *found = Located::default();",
         integration: &[],
         unit: &["exec::batch::joined::shared::probing::tests::a_located_probe_pairs_as_the_nested_comparison"],
+    },
+    Mutation {
+        name: "integers-hashed-unbounded",
+        package: Package::Core,
+        breaks: "a vector of integers of scale 0 is hashed by MAGIC only if each is below 2^51 in magnitude (D1098)",
+        file: "src/exec/table/join/keys.rs",
+        original: "            wide |= v.unsigned_abs() >= MAGIC_UNITS;\n",
+        replacement: "",
+        integration: &[],
+        unit: &["exec::table::join::tests::integers_of_scale_zero_hash_as_their_buckets"],
+    },
+    Mutation {
+        name: "integers-hashed-nulls-unmarked",
+        package: Package::Core,
+        breaks: "a null of a vector of integers hashed by MAGIC is a null's hash, a miss unless nulls match (D1098)",
+        file: "src/exec/table/join/keys.rs",
+        original: "            *h = how.null();\n",
+        replacement: "",
+        integration: &[],
+        unit: &["exec::table::join::tests::integers_of_scale_zero_hash_as_their_buckets"],
     },
 ];

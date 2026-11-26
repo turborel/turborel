@@ -94,13 +94,13 @@ impl Rest {
 impl HeldRight {
     /// How it hashes its keys.
     fn hashing(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct() }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct(), kernels: None }
     }
 
     /// How it hashes its keys for a hashed table or a runtime filter,
     /// never as a direct table's numbers (RULES.md D601).
     fn hashed(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct: false }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: false, kernels: None }
     }
 
     /// Hashes the keys of the rows of `batch` at `rows`, its key columns at

@@ -35,6 +35,9 @@ const MAGIC: f64 = 6_755_399_441_055_744.0_f64;
 /// `MAGIC`: 2^51.
 const MAGIC_RANGE: i128 = 1_i128 << 51_u32;
 
+/// \[DESIGN\] As `MAGIC_RANGE`, of a unit's magnitude.
+const MAGIC_UNITS: u64 = 1_u64 << 51_u32;
+
 /// \[DESIGN\] The powers of 10 an `f64` holds exactly: up to 10^22.
 const POWERS: [f64; 23] = [
     1e0_f64, 1e1_f64, 1e2_f64, 1e3_f64, 1e4_f64, 1e5_f64, 1e6_f64, 1e7_f64, 1e8_f64, 1e9_f64, 1e10_f64, 1e11_f64, 1e12_f64, 1e13_f64,
@@ -44,12 +47,14 @@ const POWERS: [f64; 23] = [
 /// How a join hashes its keys: by its database's seed, and whether a text
 /// is hashed by SipHash keyed by it (RULES.md D369); and whether a number
 /// is given as itself, the bits of its nearest `f64`, to a direct table,
-/// not hashed (RULES.md D601).
+/// not hashed (RULES.md D601); and the kernels a vector of integers is
+/// hashed on, if given (RULES.md D1098).
 #[derive(Clone, Copy)]
 pub(in crate::exec) struct Hashing<'s> {
     pub(in crate::exec) seed: &'s Seed,
     pub(in crate::exec) keyed: bool,
     pub(in crate::exec) direct: bool,
+    pub(in crate::exec) kernels: Option<&'s dyn crate::kernels::Kernels>,
 }
 
 /// The hashes of the keys of a batch's rows, and of each, whether it is a
@@ -133,6 +138,10 @@ fn hash_column(
     };
     let places = (0..count).map(|n| nth(rows, n));
     match column {
+        Column::Ints(ints) if ints.scale == 0 && integers_hashed((ints, rows, count), how, out) => {
+            let base = out.len().saturating_sub(count);
+            nulls_marked((ints, rows), how, nulls, (out.get_mut(base..).unwrap_or_default(), misses));
+        }
         Column::Ints(ints) => out.extend(places.zip(misses.iter_mut()).map(|(r, m)| ints_hash(ints, r, how).unwrap_or_else(|| null(m)))),
         Column::Floats(f) => out.extend(places.zip(misses.iter_mut()).map(|(r, m)| f.get(r).map_or_else(|| null(m), |x| how.number(x)))),
         Column::Texts(texts) => texts_hashed((texts, places), how, (out, misses), &null),
@@ -155,6 +164,51 @@ fn hash_column(
         }
     }
     Ok(())
+}
+
+/// \[DESIGN\] (RULES.md D1098) Appends to `out` the hash of each of
+/// `count` rows given of `ints`, of scale 0, `rows` or all, a null's as
+/// of 0, if each is below 2^51 in magnitude, and says whether it did. Each
+/// is its `f64` exactly by `MAGIC`, so its hash is the one the bucket's
+/// gives (`ints_hash`), made by a loop with no branch and the kernels'
+/// hash of words where they are given; to a direct table, the bits
+/// themselves. Of a wider one, nothing is appended.
+fn integers_hashed((ints, rows, count): (&Ints, Option<&[usize]>, usize), how: Hashing<'_>, out: &mut Vec<u64>) -> bool {
+    let unit = |n: usize| ints.units.get(nth(rows, n)).copied().unwrap_or(0);
+    let mut wide = false;
+    let bits: Vec<u64> = (0..count)
+        .map(|n| {
+            let v = unit(n);
+            wide |= v.unsigned_abs() >= MAGIC_UNITS;
+            (f64::from_bits(MAGIC.to_bits().wrapping_add(v.cast_unsigned())) - MAGIC).to_bits()
+        })
+        .collect();
+    if wide {
+        return false;
+    }
+    if how.direct {
+        out.extend_from_slice(&bits);
+    } else if let Some(kernels) = how.kernels {
+        let words: Vec<i64> = bits.iter().map(|b| b.cast_signed()).collect();
+        kernels.hash_i64(&words, how.seed.word_seed(), None, out);
+    } else {
+        out.extend(bits.iter().map(|&b| how.seed.word(b)));
+    }
+    true
+}
+
+/// Of the hashes `out` of rows given of `ints`, `rows` or all, each of a
+/// null made a null's, marked a miss in `misses` unless nulls match.
+fn nulls_marked((ints, rows): (&Ints, Option<&[usize]>), how: Hashing<'_>, nulls: bool, (out, misses): (&mut [u64], &mut [bool])) {
+    if ints.nulls.is_none() {
+        return;
+    }
+    for (n, (h, m)) in out.iter_mut().zip(misses.iter_mut()).enumerate() {
+        if ints.is_null(nth(rows, n)) {
+            *h = how.null();
+            *m = *m || !nulls;
+        }
+    }
 }
 
 /// The hash of row `r` of `ints`, none if it is null.
