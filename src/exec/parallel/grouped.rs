@@ -34,6 +34,7 @@ use std::collections::{BinaryHeap, HashMap};
 use std::sync::{Arc, Mutex, PoisonError};
 
 mod regrouped;
+mod second;
 mod waves;
 
 use self::regrouped::Outer;
@@ -127,9 +128,17 @@ impl Grouping {
     /// its HAVING condition is true of, or all of none, as `kept` keeps
     /// them: the condition judged of each group's row before the group
     /// takes a row of its own; in the order of their first rows. Of a
-    /// pair, the second grouping's groups of them, then those kept
-    /// (`ended`).
-    fn kept_of(&self, table: &GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+    /// pair, the second grouping's groups of them, then those kept: made
+    /// in a table of the first's groups as a batch where the second reads
+    /// them so (RULES.md D1123), else of their rows (`ended`).
+    fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+        if let Some(outer) = self.outer.as_ref().filter(|outer| outer.tabled(&table)) {
+            // Its groups come in the order of the first's (RULES.md D1123).
+            // Neither grouping of a pair is by a collation, so the
+            // second's keys are hashed padded, by a seed of no column
+            // grouped unpadded (RULES.md D1183).
+            return self.kept(outer.regrouped_table(table, (runner, &self.seed.unpadded(&[])))?, runner);
+        }
         let cond = self.having.as_ref().filter(|_| self.outer.is_none());
         let mut groups = match (cond, cond.and_then(|c| self.bounded(c))) {
             (_, Some(bounded)) => table.finished_above(bounded)?,
@@ -252,6 +261,9 @@ pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: 
     let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, told)? else { return Ok(Held::GaveWay) };
     let mut grouping = grouping;
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
+    if let Some(read) = &grouping.read {
+        grouping.seed = grouping.seed.unpadded(&read.unpadded);
+    }
     let grouping = Arc::new(grouping);
     let mut runs = if grouping.read.is_some() {
         let Held::Kept(runs) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
@@ -391,17 +403,19 @@ fn pieces_bytes(made: &[Piece]) -> usize {
 /// pipeline read `by` batch, if it reads them so: of DISTINCT, every
 /// column of batches holding every column of the rows; else its grouping
 /// columns and set functions as a grouping by batch reads them, no seed
-/// nor collation among them.
+/// among them, nor a collation but one whose key is the text itself
+/// (RULES.md D1183).
 fn read_of(grouping: &Grouping, by: &ByBatch) -> Option<Read> {
     if grouping.distinct {
         let whole = by.layout.iter().copied().eq(0..by.width);
         return whole.then(|| read_for(&by.layout, &[], &by.layout)).flatten();
     }
     let spec = &grouping.spec;
-    if !spec.seeds.is_empty() || !spec.collations.is_empty() {
+    if !spec.seeds.is_empty() {
         return None;
     }
-    read_for(&spec.groups, &spec.aggs, &by.layout)
+    let unpadded = super::super::group::unpadded_keys(&spec.collations)?;
+    read_for(&spec.groups, &spec.aggs, &by.layout).map(|read| Read { unpadded, ..read })
 }
 
 /// The number of the first row of morsel `m`: after the seeds, numbered

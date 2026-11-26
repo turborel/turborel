@@ -107,7 +107,8 @@ impl Summary {
             | Conjunct::NotIn { .. }
             | Conjunct::Any(_)
             | Conjunct::Dynamic { .. }
-            | Conjunct::Spans { .. } => {
+            | Conjunct::Spans { .. }
+            | Conjunct::Unpadded { .. } => {
                 let mut bounds: Vec<Option<(Value, Value)>> = vec![None; column.saturating_add(1)];
                 if let Some(b) = bounds.get_mut(*column) {
                     b.clone_from(&overall.bounds);

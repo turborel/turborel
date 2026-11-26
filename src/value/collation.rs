@@ -6,7 +6,10 @@
 //! no sort key: its comparisons stay bare, and `value/comparison.rs` judges
 //! them. Any other reaches comparison as `Value::Binary` of the sort key, so
 //! ordering, grouping, hashing and spilling need not know of collations,
-//! and an index on a collated column holds sort keys.
+//! and an index on a collated column holds sort keys. One whose key is the
+//! text itself (`CollationRef::is_octets`) is marked in a plan as any other
+//! is, and the operators that read vectors compare, hash and order its
+//! strings in place, unpadded (RULES.md D1183).
 //!
 //! A collation's name fixes its behaviour for good. `Collation::version`
 //! is stored with each collation a database uses, and a database whose
@@ -183,7 +186,23 @@ impl CollationRef {
     /// Whether it orders as a comparison with no collation does, so its
     /// comparisons stay bare.
     pub fn is_default(&self) -> bool {
-        self.pad == Pad::Space && matches!(self.collation.name(), UCS_BASIC | SQL_TEXT)
+        self.pad == Pad::Space && self.is_scalar()
+    }
+
+    /// [ISO/IEC 9075-2:2023 §4.3.2] Whether it orders strings as their
+    /// octets order, a prefix the less: `UCS_BASIC` or `SQL_TEXT` with NO
+    /// PAD, whose sort key is the text itself. Its comparisons are made of
+    /// the strings in place, no key built (RULES.md D1183).
+    pub fn is_octets(&self) -> bool {
+        self.pad == Pad::None && self.is_scalar()
+    }
+
+    /// Whether it compares each character as itself, by its Unicode scalar
+    /// value: `UCS_BASIC` or `SQL_TEXT`, of either pad characteristic. LIKE
+    /// under it, which never pads [ISO/IEC 9075-2:2023 §8.5 SR3d], is LIKE
+    /// of the strings as they are.
+    pub fn is_scalar(&self) -> bool {
+        matches!(self.collation.name(), UCS_BASIC | SQL_TEXT)
     }
 
     /// Whether it behaves as `other`: an index of the one serves the other.
@@ -228,6 +247,12 @@ impl PartialEq for CollationRef {
     fn eq(&self, other: &CollationRef) -> bool {
         self.behaves_as(other)
     }
+}
+
+/// `UCS_BASIC` with NO PAD, whose key is the text itself, for tests.
+#[cfg(test)]
+pub(crate) fn unpadded_scalar() -> CollationRef {
+    CollationRef { collation: Arc::new(folded::Scalar(UCS_BASIC)), pad: Pad::None }
 }
 
 /// The collations every database has. A table that cannot be read leaves

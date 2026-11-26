@@ -145,7 +145,9 @@ impl Judgment {
 fn judged_conjunct(conjunct: &Conjunct) -> bool {
     match conjunct {
         Conjunct::Any(each) => each.iter().all(judged_leaf),
-        Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } => judged_leaf(conjunct),
+        Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Unpadded { .. } => {
+            judged_leaf(conjunct)
+        }
         // A sort's bound, and a join's spans, pass over groups and parts
         // alone (RULES.md D379, D600).
         Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => false,
@@ -158,7 +160,8 @@ fn judged_leaf(conjunct: &Conjunct) -> bool {
         Conjunct::Condition(Condition { probe: Probe::Compare { .. }, .. })
         | Conjunct::Null { .. }
         | Conjunct::In { .. }
-        | Conjunct::NotIn { .. } => true,
+        | Conjunct::NotIn { .. }
+        | Conjunct::Unpadded { .. } => true,
         Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => false,
     }
 }
@@ -222,7 +225,8 @@ impl Pred {
             | Conjunct::NotIn { .. }
             | Conjunct::Any(_)
             | Conjunct::Dynamic { .. }
-            | Conjunct::Spans { .. } => None,
+            | Conjunct::Spans { .. }
+            | Conjunct::Unpadded { .. } => None,
         }
     }
 
@@ -291,7 +295,7 @@ impl Pred {
     /// `select_codes`; else each text in place.
     fn texts(&self, texts: &Texts, given: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {
         text_keeps(&self.conjunct, &|_| Some(Ordering::Equal))?;
-        let keeps = |s: &str| text_keeps(&self.conjunct, &|c| Some(compare_strings(s, c))) == Some(true);
+        let keeps = |s: &str| text_keeps(&self.conjunct, &|c| Some(text_order(s, c))) == Some(true);
         if let Some(coded) = texts.coded.as_ref().filter(|_| !self.of_null) {
             let mut entries = Mask::none(coded.entries.len());
             for e in (0..coded.entries.len()).filter(|&e| coded.entries.get(e).is_some_and(keeps)) {
@@ -305,30 +309,55 @@ impl Pred {
     }
 }
 
+/// A constant a text is compared with, and how.
+#[derive(Debug, Clone, Copy)]
+enum Against<'c> {
+    /// Each padded with spaces to the other's length [X3.135-1986 §5.11
+    /// GR5].
+    Padded(&'c str),
+    /// [ISO/IEC 9075-2:2023 §4.3.2] Their octets, a prefix the less, as a
+    /// collation of NO PAD that orders strings as their octets do compares
+    /// them (RULES.md D1183).
+    Unpadded(&'c [u8]),
+}
+
+/// The order of `text` against `constant`, as it says they compare.
+fn text_order(text: &str, constant: Against<'_>) -> Ordering {
+    match constant {
+        Against::Padded(c) => compare_strings(text, c),
+        Against::Unpadded(octets) => text.as_bytes().cmp(octets),
+    }
+}
+
 /// \[DESIGN\] Whether `conjunct` is true of a text not null, each
 /// constant's order against it as `order` gives it, as `matches_key`
 /// judges it of the text's value (`value::compare` of two strings is
 /// `compare_strings`); none if a constant is neither a string nor a null.
-fn text_keeps(conjunct: &Conjunct, order: &dyn Fn(&str) -> Option<Ordering>) -> Option<bool> {
+fn text_keeps(conjunct: &Conjunct, order: &dyn Fn(Against<'_>) -> Option<Ordering>) -> Option<bool> {
     match conjunct {
         // Each operand of one column, never itself an OR (`judged_conjunct`).
         Conjunct::Any(each) => each.iter().try_fold(false, |any, c| Some(any | leaf_text_keeps(c, order)?)),
-        Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } => leaf_text_keeps(conjunct, order),
+        Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Unpadded { .. } => {
+            leaf_text_keeps(conjunct, order)
+        }
         Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
     }
 }
 
 /// As `text_keeps`, of a conjunct not an OR.
-fn leaf_text_keeps(conjunct: &Conjunct, order: &dyn Fn(&str) -> Option<Ordering>) -> Option<bool> {
+fn leaf_text_keeps(conjunct: &Conjunct, order: &dyn Fn(Against<'_>) -> Option<Ordering>) -> Option<bool> {
     // Of a string, as it compares; of a null, never; of another, not known.
     let of = |v: &Value, truth: &dyn Fn(Option<Ordering>) -> bool| {
-        if let Value::Char(c) = v { Some(truth(order(c))) } else { v.is_null().then_some(false) }
+        if let Value::Char(c) = v { Some(truth(order(Against::Padded(c)))) } else { v.is_null().then_some(false) }
     };
     let equal = |v: &Value| of(v, &|o| o == Some(Ordering::Equal));
     let apart = |v: &Value| of(v, &|o| o.is_some_and(Ordering::is_ne));
     match conjunct {
         Conjunct::Null { not, .. } => Some(*not),
-        Conjunct::Condition(Condition { probe: Probe::Compare { op, value: Value::Char(c) }, .. }) => Some(holds(*op, order(c))),
+        Conjunct::Condition(Condition { probe: Probe::Compare { op, value: Value::Char(c) }, .. }) => {
+            Some(holds(*op, order(Against::Padded(c))))
+        }
+        Conjunct::Unpadded { op, octets, .. } => Some(holds(*op, order(Against::Unpadded(octets)))),
         Conjunct::In { values, .. } => values.iter().try_fold(false, |any, v| Some(any | equal(v)?)),
         Conjunct::NotIn { values, .. } => values.iter().try_fold(true, |all, v| Some(all & apart(v)?)),
         Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,

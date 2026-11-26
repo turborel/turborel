@@ -101,6 +101,14 @@ pub trait Kernels: Send + Sync {
         portable::hash::hash_texts((text, ends), seeded, sel, out);
     }
 
+    /// As `hash_texts`, of each text whole, its trailing spaces among its
+    /// bytes, as a grouping's table hashes a character string under a
+    /// collation of NO PAD that orders strings as their octets do
+    /// (RULES.md D1183).
+    fn hash_texts_unpadded(&self, (text, ends): (&[u8], &[usize]), seeded: &Seeded, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        portable::hash::hash_texts_unpadded((text, ends), seeded, sel, out);
+    }
+
     /// Appends to `out` the place of each of `hashes` a blocked Bloom
     /// filter of `words` may hold, in order (RULES.md D369): its block of
     /// 8 words picked by a hash's high bits, four of its bits by its low

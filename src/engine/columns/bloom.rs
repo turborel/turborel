@@ -157,7 +157,12 @@ fn asked(condition: &Conjunct) -> Option<(usize, &[Value])> {
             }
         }
         Conjunct::In { column, values } => Some((*column, values.as_slice())),
-        Conjunct::Null { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
+        Conjunct::Null { .. }
+        | Conjunct::NotIn { .. }
+        | Conjunct::Any(_)
+        | Conjunct::Dynamic { .. }
+        | Conjunct::Spans { .. }
+        | Conjunct::Unpadded { .. } => None,
     }
 }
 

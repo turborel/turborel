@@ -111,8 +111,8 @@ impl GroupTable {
         // Its groups put in that order, so a partition's lie one after
         // another and the thread that merges them reads each column in
         // one run, not a group from here and one from there.
-        let width = made.keys.width();
-        let keys = std::mem::replace(&mut made.keys, Keys::new(width));
+        let fresh = made.keys.like();
+        let keys = std::mem::replace(&mut made.keys, fresh);
         made.keys.extend(&keys, &places);
         let picked = |words: &[u64]| places.iter().map(|&g| words.get(crate::storage::mask::index(g)).copied().unwrap_or(0)).collect();
         (made.hashes, made.firsts) = (picked(&made.hashes), picked(&made.firsts));
@@ -158,7 +158,7 @@ impl GroupTable {
         let mut table = GroupTable::new(made.keys.width(), aggs, seed, usize::MAX);
         table.states = made.states.into_iter().zip(aggs).map(|(sent, agg)| States::thawed(sent, agg, len)).collect::<Result<_>>()?;
         table.slots.rebuilt(made.keyed.as_deref().unwrap_or(&made.hashes));
-        (table.keys, table.hashes, table.firsts, table.keyed) = (made.keys, made.hashes, made.firsts, made.keyed);
+        (table.keys, table.hashes, table.firsts, table.keyed) = (made.keys.of_seed(seed), made.hashes, made.firsts, made.keyed);
         Ok(table)
     }
 

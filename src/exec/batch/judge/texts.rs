@@ -3,7 +3,9 @@
 //! constant pattern of each text in place [X3.135-1986 §5.14], or of all
 //! at once by its piece between two `%`s (RULES.md D1119); a
 //! comparison with a constant string, IN and NOT IN a list of them, each
-//! padded with spaces as strings compare [§5.11 GR5]; IS NULL [§5.15]; of
+//! padded with spaces as strings compare [§5.11 GR5], or unpadded under a
+//! collation of NO PAD that orders strings as their octets do (RULES.md
+//! D1183); IS NULL [§5.15]; of
 //! a store's dictionaries, each once of each entry, a row then kept by its
 //! entry. A constant not a string is judged of the values instead.
 
@@ -66,6 +68,8 @@ pub(super) fn kept(judged: &Judged, texts: &Texts, over: Option<&[u32]>, kernels
             let equal = |s: &str| strings.iter().any(|c| compare_strings(s, c) == Ordering::Equal);
             Some(if *not { keep(&|s| !has_null && !equal(s)) } else { keep(&equal) })
         }
+        // [ISO/IEC 9075-2:2023 §4.3.2] their octets, a prefix the less.
+        Judged::Unpadded(_, op, octets) => Some(keep(&|s| op.holds(s.as_bytes().cmp(octets)))),
         Judged::Compare(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) => None,
     }
 }

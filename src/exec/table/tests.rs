@@ -164,3 +164,51 @@ fn a_table_truncated_keeps_its_first_groups() {
     crate::exec::batch::put_key(Cell::Value(&gone[0]), &mut expected);
     assert_eq!(bytes, expected);
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
+/// seed that says a key's column is grouped unpadded hashes its strings
+/// whole and its tables compare them so: `'a'` and `'a '` hash apart and
+/// are two groups, of a vector of texts, of a dictionary's and of values
+/// alike, where the plain seed makes them one; the column beside it, not
+/// said so, still groups padded; and keys frozen for another thread keep
+/// comparing so.
+#[test]
+fn keys_grouped_unpadded_tell_trailing_spaces_apart() {
+    let plain = Seed::fixed(7);
+    let seed = plain.unpadded(&[true, false]);
+    let text = |s: &str| Value::Char(s.into());
+    assert_ne!(hash_values(&seed, &[text("a"), text("x")]), hash_values(&seed, &[text("a "), text("x")]));
+    assert_eq!(hash_values(&seed, &[text("a"), text("x")]), hash_values(&seed, &[text("a"), text("x ")]), "the second column padded");
+    assert_eq!(hash_values(&plain, &[text("a"), text("x")]), hash_values(&plain, &[text("a "), text("x")]));
+    assert!(!plain.unpadded(&[false, false]).is_unpadded(0) && seed.is_unpadded(0) && !seed.is_unpadded(1));
+    let words = Texts::new("aa a\tb ".to_owned(), vec![1, 3, 5, 7], None);
+    let entries = std::sync::Arc::new(Texts::new("aa a\tb ".to_owned(), vec![1, 3, 5, 7], None));
+    let coded = Texts::coded(Coded { codes: vec![0, 1, 2, 3], entries }, None);
+    let same = || Column::Texts(Texts::new("xxx x".to_owned(), vec![1, 2, 3, 5], None));
+    for (what, keys) in [("texts", Column::Texts(words)), ("a dictionary", Column::Texts(coded))] {
+        let batch = Batch { columns: vec![keys, same()], rows: 4 };
+        let mut hashes = Vec::new();
+        hash_rows(&batch, (&[0, 1], None), (&seed, &Portable), &mut hashes);
+        let mut table = GroupTable::new(2, &[], &seed, usize::MAX);
+        let mut padded = GroupTable::new(2, &[], &plain, usize::MAX);
+        let mut padded_hashes = Vec::new();
+        hash_rows(&batch, (&[0, 1], None), (&plain, &Portable), &mut padded_hashes);
+        for r in 0..4 {
+            let values: Vec<Value> = (0..2).map(|c| batch.cell(c, r).to_value()).collect();
+            assert_eq!(hashes[r], hash_values(&seed, &values), "{what}: row {r}");
+            table.found_or_made(hashes[r], Key::Row(&batch, &[0, 1], r), 0);
+            padded.found_or_made(padded_hashes[r], Key::Row(&batch, &[0, 1], r), 0);
+            assert!(table.find(hash_values(&seed, &values), Key::Values(&values)).is_some(), "{what}: found by its values");
+        }
+        assert_eq!((table.len(), padded.len()), (4, 3), "{what}: 'a' and 'a ' apart unpadded, one padded");
+        let thawed = GroupTable::thawed(table.made(1, &[]).unwrap(), &[], &seed).unwrap();
+        assert_eq!(thawed.len(), 4);
+        let mut thawed = thawed;
+        let spaced = [text("a "), text("x")];
+        let plain_a = [text("a"), text("x ")];
+        assert_ne!(
+            thawed.find(hash_values(&seed, &spaced), Key::Values(&spaced)),
+            thawed.find(hash_values(&seed, &plain_a), Key::Values(&plain_a))
+        );
+    }
+}
