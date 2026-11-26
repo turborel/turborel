@@ -762,6 +762,7 @@ verification approach DO-178C expects (§8).
 | D1171 | A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time |
 | D1172 | COUNT of a column known not null, or of a literal not null, counts rows and reads no value |
 | D1173 | A group's header is read for the columns its reader asks for, the others passed over undecoded |
+| D1175 | A column's texts are judged UTF-8 by the database's kernels, on AVX2 32 bytes a step |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
@@ -20746,6 +20747,35 @@ chunks, which is one added after the group was written and reads as
 nulls. The pages of a group, its summary and its rewriting read every
 column, and ask for all. The format is unchanged, so no table is loaded
 again.
+
+#### D1175. A column's texts are judged UTF-8 by the database's kernels, on AVX2 32 bytes a step
+
+A batch holds a column's strings as text (D361), and text read of the
+store is judged UTF-8 before it is given as a `str`: the varying fields
+read, once for their range (D1131), and the texts an FSST chunk decodes,
+once for the run of them. The core forbids `unsafe` (R-SAFE-1), so it
+cannot take octets for text without judging them, though only text was
+written. The standard library judges a byte at a time past the first
+octet above 127, so text of other scripts than Latin, as of the titles
+and phrases of a web log, took the judging longer than the reading.
+
+The judging is now a kernel (`Kernels::utf8`, D354), its portable body
+`str::from_utf8`. `turborel-simd` judges 32 bytes a step on AVX2 and on
+AVX-512's level, as Keiser and Lemire, "Validating UTF-8 In Less Than
+One Instruction Per Byte" (2021), §5, judge them: each byte's high
+nibble and the byte before's high and low nibbles each look up the
+errors their pair may make, the errors all three allow are the pair's,
+and the bytes two and three back say where a continuation must be. A
+step of no octet above 127 looks nothing up. A step whose last bytes
+begin a character the next must end, and the text's end must end every
+character (`simd/src/x86/utf8.rs`). The text so judged is given as a
+`str` only where `str::from_utf8` gives one: the contract tests
+(`turborel-test-support`, `kernels.rs`) hold every set to it, of every
+pair of octets and every lead of three and four with every second octet
+at each place on and across a lane's and a step's edges, of text cut
+within its characters, and of octets of no structure. A column's texts
+read by the varying fields, an FSST chunk, a constant or a dictionary
+are judged by the set the table opened with (D570).
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
