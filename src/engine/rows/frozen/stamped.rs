@@ -292,7 +292,7 @@ impl RowTable {
             (entry, Vec::new(), Some(extent), held)
         } else {
             let group = self.group_from(&self.group_pages()?, ids.clone(), batch, &columns)?;
-            let pages = group.pages();
+            let pages = group.pages()?;
             (self.entry_of(group)?, pages, None, None)
         };
         entry.made.store(OPEN | tx, Ordering::Release);
@@ -356,13 +356,13 @@ impl Loading for RowTable {
                 continue;
             }
             entry.made.store(0, Ordering::Release);
-            let pages = self.group_of(&entry)?.pages();
+            let pages = self.group_of(&entry, None)?.pages()?;
             self.publish_entry((None, Some((entry, pages))), Vec::new())?;
         }
         // Stored without them before their pages are freed.
         self.store_directory(&*self.frozen.directory()?)?;
         for entry in dropped {
-            let pages = self.group_of(&entry)?.pages();
+            let pages = self.group_of(&entry, None)?.pages()?;
             entry.retire(pages);
         }
         self.counted.live.store(self.count_newest()?, Ordering::Release);

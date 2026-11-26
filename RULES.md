@@ -761,6 +761,7 @@ verification approach DO-178C expects (§8).
 | D1170 | A morsel of set functions of no grouping feeds one set of states by vectors, no row hashed |
 | D1171 | A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time |
 | D1172 | COUNT of a column known not null, or of a literal not null, counts rows and reads no value |
+| D1173 | A group's header is read for the columns its reader asks for, the others passed over undecoded |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
@@ -20720,6 +20721,32 @@ table is answered by what its storage counts (D351, D1180), and of
 batches each batch adds its rows. The column, read by nothing else,
 drops out of the scan (D1167). A column that may hold a null is left, as
 its nulls are not counted and their taking out warns.
+
+#### D1173. A group's header is read for the columns its reader asks for, the others passed over undecoded
+
+A group's header holds each column's chunks, each chunk with its count
+of nulls, its least and greatest values, and the same of each of its
+parts of 1,024 rows. A header was read whole: every column's bounds
+decoded as values, its texts made strings, whatever the query read. A
+table of a hundred columns and wide strings takes about 1.6 MB a group
+so decoded, and of a table of a hundred million rows its headers take
+more than the cache holds by default (D1090). Each scan then read and
+decoded every header again, about a seventh of a grouping of two of its
+columns, and a header read for one query was given up before the next.
+
+A header is now read for the columns its reader asks for (`group::read`,
+`group/wanted.rs`). A scan asks for the columns it reads and those its
+condition reads, a fetch by row id for the columns it fetches, and a
+count for none. Every other column's chunks are passed over by their
+lengths, none of their bounds decoded, and the group holds none of
+them. A header held that lacks a column asked for is read again for it
+and the columns it held, and held in its place, so the cache counts
+what each holds as it is. A group asked for a column its header was not
+read for fails with SQLCODE -910, never taking it for a column with no
+chunks, which is one added after the group was written and reads as
+nulls. The pages of a group, its summary and its rewriting read every
+column, and ask for all. The format is unchanged, so no table is loaded
+again.
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
