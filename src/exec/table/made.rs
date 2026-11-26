@@ -41,6 +41,9 @@ pub(in crate::exec) struct Made {
     /// The keyed hashes its groups are placed by, if its table took them
     /// (RULES.md D357).
     keyed: Option<Vec<u64>>,
+    /// \[DESIGN\] (RULES.md D1119) Whether it may hold a key more than
+    /// once, of a morsel whose rows were made groups of their own.
+    repeats: bool,
 }
 
 impl Made {
@@ -142,6 +145,7 @@ impl GroupTable {
             places: Vec::new(),
             starts: Vec::new(),
             keyed: self.keyed,
+            repeats: self.repeats,
         })
     }
 
@@ -203,7 +207,16 @@ impl GroupTable {
         let (mut groups, mut fresh) = std::mem::take(&mut self.merging);
         groups.clear();
         fresh.clear();
-        for &i in places {
+        // Of a Made that may hold a key twice, each group found or made
+        // one at a time, so a repeat finds the group its first made
+        // (RULES.md D1119).
+        let repeats = if made.repeats { places } else { &[] };
+        for &i in repeats {
+            let at = crate::storage::mask::index(i);
+            let hash = made.hashes.get(at).copied().unwrap_or(0);
+            groups.push(self.found_or_made(hash, Key::Group(&made.keys, at), u64::MAX));
+        }
+        for &i in places.iter().filter(|_| !made.repeats) {
             let at = crate::storage::mask::index(i);
             let found = self.find(made.hashes.get(at).copied().unwrap_or(0), Key::Group(&made.keys, at));
             groups.push(found.unwrap_or_else(|| narrow(base.saturating_add(fresh.len()))));

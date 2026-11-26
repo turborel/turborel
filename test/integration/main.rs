@@ -374,6 +374,7 @@ mod rowstore;
 mod rule_settings;
 mod running_mark;
 mod savepoints;
+mod scattered_groups;
 mod schema_statements;
 mod schema_transactions;
 mod scroll_cursors;

@@ -712,6 +712,7 @@ verification approach DO-178C expects (§8).
 | D1116 | An analyzed grouping over another that crosses its partitions passes the counts of the projections between them |
 | D1117 | A grouping over a LEFT outer join by a key of its left table, its right grouped first, is a projection of the joined rows |
 | D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
+| D1119 | A morsel whose first batch finds its keys nearly all apart makes each of its other rows a group of its own, which the partitions find |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19445,6 +19446,35 @@ past the last whole word are compared one at a time. The first place
 that holds the piece is taken, as the substring search took it, so the
 rows are those D1074 gives, as a test compares the finder with that
 search over pieces and values.
+
+#### D1119. A morsel whose first batch finds its keys nearly all apart makes each of its other rows a group of its own, which the partitions find
+
+A grouping run in parallel groups each morsel's rows in a table of its
+own, splits the groups among the partitions, and each partition finds
+or makes them again (D1110). Of TPC-H Q13's orders grouped by customer,
+a morsel's keys are nearly all apart: a count of a build gave 14.3
+million morsel groups of 16.3 million rows. The morsel's table looked
+for each row's group, compared its key with what the slot held, found
+nothing, and made it, to reduce the rows next to nothing. The partitions
+then looked for each group again.
+
+A morsel's first batch is now grouped as before. If it made more groups
+than half its rows, the morsel's keys are taken to be apart, and each
+row of its other batches is made a group of its own, its key, hash and
+first row pushed and its states fed, no group looked for and no slot
+placed (`exec/batch/groups/scattered.rs`, `exec/table/scattered.rs`).
+The morsel's groups are split among the partitions as any are, and
+marked as ones that may hold a key more than once. A partition merging
+such a morsel finds or makes each of its groups one at a time, so a
+repeat finds the group its first copy made, its first row the least of
+theirs and its states merged as two groups' states are. The groups,
+their first rows and their states are those the morsel's own table
+would have given, merged.
+
+A morsel whose first batch made half its rows' groups or fewer is grouped
+as before, as are keys of codes of dictionaries (D354) and a morsel of
+one batch. Lineitem grouped by order, whose rows come in order, makes a
+group of four rows in a morsel and is grouped as before.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
