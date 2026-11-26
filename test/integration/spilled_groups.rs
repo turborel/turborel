@@ -134,10 +134,8 @@ const QUERIES: [&str; 3] = [
 /// smallest MEMORY.WORK_BYTES, whose partitions outgrow it many times,
 /// write their partitions to the spill on the threads that merged them,
 /// not on the statement's thread alone as a grouping given way to does,
-/// in no more areas than the grouping run alone at that grant makes, which
-/// spills in one of its own beside those that hold its rows, as a grouping
-/// given way to would make one more, and give the rows they give run alone a row at a time, in their order, with their
-/// spilled partitions split again where one outgrows the grant.
+/// and give the rows they give run alone a row at a time, in their order,
+/// with their spilled partitions split again where one outgrows the grant.
 #[test]
 fn partitions_past_the_grant_are_spilled_by_their_threads() {
     let (db, a, threads) = table();
@@ -145,10 +143,8 @@ fn partitions_past_the_grant_are_spilled_by_their_threads() {
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
     let statement = std::thread::current().id();
     for (q, expected) in QUERIES.iter().zip(&in_memory) {
-        alone(&a, q);
-        let serial = threads.taken().areas;
         assert_eq!(&parallel(&a, q), expected, "{q}");
-        let Seen { made_on, written, areas } = threads.taken();
+        let Seen { made_on, written, .. } = threads.taken();
         let shown = a.physical_plan(q, &turborel::params::Params::new()).unwrap();
         assert!(
             made_on.iter().any(|&t| t != statement),
@@ -156,7 +152,33 @@ fn partitions_past_the_grant_are_spilled_by_their_threads() {
             made_on.len()
         );
         assert!(written > usize::try_from(SMALL).unwrap() * 4, "{q}: its partitions many times the grant, spilled");
-        assert!(areas <= serial, "{q}: {areas} areas, the grouping run alone {serial}: none of a grouping given way to");
+    }
+}
+
+/// `sql`, a grouping, its first five groups by its first column: rows
+/// few enough to be held in no area of their own.
+fn first_five(sql: &str) -> String {
+    let column = sql.split([' ', ',']).nth(1).unwrap();
+    format!("{sql} ORDER BY {column} FETCH FIRST 5 ROWS ONLY")
+}
+
+/// Verifies: [DESIGN] (RULES.md D1226, D1124) the groupings of
+/// `partitions_past_the_grant_are_spilled_by_their_threads`, their first
+/// five groups asked, at the smallest MEMORY.WORK_BYTES are held in the
+/// one area of their grant, and a grouping given way to would spill in
+/// one more; and give the rows they give in memory.
+#[test]
+fn a_grouping_spilled_holds_its_partitions_in_one_area() {
+    let (db, a, threads) = table();
+    let asked: Vec<String> = QUERIES.iter().map(|q| first_five(q)).collect();
+    let in_memory: Vec<Vec<String>> = asked.iter().map(|q| alone(&a, q)).collect();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    threads.taken();
+    for (q, expected) in asked.iter().zip(&in_memory) {
+        assert_eq!(&parallel(&a, q), expected, "{q}");
+        let Seen { written, areas, .. } = threads.taken();
+        assert!(written > usize::try_from(SMALL).unwrap() * 4, "{q}: its partitions many times the grant, spilled");
+        assert_eq!(areas, 1, "{q}: the grouping's own area alone, none of a grouping given way to");
     }
 }
 
@@ -187,8 +209,10 @@ fn partitions_past_the_depth_give_way() {
     let in_memory = alone(&a, q);
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
     db.set_setting("SPILL.PARTITION_DEPTH", &Value::Exact(Decimal::new(0, 0))).unwrap();
-    alone(&a, q);
-    let serial = threads.taken().areas;
     assert_eq!(parallel(&a, q), in_memory);
-    assert!(threads.taken().areas > serial, "the grouping's area and one of the grouping given way to");
+    let asked = first_five(q);
+    let expected = alone(&a, &asked);
+    threads.taken();
+    assert_eq!(parallel(&a, &asked), expected);
+    assert!(threads.taken().areas > 1, "the grouping's area and one of the grouping given way to");
 }

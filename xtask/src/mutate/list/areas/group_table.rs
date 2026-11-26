@@ -28,6 +28,10 @@ const STATES: &str = "exec::table::states::tests::columns_of_states_are_their_ac
 /// A grouping in parallel whose partitions go to the spill past its grant.
 const SPILLED: &str = "spilled_groups::partitions_past_the_grant_are_spilled_by_their_threads";
 
+/// A grouping in parallel spilled past its grant in its one area, given
+/// way to in two.
+const SPILLED_AREA: &str = "spilled_groups::a_grouping_spilled_holds_its_partitions_in_one_area";
+
 /// Groups of every kind of state read back from the spill against those
 /// written.
 const SPILLED_MERGE: &str = "exec::table::made::written::tests::groups_read_back_finish_as_those_written";
@@ -244,7 +248,7 @@ pub const GROUP_TABLE: [Mutation; 26] = [
         file: "src/exec/parallel/grouped/waves.rs",
         original: "    fn spilled_all(&mut self) -> Result<bool> {\n",
         replacement: "    fn spilled_all(&mut self) -> Result<bool> {\n        if self.spilled.is_none() {\n            return Ok(false);\n        }\n",
-        integration: &[SPILLED],
+        integration: &[SPILLED, SPILLED_AREA],
         unit: &[],
     },
     Mutation {
@@ -254,7 +258,7 @@ pub const GROUP_TABLE: [Mutation; 26] = [
         file: "src/exec/parallel/grouped/waves/spilled.rs",
         original: "u32::try_from(level.saturating_add(1))",
         replacement: "u32::try_from(level)",
-        integration: &[SPILLED],
+        integration: &[SPILLED, SPILLED_AREA],
         unit: &[],
     },
     Mutation {
