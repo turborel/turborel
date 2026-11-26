@@ -765,6 +765,7 @@ verification approach DO-178C expects (§8).
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
 | D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
+| D1185 | A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -20825,7 +20826,8 @@ where `CollationRef::is_octets` holds.
 - MAX and MIN compare the strings' octets (`CollatedAcc`).
 - ORDER BY, a join's keys and COUNT(DISTINCT) still take a key, made of a
   vector of texts in one pass as the text's octets (`calls::octets`), which
-  sort, join and compare as binary strings do.
+  sort, join and compare as binary strings do. A sort by a column reads
+  the column in place since D1185.
 - LIKE never pads [§8.5 SR3d], so under UCS_BASIC or SQL_TEXT of either
   pad characteristic its operands are no longer folded
   (`binder::collation::like_under`), and a constant pattern stays one.
@@ -20879,6 +20881,62 @@ partitions were split by.
 
 Nothing a query answers changes. `'a'` and `'a '` under such a collation
 were two groups before and are two groups now, counted by more threads.
+#### D1185. A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets
+
+ORDER BY under a collation sorts by a column the projection under the
+sort makes, each row's sort key [ISO/IEC 9075-2:2023 §10.10]. D1183 left
+that key in place where the collation's key is the text itself
+(`CollationRef::is_octets`), made of a vector of texts in one pass. It
+was still a binary string made of every row, held as a value beside its
+row, and a projection that computes reads every column of its input, so
+none was read late and each row's other columns were decoded before the
+sort chose its first rows.
+
+A sort key now says whether it orders its column's character strings by
+their octets (`SortKey::octets`, `logical/sort_key.rs`). Only the
+physical plan's pruning sets it (`physical/blind/pruned/octets.rs`), so
+no rule of the optimizer and no choice of the planner sees a key that
+has it. Walking the plan from the top (D1167), a sort over a projection
+whose key column is the sort key of a column under such a collation,
+read by none above the sort, is keyed by the column instead, by octets.
+The key reads the first column of the projection that moves the column,
+and the place the key was made in, now read by none, is given null. With
+no such column the key's own place moves it. The projection is then one
+of columns, so it makes no value, the columns the keys do not read are
+read late, and EXPLAIN shows NULL where the key was.
+
+Every way a sort runs honours the mark, as all compare through the same
+two functions and one layout.
+
+- The normal key (D364) of a string of such a key is a binary string's
+  field, its first octets padded with zeros and then its length
+  (`normal::seen_as`, `encode::value`), so the bytes order as the octets
+  do, a prefix the less.
+- Strings alike in the octets a field holds are compared whole by their
+  octets, where they lie in their vectors (`vectors::compare_cells`) or
+  as values (`SortKey::cmp`, which `compare_rows` calls). A sort of
+  batches held or spilled, the merge of its runs, a top-N of batches or
+  of rows, a sort run in parallel and its splitters, a merge of ordered
+  inputs and a SCROLL cursor's sort of its rows' keys order through
+  these.
+- A string's 8-byte prefix (`sort/prefix.rs`) is of the padded order, so
+  a key by octets has none. Where the keys have no normal form, a key of
+  a DECFLOAT beside it, the rows are compared whole.
+- The bound a top-N tells its scan (D379) holds exact numbers and
+  datetimes alone, so none is told of a key by octets
+  (`sort::topped_of`).
+
+A key stays made, and the sort as it was, where the mark would be
+wrong or is not known to be right. A key column read above the sort is
+kept, as its rows would hold strings where binary strings are read.
+FETCH FIRST WITH TIES reads its sort's keys of the rows it is given to
+find the last row's peers [§7.17 GR7d i], so the pruning now counts
+those columns as read above the sort, and its key stays made. A key of
+an expression that is no column, a collation that pads or orders by
+anything but scalar values, and a sort whose input is no projection are
+left alone. Each refusal is tested
+(`pruned::octets::tests::a_key_read_above_or_not_of_octets_stays_made`,
+`octets_sorts::ties_and_expressions_sort_by_octets_7_17`).
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 

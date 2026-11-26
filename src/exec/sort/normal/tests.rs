@@ -245,7 +245,7 @@ fn key_of(layout: &Layout, row: &Row) -> Vec<u8> {
 #[test]
 fn padding_null_bytes_and_widths() {
     let up = SortOrder::of(false, None);
-    let field = Field { column: 0, order: up, code: Code::Text { prefix: 4 }, ints: Ints::Exact, nullable: false, at: 0 };
+    let field = Field { column: 0, order: up, octets: false, code: Code::Text { prefix: 4 }, ints: Ints::Exact, nullable: false, at: 0 };
     let texts = Layout { fields: vec![field], width: 5, truncates: true };
     let at = |t: &str| key_of(&texts, &vec![Value::Char(t.into())]);
     assert_eq!(at("a"), at("a "));
@@ -291,5 +291,56 @@ fn radix_sorts_as_a_stable_sort() {
         let mut expected: Vec<u32> = (0_u32..).take(rows).collect();
         expected.sort_by_key(|&p| keys.chunks_exact(width).nth(usize::try_from(p).unwrap()).unwrap());
         assert_eq!(places, expected, "{rows} keys of {width} bytes, {lead} shared");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1185 [ISO/IEC 9075-2:2023 §4.3.2, §10.10
+/// GR1]: under a key by octets, character strings sort as their octets
+/// order, a prefix the less, whatever the padded order makes of trailing
+/// spaces and of characters below a space, strings alike in their first 32
+/// octets told apart whole; ASC and DESC under each null ordering; rows,
+/// vectors of values and a vector of texts alike, by a layout made of all
+/// and by an open one, whose field is a binary string's; and a key by
+/// octets has no prefix, so with a key of no normal form beside it the
+/// rows are compared whole, to the same order.
+#[test]
+fn a_key_by_octets_sorts_strings_by_their_octets() {
+    let text = |t: &str| Value::Char(t.into());
+    let mut rows: Vec<Row> = TEXTS.iter().chain(&TEXTS).map(|t| vec![text(t)]).collect();
+    rows.insert(5, vec![Value::Null]);
+    let bytes = |row: &Row| if let Value::Char(s) = &row[0] { Some(s.as_bytes().to_vec()) } else { None };
+    for order in ORDERS {
+        let keys = [SortKey { octets: true, ..SortKey::new(0, order) }];
+        let mut expected = rows.clone();
+        expected.sort_by(|a, b| order.placed((a[0].is_null(), b[0].is_null()), || bytes(a).cmp(&bytes(b))));
+        let expected = shown(&expected);
+        assert_ne!(expected, shown(&whole(&[SortKey::new(0, order)], &rows)), "not the padded order");
+        assert_eq!(shown(&sorted_rows(&keys, rows.clone())), expected, "rows {order:?}");
+        let layout = Layout::new(&keys, &seen_rows(&keys, &rows), Shape::Tight).unwrap();
+        assert!(matches!(layout.fields[0].code, Code::Binary { .. }) && layout.truncates, "a binary string's field");
+        let (made, keyed) = by_places(&keys, &[(batch_of(&rows), (0..rows.len()).collect())], None);
+        assert!(keyed);
+        assert_eq!(shown(&made), expected, "values {order:?}");
+        let (joined, ends) = TEXTS.iter().fold((String::new(), Vec::new()), |(mut all, mut ends), t| {
+            all.push_str(t);
+            ends.push(all.len());
+            (all, ends)
+        });
+        let vector = Batch { columns: vec![Column::Texts(TextVector::new(joined, ends, None))], rows: TEXTS.len() };
+        let mut of_texts: Vec<Row> = TEXTS.iter().map(|t| vec![text(t)]).collect();
+        of_texts.sort_by(|a, b| order.placed((false, false), || bytes(a).cmp(&bytes(b))));
+        let held = [(vector, (0..TEXTS.len()).collect())];
+        assert_eq!(shown(&by_places(&keys, &held, None).0), shown(&of_texts), "texts {order:?}");
+        assert_eq!(shown(&by_places(&keys, &held, Some(&mut Layouts::default())).0), shown(&of_texts), "open {order:?}");
+        // DECFLOAT has no normal form, so the rows are sorted without keys.
+        let two = [keys[0], SortKey::ascending(1)];
+        let wide: Vec<Row> =
+            rows.iter().map(|r| vec![r[0].clone(), Value::DecFloat(crate::value::DecFloat::new(1, 0, 34).unwrap())]).collect();
+        let mut by_octets = wide.clone();
+        by_octets.sort_by(|a, b| order.placed((a[0].is_null(), b[0].is_null()), || bytes(a).cmp(&bytes(b))));
+        assert_eq!(shown(&sorted_rows(&two, wide.clone())), shown(&by_octets), "no normal form, rows {order:?}");
+        let (whole_rows, with_keys) = by_places(&two, &[(batch_of(&wide), (0..wide.len()).collect())], None);
+        assert!(!with_keys);
+        assert_eq!(shown(&whole_rows), shown(&by_octets), "no normal form, batches {order:?}");
     }
 }

@@ -49,7 +49,7 @@ impl<'a> Distributed<'a> {
         let filtered = call.filter.is_some();
         let fraction = slot.saturating_add(1).saturating_add(usize::from(filtered));
         let mut work = work.part(space.limit);
-        let mut sorter = Sorter::new(vec![SortKey { column: 0, descending: d.order.descending, nulls_first: false }]);
+        let mut sorter = Sorter::new(vec![SortKey { column: 0, descending: d.order.descending, nulls_first: false, octets: false }]);
         let (mut reader, mut nulls) = (Reader::default(), false);
         for row in 0..part.len {
             let values = &reader.get(&mut part.keys, row)?.values;

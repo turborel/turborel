@@ -123,7 +123,7 @@ impl Fed {
             return Ok(Value::Null);
         }
         let mut work = reading.work.part(reading.space.limit);
-        let mut sorter = Sorter::new(vec![SortKey { column: 0, descending: d.order.descending, nulls_first: false }]);
+        let mut sorter = Sorter::new(vec![SortKey { column: 0, descending: d.order.descending, nulls_first: false, octets: false }]);
         values.visit(&mut |row: &Row| sorter.push(row.clone(), &mut work))?;
         let (mut low, mut high) = (Value::Null, Value::Null);
         for (at, row) in (0_u64..).zip(sorter.sorted(&mut work)?) {
