@@ -6,8 +6,9 @@
 //! reader sees makes, at any isolation level. A settled zone of 1,024 rows
 //! costs one lock and an addition, not 1,024 rows read.
 //!
-//! A table that freezes rows, or still holds groups, is not counted so:
-//! a freeze takes out the entries of rows it froze without a change of
+//! A table that freezes rows, or still holds groups, is counted from its
+//! groups' directory instead (`frozen/counts.rs`, RULES.md D1180): a
+//! freeze takes out the entries of rows it froze without a change of
 //! their zones, so a zone's rows are not the tree's (`rows/frozen.rs`).
 
 use std::iter;
@@ -19,16 +20,26 @@ use crate::storage::{Counts, Ramp};
 use crate::txn::TxId;
 
 impl RowTable {
-    /// The counts `TableStorage::count` gives of the rows `tx` sees, or
-    /// none of a table that freezes rows or holds groups. Nothing is read, nor
-    /// the read noted, until the first count is asked for.
-    pub(super) fn count_of(self: Arc<Self>, tx: TxId) -> Option<Counts> {
-        let freezes = self.frozen.columns().is_some();
-        if freezes || !self.frozen.directory().is_ok_and(|directory| directory.groups.is_empty()) {
-            return None;
-        }
+    /// The counts `TableStorage::count` gives of the rows `tx` sees: of a
+    /// table that freezes rows or holds groups, from its directory, else
+    /// from its zones. Nothing is read, nor the read noted, until the first
+    /// count is asked for, which is when the one way or the other is taken.
+    pub(super) fn count_of(self: Arc<Self>, tx: TxId) -> Counts {
         let mut started: Option<Counts> = None;
-        Some(Box::new(iter::from_fn(move || started.get_or_insert_with(|| Arc::clone(&self).counts(tx)).next())))
+        Box::new(iter::from_fn(move || {
+            started
+                .get_or_insert_with(|| {
+                    let table = Arc::clone(&self);
+                    if table.holds_groups() { table.grouped_counts(tx) } else { table.counts(tx) }
+                })
+                .next()
+        }))
+    }
+
+    /// Whether it freezes rows or holds groups, so its zones' rows are not
+    /// its rows.
+    pub(super) fn holds_groups(&self) -> bool {
+        self.frozen.columns().is_some() || !self.frozen.directory().is_ok_and(|directory| directory.groups.is_empty())
     }
 
     /// The counts of the rows `tx` sees, of the zones settled, then of the

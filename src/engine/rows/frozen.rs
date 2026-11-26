@@ -30,6 +30,7 @@
 //! ```
 
 mod batches;
+mod counts;
 pub(super) mod extents;
 mod fetched;
 mod freeze;
@@ -42,6 +43,7 @@ pub(super) use sampled::Chosen;
 mod loaded;
 mod shadow_bits;
 mod stamped;
+mod summarized;
 
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};

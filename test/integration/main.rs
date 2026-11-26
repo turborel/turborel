@@ -448,6 +448,7 @@ mod structured_type_privileges;
 mod structured_values;
 mod subqueries;
 mod subquery_plans;
+mod summarized;
 mod sums;
 mod syntax_states;
 mod system_tables;
