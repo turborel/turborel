@@ -41,7 +41,7 @@ impl Indexed {
 ///
 /// As `State::acquire`; SQLCODE -910 if the transaction's state is
 /// poisoned.
-pub(super) fn hold_back(st: &State, tx: &Txn, together: &mut Together<'_>) -> Result<()> {
+pub(in crate::db::write) fn hold_back(st: &State, tx: &Txn, together: &mut Together<'_>) -> Result<()> {
     if let Some(held) = tx.held_back(together.table)? {
         together.grouped = grouped(tx, together)?;
         holding(together, &held);

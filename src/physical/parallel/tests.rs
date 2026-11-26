@@ -73,7 +73,7 @@ fn called(name: &str, distinct: bool) -> AggCall {
 /// pair a part holds whole if it groups by some of the first's
 /// grouping columns and no others, an analyzed plan's count between
 /// them or none; not of no grouping column, of a column past the
-/// first's grouping columns, of a collation, of groups of empty
+/// first's grouping columns, of groups of empty
 /// grouping sets of either, of a first streamed, of a DISTINCT set
 /// function in the second, or of the first's states that do not merge.
 #[test]
@@ -97,12 +97,88 @@ fn a_grouping_over_one_holding_its_columns_is_a_pair() {
     assert!(first_level(&pair(vec![0], vec![count(true)], first(Vec::new(), false))).is_none(), "of DISTINCT in the second");
     let unmerged = grouping(vec![0, 1], (vec![count(true)], Vec::new()), values(), false);
     assert!(first_level(&pair(vec![0], Vec::new(), unmerged)).is_none(), "of the first's states that do not merge");
-    let mut collated = pair(vec![0], Vec::new(), first(Vec::new(), false));
-    if let Plan::Aggregate { collations, .. } = &mut collated {
-        collations.push(None);
-    }
-    assert!(first_level(&collated).is_none(), "of a collation");
     assert!(first_level(&first(Vec::new(), false)).is_none(), "of a grouping over no grouping");
+}
+
+/// A grouping by `groups` under `collations` of `input`, counting rows if
+/// `counts`.
+fn collated(groups: Vec<usize>, collations: Vec<Option<CollationRef>>, input: Plan, counts: bool) -> Plan {
+    let aggs = if counts { vec![count(false)] } else { Vec::new() };
+    let mut plan = grouping(groups, (aggs, Vec::new()), input, false);
+    if let Plan::Aggregate { collations: by, .. } = &mut plan {
+        *by = collations;
+    }
+    plan
+}
+
+/// A collation of NO PAD that orders strings as their octets do.
+fn octets() -> CollationRef {
+    crate::value::collation::unpadded_scalar()
+}
+
+/// A collation whose key is not the text: one that folds case.
+fn folded() -> CollationRef {
+    use crate::value::collation::{CASE_INSENSITIVE, builtin, default_pad};
+    let collation = builtin().into_iter().find(|c| c.name() == CASE_INSENSITIVE).unwrap();
+    CollationRef { collation, pad: default_pad(CASE_INSENSITIVE) }
+}
+
+/// A grouping by `groups` under `of` over one by two columns under `by`.
+fn pair_under(groups: Vec<usize>, of: Vec<Option<CollationRef>>, by: Vec<Option<CollationRef>>) -> Plan {
+    let values = Plan::Values { rows: Vec::new(), detail: String::new() };
+    collated(groups, of, collated(vec![0, 1], by, values, false), false)
+}
+
+/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §4.3.2] RULES.md D1184: a pair
+/// under collations is one a part holds whole if each column of either
+/// grouping is by none or by one of NO PAD that orders strings as their
+/// octets do, and each column of the second is by the same as the first's
+/// column it is, whichever place it has in the second's key.
+#[test]
+fn a_pair_under_collations_of_octets_alike_is_a_pair() {
+    assert!(first_level(&pair_under(vec![0], vec![None], vec![None, None])).is_some(), "of none named");
+    assert!(first_level(&pair_under(vec![0], vec![Some(octets())], vec![Some(octets()), None])).is_some(), "of octets, of both");
+    assert!(
+        first_level(&pair_under(vec![1, 0], vec![Some(octets()), None], vec![None, Some(octets())])).is_some(),
+        "each by its own column's"
+    );
+    assert!(first_level(&pair_under(vec![0], Vec::new(), vec![None, Some(octets())])).is_some(), "the first's other column unpadded");
+}
+
+/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §4.3.2] RULES.md D1184: a pair
+/// is none a part holds whole under any other collation, in the second or
+/// in the first, even at a column the second does not group by; nor if
+/// the second groups a column unpadded and the first padded, or the other
+/// way round, or each by the other column's.
+#[test]
+fn a_pair_under_another_collation_or_keyed_apart_is_no_pair() {
+    assert!(first_level(&pair_under(vec![0], vec![Some(folded())], vec![Some(folded()), None])).is_none(), "of another collation, of both");
+    assert!(first_level(&pair_under(vec![0], Vec::new(), vec![None, Some(folded())])).is_none(), "of another in the first's other column");
+    assert!(first_level(&pair_under(vec![0], vec![Some(folded())], Vec::new())).is_none(), "of another in the second alone");
+    assert!(first_level(&pair_under(vec![0], vec![Some(octets())], vec![None, None])).is_none(), "unpadded over padded");
+    assert!(first_level(&pair_under(vec![0], vec![None], vec![Some(octets()), None])).is_none(), "padded over unpadded");
+    assert!(
+        first_level(&pair_under(vec![1, 0], vec![Some(octets()), None], vec![Some(octets()), None])).is_none(),
+        "by the other column's"
+    );
+}
+
+/// Verifies: [DESIGN] RULES.md D1184, D1133: a second grouping crossing
+/// the first's partitions is merged by its own keys, whatever the first's
+/// partitions are split by, so it is by none or by a collation of octets
+/// over a first by either, alike or not; and by no other collation, nor
+/// over one.
+#[test]
+fn a_pair_crossing_the_partitions_is_by_octets_or_none() {
+    let values = || Plan::Values { rows: Vec::new(), detail: String::new() };
+    let crossing = |of: Vec<Option<CollationRef>>, by: Vec<Option<CollationRef>>| {
+        collated(vec![2], of, collated(vec![0, 1], by, values(), true), true)
+    };
+    assert!(crosses(&crossing(Vec::new(), Vec::new())));
+    assert!(first_level(&crossing(vec![Some(octets())], vec![None, None])).is_some(), "unpadded over padded");
+    assert!(first_level(&crossing(vec![None], vec![Some(octets()), None])).is_some(), "padded over unpadded");
+    assert!(first_level(&crossing(vec![Some(folded())], Vec::new())).is_none(), "of another collation");
+    assert!(first_level(&crossing(Vec::new(), vec![Some(folded())])).is_none(), "over another collation");
 }
 
 /// Verifies: [DESIGN] RULES.md D1133: a grouping over another crosses

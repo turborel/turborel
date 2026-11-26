@@ -116,9 +116,10 @@ fn a_grouped_count_is_the_scans_at_every_isolation_level() {
 
 /// Verifies: [EXTENSION] [DESIGN] RULES.md D351: EXPLAIN notes the table
 /// a bare COUNT(*) counts by its storage, under a projection too, and
-/// never runs it in parallel, of a table of the column store too (D1180);
-/// of a count under a filter, a grouping, a count of a column or with
-/// EXECUTOR.BATCHES OFF, it notes none.
+/// never runs it in parallel, of a table of the column store too (D1180),
+/// and a count of a column known not null, which counts rows (D1172); of
+/// a count under a filter, a grouping, a count of a column that may hold
+/// a null or with EXECUTOR.BATCHES OFF, it notes none.
 #[test]
 fn explain_notes_a_count_by_the_storage() {
     let db = counted_table(false);
@@ -129,7 +130,8 @@ fn explain_notes_a_count_by_the_storage() {
     let noted = |s: &Session, sql: &str| explained(s, sql).lines().any(|l| l == "-- counted by storage: A.T");
     assert!(noted(&a, "SELECT COUNT(*) FROM T"));
     assert!(noted(&a, "SELECT COUNT(*) + 1, COUNT(*) FROM T"));
-    for sql in ["SELECT COUNT(*) FROM T WHERE K > 1", "SELECT K, COUNT(*) FROM T GROUP BY K", "SELECT COUNT(K) FROM T"] {
+    assert!(noted(&a, "SELECT COUNT(K) FROM T"));
+    for sql in ["SELECT COUNT(*) FROM T WHERE K > 1", "SELECT K, COUNT(*) FROM T GROUP BY K", "SELECT COUNT(S) FROM T"] {
         assert!(!noted(&a, sql), "{sql}");
     }
     a.run("SET EXECUTOR.PARALLEL_MIN_ROWS = 1").unwrap();

@@ -38,7 +38,8 @@ const CRATE_ROOTS: [&str; 2] = ["/lib", "/main"];
 /// The places that may: the database's jobs' threads, the executor's
 /// workers, a path search's scoped workers, the readers of plug-in processes' pipes, the graph
 /// algorithms' scoped workers, the server's runtime, the command-line
-/// client's thread hearing Ctrl-C, and the plug-in SDK's reader of a
+/// client's thread hearing Ctrl-C, its scoped jobs of an import over
+/// several connections (RULES.md D1148), and the plug-in SDK's reader of a
 /// plug-in's standard input, in the plug-in's own process.
 const MAKERS: &[&str] = &[
     "src/threads/worker.rs",
@@ -48,6 +49,7 @@ const MAKERS: &[&str] = &[
     "src/graph/algo/parallel.rs",
     "server/src/runtime.rs",
     "cli/src/interrupt.rs",
+    "cli/src/run/jobs.rs",
     "plugin/src/input.rs",
 ];
 

@@ -2,12 +2,13 @@
 //! index of sort keys honest, the order of a key, and how DROP COLLATION,
 //! REVOKE USAGE and DROP SCHEMA revert a collation's columns; and, of a
 //! collation of NO PAD that orders strings as their octets do, each place
-//! its strings are compared in place (D1183).
+//! its strings are compared in place (D1183), and the pair of groupings a
+//! DISTINCT set function makes under one (D1184).
 
 use super::{Mutation, Package};
 
 /// The mutations of collations, in the order they run.
-pub const COLLATIONS: [Mutation; 27] = [
+pub const COLLATIONS: [Mutation; 30] = [
     Mutation {
         name: "collated-read-tracked",
         package: Package::Core,
@@ -283,5 +284,35 @@ pub const COLLATIONS: [Mutation; 27] = [
         replacement: "            let quiet = true;",
         integration: &[],
         unit: &["exec::batch::late::tests::a_top_bound_is_told_its_scan_where_its_rows_are_the_scans"],
+    },
+    Mutation {
+        name: "unpadded-pair-second-padded",
+        package: Package::Core,
+        breaks: "the second grouping of a pair groups a column of a collation of octets padded (D1184)",
+        file: "src/exec/parallel/grouped/regrouped.rs",
+        original: "(runner, &seed.unpadded(&read.unpadded)))",
+        replacement: "(runner, &seed.unpadded(&[])))",
+        integration: &["unpadded_collations::a_distinct_set_function_s_pair_groups_unpadded_10_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "unpadded-pair-rows-trimmed",
+        package: Package::Core,
+        breaks: "the second grouping of a pair made of rows keys a column of a collation of octets padded (D1184)",
+        file: "src/exec/parallel/grouped/regrouped.rs",
+        original: "            let at = match found.entry(group_key(&self.spec, &values)?) {",
+        replacement: "            let at = match found.entry(crate::spill::norm_row(&values)) {",
+        integration: &["unpadded_collations::a_distinct_set_function_s_pair_groups_unpadded_10_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "unpadded-pair-keyed-apart",
+        package: Package::Core,
+        breaks: "a pair whose second groups a column padded and whose first groups it unpadded runs as one part (D1184)",
+        file: "src/physical/parallel.rs",
+        original: "unpadded(collations.get(at)) == unpadded(by.get(g))",
+        replacement: "true",
+        integration: &[],
+        unit: &["physical::parallel::tests::a_pair_under_another_collation_or_keyed_apart_is_no_pair"],
     },
 ];

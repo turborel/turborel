@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 
+use super::super::fields::Cells;
 use super::super::packed::pack;
 use super::super::{too_large, word};
 use super::{MOST_ENTRIES, SORTED};
@@ -13,13 +14,13 @@ use crate::value::compare_strings;
 /// Appends `fields` as a dictionary of their values, each one's entry in a
 /// code of `bits`, bit-packed; its entries in order as strings compare if
 /// `sorted`, they being texts (RULES.md D512), else as first seen.
-pub(super) fn write(fields: &[Option<Vec<u8>>], (bits, sorted): (u32, bool), out: &mut Vec<u8>) -> Result<()> {
+pub(super) fn write(fields: Cells<'_>, (bits, sorted): (u32, bool), out: &mut Vec<u8>) -> Result<()> {
     let mut places: HashMap<&[u8], usize> = HashMap::new();
     let mut entries: Vec<&[u8]> = Vec::new();
     let codes: Vec<u64> = fields
         .iter()
         .map(|f| {
-            f.as_deref().map_or(0, |f| {
+            f.map_or(0, |f| {
                 *places.entry(f).or_insert_with(|| {
                     entries.push(f);
                     entries.len().saturating_sub(1)

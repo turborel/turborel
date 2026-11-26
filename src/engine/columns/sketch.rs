@@ -21,11 +21,12 @@
 //! as many parts as a page holds on one, read only by a scan whose
 //! condition can use them; the edges in the group's header.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use super::encoded::FSST;
-use super::group::{Filter, Group, Pages, Seal, Zone};
-use super::imprints::parts_of;
+use super::group::{Column, Filter, Group, Pages, Seal, Zone};
+use super::imprints::{held_in, parts_of};
 use super::padding;
 use crate::disk::pager::PageId;
 use crate::error::Result;
@@ -179,9 +180,19 @@ impl Edges {
     /// sorted sample of them cut into bins of about as many each, and the
     /// most frequent, each among at least a bin's share, points.
     pub fn of(values: &[&Value]) -> Edges {
-        let step = values.len().div_ceil(SAMPLE).max(1);
-        let mut sample: Vec<&[u8]> =
-            values.iter().step_by(step).filter_map(|v| if let Value::Char(s) = v { Some(s.as_bytes()) } else { None }).collect();
+        Self::of_column(values)
+    }
+
+    /// As `of`, of the values of `column`, only those sampled read.
+    pub(super) fn of_column<C: Column + ?Sized>(column: &C) -> Edges {
+        let step = column.len().div_ceil(SAMPLE).max(1);
+        let held: Vec<Cow<'_, Value>> = (0..column.len()).step_by(step).map(|n| column.value(n)).collect();
+        let sample: Vec<&[u8]> = held.iter().filter_map(|v| if let Value::Char(s) = &**v { Some(s.as_bytes()) } else { None }).collect();
+        Self::of_sample(sample)
+    }
+
+    /// As `of`, of `sample`, texts taken evenly apart.
+    fn of_sample(mut sample: Vec<&[u8]>) -> Edges {
         sample.sort_by(|a, b| padded_order(a, b));
         // Each run of one value: where it begins and how many.
         let mut runs: Vec<(usize, usize)> = Vec::new();
@@ -238,32 +249,33 @@ pub fn sketched(t: &DataType) -> bool {
 }
 
 /// Writes the sketch of each column of `types` at `places` that takes
-/// one (`sketched`) and has a chunk coded by symbols, of `rows`, in its
-/// chunks `columns`, if a page holds a part's codes: of each column, its
-/// edges, none if it has none.
+/// one (`sketched`) and has a chunk coded by symbols, of its values
+/// `columns`, in its chunks `chunks`, if a page holds a part's codes: of
+/// each column, its edges, none if it has none.
 ///
 /// # Errors
 ///
 /// As `Pages::put`.
-pub(super) fn put_all<S: Seal, R: AsRef<[Value]>>(
+pub(super) fn put_all<S: Seal, C: Column>(
     pages: &Pages<'_, S>,
-    (types, rows, places): (&[DataType], &[R], &[usize]),
-    columns: &mut [Vec<Zone>],
+    (types, columns, places): (&[DataType], &[C], &[usize]),
+    chunks: &mut [Vec<Zone>],
     written: &mut Vec<PageId>,
 ) -> Result<Vec<Edges>> {
     let mut out = vec![Edges::default(); types.len()];
     let part = usize::try_from(super::group::PART_ROWS).unwrap_or(usize::MAX);
     for &c in places {
-        let (Some(t), Some(zones), Some(slot)) = (types.get(c), columns.get_mut(c), out.get_mut(c)) else { continue };
+        let (Some(t), Some(column), Some(zones), Some(slot)) = (types.get(c), columns.get(c), chunks.get_mut(c), out.get_mut(c)) else {
+            continue;
+        };
         if !sketched(t) || pages.capacity < part || !coded(pages, zones)? {
             continue;
         }
-        let values: Vec<&Value> = rows.iter().map(|r| r.as_ref().get(c).unwrap_or(&Value::Null)).collect();
-        let edges = Edges::of(&values);
+        let edges = Edges::of_column(column);
         if edges.is_empty() {
             continue;
         }
-        put_codes(pages, (&edges, &values), zones, written)?;
+        put_codes(pages, (&edges, column), zones, written)?;
         *slot = edges;
     }
     Ok(out)
@@ -284,25 +296,25 @@ fn code_of(edges: &Edges, v: &Value) -> u8 {
     if let Value::Char(s) = v { edges.code(s.as_bytes()) } else { NULL_CODE }
 }
 
-/// Writes the codes of each part of the chunks `zones`, of the column
-/// `values`, by `edges`, those of as many parts as a page holds on one,
+/// Writes the codes of each part of the chunks `zones`, of the values of
+/// `column`, by `edges`, those of as many parts as a page holds on one,
 /// and puts where each is in its part.
-fn put_codes<S: Seal>(
+fn put_codes<S: Seal, C: Column + ?Sized>(
     pages: &Pages<'_, S>,
-    (edges, values): (&Edges, &[&Value]),
+    (edges, column): (&Edges, &C),
     zones: &mut [Zone],
     written: &mut Vec<PageId>,
 ) -> Result<()> {
     let mut places: Vec<Filter> = Vec::new();
     let (mut page, mut held): (Vec<u8>, Vec<(u32, u32)>) = (Vec::new(), Vec::new());
     for (from, to) in zones.iter().flat_map(parts_of) {
-        let these = values.get(usize::try_from(from).unwrap_or(usize::MAX)..usize::try_from(to).unwrap_or(0)).unwrap_or_default();
+        let these = held_in(column, (from, to));
         if !page.is_empty() && page.len().saturating_add(these.len()) > pages.capacity {
             put_page(pages, (&page, &mut held), &mut places, written)?;
             page.clear();
         }
         let at = u32::try_from(page.len()).unwrap_or(u32::MAX);
-        page.extend(these.iter().map(|v| code_of(edges, v)));
+        page.extend(these.clone().map(|n| code_of(edges, &column.value(n))));
         held.push((at, u32::try_from(these.len()).unwrap_or(u32::MAX)));
     }
     if !page.is_empty() {

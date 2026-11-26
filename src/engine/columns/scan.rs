@@ -361,7 +361,8 @@ pub fn datetimes<S: Seal>(
 
 /// The 8-byte fields of column `column` of the rows at positions `from` to
 /// `to`, each chunk's read at once, and where each run of one value among
-/// them ends, if every chunk keeps its values as runs (`Chunk::run_ends`).
+/// them ends, if every chunk keeps its values as runs, of the same reading
+/// as their values (`Chunk::ints_ending`).
 fn words<S: Seal>(
     group: &Group,
     (pages, prepared): Reading<'_, '_, S>,
@@ -377,13 +378,19 @@ fn words<S: Seal>(
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
         let base = units.len();
         let held = prepared.with(pages, (column, zone, t), |chunk, made| {
-            let held = chunk.ints_made((at(first), at(end)), (&mut units, &mut nulls), (made, pages.kernels));
-            if let Some(ends) = &mut runs
-                && chunk.run_ends((at(first), at(end)), base, ends).is_none()
-            {
-                runs = None;
-            }
-            Ok(held)
+            // Of runs, their values and ends of one reading (RULES.md D1171).
+            let ran = match &mut runs {
+                Some(ends) => chunk.ints_ending((at(first), at(end)), (&mut units, &mut nulls), (ends, base)),
+                None => Some(false),
+            };
+            Ok(match ran {
+                Some(true) => Some(()),
+                Some(false) => {
+                    runs = None;
+                    chunk.ints_made((at(first), at(end)), (&mut units, &mut nulls), (made, pages.kernels))
+                }
+                None => None,
+            })
         })?;
         if held.is_none() {
             return Ok(None);

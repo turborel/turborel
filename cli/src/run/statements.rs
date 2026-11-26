@@ -9,7 +9,7 @@ use std::time::Duration;
 use turborel::error::{Code, SqlError};
 use turborel::storage::Row;
 use turborel::value::{DataType, Value};
-use turborel_client::agent::{Agent, Connector};
+use turborel_client::agent::{Agent, Connected, Connector};
 use turborel_client::capability::PING;
 use turborel_client::connection::{Connection, Outcome, Sink, Streamed};
 use turborel_client::export::Layout;
@@ -123,6 +123,18 @@ pub trait Statements {
     ///
     /// Why the import stopped, and what of it was kept.
     fn import(&mut self, source: &mut FileSource, how: &Import, rejected: &mut dyn FnMut(Rejected)) -> Result<Imported, ImportError>;
+
+    /// \[DESIGN\] RULES.md D1148: a connection of its own to the server the
+    /// command line names, proved as the first was, for a job of an import
+    /// over several connections at once.
+    ///
+    /// # Errors
+    ///
+    /// The server cannot be reached, or refuses the connection; SQLCODE
+    /// -900 of what makes no other connection.
+    fn spare(&mut self) -> Result<Connected, Failure> {
+        Err(Failure::from(&SqlError::new(Code::Unsupported, "[DESIGN] what this run's statements go to makes no other connection")))
+    }
 
     /// \[EXTENSION\] What `\debug` asks, of the current connection, as
     /// lines, null values written as `null` (RULES.md D1036).
@@ -417,6 +429,10 @@ impl<C: Connector> Statements for Agent<C> {
 
     fn import(&mut self, source: &mut FileSource, how: &Import, mut rejected: &mut dyn FnMut(Rejected)) -> Result<Imported, ImportError> {
         import::import(self.current().map_err(unbegun)?, source, how, &mut rejected)
+    }
+
+    fn spare(&mut self) -> Result<Connected, Failure> {
+        Agent::spare(self)
     }
 
     fn debug(&mut self, asked: &DebugCommand, null: &str) -> Result<String, Failure> {

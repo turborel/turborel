@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 21] = [
+pub const RANGE_READS: [Mutation; 22] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -221,5 +221,15 @@ pub const RANGE_READS: [Mutation; 21] = [
         replacement: "        if live.iter().all(|c| reads.contains(c)) || reads.len() < usize::MAX {",
         integration: &[],
         unit: &["physical::blind::pruned::tests::a_joins_keys_are_given_null_after_it"],
+    },
+    Mutation {
+        name: "run-ends-past-their-base",
+        package: Package::Core,
+        breaks: "the runs' ends read with a chunk's values are taken from the chunk's start, not the range's (RULES.md D1171)",
+        file: "src/engine/columns/runs.rs",
+        original: "                ends.push(base.checked_add(end.checked_sub(from)?)?);",
+        replacement: "                ends.push(base.checked_add(end)?);",
+        integration: &[],
+        unit: &["engine::columns::tests::chunks_of_runs_give_their_values_and_where_each_run_ends"],
     },
 ];

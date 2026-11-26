@@ -32,6 +32,7 @@ mod dictionary;
 mod words;
 
 use super::alp::{Alp, Factors, Trials};
+use super::fields::Cells;
 use super::fsst::{Coded, Symbols, Table};
 use super::packed::{bits_for, dense, get, pack, packed_len, unpack_words};
 use super::runs::{Runs, runs_len};
@@ -218,11 +219,17 @@ impl<'f> Sizer<'f> {
 }
 
 /// Appends `fields` to `out` as `plan` writes them, of texts by `table`.
-pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], (table, sorted): (Option<&Table>, bool), out: &mut Vec<u8>) -> Result<()> {
+/// Of fixed fields with no null, and of varying ones, their records are
+/// copied as the column holds them, end to end (RULES.md D1148).
+pub(super) fn encode(plan: Plan, fields: Cells<'_>, (table, sorted): (Option<&Table>, bool), out: &mut Vec<u8>) -> Result<()> {
     match plan {
         Plan::Fixed(width) => {
             out.extend_from_slice(&word(width)?);
-            for field in fields {
+            if fields.no_nulls() {
+                out.extend_from_slice(fields.span());
+                return Ok(());
+            }
+            for field in fields.iter() {
                 match field {
                     Some(f) => out.extend_from_slice(f),
                     None => out.resize(out.len().saturating_add(width), 0),
@@ -232,14 +239,14 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], (table, sorted): (O
         Plan::Varying => {
             let mut at = 0_usize;
             out.extend_from_slice(&word(at)?);
-            for field in fields {
-                at = at.checked_add(field.as_ref().map_or(0, Vec::len)).ok_or_else(too_large)?;
+            for field in fields.iter() {
+                at = at.checked_add(field.map_or(0, <[u8]>::len)).ok_or_else(too_large)?;
                 out.extend_from_slice(&word(at)?);
             }
-            fields.iter().flatten().for_each(|f| out.extend_from_slice(f));
+            out.extend_from_slice(fields.span());
         }
         Plan::Constant => {
-            let one = fields.iter().flatten().next().map_or(&[][..], Vec::as_slice);
+            let one = fields.iter().flatten().next().unwrap_or_default();
             out.extend_from_slice(&word(one.len())?);
             out.extend_from_slice(one);
         }
@@ -254,11 +261,11 @@ pub(super) fn encode(plan: Plan, fields: &[Option<Vec<u8>>], (table, sorted): (O
 
 /// Appends `fields`, of 8 bytes each, as frame of reference of `least`,
 /// each difference in `bits`, bit-packed.
-fn framed(fields: &[Option<Vec<u8>>], (least, bits): (i64, u32), out: &mut Vec<u8>) {
+fn framed(fields: Cells<'_>, (least, bits): (i64, u32), out: &mut Vec<u8>) {
     out.push(u8::try_from(bits).unwrap_or(u8::MAX));
     out.extend_from_slice(&least.to_le_bytes());
     let deltas = fields.iter().map(|field| {
-        let n = field.as_deref().and_then(integer).map_or(0, |n| i128::from(n).saturating_sub(i128::from(least)));
+        let n = field.and_then(integer).map_or(0, |n| i128::from(n).saturating_sub(i128::from(least)));
         u64::try_from(n).unwrap_or(0)
     });
     pack(deltas, bits, out);
@@ -376,17 +383,31 @@ impl Body<'_> {
 }
 
 impl Body<'_> {
-    /// \[DESIGN\] Where each run of one value among positions `from` to
-    /// `to` ends, past `base`, pushed to `ends`: of runs, theirs; of a
-    /// constant, one; none of another encoding.
-    pub(super) fn run_ends(&self, (from, to): (usize, usize), base: usize, ends: &mut Vec<usize>) -> Option<()> {
+    /// \[DESIGN\] (RULES.md D1171) Of runs, or one value, the values at
+    /// positions `from` to `to` pushed to `out`, as `ints` gives them, and
+    /// where each run among them ends, past `base`, pushed to `ends`, both
+    /// of one reading of its runs (`Runs::ints_ends`): whether it keeps
+    /// its values so, none if they are not there. Of another encoding,
+    /// nothing is pushed.
+    pub(super) fn ints_ending(
+        &self,
+        (from, to): (usize, usize),
+        out: &mut Vec<i64>,
+        (ends, base): (&mut Vec<usize>, usize),
+    ) -> Option<bool> {
         match self {
-            Body::Runs(runs) => runs.ends_in((from, to), base, ends),
-            Body::Constant { .. } => {
-                ends.push(base.checked_add(to.checked_sub(from)?)?);
-                Some(())
+            Body::Runs(runs) => runs.ints_ends((from, to), out, Some((ends, base))).map(|()| true),
+            Body::Constant { field } => {
+                // None if every value is null, its field empty.
+                out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), to.checked_sub(from)?));
+                if to > from {
+                    ends.push(base.checked_add(to.checked_sub(from)?)?);
+                }
+                Some(true)
             }
-            Body::Frame { .. } | Body::Alp(_) | Body::Dictionary { .. } | Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => None,
+            Body::Frame { .. } | Body::Alp(_) | Body::Dictionary { .. } | Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => {
+                Some(false)
+            }
         }
     }
 

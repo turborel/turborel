@@ -37,6 +37,7 @@ as a table as they come, and each statement's outcome.
 | `--delimiter CHAR` | the character between an imported file's fields; a comma for `csv`, a tab for `tsv` by default |
 | `--batch ROWS` | commit each ROWS rows imported; 1000 by default, 0 for all at once |
 | `--skip-bad-rows` | tell a row that fails to import, and import the rest |
+| `--jobs N` | import each file over N connections at once, each a contiguous range of it; 1 by default ([Importing](#importing)) |
 | `--connect-timeout SECONDS` | wait at most SECONDS to connect, begin TLS and for each step of the login; 30 by default, 0 for no limit |
 | `--read-timeout SECONDS` | wait at most SECONDS for each reply of the server; 0, no limit, by default, as a statement may run long |
 | `-v`, `--set NAME=VALUE` | set a variable before the first statement ([Variables](05-turborel-commands.md#variables)) |
@@ -227,9 +228,14 @@ of either case, as `\export` writes them; one that is not is refused
 (SQLSTATE 22018, SQLCODE -301).
 
 The rows are inserted through one prepared INSERT, `--batch` rows to a
-transaction, each batch committed. An import begins with no transaction
-active: one a statement before it left open is refused, as the import
-would commit it. A row that fails stops the import: the client tells
+transaction, each batch committed. Where the server grants it, the
+client sends them by bulk copy instead, a batch to a copy, and by
+column where the server grants `columns` too: each field's text goes
+as it is, and the server parses it into its column's type
+([Protocol](05-protocol.md#copycolumns-o)).
+
+An import begins with no transaction active: one a statement before it
+left open is refused, as the import would commit it. A row that fails stops the import: the client tells
 the record, the line it began on and why, and how many rows were
 committed before; the batch under way is rolled back. The run then goes
 on, unless `--stop-on-error` ends it. With `--skip-bad-rows`, a row
@@ -286,6 +292,37 @@ SELECT ID, NAME, HIRED FROM STAFF ORDER BY ID
             3 | Eve                  | 1999-12-31
             5 | Carol                | 2001-05-06
 (4 rows)
+```
+
+With `--jobs N`, a file is imported over N connections at once. The
+file is split into N ranges of about equal size, each a run of whole
+lines, the first beginning after the header. Each connection imports
+its own range as an import of its own, so the server loads them side
+by side. Each job reads the header too, and
+a record it tells is told by its line in the whole file. The rows said
+are those of every job. A job that fails stops the others at their next
+record, and the import is told by the first in the file that failed,
+with the rows every job committed and rolled back. The batches each job
+committed are kept, as they are of an import on one connection.
+
+A range begins just after a line break. A CSV file whose quoted field
+holds a line break where the file would be split cannot be imported so,
+as neither job could read the record whole. The client finds this
+before it imports any row, and refuses the import, saying to use
+`--jobs 1`. Standard input, and any file that is not a regular one,
+cannot be read in ranges, so with `--jobs` above 1 it is refused. Each
+job's connection proves its user as the first did, a password typed
+asked for again.
+
+```
+$ cat later.csv
+id,name,hired
+6,Dan,2003-03-04
+7,Fay,2004-05-06
+8,Gus,
+9,Hal,2005-07-08
+$ turborel -U ann --import later.csv --table STAFF --header --jobs 2
+OK, 4 rows imported
 ```
 
 ## Connections

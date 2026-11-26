@@ -19,6 +19,7 @@ use turborel::binder::OutColumn;
 use turborel::db::{Completion, Cursor, Database, Direct, Prepared, Session};
 use turborel::error::{Code, Result, SqlError, SqlState};
 use turborel::storage::Row;
+use turborel::storage::lanes::Lanes;
 use turborel::value::Value;
 use turborel_protocol::Called;
 use turborel_protocol::capability::{DECLARED_TYPES, PARAMETER_MODES};
@@ -69,6 +70,8 @@ pub(super) enum Work {
     CopyIn { table: String, columns: Vec<String>, ends: bool },
     /// Rows of the copy.
     CopyData(Vec<Row>),
+    /// Rows of the copy by column (RULES.md D1148).
+    CopyColumns(Lanes),
     /// The copy's end, abandoned if `.0`.
     CopyEnd(bool),
     /// \[EXTENSION\] A debugger's request (`requests/debugged.rs`).
@@ -79,7 +82,7 @@ impl Work {
     /// Whether it is of a copy under way.
     fn copies(&self) -> bool {
         match self {
-            Work::CopyData(_) | Work::CopyEnd(_) => true,
+            Work::CopyData(_) | Work::CopyColumns(_) | Work::CopyEnd(_) => true,
             Work::Query { .. }
             | Work::Prepare(..)
             | Work::Execute { .. }
@@ -326,6 +329,7 @@ impl Held {
             | Work::Describe(_)
             | Work::CopyIn { .. }
             | Work::CopyData(_)
+            | Work::CopyColumns(_)
             | Work::Debug(_) => false,
         }
     }
@@ -343,6 +347,7 @@ impl Held {
             | Work::Describe(_)
             | Work::CopyIn { .. }
             | Work::CopyData(_)
+            | Work::CopyColumns(_)
             | Work::CopyEnd(_)
             | Work::Debug(_) => None,
         }
@@ -379,6 +384,12 @@ impl Held {
             Work::CopyData(rows) => {
                 if let Some(copy) = self.copy.as_mut() {
                     copy.rows(&self.session, rows);
+                }
+                Ok(None)
+            }
+            Work::CopyColumns(lanes) => {
+                if let Some(copy) = self.copy.as_mut() {
+                    copy.columns(&self.session, &lanes);
                 }
                 Ok(None)
             }
