@@ -23,7 +23,7 @@
 //! the rows are sorted again above it by the same keys.
 //!
 //! A column is fetched so only if nothing between the grouping and the
-//! FETCH FIRST reads it but to hand it on: a sort key, a HAVING condition
+//! FETCH FIRST reads it but to hand it on. A sort key, a HAVING condition
 //! or an expression of the select list that reads it needs it of every
 //! group, and it stays carried. The count is a constant of FETCH FIRST ... ROWS ONLY.
 //!

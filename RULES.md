@@ -20141,7 +20141,7 @@ The table stays joined below, reading its key and what the joins
 compare, for the rows it leaves out. The grouping, its groups and what
 each set function is given are as they were, so nothing is evaluated of
 a row or a group it was not before (D15). A group has one value of the
-key, and it is not null: the key's columns are NOT NULL, of a PRIMARY
+key, and it is not null, as the key's columns are NOT NULL, of a PRIMARY
 KEY or UNIQUE constraint not deferrable, and the table's row reached
 the group through filters and inner joins alone. So the join above finds
 exactly one row for each row kept, the one its group's rows were of. It

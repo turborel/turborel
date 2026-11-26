@@ -398,7 +398,7 @@ fn unnested(w: &Walk<'_>, u: &Unnest<LogicalPlan>) -> Known {
     let mut known = known(w, &u.input);
     let own: Vec<usize> = (0..u.width()).map(|_| w.attribute()).collect();
     let fixed = u.collections.iter().all(deterministic) && u.outer.as_ref().is_none_or(conditions::deterministic_cond);
-    // Strictly none: collections of rows not distinct may differ.
+    // Strictly none, as collections of rows not distinct may differ.
     let fixed = fixed && !known.strict;
     if let Some(&ordinal) = own.last().filter(|_| u.ordinality && fixed) {
         let mut from: Attrs = known.columns.iter().copied().collect();

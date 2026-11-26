@@ -7,8 +7,8 @@
 //! a rule fires at a node, the rules are tried at the node again before the
 //! walk goes up, within a budget of rewrites (RULES.md D371). The late
 //! rules are applied so once the others have reached their fixpoint, and
-//! the others not again: a late rule makes a shape the others would read
-//! less of (RULES.md D1201).
+//! the others not again, as a late rule makes a shape the others would
+//! read less of (RULES.md D1201).
 //!
 //! Every rule here must preserve the result *and* the run-time errors of the
 //! query ([X3.135-1986 §3.3] the implementation "shall achieve the same effect"). That is
