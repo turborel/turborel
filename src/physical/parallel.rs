@@ -45,6 +45,7 @@ use crate::index::Probe;
 use crate::logical::{AggCall, Cond, Expr, OuterJoin, SetOp};
 use crate::settings::{EXECUTOR_DEGREE, EXECUTOR_MORSEL_ROWS, EXECUTOR_PARALLEL_MIN_ROWS, EXECUTOR_WORKERS};
 use crate::value::Value;
+use crate::value::collation::CollationRef;
 
 /// \[DESIGN\] How deep a plan is walked for its parts (RULES.md R-CF-6):
 /// deeper than any plan the binder makes nests.
@@ -271,11 +272,13 @@ fn filtered(plan: &Plan) -> bool {
     matches!(plan, Plan::Filter { .. } | Plan::SemiJoin(_))
 }
 
-/// \[DESIGN\] (RULES.md D1113, D1133) The first grouping of `plan`, if
-/// `plan` is a grouping over it, an analyzed plan's count between them or
-/// none, that a part runs whole: neither by a collation nor with groups
-/// of empty grouping sets, the second's set functions none DISTINCT nor
-/// an inverse distribution function and calm, the first's states merging.
+/// \[DESIGN\] (RULES.md D1113, D1133, D1184) The first grouping of
+/// `plan`, if `plan` is a grouping over it, an analyzed plan's count
+/// between them or none, that a part runs whole: neither with groups of
+/// empty grouping sets, nor by a collation but one whose key is the text
+/// itself, of both alike (`keyed_alike`), the second's set functions none
+/// DISTINCT nor an inverse distribution function and calm, the first's
+/// states merging.
 /// The second groups by some of the first's grouping columns and no
 /// others, so the partitions are of those columns alone, each holds every
 /// group of the first that one of the second takes, and its thread makes
@@ -287,12 +290,28 @@ pub(crate) fn first_level(plan: &Plan) -> Option<&Plan> {
     let first = if let Plan::Counted(c) = below { &c.input } else { below };
     let Plan::Aggregate { groups: keys, collations: by, aggs: parts, seeds: seeded, streamed: false, .. } = first else { return None };
     let within = steps.is_empty() && !groups.is_empty() && groups.iter().all(|&g| g < keys.len());
-    let uncollated = collations.is_empty() && by.is_empty() && seeds.is_empty() && seeded.is_empty();
+    let unseeded = seeds.is_empty() && seeded.is_empty();
     let calm_parts = |a: &AggCall| a.arg.as_ref().is_none_or(calm) && a.filter.as_ref().is_none_or(calm_cond);
     let whole = aggs.iter().all(|a| !a.distinct && a.distribution.is_none() && calm_parts(a));
     let calm_steps = steps.iter().all(|exprs| exprs.iter().all(calm));
-    let joined = within || (crosses(plan) && calm_steps);
-    (joined && uncollated && whole && mergeable(parts)).then_some(first)
+    let joined = (within && keyed_alike(groups, collations, by)) || (crosses(plan) && calm_steps && keyed_alike(&[], collations, by));
+    (joined && unseeded && whole && mergeable(parts)).then_some(first)
+}
+
+/// [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1184) Whether the groupings of
+/// a pair, the second by `collations` and the first by `by`, key their
+/// groups so that a part makes both: each column of either by no
+/// collation, or by one of NO PAD that orders strings as their octets do,
+/// whose strings a table hashes and compares in place (RULES.md D1183);
+/// and each of `groups`, the second's columns among the first's, by the
+/// same of both. A partition's groups of the first are split by the
+/// first's keys of those columns, so two groups one group of the second
+/// takes share a partition only if the first tells apart no strings the
+/// second holds equal.
+fn keyed_alike(groups: &[usize], collations: &[Option<CollationRef>], by: &[Option<CollationRef>]) -> bool {
+    let unpadded = |c: Option<&Option<CollationRef>>| c.and_then(Option::as_ref).map_or(Some(false), |c| c.is_octets().then_some(true));
+    let each = collations.iter().chain(by).all(|c| unpadded(Some(c)).is_some());
+    each && groups.iter().enumerate().all(|(at, &g)| unpadded(collations.get(at)) == unpadded(by.get(g)))
 }
 
 /// \[DESIGN\] (RULES.md D1133) Whether `plan`, a grouping over another,
