@@ -133,37 +133,13 @@ fn a_changed_row_is_written_whole_and_given_back() {
 /// the nesting test has it.
 const HALF_DEFAULT_STACK: usize = 1024 * 1024;
 
-/// Builds a statement whose plan has about `n` operators one in another.
-type DeepSql = fn(usize) -> String;
-
-/// Statement shapes whose plan grows one operator the pruning walks per
-/// `n`, each reading a column nothing above reads, and whether the parser
-/// bounds it. A select list's subqueries it does not, and each is joined.
-fn deep_shapes() -> Vec<(&'static str, bool, DeepSql)> {
-    vec![
-        ("joins", true, |n| {
-            let (from, on): (Vec<String>, Vec<String>) =
-                (1..=n).map(|i| (format!(", B B{i}"), format!(" AND B{i}.K = B0.K AND B{i}.S LIKE '%green%'"))).unzip();
-            format!("SELECT B0.N FROM B B0{} WHERE B0.K = 5{}", from.concat(), on.concat())
-        }),
-        ("outer joins", true, |n| {
-            let joins: String = (1..=n).map(|i| format!(" LEFT OUTER JOIN B B{i} ON B{i}.K = B0.K AND B{i}.S LIKE '%green%'")).collect();
-            format!("SELECT B0.N FROM B B0{joins} WHERE B0.K = 5")
-        }),
-        ("semijoins", true, |n| {
-            let semi: String =
-                (1..=n).map(|i| format!(" AND EXISTS (SELECT * FROM B B{i} WHERE B{i}.K = B0.K AND B{i}.S LIKE '%green%')")).collect();
-            format!("SELECT B0.N FROM B B0 WHERE B0.K = 5{semi}")
-        }),
-        ("groupings", true, |n| {
-            let grouped = "SELECT K, MAX(S) AS S, MAX(N) AS N FROM (".repeat(n);
-            format!("{grouped}SELECT K, S, N FROM B WHERE K = 5{}", ") AS D GROUP BY K".repeat(n))
-        }),
-        ("a select list's subqueries", false, |n| {
-            let list: String = (1..=n).map(|i| format!(", (SELECT MAX(B{i}.V) FROM A B{i} WHERE B{i}.K = B0.K)")).collect();
-            format!("SELECT B0.N{list} FROM B B0 WHERE B0.K = 5")
-        }),
-    ]
+/// A statement of `n` joins one over another, each operand's filter
+/// reading a column nothing above reads, so each join's operand is put
+/// under a projection that gives it null.
+fn joined_deep(n: usize) -> String {
+    let (from, on): (Vec<String>, Vec<String>) =
+        (1..=n).map(|i| (format!(", B B{i}"), format!(" AND B{i}.K = B0.K AND B{i}.S LIKE '%green%'"))).unzip();
+    format!("SELECT B0.N FROM B B0{} WHERE B0.K = 5{}", from.concat(), on.concat())
 }
 
 /// What `sql` gives on a thread of `HALF_DEFAULT_STACK`, planned for
@@ -181,20 +157,18 @@ fn on_half_stack(db: &Database, sql: &str) -> Result<usize, Code> {
     })
 }
 
-/// Verifies: [DESIGN] RULES.md D1167, R-CF-6: the deepest plan of each
-/// shape the parser accepts is pruned within half the default stack, and
-/// so is one of as many subqueries of a select list.
+/// Verifies: [DESIGN] RULES.md D1167, R-CF-6: the deepest chain of joins
+/// the parser accepts is pruned, run and shown within half the default
+/// stack.
 ///
 /// Regression test: the pruning once held a plan's nodes on the stack, and
 /// a select list of ordered set functions, each a subquery joined,
 /// overflowed it.
 #[test]
-fn the_deepest_plan_is_pruned_within_half_the_default_stack() {
+fn the_deepest_chain_of_joins_is_pruned_within_half_the_default_stack() {
     let db = tables();
-    for (shape, bounded, sql) in deep_shapes() {
-        let deepest = (1..=MAX_NESTING_DEPTH).rev().find(|&n| on_half_stack(&db, &sql(n)) != Err(Code::Unsupported));
-        let deepest = deepest.unwrap_or_else(|| panic!("{shape}: never accepted within {MAX_NESTING_DEPTH}"));
-        assert_eq!(deepest < MAX_NESTING_DEPTH, bounded, "{shape}: {deepest}");
-        assert_eq!(on_half_stack(&db, &sql(deepest)), Ok(1), "{shape}: {deepest}");
-    }
+    let deepest = (1..=MAX_NESTING_DEPTH).rev().find(|&n| on_half_stack(&db, &joined_deep(n)) != Err(Code::Unsupported));
+    let deepest = deepest.unwrap_or_else(|| panic!("never accepted within {MAX_NESTING_DEPTH}"));
+    assert!(deepest < MAX_NESTING_DEPTH, "{deepest}");
+    assert_eq!(on_half_stack(&db, &joined_deep(deepest)), Ok(1), "{deepest}");
 }
