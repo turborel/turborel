@@ -46,7 +46,9 @@
 //! `goals`, FETCH FIRST over filters, joins and groupings read in order
 //! and groupings streamed alone (`analytics/goals.rs`), to `costs`,
 //! the operators whose speeds the planner's weights stand for, and the
-//! weights they give, alone (`analytics/costs.rs`), or to `core`, the
+//! weights they give, alone (`analytics/costs.rs`), to `weblog`, the
+//! queries of a web analytics service on its log of page views, which
+//! run only so (`analytics/weblog.rs`), or to `core`, the
 //! filters, groupings, joins and sorts of F and FC alone.
 
 #![allow(
@@ -95,6 +97,8 @@ mod social;
 mod sorts;
 #[path = "analytics/unnesting.rs"]
 mod unnesting;
+#[path = "analytics/weblog.rs"]
+mod weblog;
 #[path = "analytics/windows.rs"]
 mod windows;
 
@@ -115,6 +119,9 @@ use turborel::db::{Database, Session};
 /// `windows` for window functions of every frame type.
 const ONLY_VAR: &str = "TURBOREL_BENCH_ANALYTICS_ONLY";
 
+/// What `ONLY_VAR` holds for the queries of a web log alone (`analytics/weblog.rs`), which run only so, reported as a
+/// benchmark of that name, so saving their results keeps the others'.
+const WEBLOG: &str = "weblog";
 /// Rows in the table F.
 const ROWS: u64 = 200_000;
 /// Rows each INSERT of the setup writes.
@@ -125,8 +132,8 @@ const LOOKUPS: u64 = 1_000;
 const KEYS: u64 = 400_000;
 
 fn main() {
-    let bench = Bench::new("analytics");
     let only = std::env::var(ONLY_VAR).unwrap_or_default();
+    let bench = Bench::new(if only == WEBLOG { WEBLOG } else { "analytics" });
     if alone(&bench, &only) {
         return;
     }
@@ -194,6 +201,7 @@ fn alone(bench: &Bench, only: &str) -> bool {
         "bands-large" => bands::large,
         "goals" => goals::workloads,
         "windows" => windows::workloads,
+        WEBLOG => weblog::workloads,
         _ => return false,
     };
     run(bench);

@@ -20780,7 +20780,10 @@ pair of octets and every lead of three and four with every second octet
 at each place on and across a lane's and a step's edges, of text cut
 within its characters, and of octets of no structure. A column's texts
 read by the varying fields, an FSST chunk, a constant or a dictionary
-are judged by the set the table opened with (D570).
+are judged by the set the table opened with (D570). A dictionary's
+entries, made text as its chunk is opened, are judged once from the
+first entry's start to the last's end, each entry then a slice of them,
+as the varying fields are (D1131).
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
