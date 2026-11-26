@@ -30,7 +30,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use super::{Merging, feed, finished, fresh};
 use crate::error::Result;
+use crate::exec::batch::{Read, read_for};
 use crate::exec::group::Spec;
+use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{Runner, broken, eval};
 use crate::logical::Expr;
 use crate::physical::parallel::{between, counted_between, crosses};
@@ -52,6 +54,11 @@ pub(super) struct Outer {
     /// last; its partitions' groups, each with its first and its states
     /// written; and whether a projection failed in one.
     crossing: Option<Crossing>,
+    /// \[DESIGN\] (RULES.md D1123) What it reads of the first's groups
+    /// given as a batch, if it reads them so (`second.rs`): of one that
+    /// crosses no partition, each set function as a grouping by batch
+    /// takes it.
+    read: Option<Read>,
 }
 
 /// What a second grouping crossing the first's partitions keeps of them.
@@ -71,6 +78,8 @@ impl Outer {
     pub(super) fn of(plan: &Plan) -> Option<(Outer, &Plan)> {
         let first = first_level(plan)?;
         let Plan::Aggregate { groups, aggs, input, .. } = plan else { return None };
+        let Plan::Aggregate { groups: keys, aggs: parts, .. } = first else { return None };
+        let layout: Vec<usize> = (0..keys.len().saturating_add(parts.len())).collect();
         let (steps, below) = between(input, 0);
         // [EXTENSION] The first grouping counted as its groups are made
         // (RULES.md D378).
@@ -81,8 +90,9 @@ impl Outer {
         for c in count.iter().chain(&projected) {
             c.opened();
         }
+        let read = if crossing.is_none() { read_for(groups, aggs, &layout) } else { None };
         let spec = Spec { groups: groups.clone(), collations: Vec::new(), aggs: aggs.clone(), seeds: Vec::new() };
-        Some((Outer { spec, count, projected, crossing }, first))
+        Some((Outer { spec, count, projected, crossing, read }, first))
     }
 
     /// The lanes of the first grouping's keys its partitions are split
@@ -107,9 +117,7 @@ impl Outer {
     ///
     /// As a set function fails.
     pub(super) fn regrouped(&self, firsts: Vec<(u64, Row)>, runner: &Runner) -> Result<Vec<(u64, Row)>> {
-        for count in self.count.iter().chain(&self.projected) {
-            count.stepped(u64::try_from(firsts.len()).unwrap_or(u64::MAX));
-        }
+        self.counted(firsts.len());
         let mut found: HashMap<Vec<u8>, usize> = HashMap::new();
         let mut made: Vec<Merging> = Vec::new();
         for (first, row) in firsts {
@@ -133,6 +141,38 @@ impl Outer {
             return Ok(Vec::new());
         }
         made.into_iter().map(|(first, values, states)| Ok((first, finished(states, values)?))).collect()
+    }
+
+    /// \[EXTENSION\] (RULES.md D378, D1116) Counts `firsts` groups of the
+    /// first grouping, of an analyzed plan: the first's count and that of
+    /// each projection between the two.
+    fn counted(&self, firsts: usize) {
+        for count in self.count.iter().chain(&self.projected) {
+            count.stepped(u64::try_from(firsts).unwrap_or(u64::MAX));
+        }
+    }
+
+    /// \[DESIGN\] (RULES.md D1123) Whether it groups `first`, a
+    /// partition's groups of the first grouping, in the executor's table
+    /// (`regrouped_table`): it reads them as a batch, and they are in the
+    /// order of their first rows, the order its set functions take them
+    /// in.
+    pub(super) fn tabled(&self, first: &GroupTable) -> bool {
+        self.read.is_some() && first.in_order()
+    }
+
+    /// [X3.135-1986 §5.22 GR2] The groups of `first`, a partition's
+    /// groups of the first grouping it groups in a table (`tabled`), as
+    /// `regrouped` gives them of the same groups; none of one it does not
+    /// read so.
+    ///
+    /// # Errors
+    ///
+    /// As a set function fails.
+    pub(super) fn regrouped_table(&self, first: GroupTable, (runner, seed): (&Runner, &Seed)) -> Result<Vec<(u64, Row)>> {
+        let Some(read) = &self.read else { return Ok(Vec::new()) };
+        self.counted(first.len());
+        super::second::regrouped(first, (read, &self.spec.aggs), (runner, seed))
     }
 
     /// `row`, a group of the first, through the projections between the

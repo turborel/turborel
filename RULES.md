@@ -715,6 +715,8 @@ verification approach DO-178C expects (§8).
 | D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
 | D1119 | A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them |
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
+| D1122 | The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change |
+| D1123 | The second grouping of a pair is made in the executor's table, of the first's groups given as a batch |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -744,6 +746,7 @@ verification approach DO-178C expects (§8).
 | D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
 | D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
 | D1157 | A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone |
+| D1158 | A plan asking for a table's first statistics while the maintenance thread gathers them waits for that pass |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -752,6 +755,7 @@ verification approach DO-178C expects (§8).
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
 | D1167 | Each operator carries only the columns read above it |
+| D1170 | A morsel of set functions of no grouping feeds one set of states by vectors, no row hashed |
 | D1171 | A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
@@ -19568,6 +19572,64 @@ batch's rows are now made a column at a time, each column's codes read
 in one loop into a vector of places, and the rows then look their
 places up in the memo (`exec/batch/groups/coded.rs`).
 
+#### D1122. The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change
+
+A spill area keeps its pages in a pager file of its own (D38), and a
+grouping or sort that spills takes and frees pages there a page at a
+time, so its free list holds many runs. The list found the smallest
+free run that held a request by a pass over every run, and counted its
+free pages by another, at each page taken.
+
+The free runs are now kept by size and first page beside the map by
+first page, and their pages counted as runs are added and removed
+(`disk/pager/free.rs`). The smallest run that holds a request is the
+first of those by size at least the request's, the first by page of
+runs of one size, which is the run the pass found. A request no run
+holds is made as before (D30). The runs by size and the count are
+those of the runs after every change, which a unit test checks through
+merges, splits and the run that ends the file taken and released.
+
+#### D1123. The second grouping of a pair is made in the executor's table, of the first's groups given as a batch
+
+A pair of groupings run as one part (D1113) finished each partition in
+three steps. The first grouping's table gave each of its groups as a row
+of values, the rows were put in the order of their first rows, and the
+second grouping keyed each row by the bytes of its grouping values in a
+map of accumulators, one a group. Of a DISTINCT set function the first
+grouping holds nearly a group a row of the query, so the part made a
+row, a key and a probe of the map for each, where the first grouping
+itself had made none.
+
+A table now gives its groups as one batch, a group a row in the order
+the groups were made (`exec/table/given.rs`). The lanes of its keys are
+the columns as they are, integers, approximate numbers and texts in
+vectors of their types with their nulls a mask, any other lane its
+values. Each set function's results are a column after them, COUNT's
+counts as integers and every other function's as its accumulator
+finishes each group, so each value is the one the group's row held. A
+set function that fails raises what the rows raised, the error of the
+first group that fails.
+
+The second grouping reads that batch as a grouping by batch reads a
+scan's (`exec/parallel/grouped/second.rs`). Its keys are hashed a vector
+at a time, each row's group is found or made by its key in the vectors,
+and each set function's states are fed the rows in one loop, in columns
+where a column holds them (D356). A group of the second is numbered by
+its first group of the first, as before, so the statement's thread
+merges the partitions' groups in the plan's order.
+
+It does so when three things hold. The second crosses no partition
+(D1133). Each of its set functions is one a grouping by batch reads
+(D354), which a filtered one is not. And the first's groups lie in the
+order of their first rows, which the table tells of its numbers
+(`GroupTable::in_order`) and which holds when its morsels were merged in
+order. That is the order the plan run alone feeds each set function in,
+so a set function whose result depends on that order gives the plan's
+result. Any other pair, and a
+pipeline read a row at a time, is grouped again of rows as before
+(`regrouped.rs`). The batch is made only as the last wave finishes a
+partition, so what the part holds and when it gives way are unchanged.
+
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
 A function with no body over vectors is called for each row of a batch
@@ -20229,6 +20291,23 @@ are taken to hold values of one domain, the key's. A referential constraint make
 it exact. A UNIQUE of a column that may be null bounds nothing, nor does
 a statistics count, and a class of no such key is left as it was.
 
+#### D1158. A plan asking for a table's first statistics while the maintenance thread gathers them waits for that pass
+
+D1092 has the plan that first asks for the statistics of a table opened
+gather them, and plans asking meanwhile wait on the lock that pass
+holds. The maintenance thread's pass of the same table did not take
+that lock. A plan asking while it ran saw the pass under way, noted its
+own as tried and was made without statistics, on the fixed
+selectivities, so the first plans after a start could differ by
+whether the maintenance thread happened to be gathering.
+
+A pass of a table opened, by the maintenance thread too, now holds the
+lock the asking plan's holds, taken before the flag that says a pass
+runs. A plan asking for the first statistics during it waits for the
+pass and is given what it gathered. Plans that find statistics never
+take the lock, so later passes do not hold them up
+(`engine/rows/stats.rs`).
+
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
 A value given for a `?` is cast to the parameter's type [ISO/IEC
@@ -20437,6 +20516,34 @@ The plan is pruned in place, so the walk of a deep plan holds little
 on the stack. The texts gathered of a vector are found once and copied
 into a buffer made at their length (`storage/batch/gathered.rs`), not
 one grown as they are copied.
+
+#### D1170. A morsel of set functions of no grouping feeds one set of states by vectors, no row hashed
+
+Set functions of no grouping run in parallel were grouped as any
+grouping by batch is (D293, D356). Each morsel's table hashed every row
+on a key of no columns, found the one group by it, compared the key and
+took the row for the group, and then fed the group's states. So each
+row cost a hash, a probe, a compare and three pushes, and a sum of a
+column on eight threads took longer than it did on one.
+
+A morsel of no grouping columns now feeds one set of accumulators each
+batch's vectors, as a set function of no grouping run alone is fed
+(`exec/batch.rs`, `exec/batch/groups/morsel.rs`). The vector kernels
+that sum a column, the null lane that counts it and the extremes taken
+a vector at a time all apply. Once the morsel's batches are fed, each
+state is written into the morsel's one group, which is made of its
+first row, numbered as before. The morsels' groups are then merged in
+morsel order as before, so a function keeping its first value keeps
+the first row's, and a grant refused gives way as before. A morsel of
+no rows makes no group, and the set functions of no rows are one row
+as before. A set function whose accumulator writes no state, as a sum
+or an average of approximate or DECFLOAT numbers, is not run in
+parallel at all (D53, `physical/parallel.rs`): its total depends on the
+order its values are added in, so partial totals merged would differ
+from the plan run alone. It keeps its serial plan, fed in the input's
+order, and a morsel that met one anyway would be grouped as before.
+DISTINCT and filtered set functions are not read by batch, so they
+never come here.
 
 #### D1171. A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time
 

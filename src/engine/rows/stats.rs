@@ -401,8 +401,10 @@ impl RowTable {
 
     /// Gathers the first statistics of a table opened, on the thread of
     /// the plan first asking for them, those asking meanwhile waiting
-    /// until they are gathered (RULES.md D1092): tried once, a failure
-    /// leaving them due for the maintenance thread.
+    /// until they are gathered (RULES.md D1092, D1158): tried once, a failure
+    /// leaving them due for the maintenance thread. A pass of the
+    /// maintenance thread holds the same lock (`gather_if_due`), so the
+    /// asking plan waits for it too.
     fn gather_first(&self) {
         let gathered = &self.gathered;
         if !gathered.when_asked.load(Ordering::Relaxed) || gathered.get().is_some() {
@@ -434,12 +436,19 @@ impl RowTable {
     pub(super) fn gather_if_due(&self, now: bool) -> bool {
         let gathered = &self.gathered;
         let due = gathered.due() && (now || (gathered.wanted() && gathered.spaced()));
-        if due && !self.gathered.gathering.swap(true, Ordering::Acquire) {
-            let _ = self.gather();
-            self.gathered.gathering.store(false, Ordering::Release);
-            return true;
+        if !due {
+            return false;
         }
-        false
+        // A pass of a table opened holds `first`, as the asking plan's
+        // does, so a plan asking for its first statistics meanwhile waits
+        // for them and is not planned without them.
+        let _first = gathered.when_asked.load(Ordering::Relaxed).then(|| lock_builtin(&gathered.first));
+        if gathered.gathering.swap(true, Ordering::Acquire) {
+            return false;
+        }
+        let _ = self.gather();
+        gathered.gathering.store(false, Ordering::Release);
+        true
     }
 }
 
