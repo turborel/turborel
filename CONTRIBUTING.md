@@ -133,9 +133,11 @@ Do not trust it for these.
   to the rows, not grown past them.
 - A change it shows as a gain. Confirm it on the reference log before
   it is claimed.
-- A change smaller than its own runs differ by on the machine. The run
-  prints the load average at its start and end, and a warning when it
-  moved. Run it again then.
+- A change smaller than its own runs differ by on the machine, or any
+  time taken while other work shared its processors. Between the queries
+  the run times a fixed piece of work, marks as `disturbed` each query
+  beside which that work ran slow, and prints the load average at its
+  start and end. Run a marked query again before comparing it.
 
 Its options follow.
 
