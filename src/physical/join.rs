@@ -32,6 +32,10 @@
 //! of its rows when the other has a row, as the RIGHT one does, so whether
 //! one is raised is the same.
 
+mod single;
+
+pub(super) use single::{implied, judged, single};
+
 use super::collated::{Lifted, lifted};
 use super::indexed::{EquiKind, Equijoin, Fixed, index_join, right_index_join};
 use super::shown::Shown;
@@ -112,6 +116,10 @@ impl PhysicalPlanner<'_> {
             let join = Equijoin { width, keys: &pairs, rest, outer: EquiKind::Inner };
             return Some(Built { plan: index_join(probing, join, (l.plan, rows), shown), ordered });
         }
+        // Of keys of one column one is hashed, the others judged of the
+        // matched rows (`join/single.rs`, RULES.md D1206).
+        let (keys, moved) = single(keys, |k| self.distinct_of(left, k.left).max(self.distinct_of(right, k.right)));
+        rest.extend(moved.into_iter().map(|k| judged(k, width)));
         // The left built instead, if it has fewer rows; its order is lost.
         if !ordered && self.larger(right, left) {
             let flip = Flip { width, right_width: right.width() };
