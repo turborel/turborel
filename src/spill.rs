@@ -24,6 +24,7 @@
 //! and XML values kept apart are named by what keeps them, which its spill
 //! holds (`spill/named.rs`).
 
+mod asks;
 mod grant;
 mod keys;
 pub use lobs::TempLobStore;
@@ -42,6 +43,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
+pub use asks::Asks;
 pub use grant::Grant;
 pub use keys::{bucket_key, norm_key, norm_row, put_norm, put_norm_approx, put_norm_exact, put_norm_text};
 pub use list::{Decode, Encode, ListItem, ListSpace, Located, SpillList};
@@ -267,6 +269,8 @@ pub struct WorkAreas {
     covered: bool,
     /// The bytes its grants hold reserved of the budget (RULES.md D683).
     granted: Arc<AtomicUsize>,
+    /// What its database's engines tell of a read that made maintenance wanted (`spill/asks.rs`, RULES.md D1212).
+    asks: Arc<Asks>,
 }
 
 impl WorkAreas {
@@ -275,7 +279,13 @@ impl WorkAreas {
     pub fn new(memory: Arc<MemoryBudget>) -> WorkAreas {
         let files = MemoryFileSystem::within(Arc::clone(&memory), "a spill file");
         let temp = TempFiles::new(Arc::new(files), Path::new("/tmp"));
-        WorkAreas { memory, place: RwLock::new((Arc::new(PagedSpill), Arc::new(temp))), covered: false, granted: Arc::default() }
+        let place: RwLock<(Arc<dyn Spill>, Arc<TempFiles>)> = RwLock::new((Arc::new(PagedSpill), Arc::new(temp)));
+        WorkAreas { memory, place, covered: false, granted: Arc::default(), asks: Arc::default() }
+    }
+
+    /// What an engine tells of a read that made maintenance wanted.
+    pub fn maintenance(&self) -> &Asks {
+        &self.asks
     }
 
     /// The budget its areas are reserved of, for what is held beside them.

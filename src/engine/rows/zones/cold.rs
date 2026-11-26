@@ -34,9 +34,9 @@
 //!
 //! A table opened has its zones due summed up and settled only once one
 //! is asked for after it opens, by what warms a cold table (RULES.md
-//! D1212): the table notes the first ask, the transaction that asked
-//! notes it for maintenance as it ends, one that read alone by asking
-//! the table once (`take_ask`), and until then the maintenance
+//! D1212): the table notes the first ask and tells its database
+//! (`spill/asks.rs`), whose maintenance job then notes the tables with
+//! maintenance due, and until then the maintenance
 //! thread is not asked for, so a start does no pass over a table nothing
 //! reads. An ask after the first reads the note and writes nothing.
 
@@ -66,15 +66,6 @@ impl Zones {
         self.asked.load(Ordering::Acquire)
     }
 
-    /// Whether a zone was asked for and no end of a transaction was told
-    /// yet: told from now on. The end of a transaction that read alone
-    /// asks, and notes the table for maintenance, as no collection of
-    /// garbage does for it; once told it reads two flags and writes
-    /// nothing (RULES.md D1212).
-    pub(in crate::engine::rows) fn take_ask(&self) -> bool {
-        self.asked() && !self.told.load(Ordering::Acquire) && !self.told.swap(true, Ordering::AcqRel)
-    }
-
     /// Notes the table opened, its zones read as saved: none asked for
     /// yet, whatever made it warm (RULES.md D1212).
     pub(super) fn opened(&self) {
@@ -93,6 +84,12 @@ impl Zones {
         self.warm_cold();
         // After it is warm: a table asked is never cold.
         self.asked.store(true, Ordering::Release);
+        // [DESIGN] RULES.md D1212: no end of a transaction that read alone
+        // notes the table, so its database is told here, once.
+        let work = self.work.read().ok().and_then(|work| work.clone());
+        if let Some(work) = work {
+            work.maintenance().ask();
+        }
     }
 
     /// `warm`'s work of a table cold.

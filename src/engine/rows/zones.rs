@@ -67,11 +67,12 @@
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use super::counted::Live;
 use crate::engine::record::RecordFormat;
+use crate::spill::WorkAreas;
 use crate::storage::{Conjunct, Conjunction, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::value::{DataType, Value, compare};
@@ -168,8 +169,9 @@ pub(super) struct Zones {
     /// Whether a zone was asked for since the table was made or opened:
     /// until one is, a table opened has none summed up (RULES.md D1212).
     asked: AtomicBool,
-    /// Whether the end of a transaction was told of the ask (`take_ask`).
-    told: AtomicBool,
+    /// The work areas its store is attached to, once it is: told of the
+    /// first ask (`spill/asks.rs`).
+    work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
     /// The table's row ids given so far: one past them.
     given: Arc<AtomicU64>,
     /// The versions superseded while the table was cold, not yet collected.
@@ -290,7 +292,7 @@ impl Zones {
             unknown_below: AtomicU64::new(0),
             warm: AtomicBool::new(false),
             asked: AtomicBool::new(false),
-            told: AtomicBool::new(false),
+            work: Arc::default(),
             given: Arc::default(),
             owed: Live::new(),
             stale: AtomicUsize::new(0),
@@ -308,6 +310,12 @@ impl Zones {
     /// The zones, of a table whose row ids given so far are below `given`.
     pub(super) fn over(mut self, given: Arc<AtomicU64>) -> Zones {
         self.given = given;
+        self
+    }
+
+    /// The zones, their first ask told to `work`, its store's work areas.
+    pub(super) fn telling(mut self, work: Arc<RwLock<Option<Arc<WorkAreas>>>>) -> Zones {
+        self.work = work;
         self
     }
 

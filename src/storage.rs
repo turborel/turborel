@@ -525,11 +525,6 @@ pub trait TableStorage: Send + Sync {
     fn maintenance_due(&self) -> bool {
         false
     }
-    /// \[DESIGN\] Whether a read made maintenance wanted that no end of a transaction was told yet: told once, to the end of the transaction
-    /// that read, which changes nothing and so asks nothing else, and should cost a load or two (RULES.md D1212). Default: no.
-    fn asked_maintenance(&self) -> bool {
-        false
-    }
     /// Whether its statistics are due and a plan read them since their last pass (RULES.md D473). Default: no.
     fn statistics_wanted(&self) -> bool {
         false

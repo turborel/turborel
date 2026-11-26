@@ -56,7 +56,7 @@ impl State {
             (mem::take(&mut st.joined), st.wrote)
         };
         if !wrote {
-            return self.commit_read(tx, &joined);
+            return Self::commit_read(tx, &joined);
         }
         // The commit record and the versions stamped are one change to a
         // checkpoint.
@@ -114,16 +114,12 @@ impl State {
     /// \[DESIGN\] The commit of `tx`, which changed nothing, so it read one
     /// committed state, its snapshot, and is serializable there: no engine
     /// need check its reads, and it takes no commit timestamp (RULES.md
-    /// D29). A table whose zones it asked is noted for maintenance, as
-    /// no collection follows to note it (RULES.md D1212).
-    fn commit_read(&self, tx: &Txn, joined: &[Joined]) -> Result<()> {
+    /// D29). It collects nothing and notes no table for maintenance: a
+    /// read that makes some wanted is told of by the table's engine
+    /// (`spill/asks.rs`, RULES.md D1212).
+    fn commit_read(tx: &Txn, joined: &[Joined]) -> Result<()> {
         for participant in joined {
             participant.storage.commit(tx.id, tx.snapshot());
-            // [DESIGN] RULES.md D1212: a read that asked a table's zones
-            // leaves them wanted, and no collection follows to note it.
-            if participant.storage.asked_maintenance() {
-                self.tx.note_maintenance(&participant.table);
-            }
         }
         tx.release();
         // [DESIGN] RULES.md D441: what it read past its snapshot is durable

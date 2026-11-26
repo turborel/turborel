@@ -548,10 +548,6 @@ impl TableStorage for RowTable {
         self.gather_wanted() || self.zones.wanted() || self.freeze_wanted() || self.groups_pending()
     }
 
-    fn asked_maintenance(&self) -> bool {
-        self.zones.take_ask()
-    }
-
     /// Statistics gathered as one call's work, once spaced from the last
     /// pass or `now` (`rows/stats.rs`), zones summed up as the next's,
     /// freezing as the next's: freezing as this one's too if no zone could

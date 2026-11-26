@@ -191,6 +191,8 @@ impl Database {
     pub(super) fn serve_read_ahead(&self) {
         if let Ok(st) = self.snapshot() {
             st.ahead.use_job(JobAsker::new(self.downgrade(), JobHandle(self.background().read_ahead)));
+            // A read that makes maintenance wanted asks for its job so too (RULES.md D1212).
+            st.work.maintenance().use_job(JobAsker::new(self.downgrade(), JobHandle(self.background().maintenance)));
         }
         // What answers the statistics plug-ins ask is served as the
         // database opens, as read-ahead is (RULES.md D279).

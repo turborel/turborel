@@ -8,6 +8,8 @@ use super::tests::{TYPES, equal, files, reads, row, warmed};
 use super::{MOST_SUMMED, ZONE_ROWS};
 use crate::disk::pager::PageId;
 use crate::engine::rows::{RowTable, TableFiles, TableOptions};
+use crate::memory::MemoryBudget;
+use crate::spill::WorkAreas;
 use crate::storage::{RowId, TableStorage};
 use crate::txn::NO_TRANSACTION;
 
@@ -105,17 +107,20 @@ fn a_sum_up_saved_is_resumed_once_asked_again() {
     assert!(made.zones.asked() && made.maintenance_due(), "made warm: wanted as written");
 }
 
-/// Verifies: [DESIGN] RULES.md D1212: the end of a transaction that read
-/// alone is told of an ask once: not of a table opened no zone of which
-/// was asked for, once after the first ask, and not again. MC/DC of the
-/// telling (R-TEST-8): asked or not, told already or not.
+/// Verifies: [DESIGN] RULES.md D1212: the first ask of a table's zones
+/// is told to the work areas its store is attached to, once: a table
+/// opened none of whose zones was asked for tells nothing, the first ask
+/// leaves a note, and an ask after it none.
 #[test]
-fn an_ask_is_told_once_to_the_end_of_a_transaction() {
+fn the_first_ask_is_told_to_the_work_areas_once() {
     let files = files();
+    let work = Arc::new(WorkAreas::new(MemoryBudget::new(1 << 20)));
+    *files.work.write().unwrap() = Some(Arc::clone(&work));
     let (meta, ids) = saved_unknown(&files, 1);
+    assert!(work.maintenance().take(), "the warming of the table made");
     let table = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
-    assert!(!table.asked_maintenance(), "none asked for");
+    assert!(!work.maintenance().take(), "none asked for");
     assert!(reads(&table, &equal(0, 5), ids[0]));
-    assert!(table.asked_maintenance(), "asked: told");
-    assert!(!table.asked_maintenance() && table.maintenance_due(), "told once, due still");
+    assert!(work.maintenance().take() && table.maintenance_due(), "the first ask: told");
+    assert!(reads(&table, &equal(0, 5), ids[0]) && !work.maintenance().take(), "told once");
 }
