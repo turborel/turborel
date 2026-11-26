@@ -69,8 +69,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use files::TableFiles;
-pub use frozen::SYSTEM_CACHE_BYTES;
 use frozen::{Frozen, Merged, Merging};
+pub use frozen::{SYSTEM_CACHE_BYTES, extents::SegmentPlace};
 use ids::IdBlocks;
 use ids::{key, no_row, row_id};
 use lobs::LobSpace;

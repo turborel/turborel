@@ -23,17 +23,17 @@
 use std::sync::Arc;
 
 use super::super::integrity::{Effects, RowsChecked};
-use crate::catalog::{IndexDesc, QualifiedName};
+use crate::catalog::{ColumnDesc, ConstraintKind, IndexDesc, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
 use crate::exec::HeldRows;
 use crate::index::{Index, Key};
-use crate::log::record::insert_rows_record;
+use crate::log::record::{group_record_head, insert_rows_record};
 use crate::params::Load;
 use crate::spill::row_bytes;
-use crate::storage::{Row, RowId, TableStorage};
+use crate::storage::{Loaded, Row, RowId, TableStorage};
 use crate::txn::{Txn, Undo, UndoEntry};
-use crate::value::Value;
+use crate::value::{DataType, Value};
 
 /// \[DESIGN\] The rows a batch holds at most: enough that the costs of a
 /// batch are shared by many rows, few enough that its keys are held in
@@ -68,6 +68,10 @@ pub(in crate::db) struct Together<'s> {
     /// The rows of a group, if a load writes its rows straight as frozen
     /// groups (RULES.md D533).
     grouped: Option<usize>,
+    /// Whether the table qualifies for extents, so a load goes to groups
+    /// by default: no index, no constraint but NOT NULL, no large object
+    /// column (RULES.md D1147). A trigger's table loads none at all.
+    qualifies: bool,
 }
 
 /// The rows of a batch gone in: their ids, in order, and of each whether
@@ -107,7 +111,8 @@ impl State {
         }
         let storage = Arc::clone(self.storage_of(table)?);
         let logs = Self::logs_changes(caps.persistence);
-        Ok(Together { table, storage, undone: caps.undo == Undo::Log, logs, indexes, grouped: None })
+        let qualifies = indexes.is_empty() && self.catalog.table(table).is_some_and(qualifies);
+        Ok(Together { table, storage, undone: caps.undo == Undo::Log, logs, indexes, grouped: None, qualifies })
     }
 
     /// [X3.135-1986 §8.7] Inserts `rows` into the table of `together`, with
@@ -148,9 +153,21 @@ impl State {
     fn stored_together(&self, tx: &Txn, together: &Together<'_>, rows: &[Row]) -> Result<Vec<RowId>> {
         let table = together.table;
         let loading = together.grouped.and_then(|_| together.storage.loading());
-        let grouped = loading.map(|l| l.insert_group(tx.id, rows)).transpose()?.flatten();
+        // [DESIGN] RULES.md D1146: a table of no index takes a group as an
+        // extent, its record the group's; one with an index logs its rows,
+        // as recovery mends its entries from their images.
+        let whole = together.indexes.is_empty();
+        let grouped = loading.map(|l| l.insert_group(tx.id, rows, whole)).transpose()?.flatten();
+        if let Some(Loaded { ids, extent: Some(extent), .. }) = &grouped {
+            if together.logs {
+                let span = (ids.first().copied().unwrap_or_default(), ids.last().copied().unwrap_or_default());
+                let head = group_record_head(tx.id, (table, self.generation_of(table)), span, extent.len());
+                tx.log_parts(&[&head, extent], u64::try_from(ids.len()).unwrap_or(u64::MAX))?;
+            }
+            return Ok(grouped.map(|g| g.ids).unwrap_or_default());
+        }
         let given = grouped.is_some();
-        let mut ids = grouped.unwrap_or_else(|| Vec::with_capacity(rows.len()));
+        let mut ids = grouped.map_or_else(|| Vec::with_capacity(rows.len()), |g| g.ids);
         let mut from = 0;
         while let Some(rest) = rows.get(from..).filter(|r| !r.is_empty()) {
             let taken = record_rows(rest);
@@ -171,6 +188,13 @@ impl State {
         }
         Ok(ids)
     }
+}
+
+/// Whether `desc` qualifies for extents (RULES.md D1147): no constraint
+/// but NOT NULL, and no column of a large object.
+fn qualifies(desc: &TableDesc) -> bool {
+    let lob = |c: &ColumnDesc| matches!(c.data_type, DataType::Lob { .. });
+    desc.constraints.iter().all(|c| matches!(c.kind, ConstraintKind::NotNull(_))) && !desc.columns.iter().any(lob)
 }
 
 /// Adds the entries of `rows`, of row ids `ids`, to the index of `ix`, in

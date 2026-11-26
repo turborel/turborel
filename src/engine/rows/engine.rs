@@ -81,12 +81,17 @@ impl StorageEngine for RowStore {
         let files = self.files()?;
         // No table's rows half frozen (`rows/frozen.rs`).
         let _frozen = write(&files.freezes)?;
+        // [DESIGN] RULES.md D1146: the segments the directories name now.
+        if let Some(place) = &files.segments {
+            place.capture();
+        }
         if let Some(shadows) = &files.shadows {
             captured(&files, shadows)?;
             files.sealed.store(at.0, Ordering::Release);
             return Ok(());
         }
         saved(&files)?;
+        files.segments.as_ref().map_or(Ok(()), |p| p.sync(Durability::Full))?;
         files.pool.sync(files.file, Durability::Full)?;
         files.durable.fetch_max(at.0, Ordering::AcqRel);
         Ok(())
@@ -102,8 +107,13 @@ impl StorageEngine for RowStore {
         if let Some(shadows) = &files.shadows {
             let capture = lock_builtin(&files.capture).take();
             capture.map_or(Ok(()), |capture| ended(&files, capture))?;
+            // Their extents durable before a directory naming them is.
+            files.segments.as_ref().map_or(Ok(()), |p| p.sync(Durability::Full))?;
             shadows.commit_sealed()?;
             files.durable.fetch_max(files.sealed.load(Ordering::Acquire), Ordering::AcqRel);
+        }
+        if let Some(place) = &files.segments {
+            place.sweep();
         }
         Ok(())
     }

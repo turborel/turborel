@@ -486,15 +486,7 @@ impl Log for FileLog {
 
     /// A segment in them is begun before the next record appended.
     fn set_formats(&self, hash: Arc<dyn HashFunction>, pipeline: Pipeline) {
-        let changed = {
-            let mut formats = lock_builtin(&self.formats);
-            let changed = formats.0.key_name() != hash.key_name() || formats.1.ids() != pipeline.ids();
-            *formats = (hash, pipeline);
-            changed
-        };
-        if changed {
-            self.rotate_asked.store(true, Ordering::Release);
-        }
+        self.formats_from_now(hash, pipeline);
     }
 
     fn append(&self, record: &[u8]) -> Result<Lsn> {
@@ -504,6 +496,13 @@ impl Log for FileLog {
 
     fn append_all(&self, records: &[Vec<u8>]) -> Result<Vec<Lsn>> {
         self.append_records(records.iter().map(Vec::as_slice))
+    }
+
+    /// Framed from the parts where they are (RULES.md D1146).
+    fn append_parts(&self, parts: &[&[u8]]) -> Result<Lsn> {
+        let bytes = parts.iter().fold(0_usize, |sum, p| sum.saturating_add(p.len()));
+        let (number, id) = self.on_active(|blocks| blocks.append_parts(parts), 1, bytes)?;
+        Ok(lsn(number, id))
     }
 
     /// Framed from the buffer the run is held in (RULES.md D882).

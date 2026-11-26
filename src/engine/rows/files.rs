@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use super::UndoStore;
 use super::counted::Counted;
+use super::frozen::extents::SegmentPlace;
 use super::mvcc::Statuses;
 use super::stats::Kept;
 use super::zones::Zones;
@@ -67,6 +68,9 @@ pub struct TableFiles {
     /// Why a capture failed, if one did: its batch lacks a page, so no
     /// checkpoint is taken until the database is opened again.
     pub(super) spoiled: Arc<Mutex<Option<SqlError>>>,
+    /// Where its tables' loads write their groups, if anywhere (RULES.md
+    /// D1146): none of a store in memory, whose loads write pages.
+    pub(super) segments: Option<Arc<SegmentPlace>>,
 }
 
 impl TableFiles {
@@ -98,6 +102,7 @@ impl TableFiles {
             system_cache: Arc::new(AtomicU64::new(u64::MAX)),
             capture: Arc::default(),
             spoiled: Arc::default(),
+            segments: None,
         }
     }
 
@@ -106,6 +111,13 @@ impl TableFiles {
     #[must_use]
     pub fn shadowed(self, shadows: Arc<ShadowFileSystem>) -> TableFiles {
         TableFiles { shadows: Some(shadows), ..self }
+    }
+
+    /// The same, its tables' loads writing their groups to segments of
+    /// `place` (RULES.md D1146).
+    #[must_use]
+    pub fn segmented(self, place: Arc<SegmentPlace>) -> TableFiles {
+        TableFiles { segments: Some(place), ..self }
     }
 
     /// The undo store.
