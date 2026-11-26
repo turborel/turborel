@@ -20,6 +20,7 @@ mod boxed;
 mod carried;
 mod columns;
 mod typed;
+mod written;
 
 use crate::error::{Code, Result, fail};
 use crate::exec::Runner;

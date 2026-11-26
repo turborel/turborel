@@ -423,6 +423,7 @@ mod spatial_types;
 mod spill_encodings;
 mod spilled_actions;
 mod spilled_checks;
+mod spilled_groups;
 mod spilled_order;
 mod spilled_rows;
 mod spilled_sorts;
