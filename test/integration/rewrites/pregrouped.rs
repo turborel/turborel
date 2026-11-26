@@ -45,12 +45,17 @@ fn with_orders() -> (Database, Session) {
 /// of its own and KS of a key of strings, each with G, one of 4.
 fn keyed(s: &Session, prefix: &str, store: &str) {
     let ids: Vec<String> = (0..80).map(|i| format!("({i}, {})", i % 4)).collect();
-    let nulled: Vec<String> = (0..80).map(|i| if i % 13 == 5 { format!("(NULL, {})", i % 4) } else { format!("({i}, {})", i % 4) }).collect();
+    let nulled: Vec<String> =
+        (0..80).map(|i| if i % 13 == 5 { format!("(NULL, {})", i % 4) } else { format!("({i}, {})", i % 4) }).collect();
     for (table, columns, rows) in [
         ("K", "ID INTEGER PRIMARY KEY, G INTEGER NOT NULL".to_owned(), ids.join(", ")),
         ("KN", "ID INTEGER UNIQUE, G INTEGER NOT NULL".to_owned(), nulled.join(", ")),
         ("KD", format!("ID INTEGER NOT NULL, G INTEGER NOT NULL, CONSTRAINT {prefix}KD_KEY PRIMARY KEY (ID) DEFERRABLE"), ids.join(", ")),
-        ("KC", "NAME VARCHAR(10) COLLATE CASE_INSENSITIVE PRIMARY KEY, G INTEGER NOT NULL".to_owned(), "('s0', 0), ('S1', 1), ('x', 60)".to_owned()),
+        (
+            "KC",
+            "NAME VARCHAR(10) COLLATE CASE_INSENSITIVE PRIMARY KEY, G INTEGER NOT NULL".to_owned(),
+            "('s0', 0), ('S1', 1), ('x', 60)".to_owned(),
+        ),
         ("KS", "NAME VARCHAR(10) PRIMARY KEY, G INTEGER NOT NULL".to_owned(), "('s0', 0), ('s1', 1), ('x', 2)".to_owned()),
     ] {
         s.run(&format!("CREATE TABLE {prefix}{table} ({columns}){store}")).unwrap();

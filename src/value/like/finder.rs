@@ -99,8 +99,22 @@ mod tests {
     fn a_piece_is_found_where_a_search_finds_it() {
         let pieces = ["a", "ab", "aa", "aba", "special", "requests", "é", "€é", "\u{0}", "\u{1}a", "abcdefghij"];
         let mut values: Vec<String> = [
-            "", "a", "b", "ab", "aab", "abab", "xxxxxxxab", "xxxxxxxxab", "xxxxxxxxxxxxxxab", "aaaaaaaaaaaaaaaaaaaa",
-            "furiously special packages wake; requests", "spec", "requestsrequest", "x€yéz", "\u{0}\u{1}a\u{0}", "abcdefghiabcdefghij",
+            "",
+            "a",
+            "b",
+            "ab",
+            "aab",
+            "abab",
+            "xxxxxxxab",
+            "xxxxxxxxab",
+            "xxxxxxxxxxxxxxab",
+            "aaaaaaaaaaaaaaaaaaaa",
+            "furiously special packages wake; requests",
+            "spec",
+            "requestsrequest",
+            "x€yéz",
+            "\u{0}\u{1}a\u{0}",
+            "abcdefghiabcdefghij",
         ]
         .iter()
         .map(|v| (*v).to_owned())

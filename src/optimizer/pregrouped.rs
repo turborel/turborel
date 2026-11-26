@@ -40,13 +40,13 @@
 use super::elimination::{table_of, unique_key_covered};
 use super::extremes::table_rows;
 use super::{Rule, RuleContext};
-use crate::value::collation::CollationRef;
 use crate::catalog::TableDesc;
 use crate::error::SqlState;
 use crate::functions::Standard;
 use crate::lexer::kw;
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, OuterJoin, split_and};
 use crate::physical::estimated_rows;
+use crate::value::collation::CollationRef;
 use crate::value::{CompOp, DataType, Decimal, Value};
 
 /// The rule's name, as EXPLAIN shows it and its setting names it.
