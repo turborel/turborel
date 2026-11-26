@@ -155,11 +155,21 @@ fn partitions_past_the_grant_are_spilled_by_their_threads() {
     }
 }
 
-/// `sql`, a grouping, its first five groups by its first column: rows
-/// few enough to be held in no area of their own.
-fn first_five(sql: &str) -> String {
-    let column = sql.split([' ', ',']).nth(1).unwrap();
-    format!("{sql} ORDER BY {column} FETCH FIRST 5 ROWS ONLY")
+/// The groupings of `QUERIES`, their first five groups asked by a set
+/// function's value, then by key: rows few enough to be held in no area
+/// of their own, of a grouping run in parallel, as a sort by its grouping
+/// columns would group the rows sorted.
+const ASKED: [&str; 3] = [
+    "SELECT G, COUNT(*), SUM(N) AS S, AVG(N), MAX(T) FROM C GROUP BY G ORDER BY S DESC, G FETCH FIRST 5 ROWS ONLY",
+    "SELECT T, COUNT(*), MIN(N) AS M FROM C GROUP BY T ORDER BY M DESC, T FETCH FIRST 5 ROWS ONLY",
+    "SELECT G, SUM(N) AS S FROM C GROUP BY G HAVING COUNT(*) > 2 ORDER BY S DESC, G FETCH FIRST 5 ROWS ONLY",
+];
+
+/// The plan of `sql` as `s` runs it, which must run a part in parallel.
+fn in_parallel(s: &Session, sql: &str) -> String {
+    let shown = s.physical_plan(sql, &turborel::params::Params::new()).unwrap();
+    assert!(shown.contains("Parallel"), "{sql}: run in parallel\n{shown}");
+    shown
 }
 
 /// Verifies: [DESIGN] (RULES.md D1226, D1124) the groupings of
@@ -170,15 +180,15 @@ fn first_five(sql: &str) -> String {
 #[test]
 fn a_grouping_spilled_holds_its_partitions_in_one_area() {
     let (db, a, threads) = table();
-    let asked: Vec<String> = QUERIES.iter().map(|q| first_five(q)).collect();
-    let in_memory: Vec<Vec<String>> = asked.iter().map(|q| alone(&a, q)).collect();
+    let in_memory: Vec<Vec<String>> = ASKED.iter().map(|q| alone(&a, q)).collect();
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
     threads.taken();
-    for (q, expected) in asked.iter().zip(&in_memory) {
+    for (q, expected) in ASKED.iter().zip(&in_memory) {
         assert_eq!(&parallel(&a, q), expected, "{q}");
         let Seen { written, areas, .. } = threads.taken();
-        assert!(written > usize::try_from(SMALL).unwrap() * 4, "{q}: its partitions many times the grant, spilled");
-        assert_eq!(areas, 1, "{q}: the grouping's own area alone, none of a grouping given way to");
+        let shown = in_parallel(&a, q);
+        assert!(written > usize::try_from(SMALL).unwrap() * 4, "{q}: its partitions many times the grant, spilled\n{shown}");
+        assert_eq!(areas, 1, "{q}: the grouping's own area alone, none of a grouping given way to\n{shown}");
     }
 }
 
@@ -210,9 +220,11 @@ fn partitions_past_the_depth_give_way() {
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
     db.set_setting("SPILL.PARTITION_DEPTH", &Value::Exact(Decimal::new(0, 0))).unwrap();
     assert_eq!(parallel(&a, q), in_memory);
-    let asked = first_five(q);
-    let expected = alone(&a, &asked);
+    let asked = ASKED.first().unwrap();
+    let expected = alone(&a, asked);
     threads.taken();
-    assert_eq!(parallel(&a, &asked), expected);
-    assert!(threads.taken().areas > 1, "the grouping's area and one of the grouping given way to");
+    assert_eq!(&parallel(&a, asked), &expected);
+    let areas = threads.taken().areas;
+    let shown = in_parallel(&a, asked);
+    assert!(areas > 1, "the grouping's area and one of the grouping given way to: {areas} areas\n{shown}");
 }

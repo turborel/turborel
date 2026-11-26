@@ -254,11 +254,11 @@ pub const GROUP_TABLE: [Mutation; 26] = [
     Mutation {
         name: "spilled-split-by-the-same-bits",
         package: Package::Core,
-        breaks: "a spilled partition past the grant is split by the bits that chose it, so all of it falls in one part again and the grouping gives way at the depth (RULES.md D1226)",
+        breaks: "a spilled partition past the grant is split at every level by the bits that chose it, so all of it falls in one part again and the grouping gives way at the depth (RULES.md D1226)",
         file: "src/exec/parallel/grouped/waves/spilled.rs",
-        original: "u32::try_from(level.saturating_add(1))",
-        replacement: "u32::try_from(level)",
-        integration: &[SPILLED, SPILLED_AREA],
+        original: "u32::try_from(level.saturating_add(1)).unwrap_or(u32::MAX)",
+        replacement: "0_u32",
+        integration: &[SPILLED_AREA],
         unit: &[],
     },
     Mutation {
