@@ -1,8 +1,8 @@
-//! Where each row of the web log falls (`weblog.rs`): the rows come in the
+//! Where each row of the web log falls (`weblog.rs`). The rows come in the
 //! order the reference log's do, by the counter, then the day, then the
 //! user, then the time, which is the order HITS keeps them in. So the
-//! layout is made first, from the seed: each counter takes its measured
-//! share of the rows, the rows of a counter are dealt to the days it has
+//! layout is made first, from the seed. Each counter takes its measured
+//! share of the rows. The rows of a counter are dealt to the days it has
 //! views on, and the rows of a counter's day to users, each given as many
 //! views as a user of a measured class has, and an identifier that rises
 //! with the user's place. A user so belongs to one counter and one day,
@@ -29,7 +29,7 @@ pub struct Cell {
     pub day: u64,
 }
 
-/// A user: where its rows begin, its identifier, and its cell.
+/// Where a user's rows begin, with its identifier and its cell.
 #[derive(Clone, Copy)]
 struct User {
     first: u64,
@@ -107,8 +107,9 @@ impl Layout {
     }
 }
 
-/// The views of the next user: a class by how many users it has, then the
-/// class's least views or, of the others, any up to twice that.
+/// The views of the next user. Its class is drawn by how many users each
+/// has, and it has the class's least views or, in the share of the
+/// others, any up to twice that.
 fn views(draws: &mut Random) -> u64 {
     let classes = || m::USERS.as_chunks::<3>().0.iter().copied();
     let all: u64 = classes().map(|[_, users, _]| users).sum();
@@ -124,8 +125,9 @@ fn views(draws: &mut Random) -> u64 {
 }
 
 /// The counters with rows among `rows`, in the order of their numbers,
-/// each with its rows: the listed counters and the others, each given its
-/// measured share, the counter of most views taking what rounding leaves.
+/// each with its rows. The listed counters and the others are each given
+/// their measured share, and the counter of most views takes what rounding
+/// leaves.
 fn counters(rows: u64) -> Vec<(i64, u64)> {
     let scaled = |views: u64| (u128::from(views) * u128::from(rows)).div_euclid(u128::from(m::REFERENCE_ROWS)) as u64;
     let mut held: Vec<(i64, u64)> = pairs(&m::COUNTERS).map(|(counter, views)| (counter, scaled(views.cast_unsigned()))).collect();
@@ -145,9 +147,9 @@ fn counters(rows: u64) -> Vec<(i64, u64)> {
 }
 
 /// The days counter `counter` has views on, in order, each with its rows
-/// of the counter's `rows`: the counter of the last queries on its one
-/// measured day; another on each day with the measured chance that a
-/// counter has views on a day, the days sharing its rows by their own
+/// of the counter's `rows`. The counter of the last queries has its one
+/// measured day. Another has each day with the measured chance that a
+/// counter has views on a day, and its days share its rows by their own
 /// shares, the last taking what rounding leaves.
 fn days(counter: i64, rows: u64, seed: u64) -> Vec<(u64, u64)> {
     if counter == m::BUSY.0 {

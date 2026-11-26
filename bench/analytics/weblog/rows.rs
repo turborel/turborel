@@ -1,11 +1,11 @@
-//! The web log's rows (`weblog.rs`): each made from the run's seed and its
-//! own number, so any part of the table can be made alone and on any
-//! thread. A row is a page view: whose it is and of which counter's site
-//! (`layout.rs` lays the rows out in the order of the counter, the day
-//! and the user), what was viewed and how the visitor came to it
-//! (`keys.rs` draws the page, the referer and the search phrase from the
-//! spectra measured of a reference log), and with what browser
-//! (`plain.rs`).
+//! The web log's rows (`weblog.rs`). Each is made from the run's seed and
+//! its own number, so any part of the table can be made alone and on any
+//! thread. A row is a page view. `layout.rs` says whose it is and of which
+//! counter's site, laying the rows out in the order of the counter, the
+//! day and the user. `keys.rs` draws what was viewed and how the visitor
+//! came to it, the page, the referer and the search phrase, from the
+//! spectra measured of a reference log. `plain.rs` draws the browser and
+//! the rest.
 
 use turborel::hash::xxhash::xxh3_64;
 use turborel::storage::lanes::{Lane, Lanes};
@@ -117,8 +117,8 @@ impl Maker {
         self.rows
     }
 
-    /// What tells its rows from another maker's: the rows, the seed, and
-    /// the day the figures were measured.
+    /// What tells its rows from another maker's, which is the rows, the
+    /// seed and the day the figures were measured.
     pub fn label(&self) -> String {
         format!("{} rows, seed {}, figures of {}", self.rows, self.seed, measured::MEASURED)
     }
@@ -197,11 +197,11 @@ impl Maker {
         }
     }
 
-    /// The constants the queries' texts take for these rows: a user of a
-    /// few views, the hashes of the most viewed page of the counter the
-    /// last queries group and of the most frequent referer, and the
-    /// original's thresholds and skipped rows as the same shares of these
-    /// rows, one at least.
+    /// The constants the queries' texts take for these rows. They are a
+    /// user of a few views, the hashes of the most viewed page of the
+    /// counter the last queries group and of the most frequent referer,
+    /// and the original's thresholds and skipped rows as the same shares
+    /// of these rows, one at least.
     pub fn constants(&self) -> Constants {
         let (mut url, mut referer) = (Vec::new(), Vec::new());
         self.keys.url(&mut url, measured::BUSY.0, 0);
@@ -217,8 +217,8 @@ impl Maker {
     }
 }
 
-/// The hash a text is known by: XXH3 of its octets, as a whole number of
-/// 64 bits; of the empty text, 0.
+/// The hash a text is known by, XXH3 of its octets as a whole number of
+/// 64 bits, and 0 of the empty text.
 fn hashed(text: &[u8]) -> i64 {
     if text.is_empty() { 0 } else { xxh3_64(text).cast_signed() }
 }

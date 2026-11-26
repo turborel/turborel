@@ -1,5 +1,5 @@
 //! Measurements of work whose result matters as well as its speed, such as
-//! a query's: the harness times the runs as it times any (`harness.rs`),
+//! a query's. The harness times the runs as it times any (`harness.rs`),
 //! hands back how long each took and what it gave, and keeps a line of
 //! what the result was beside the rates, so `cargo xtask bench --compare`
 //! can tell a build that answers differently from one that is only faster

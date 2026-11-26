@@ -1,11 +1,12 @@
-//! The web log's 43 queries (`weblog.rs`), in standard SQL: counts and
-//! sums of the whole table, groupings by keys of few and of many values,
-//! DISTINCT set functions, searches of texts by LIKE and by a regular
-//! expression, the first rows by a sort, and a counter's views of a month
-//! grouped. The constants that depend on the rows made stand as names in
-//! braces, which `text` replaces: a user and two hashes that exist, the
-//! views a group needs to be kept, and the rows skipped before the first
-//! returned, each a share of the rows as the original's was of its own.
+//! The web log's 43 queries (`weblog.rs`), in standard SQL. They are
+//! counts and sums of the whole table, groupings by keys of few and of
+//! many values, DISTINCT set functions, searches of texts by LIKE and by
+//! a regular expression, the first rows by a sort, and a counter's views
+//! of a month grouped. The constants that depend on the rows made stand
+//! as names in braces, which `text` replaces with a user and two hashes
+//! that exist, the views a group needs to be kept, and the rows skipped
+//! before the first returned, each a share of the rows as the original's
+//! was of its own.
 
 /// The sums of the query of ninety, each of the width and a constant.
 const SUMS: u32 = 90;
@@ -167,8 +168,9 @@ pub struct Constants {
     pub url: i64,
     /// The views a group has more than, to be kept.
     pub having: u64,
-    /// The rows skipped of the groupings of counter 62: of its views by
-    /// one referer, of its pages, and of the sizes of windows on one page.
+    /// The rows skipped of the groupings of counter 62, those of its views
+    /// by one referer, of its pages, and of the sizes of windows on one
+    /// page.
     pub skips: [u64; 3],
 }
 

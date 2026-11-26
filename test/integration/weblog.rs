@@ -1,8 +1,8 @@
-//! The web log bench's rows and queries (RULES.md R-BENCH-1): the rows
+//! The web log bench's rows and queries (RULES.md R-BENCH-1). The rows
 //! `bench/analytics/weblog.rs` makes are the same from one seed whatever
 //! part is made, come in the order the table keeps them in, and have the
-//! shape measured of the reference log; and each of its 43 queries runs
-//! on a table of them. The maker and the queries are the bench's own.
+//! shape measured of the reference log. Each of its 43 queries runs on a
+//! table of them. The maker and the queries are the bench's own.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -34,8 +34,10 @@ mod texts;
 
 use rows::Maker;
 
-/// Rows of the small table.
+/// Rows made to look at their shape.
 const ROWS: u64 = 20_000;
+/// Rows of the table the queries run on.
+const QUERIED: u64 = 10_000;
 
 /// The cells of the column `name` of `lanes`, as text.
 fn column<'a>(lanes: &'a Lanes, name: &str) -> Vec<&'a str> {
@@ -49,9 +51,9 @@ fn share(cells: &[&str], wanted: impl Fn(&str) -> bool) -> usize {
 }
 
 /// Verifies: [TOOL] R-BENCH-1 the web log's rows depend on the seed and
-/// the row's number alone: made twice they are the same, a part made
+/// the row's number alone. Made twice they are the same, a part made
 /// alone is that part of the whole, in every column, and another seed
-/// makes other rows; a maker's label tells its rows and seed.
+/// makes other rows. A maker's label tells its rows and seed.
 #[test]
 fn the_same_rows_come_of_the_same_seed() {
     let maker = Maker::new(ROWS, 1);
@@ -69,10 +71,11 @@ fn the_same_rows_come_of_the_same_seed() {
 
 /// Verifies: [TOOL] R-BENCH-1 the rows come in the order of the counter,
 /// the day and the user, as the reference log's do, and have its measured
-/// shape: the counter of most views has between a fifth and a quarter of
+/// shape. The counter of most views has between a fifth and a quarter of
 /// them, nine search phrases of ten are empty, nearly every view names
 /// no advertising engine, a user has about five views, addresses begin
-/// with a scheme, and every date is one of the measured days.
+/// with a scheme, every date is one of the measured days, and a view's
+/// time is on its date or the evening before.
 #[test]
 fn the_rows_have_the_measured_shape() {
     let lanes = Maker::new(ROWS, 1).lanes(0, ROWS);
@@ -97,12 +100,12 @@ fn the_rows_have_the_measured_shape() {
 }
 
 /// Verifies: [TOOL] R-BENCH-1 each of the web log's 43 queries runs on a
-/// table of its rows, loaded as the bench loads them, by column; the
+/// table of its rows, loaded as the bench loads them, by column. The
 /// count of all rows is the rows made, and the queries that ask for one
 /// user, one referer and one page by number name ones the rows hold.
 #[test]
 fn every_query_runs_on_the_rows() {
-    let maker = Maker::new(ROWS, 1);
+    let maker = Maker::new(QUERIED, 1);
     let db = Database::new();
     db.schema("CREATE SCHEMA AUTHORIZATION B").unwrap();
     let s = db.session("B");
@@ -110,7 +113,7 @@ fn every_query_runs_on_the_rows() {
         s.run(&definition).unwrap();
     }
     let insert = s.prepare(&schema::insert()).unwrap();
-    s.execute_prepared_lanes(&insert, Arc::new(maker.lanes(0, ROWS)), Load::Ending).unwrap();
+    s.execute_prepared_lanes(&insert, Arc::new(maker.lanes(0, QUERIED)), Load::Ending).unwrap();
     s.commit().unwrap();
     let constants = maker.constants();
     assert_eq!(queries::count(), 43);
@@ -125,7 +128,7 @@ fn every_query_runs_on_the_rows() {
         drop(cursor);
         s.commit().unwrap();
         if name == "q01" {
-            assert_eq!(rows[0][0].to_string(), ROWS.to_string());
+            assert_eq!(rows[0][0].to_string(), QUERIED.to_string());
         }
         if name == "q20" {
             assert!(!rows.is_empty(), "the user asked for by number has views");

@@ -1,18 +1,19 @@
 //! How fast the queries of a web analytics service run on its log of page
-//! views (RULES.md R-BENCH-1): HITS, a column store table of 105 columns
-//! (`weblog/schema.rs`), filled with rows made from a seed in the shape
-//! such a log has (`weblog/rows.rs`, its figures measured from a reference
-//! log and kept in `weblog/measured.rs` and `weblog/columns.rs`), loaded as a bulk copy loads
-//! them (`weblog/load.rs`), and read by 43 queries (`weblog/queries.rs`).
-//! Each query runs once untimed and three times timed; the harness
-//! reports its rate, and a table at the end ranks the queries by the
-//! seconds of their fastest run, with the rows each gave and a checksum
-//! of them, which two builds' runs are compared by. It is a suite of the
-//! analytics benchmark, run alone as `cargo xtask bench weblog`, whose
-//! options reach it as the variables below; it stands in for runs on a
-//! reference log too large for a developer's machine, so its use is to
-//! rank the queries, to profile one, to read a plan, and to tell whether a
-//! change moved one, not to state how fast the database is.
+//! views (RULES.md R-BENCH-1). HITS is a column store table of 105 columns
+//! (`weblog/schema.rs`). Its rows are made from a seed in the shape such a
+//! log has (`weblog/rows.rs`), from figures measured of a reference log
+//! and kept in `weblog/measured.rs` and `weblog/columns.rs`. They are
+//! loaded as a bulk copy loads them (`weblog/load.rs`) and read by 43
+//! queries (`weblog/queries.rs`). Each query runs once untimed and three
+//! times timed. The harness reports its rate, and a table at the end
+//! ranks the queries by the seconds of their fastest run, with the rows
+//! each gave and a checksum of them, which two builds' runs are compared
+//! by. It is a suite of the analytics benchmark, run alone as `cargo xtask
+//! bench weblog`, whose options reach it as the variables below. It
+//! stands in for runs on a reference log too large for a developer's
+//! machine. Its use is to rank the queries, to profile one, to read a
+//! plan and to tell whether a change moved one. It does not state how
+//! fast the database is.
 
 #[path = "weblog/columns.rs"]
 mod columns;
@@ -64,7 +65,7 @@ const SECS_VAR: &str = "TURBOREL_BENCH_WEBLOG_SECS";
 /// first loads it; the harness's own, removed as the run ends, if not set.
 const DIR_VAR: &str = "TURBOREL_BENCH_WEBLOG_DIR";
 
-/// Rows of HITS by default: the suite then runs in a few minutes.
+/// Rows of HITS by default, with which the suite runs in a few minutes.
 const ROWS: u64 = 5_000_000;
 /// The seed by default.
 const SEED: u64 = 1;
@@ -72,6 +73,11 @@ const SEED: u64 = 1;
 const RUNS: usize = 3;
 /// Seconds a profiled query's loop lasts by default.
 const SECS: u64 = 30;
+/// Where the system says how many of its threads are busy, where it does.
+const LOAD: &str = "/proc/loadavg";
+/// The hundredths the load may move by between a run's start and its end
+/// before the run's times are called disturbed, half a busy thread.
+const MOVED: u64 = 50;
 /// Seconds the process waits before a profiled query's loop, its number
 /// printed, so a profiler can attach.
 const WAIT: u64 = 5;
@@ -86,15 +92,30 @@ fn number(name: &str, default: u64) -> u64 {
     var(name).and_then(|value| value.parse().ok()).unwrap_or(default)
 }
 
-/// What a query gave: its rows, and a checksum of their values in order.
+/// The system's load average over the last minute, in hundredths, where
+/// it tells one.
+fn load() -> Option<u64> {
+    let text = std::fs::read_to_string(LOAD).ok()?;
+    let (whole, part) = text.split_whitespace().next()?.split_once('.')?;
+    Some(whole.parse::<u64>().ok()? * 100 + part.parse::<u64>().ok()?)
+}
+
+/// Prints the load average `at` this point of the run, `load`, written
+/// with its hundredths.
+fn loaded(at: &str, load: u64) {
+    note(&format!("load average {}.{:02} at the {at}", load.div_euclid(100), load % 100));
+}
+
+/// What a query gave, its rows and a checksum of their values in order.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Gave {
     rows: u64,
     checksum: u64,
 }
 
-/// Reads every row of `sql`: how many, and XXH3 of each row's values as
-/// text, seeded with the checksum of the rows before it.
+/// Reads every row of `sql` and gives how many there were, with XXH3 of
+/// each row's values as text, seeded with the checksum of the rows before
+/// it.
 fn fetched(s: &Session, sql: &str) -> Gave {
     let mut cursor = s.open_cursor(sql).unwrap();
     let mut gave = Gave { rows: 0, checksum: 0 };
@@ -112,7 +133,8 @@ fn fetched(s: &Session, sql: &str) -> Gave {
     gave
 }
 
-/// A measured query: its name, its fastest run's seconds, and what it gave.
+/// A measured query, with its name, its fastest run's seconds and what it
+/// gave.
 struct Line {
     name: &'static str,
     secs: f64,
@@ -121,8 +143,8 @@ struct Line {
     same: bool,
 }
 
-/// Runs the suite: HITS made or opened, then the queries measured and
-/// ranked, or one run in a loop.
+/// Runs the suite. HITS is made or opened, then the queries are measured
+/// and ranked, or their plans printed, or one run in a loop.
 pub fn workloads(bench: &Bench) {
     let system = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let threads = number(THREADS_VAR, system as u64) as usize;
@@ -138,12 +160,22 @@ pub fn workloads(bench: &Bench) {
     let chosen = |name: &str| only.as_ref().is_none_or(|names| names.split(',').any(|n| n.trim() == name));
     let texts: Vec<(&'static str, String)> =
         (0..queries::count()).filter(|&n| chosen(queries::name(n))).map(|n| (queries::name(n), queries::text(n, &constants))).collect();
+    let before = load();
+    if let Some(load) = before {
+        loaded("start", load);
+    }
     if var(PLAN_VAR).is_some() {
         planned(&s, &texts);
     } else if var(PROFILE_VAR).is_some() {
         profiled(&s, &texts);
     } else {
         ranked(bench, &s, &texts, threads);
+    }
+    if let (Some(before), Some(after)) = (before, load()) {
+        loaded("end", after);
+        if before.abs_diff(after) > MOVED {
+            note("WARNING: the load moved while the queries ran, so other work disturbed their times; run them again");
+        }
     }
     drop(s);
     // Closed, so a table kept for the next run is whole in its files.

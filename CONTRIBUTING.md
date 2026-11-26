@@ -108,20 +108,36 @@ an existing database sees.
 
 `cargo xtask bench weblog --save before` runs the 43 queries of a web
 analytics service on a log of page views, a column store table of 105
-columns. Its use is to rank the queries by time, to profile one, and to
-tell whether a change moved one, on a developer's machine in a few
-minutes. The rows are made from a seed in the shape measured of a
-reference log too large for that, so the suite stands in for runs on the
-reference log between measurements there. It does not say how fast the
-database is, and a change it shows is confirmed on the reference log
-before it is claimed.
+columns. Its use is to rank the queries by time, to profile one, to read
+a plan, and to tell whether a change moved one, on a developer's machine
+in a few minutes. The rows are made from a seed in the shape measured of
+a reference log too large for that, so the suite stands in for runs on
+the reference log between measurements there.
 
 Each query runs once untimed and three times timed. The table at the end
 ranks the queries by their fastest run, with the rows each gave and a
-checksum of them. `--compare before` then shows each query's change, and
-names the queries whose result is not the saved one's. A query that
-cuts its rows off among ties, or has no ORDER BY, may give other rows
-from one build to the next and still be right.
+checksum of them. `--compare before` then shows each query's change,
+names the queries whose result is not the saved one's, and fails if
+there is one. A query that cuts its rows off among ties, or has no ORDER
+BY, may give other rows from one build to the next and still be right,
+so read such a failure before believing it. Compare two builds on one
+kept table, since a table made again has its groups in another order.
+
+Do not trust it for these.
+
+- Times against another system, or as a statement of how fast the
+  database is. The rows are fewer and made, not real.
+- Anything that depends on the memory a table of the reference log's
+  size needs. Nothing spills at the default size, the groupings of many
+  groups stay in memory, and the cache of group headers is only scaled
+  to the rows, not grown past them.
+- A change it shows as a gain. Confirm it on the reference log before
+  it is claimed.
+- A change smaller than its own runs differ by on the machine. The run
+  prints the load average at its start and end, and a warning when it
+  moved. Run it again then.
+
+Its options follow.
 
 - `--rows N` sets the rows made, 5,000,000 if not given. The queries'
   thresholds follow the rows, so each returns rows at any size.
@@ -129,13 +145,20 @@ from one build to the next and still be right.
   those under the label.
 - `--threads N` sets the threads a query runs on at most, the system's
   if not given.
+- `--cpus 4-7,12-15` keeps the run to those processors, by `taskset`,
+  apart from other work on the machine. A comparison of two builds needs
+  it on a machine that is doing anything else.
 - `--dir PATH` keeps the table in that directory, so only the first run
   makes and loads it. Remove the directory after a change to the stored
-  format.
+  format or to the rows made.
 - `--profile q29` runs that query in a loop and measures nothing. It
   prints the process's number and waits five seconds first, so `perf
-  record -g -p NUMBER` can attach. `--secs N` sets how long the loop
-  lasts, 30 if not given.
+  record -p NUMBER` can attach. `--secs N` sets how long the loop lasts,
+  30 if not given. The program is built by cargo's `bench` profile,
+  which is the release profile, optimized and with its symbols, so a
+  profile names functions. It has no frame pointers, so for call graphs
+  build with `RUSTFLAGS=-Cforce-frame-pointers=yes` and record with
+  `perf record -g`.
 - `--plan q10,q29` runs those queries once and prints the plan of each
   with what each step did, as EXPLAIN ANALYZE gives it.
 

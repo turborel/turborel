@@ -14,8 +14,9 @@
 //! real only when it is larger than the spread of the runs on either side,
 //! and than `NOISE_FLOOR`. A benchmark may keep, beside a rate, a line of
 //! what the work gave (`RESULT`); a comparison names the work whose result
-//! is not the saved one's. A suite of a benchmark runs alone by its own
-//! name, with its own options (`bench/suites.rs`).
+//! is not the saved one's, and the comparison then fails. A suite of a
+//! benchmark runs alone by its own name, with its own options
+//! (`bench/suites.rs`).
 
 use std::ffi::OsStr;
 use std::fs;
@@ -38,6 +39,8 @@ const OUT_VAR: &str = "TURBOREL_BENCH_OUT";
 /// The options.
 const SAVE: &str = "--save";
 const COMPARE: &str = "--compare";
+/// What begins the line of `rustc -vV` that names the host's target.
+const HOST: &str = "host: ";
 /// Marks a header line of a results file.
 const HEADER: &str = "# ";
 /// Per-operation latency metadata from the shared harness, kept with its benchmark.
@@ -78,6 +81,8 @@ struct Options<'a> {
     compare: Option<&'a str>,
     /// A suite's options: the variable each is handed in, and its value.
     settings: Vec<(&'static str, &'a str)>,
+    /// The processors a suite's run is kept to.
+    cpus: Option<&'a str>,
 }
 
 /// Runs `cargo xtask bench` with the arguments after `bench`.
@@ -88,12 +93,14 @@ pub fn run(root: &Path, args: &[&str]) -> Result<()> {
     let last = dir.join(results_file(LAST));
     write(&last, &header(root)?)?;
     let suite = options.bench.and_then(suites::named);
-    if suite.is_none() && !options.settings.is_empty() {
+    if suite.is_none() && (!options.settings.is_empty() || options.cpus.is_some()) {
         return Err(usage());
     }
+    let pinned = options.cpus.map(|cpus| host(root).map(|host| suites::pinned(&host, cpus))).transpose()?;
     let mut envs: Vec<(&str, &OsStr)> = vec![(OUT_VAR, last.as_os_str())];
     envs.extend(suite.map(|s| (s.chosen_by.0, OsStr::new(s.chosen_by.1))));
     envs.extend(options.settings.iter().map(|(variable, value)| (*variable, OsStr::new(value))));
+    envs.extend(pinned.iter().map(|(variable, runner)| (variable.as_str(), OsStr::new(runner))));
     let runs: Vec<Vec<&str>> = match suite.map(|s| s.bench).or(options.bench) {
         Some(name) => vec![bench_args(name)],
         None => {
@@ -115,6 +122,10 @@ pub fn run(root: &Path, args: &[&str]) -> Result<()> {
         println!("\n== compared with {label}");
         for line in comparison(&base, &now) {
             println!("{line}");
+        }
+        let unlike = differing(&base, &now).len();
+        if unlike > 0 {
+            return Err(Error::new(format!("bench: {unlike} results are not those saved as {label}, so the builds do not answer alike")));
         }
     }
     Ok(())
@@ -139,6 +150,10 @@ fn options<'a>(args: &[&'a str]) -> Result<Options<'a>> {
                 options.compare = Some(label);
                 more
             }
+            (suites::CPUS, [cpus, more @ ..]) => {
+                options.cpus = Some(cpus);
+                more
+            }
             (name, more) if options.bench.is_none() && !name.starts_with('-') => {
                 options.bench = Some(name);
                 more
@@ -153,6 +168,13 @@ fn options<'a>(args: &[&'a str]) -> Result<Options<'a>> {
 fn usage() -> Error {
     let suites = suites::usage();
     Error::new(format!("usage: cargo xtask bench [NAME] [{SAVE} LABEL] [{COMPARE} LABEL]; of the suite weblog also{suites}"))
+}
+
+/// The target the toolchain builds for on this machine.
+fn host(root: &Path) -> Result<String> {
+    let told = command::tool_output(root, Path::new("rustc"), &["-vV"])?;
+    let host = told.lines().find_map(|line| line.strip_prefix(HOST));
+    host.map(str::to_owned).ok_or_else(|| Error::new("rustc -vV names no host".to_owned()))
 }
 
 /// The file name of the results kept as `label`.
@@ -302,7 +324,7 @@ mod tests {
     fn options_are_read() {
         assert_eq!(options(&[]).ok(), Some(Options::default()));
         let all = options(&["pages", "--save", "a", "--compare", "b"]).ok();
-        assert_eq!(all, Some(Options { bench: Some("pages"), save: Some("a"), compare: Some("b"), settings: Vec::new() }));
+        assert_eq!(all, Some(Options { bench: Some("pages"), save: Some("a"), compare: Some("b"), ..Options::default() }));
         let compared = Options { bench: Some("pages"), compare: Some("b"), ..Options::default() };
         assert_eq!(options(&["--compare", "b", "pages"]).ok(), Some(compared));
         assert!(options(&["--save"]).is_err());
@@ -380,9 +402,9 @@ mod tests {
     /// keeps the results of the benchmarks not run.
     #[test]
     fn a_suites_options_and_results_are_read() {
-        let read = options(&["weblog", "--only", "q02,q29", "--save", "a", "--threads", "8"]).ok();
+        let read = options(&["weblog", "--only", "q02,q29", "--save", "a", "--threads", "8", "--cpus", "4-7"]).ok();
         let settings = vec![("TURBOREL_BENCH_WEBLOG_ONLY", "q02,q29"), ("TURBOREL_BENCH_WEBLOG_THREADS", "8")];
-        assert_eq!(read, Some(Options { bench: Some("weblog"), save: Some("a"), compare: None, settings }));
+        assert_eq!(read, Some(Options { bench: Some("weblog"), save: Some("a"), compare: None, settings, cpus: Some("4-7") }));
         assert!(options(&["weblog", "--only"]).is_err());
         let before = "w\tq01\t8\t0\tqueries\t1\t1\t1\n@result\tw\tq01\t8\t1 rows, checksum 0a\n@result\tw\tq02\t8\t1 rows, checksum 0b\n";
         let now = "w\tq01\t8\t0\tqueries\t1\t1\t1\n@result\tw\tq01\t8\t1 rows, checksum 0a\n@result\tw\tq02\t8\t2 rows, checksum 0c\n";

@@ -1,16 +1,16 @@
-//! Who and what a row of the web log is of (`weblog.rs`): the user and
-//! the counter of the site viewed, which the row's place gives
-//! (`layout.rs`), the page, its title, the referer, the search phrase, the
-//! address and region of the visitor, and the time. Each is drawn from
-//! what was measured of the reference log (`measured.rs`): a few pages,
-//! referers and phrases have most rows and most have one or two, by the
-//! spectrum of each; a page belongs to its counter, which has as large a
-//! share of the pages as of the rows; a user's address is the user's own
-//! and a region the address's; a user's views follow one another by half
-//! a minute, and two in a row share whether they came of a search, and
-//! the phrase; a view that came of a search has a referer and the
-//! phrase's engine. The texts of a page, a title, a referer and a phrase
-//! depend only on which one it is.
+//! Who and what a row of the web log is of (`weblog.rs`). The row's place
+//! gives the user and the counter of the site viewed (`layout.rs`). The
+//! page, its title, the referer, the search phrase, the address and
+//! region of the visitor and the time are drawn here from what was
+//! measured of the reference log (`measured.rs`). A few pages, referers
+//! and phrases have most rows and most have one or two, by the spectrum
+//! of each. A page belongs to its counter, which has as large a share of
+//! the pages as of the rows. A user's address is the user's own and a
+//! region the address's. A user's views follow one another by half a
+//! minute, and two in a row share whether they came of a search, and the
+//! phrase. A view that came of a search has a referer and the phrase's
+//! engine. The texts of a page, a title, a referer and a phrase depend
+//! only on which one it is.
 
 use super::layout::{Layout, Place};
 use super::measured as m;
@@ -58,8 +58,8 @@ pub struct View {
     pub watch: i64,
     pub address: i64,
     pub region: i64,
-    /// Seconds from the month's first midnight: of the view, by the
-    /// visitor's clock, and by the visitor's local time.
+    /// Seconds from the month's first midnight, of the view, by the
+    /// visitor's clock and by the visitor's local time.
     pub seconds: u64,
     pub client_seconds: u64,
     pub local_seconds: u64,
@@ -123,10 +123,10 @@ impl Keys {
         }
     }
 
-    /// When the view at `place` was: on its day, by the log's clock, the
-    /// user's first view at a time of the day the user's own, each later
-    /// one the measured seconds after, or sooner if the user has too many
-    /// for the day.
+    /// When the view at `place` was, on its day, by the log's clock. The
+    /// user's first view is at a time of the day the user's own, and each
+    /// later one the measured seconds after, or sooner if the user has too
+    /// many for the day.
     fn seconds(&self, place: &Place, draws: &mut Random) -> u64 {
         let apart = m::SECONDS_APART.min(DAY.div_euclid(place.of.max(1))).max(1);
         let start = below(drawn(self.seed, place.user, START), DAY.saturating_sub((place.of - 1) * apart).max(1));
@@ -135,7 +135,7 @@ impl Keys {
     }
 
     /// The search phrase of the view at `place`, none if it came of no
-    /// search: the same for the user's views of one run.
+    /// search, the same for the user's views of one run.
     fn phrase_of(&self, place: &Place) -> Option<u64> {
         let run = (place.user << RUN_BITS) | place.nth.div_euclid(m::SEARCH_RUN);
         let mut draws = Random::new(drawn(self.seed, run, SEARCH));
@@ -151,9 +151,9 @@ impl Keys {
         class.first + below(draws.next(), values.clamp(1, class.values))
     }
 
-    /// The referer of a view: of one that came of a search, `sought`,
-    /// always one, of another none in the measured share of them; a site
-    /// by its share, and one of the site's pages.
+    /// The referer of a view, a site by its share and one of the site's
+    /// pages. A view that came of a search, `sought`, always has one, and
+    /// the measured share of the others has none.
     fn referer_of(&self, sought: bool, draws: &mut Random) -> Option<(u64, u64)> {
         let (direct, site, rest) = (draws.next(), draws.next(), draws.next());
         if !sought && below(direct, MILLION) < u64::from(m::DIRECT) {
@@ -166,8 +166,8 @@ impl Keys {
         Some((site, Self::within(&self.referers, share, draws)))
     }
 
-    /// The region of the address numbered `address`: one of the listed by
-    /// its share, else one of the others by their spectrum.
+    /// The region of the address numbered `address`, one of the listed by
+    /// its share or else one of the others by their spectrum.
     fn region(&self, address: u64) -> i64 {
         let mut draws = Random::new(drawn(self.seed, address, REGION));
         let (first, apart) = m::REGIONS_REST_NUMBERS;
@@ -180,9 +180,9 @@ impl Keys {
         self.layout.user_of(MODEST)
     }
 
-    /// Appends to `out` the address of page `page` of counter `counter`:
-    /// the scheme, the counter's site, then words, and `google` in the
-    /// measured share of pages.
+    /// Appends to `out` the address of page `page` of counter `counter`,
+    /// made of the scheme, the counter's site and words, with `google` in
+    /// the measured share of the less viewed pages.
     pub fn url(&self, out: &mut Vec<u8>, counter: i64, page: u64) {
         let of = drawn(self.seed, counter.cast_unsigned(), PAGE).wrapping_add(page);
         let mut draws = Random::new(drawn(self.seed, of, PAGE));
@@ -218,8 +218,8 @@ impl Keys {
         texts::text(out, &head, (length, page), (between, m::REFERER.wide), &mut draws);
     }
 
-    /// Appends to `out` the title of page `page` of counter `counter`:
-    /// pages share titles in the measured ratio, the measured share of
+    /// Appends to `out` the title of page `page` of counter `counter`.
+    /// Pages share titles in the measured ratio, the measured share of
     /// titles is empty, and the measured share holds `Google`.
     pub fn title(&self, out: &mut Vec<u8>, counter: i64, page: u64) {
         let title = (u128::from(page) * u128::from(m::TITLES_OF_PAGES.0)).div_euclid(u128::from(m::TITLES_OF_PAGES.1)) as u64;

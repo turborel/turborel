@@ -1,10 +1,10 @@
-//! The web log's texts (`weblog.rs`): an address of a page, a title, a
-//! search phrase and the other texts of a row, each made of words from a
-//! short vocabulary until it has the octets its column's measured lengths
-//! ask, with the share of two-octet characters measured for the column,
-//! and ending in the number of what it is the text of, so two things have
-//! two texts. A text depends only on the draws it is given, so one page
-//! has one address wherever it occurs.
+//! The web log's texts (`weblog.rs`). An address of a page, a title, a
+//! search phrase and the other texts of a row are each made of words from
+//! a short vocabulary until the text has the octets its column's measured
+//! lengths ask, with the share of two-octet characters measured for the
+//! column. A text ends in the number of what it is the text of, so two
+//! things have two texts. It depends only on the draws it is given, so
+//! one page has one address wherever it occurs.
 
 use super::random::{MILLION, Random, below, pairs};
 
@@ -12,8 +12,8 @@ use super::random::{MILLION, Random, below, pairs};
 pub struct Shape {
     /// The texts that are empty, in parts of a million.
     pub empty: u32,
-    /// Of the others, classes of lengths, a table of pairs: the least
-    /// octets of each, and its share in parts of a million; a class ends
+    /// Of the others, classes of lengths, a table of pairs of the least
+    /// octets of a class and its share in parts of a million. A class ends
     /// where the next begins, the last at `longest`.
     pub lengths: &'static [u32],
     /// The octets the last class ends before.
@@ -104,8 +104,9 @@ pub fn numbered(out: &mut Vec<u8>, mut number: u64) {
 }
 
 /// Appends words to `out` until the text that began at `from` has `length`
-/// octets, less the room `kept` for what follows them: each word apart by
-/// `between`, one in a million `wide` of them of two-octet characters.
+/// octets, a word that would pass them left out and the rest filled. The
+/// words are apart by `between`, and `wide` in a million of them are of
+/// two-octet characters.
 pub fn worded(out: &mut Vec<u8>, (from, length): (usize, usize), (between, wide): (u8, u32), draws: &mut Random) {
     while out.len() - from < length {
         let draw = draws.next();
@@ -123,8 +124,8 @@ pub fn worded(out: &mut Vec<u8>, (from, length): (usize, usize), (between, wide)
     out.resize(from + length, FILL);
 }
 
-/// Appends to `out` a text of `length` octets that ends in `number`: a
-/// start `head`, then words as `worded` appends them.
+/// Appends to `out` a text of `length` octets that begins with `head`,
+/// goes on with words as `worded` appends them, and ends in `number`.
 pub fn text(out: &mut Vec<u8>, head: &[u8], (length, number): (usize, u64), shape: (u8, u32), draws: &mut Random) {
     let from = out.len();
     let mut tail = Vec::with_capacity(16);

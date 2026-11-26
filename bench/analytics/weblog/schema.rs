@@ -1,9 +1,9 @@
-//! The web log's table (`weblog.rs`): HITS, of 105 columns, the page views
-//! of a web analytics service, one row a view. Whole numbers of 64 bits
-//! are NUMERIC(19, 0), since identifiers and hashes fill them; texts are
-//! under BYTES, a collation of octets with no padding, so two texts are
-//! equal only if their octets are; the rows are kept in the order of the
-//! counter, the date, the user, the time and the view.
+//! The web log's table (`weblog.rs`). HITS has 105 columns and holds the
+//! page views of a web analytics service, one row a view. Whole numbers
+//! of 64 bits are NUMERIC(19, 0), since identifiers and hashes fill them.
+//! Texts are under BYTES, a collation of octets with no padding, so two
+//! texts are equal only if their octets are. The rows are kept in the
+//! order of the counter, the date, the user, the time and the view.
 
 /// What a column holds.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -153,7 +153,7 @@ pub const COLUMNS: [(&str, Kind); WIDTH] = [
 
 /// The collation of octets the texts are under.
 const COLLATION: &str = "CREATE COLLATION BYTES FOR SQL_TEXT FROM UCS_BASIC NO PAD";
-/// The order HITS keeps its rows in, and how a load writes them: each
+/// The order HITS keeps its rows in, and how a load writes them, each
 /// batch straight as a frozen group.
 const OPTIONS: &str =
     "USING columnstore WITH (COLUMNSTORE.ORDER = 'CounterID, EventDate, UserID, EventTime, WatchID', COLUMNSTORE.LOAD = 'GROUPS')";
@@ -164,7 +164,7 @@ pub fn definitions() -> [String; 2] {
     [COLLATION.to_owned(), format!("CREATE TABLE HITS ({}) {OPTIONS}", columns.join(", "))]
 }
 
-/// The INSERT a load prepares: one row, a parameter a column.
+/// The INSERT a load prepares, of one row, a parameter a column.
 pub fn insert() -> String {
     format!("INSERT INTO HITS VALUES ({})", vec!["?"; WIDTH].join(", "))
 }

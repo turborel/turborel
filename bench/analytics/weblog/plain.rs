@@ -1,9 +1,9 @@
-//! The web log's columns that no query's speed turns on (`weblog.rs`):
-//! each drawn from its own measured figures, the values it holds most
+//! The web log's columns that no query's speed turns on (`weblog.rs`).
+//! Each is drawn from its own measured figures, the values it holds most
 //! often with their shares and, for the rest, as many other values as
 //! were counted, spread over its range. A column of what a visitor's
 //! browser or a counter's site is draws by the user or the counter, so a
-//! user's rows agree; the others draw by the row.
+//! user's rows agree. The others draw by the row.
 
 use super::random::{Listed, MILLION, Random, below, drawn};
 use super::texts::{self, Shape};
@@ -11,9 +11,9 @@ use super::texts::{self, Shape};
 /// What a column's value is drawn by.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum By {
-    /// The user: a fact of the visitor or the browser.
+    /// The user, for a fact of the visitor or the browser.
     User,
-    /// The counter: a fact of the site.
+    /// The counter, for a fact of the site.
     Counter,
     /// The row alone.
     Row,
@@ -55,8 +55,8 @@ pub struct Worded {
     pub column: &'static str,
     pub by: By,
     pub shape: Shape,
-    /// The texts it holds most often after the empty one: the octets of
-    /// each, with its share of the rows that are not empty.
+    /// The texts it holds most often after the empty one, the octets of
+    /// each with its share of the rows that are not empty.
     pub top: Listed,
     /// How many texts there are beside the listed ones.
     pub others: u64,

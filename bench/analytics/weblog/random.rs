@@ -1,11 +1,11 @@
-//! The web log's draws (`weblog.rs`): SplitMix64 (Steele, Lea and Flood,
-//! OOPSLA 2014), the generator the benches draw from (`oltp/random.rs`),
-//! seeded for each row from the run's seed and the row's number by XXH3,
-//! so a row is the same whatever rows were made before it and on whatever
-//! thread; a draw that depends only on what it is of, such as a user's
-//! region, which is XXH3 of the two; and the two shapes values are drawn
-//! in, a list of values with their shares and a spectrum of how often
-//! values occur.
+//! The web log's draws (`weblog.rs`). A row draws from SplitMix64 (Steele,
+//! Lea and Flood, OOPSLA 2014), the generator the benches draw from
+//! (`oltp/random.rs`), seeded from the run's seed and the row's number by
+//! XXH3, so a row is the same whatever rows were made before it and on
+//! whatever thread. A draw that depends only on what it is of, such as a
+//! user's region, is XXH3 of that and its purpose. Values are drawn in
+//! two shapes, a list of values with their shares and a spectrum of how
+//! often values occur.
 
 use turborel::hash::xxhash::xxh3_64_words;
 
@@ -38,7 +38,7 @@ impl Random {
     }
 }
 
-/// The draw that belongs to `of`, for the purpose `purpose`, under `seed`:
+/// The draw that belongs to `of`, for the purpose `purpose`, under `seed`,
 /// the same each time it is asked.
 pub fn drawn(seed: u64, of: u64, purpose: u64) -> u64 {
     xxh3_64_words(&[of, purpose], seed)
@@ -54,12 +54,12 @@ pub fn pairs<T: Copy>(table: &[T]) -> impl Iterator<Item = (T, T)> + '_ {
     table.as_chunks::<2>().0.iter().map(|[first, second]| (*first, *second))
 }
 
-/// A share of a key's rows: so many of so many.
+/// A share of a key's rows, so many of so many.
 pub type Share = (u64, u64);
 
-/// Values with their shares, drawn by share: a table of pairs, each a
-/// value and its share in parts of a million. The share the list leaves
-/// out of a million belongs to no value of it.
+/// Values with their shares, drawn by share. They are a table of pairs,
+/// each a value and its share in parts of a million. The share the list
+/// leaves out of a million belongs to no value of it.
 pub struct Listed {
     pairs: &'static [i64],
 }
@@ -103,7 +103,7 @@ impl Listed {
     }
 }
 
-/// How often the values of a key occur: classes of values, the most
+/// How often the values of a key occur, as classes of values, the most
 /// frequent first, each with how many values it has and the rows they
 /// have together. A draw falls in a class by its rows, then on one of its
 /// values, each as likely, so a value is drawn as often as the class's
@@ -146,7 +146,7 @@ impl Spectrum {
         self.classes[class.min(self.classes.len() - 1)]
     }
 
-    /// The number of the value the draws fall on: `draw` on its class,
+    /// The number of the value the draws fall on, `draw` on its class and
     /// `within` on the value of the class.
     pub fn pick(&self, draw: u64, within: u64) -> u64 {
         let class = self.class(draw);
