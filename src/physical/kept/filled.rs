@@ -207,9 +207,9 @@ impl Filling<'_> {
             // A transition table is read as refilled at each run (RULES.md D793).
             Plan::SeqScan { .. } | Plan::Transition { .. } => Ok(plan),
             Plan::Nearest(read) => self.nearest(read),
-            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed } => {
+            Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed, first } => {
                 let aggs = aggs.into_iter().map(|a| self.agg(a)).collect::<Result<_>>()?;
-                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est, streamed })
+                Ok(Plan::Aggregate { groups, collations, aggs, seeds, detail, input: Box::new(self.plan(*input)?), est, streamed, first })
             }
             Plan::Distinct { input, est, streamed } => Ok(Plan::Distinct { input: Box::new(self.plan(*input)?), est, streamed }),
             Plan::Sort { keys, detail, input, most } => Ok(Plan::Sort { keys, detail, input: Box::new(self.plan(*input)?), most }),
