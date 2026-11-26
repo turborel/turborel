@@ -1,5 +1,5 @@
 //! The mutations of a morsel's memory (RULES.md R-TEST-9, D1150, D1151,
-//! D1153, D1154): a morsel charged to its part's grant as it is gathered, one
+//! D1153 to D1155): a morsel charged to its part's grant as it is gathered, one
 //! past it read on from where its thread left it, never read again, its
 //! rows made as they are read, a
 //! probe's pairs made a batch at a time, a stream's rows ahead of its
@@ -12,7 +12,17 @@ use super::super::{Mutation, Package};
 const PAST: &str = "fan_out::a_join_past_its_grant_answers_as_alone";
 
 /// Mechanisms whose removal must fail the requirements of a morsel's memory.
-pub const MORSEL_MEMORY: [Mutation; 8] = [
+pub const MORSEL_MEMORY: [Mutation; 9] = [
+    Mutation {
+        name: "course-counts-ahead",
+        package: Package::Core,
+        breaks: "whether a part will pass its grant counts the morsels gathered ahead of its reader as those it has taken",
+        file: "src/exec/parallel.rs",
+        original: "        from.saturating_add(grown.saturating_mul(count)",
+        replacement: "        from.saturating_add(grown.max(self.held()).saturating_mul(count)",
+        integration: &[],
+        unit: &["exec::parallel::tests::a_part_is_on_course_by_the_morsels_read"],
+    },
     Mutation {
         name: "morsel-charge-unbounded",
         package: Package::Core,

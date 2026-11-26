@@ -710,6 +710,7 @@ verification approach DO-178C expects (§8).
 | D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
 | D1114 | An index nested-loop join over a part run in parallel probes its index on the part's threads |
 | D1115 | A semi join that builds its left holds a left run in parallel by the threads that read it |
+| D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -718,6 +719,8 @@ verification approach DO-178C expects (§8).
 | D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
 | D1132 | A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels |
 | D1133 | A count over another grouping's groups crosses its partitions, each partition's counts merged by the statement's thread |
+| D1134 | A partition looks up every morsel's groups, as its morsels come to it out of their keys' order |
+| D1135 | A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
@@ -730,6 +733,7 @@ verification approach DO-178C expects (§8).
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 | D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
 | D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
+| D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -737,6 +741,8 @@ verification approach DO-178C expects (§8).
 | D1164 | A start that changes nothing records no catalog image |
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
+| D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
+| D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 
 ### The project
 
@@ -10212,8 +10218,9 @@ and the ids past the last are read in place with no column (D350).
 Under SERIALIZABLE the read is noted as the whole table's, as a scan's
 with no condition is. Nothing is read or noted until the first count is
 asked for, so EXPLAIN can ask the storage whether it counts. A table
-that freezes rows is scanned, because a freeze takes out entries without
-a change of their zones, so their rows are no longer the tree's. Zone
+that freezes rows is not counted by its zones, because a freeze takes
+out entries without a change of their zones, so their rows are no longer
+the tree's. D1180 counts it from its groups' directory instead. Zone
 flags stay in memory, so a table opened reads its rows until the
 maintenance thread settles its zones.
 
@@ -19391,6 +19398,32 @@ raised, after the rows before it are taken (D15). A pipeline whose
 morsels are not read by batch, or whose batches hold other columns
 than the plan's, and a left asked for in an order are read as before.
 
+#### D1120. The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time
+
+A grouping of few groups, as TPC-H Q1 groups its lines into four, gives
+each group many rows in turn. A typed SUM, AVG or COUNT state added
+each row's value to its group's total, and the add of one row waited on
+the store of the row before it of the same group. Each row also matched
+the set function's kind, and COUNT(*) asked a boxed closure whether the
+row was null.
+
+A sum of at most 64 groups, of a vector with no null, is now fed in
+lanes: rows go in turn to four partial totals and counts of each group,
+so the adds of a lane do not wait on the others, and the partials are
+added to the groups' states once the batch is fed
+(`exec/table/states/typed/few.rs`). COUNT(*) of at most 64 groups
+counts its rows the same way. A sum of at most 2^63 numbers below 2^63
+each stays below 2^126, so no partial or total reaches the 128 bits the
+states sum in; the overflow is still checked, and the totals are those
+the rows fed one at a time give. A vector with a null, or more groups,
+is fed a row at a time as before.
+
+Grouping by dictionary codes (D1161) made each row's place by asking
+each key column for its vector and code, row by row. The places of a
+batch's rows are now made a column at a time, each column's codes read
+in one loop into a vector of places, and the rows then look their
+places up in the memo (`exec/batch/groups/coded.rs`).
+
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
 A function with no body over vectors is called for each row of a batch
@@ -19629,6 +19662,36 @@ by the order its partitions are merged in, so a grouping of one stays
 above the part. A projection that fails in a partition gives the part
 way to the serial plan, which meets the rows in their order and raises
 what it raises (D15).
+
+#### D1134. A partition looks up every morsel's groups, as its morsels come to it out of their keys' order
+
+A grouping run in parallel merges each partition's groups of the
+morsels, each group looked up in the partition's table before it is
+made. A grouping by one integer column of a table kept in the order of
+that column, as TPC-H Q18 groups lines by their order, has morsels of
+keys apart from one another, so a morsel's lookups mostly miss. A
+partition's table was made to keep the least and greatest of its keys,
+and a morsel's groups lying wholly below or above them were made with
+no lookup.
+
+That cannot work. A partition merges its morsels in the order they
+are handed over, which is the order the threads finish them, not the
+order of their keys. So a morsel mostly lands in a gap between the
+morsels merged before it, inside their least and greatest keys though
+apart from every key there, and one pair of keys cannot see the gaps.
+It was taken out: every morsel's groups are looked up, as before.
+
+#### D1135. A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone
+
+A HAVING condition judged by a grouping's part (D1073) finished every
+group's row, its keys and each set function's value, and judged the
+condition of it. A condition that compares the grouping's one set
+function with a constant, as `HAVING SUM(L_QUANTITY) > 300`, needs only
+that value. Such a condition is now judged of the value as it is
+finished, by the comparison the condition makes, and the row is made
+only of a group kept (`GroupTable::finished_above`). Every group's
+value is still finished, so a set function that raises as it finishes
+raises as it did.
 
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 
@@ -19872,6 +19935,21 @@ join's the simple probe does not take, stop so too
 those before an error first, then the error, as before. A probe of a
 table its morsels share stops so already (D1151).
 
+#### D1155. Whether a part run in parallel will pass its grant is told by the morsels its reader has taken
+
+A join's build, a sort, a grouping and a held join operand each look,
+as a morsel is taken, at whether the morsels left would pass the work
+grant if each held as much as those so far, so a part that will give way
+does so after its first morsels. What the part holds was divided by the
+morsels taken, which was right while only the reader charged them. Since
+D1150 a build's and a sort's threads charge a morsel as they gather it,
+so the part holds the morsels gathered ahead of the reader too, up to two
+a thread, and a first morsel taken while sixteen more were gathered was
+counted as seventeen. A part that fit its grant then gave way or not by
+how fast each thread was, and the plan ran again alone. Each caller now
+gives the bytes of the morsels taken (`Limit::on_course`), and what the
+part held before its morsels is read before a thread starts on one.
+
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
 A value given for a `?` is cast to the parameter's type [ISO/IEC
@@ -20037,6 +20115,71 @@ pages.
 A count is now exact to 2^53 and the nearest `f64` past it, its high and
 low words each converted. The ceiling of an estimate is the most a
 count holds only of one reaching it.
+
+#### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
+
+A table that froze rows or held groups was counted by its scan. A count
+of all its rows then read every group's header and every chunk's run
+of row positions, on every core, as a scan of no column does. D351's
+zone counts do not apply to it. A freeze takes out the tree's entries
+of rows it froze without a change of their zones, so a zone's rows are
+not the table's.
+
+Such a table now answers `TableStorage::count` from its directory
+(`rows/frozen/counts.rs`). The directory is taken first, of the groups
+the reader sees (D533's stamps), as a scan by batch takes it before it
+reads the tree. Each group adds the rows its summary holds. The tree is
+read over the group's shadow bits alone (D1100), the same ids the scan
+reads there. Each entry the reader sees adds a row, and each of the
+group's own rows such an entry stands for takes one away, found by the
+group's row ids, which are read only then. Then the tree's entries
+outside every group's range are read, each the reader sees adding one.
+So a count is the scan's at every isolation level, of frozen rows
+updated and deleted, of rows frozen while it counts and of rows not yet
+frozen, and a group no entry shadows costs an addition. Under
+SERIALIZABLE the read is noted as the whole table's, as D351's is.
+
+The plan, EXPLAIN's line and the planner's choice not to split the
+count are D351's, now of the column store too. Rejected: summing the
+summaries' rows alone, which counts rows deleted or changed since the
+freeze; a count kept per group of its rows still live, which every
+delete of a frozen row would have to write and which is no snapshot's.
+
+#### D1181. MIN and MAX of a table that holds groups take each group no entry shadows from its summary
+
+`SELECT MIN(EventDate), MAX(EventDate) FROM hits` read every value of
+the column, on every core. Yet a group's summary, held in memory, keeps
+each column's nulls and its least and greatest values that are not null
+(D31), exact as the group was written.
+
+`TableStorage::summarized` gives the rows a scan of some columns with no
+condition gives, in pieces (`rows/frozen/summarized.rs`). The directory
+is taken first, as D1180's is. A group whose shadow bits are all clear
+has no entry of the tree over its rows, so the reader sees each of them
+as frozen, and it is given whole: its rows, and of each column asked
+for its nulls and bounds, none of its values read. The other groups and
+the tree's rows past them are given by batch, by the scan itself
+(`Batched` over those groups alone, its tree's rows those outside every
+group), so each row the scan gives is given once. Under SERIALIZABLE the
+read is noted as the scan's of those columns is. The row store gives
+none, its zones' bounds being kept as rows change, not exact.
+
+The executor feeds an aggregation of one group, over a bare scan, whose
+set functions are each COUNT(*), MIN or MAX, at least one of a column,
+the pieces in place of the scan's batches (`exec/batch/count.rs`). A
+piece given whole adds its rows to each COUNT(*), its least to each MIN
+and its greatest to each MAX, and its nulls raise the warning of a null
+taken out [X3.135-1986 §5.8 GR1]. A batch is fed as the scan's is. MIN
+and MAX are fed so only of a column of exact numbers or a datetime: a
+summary's bounds are compared as values are, and a text's MIN and MAX
+are taken by its collation (§9.15), while an approximate number's
+bounds would also need NaN and signed zero ordered as the set functions
+order them. A bare COUNT(*) stays D1180's. EXPLAIN adds the line
+`-- summarized by storage: <table>`, and the planner keeps the
+aggregation whole, as D351 keeps a count. Rejected: COUNT of a column
+from a group's rows less its nulls, whose accumulator takes values, not
+counts; keeping bounds of a group exact as its rows are deleted, which
+every delete of a frozen row would have to write.
 
 ## 2. Project layout
 
