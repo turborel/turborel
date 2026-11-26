@@ -21,7 +21,7 @@ const NORM2: &str = "NORM2";
 const NORMINF: &str = "NORMINF";
 /// VECTORPROPERTY's properties.
 const DIMENSIONS: &str = "DIMENSIONS";
-/// The element format, in lower case as SQL Server writes it.
+/// The property whose value is the element format's name, in lower case.
 const BASE_TYPE: &str = "BASETYPE";
 /// The length of a format's, a layout's or a property's name.
 const NAME_LENGTH: u32 = 16;

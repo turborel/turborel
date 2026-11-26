@@ -1,5 +1,5 @@
-//! \[EXTENSION\] XY WKB, OGC 06-103r4 §8, with GEOS's NaN-pair
-//! representation of POINT EMPTY. Counts are checked against both the
+//! \[EXTENSION\] XY WKB, OGC 06-103r4 §8, with POINT EMPTY written
+//! as a pair of NaN ordinates. Counts are checked against both the
 //! remaining bytes and a shared component budget before allocating.
 
 use super::shape::{self, LINE, POINT, POLYGON, Point, Shape};
@@ -15,7 +15,7 @@ const COUNT_BYTES: usize = 4;
 const POINT_BYTES: usize = 16;
 /// An OGC 06-103r4 §8.2.2 Double has eight bytes.
 const ORDINATE_BYTES: usize = 8;
-/// GEOS WKB empty point convention, a canonical IEEE quiet NaN.
+/// An empty point's ordinate, a canonical IEEE quiet NaN.
 const EMPTY_ORDINATE: u64 = 0x7ff8_0000_0000_0000;
 /// Canonical stored coordinates use positive zero (RULES.md D85).
 const NEGATIVE_ZERO: u64 = 0x8000_0000_0000_0000;

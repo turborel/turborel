@@ -1,5 +1,5 @@
-//! CREATE VECTOR INDEX in the vector design document's Oracle and SQL
-//! Server forms, CREATE INDEX ... USING of a vector method, and ALTER
+//! CREATE VECTOR INDEX in the vector design document's clause and WITH
+//! forms, CREATE INDEX ... USING of a vector method, and ALTER
 //! INDEX REBUILD, MERGE DELTA, LOAD and UNLOAD (§10.2, §10.3, §10.6),
 //! each desugared to an index of a method and its options, read back
 //! from INFORMATION_SCHEMA.INDEX_OPTIONS. Fake methods stand in for the
@@ -39,12 +39,12 @@ fn described(db: &Database, name: &str) -> String {
 /// its method, INMEMORY NEIGHBOR GRAPH hnsw, NEIGHBOR PARTITIONS ivf,
 /// DISK NEIGHBOR GRAPH diskann, INVERTED inverted, diskann of none; each
 /// clause an option of the method's group: DISTANCE its METRIC, TARGET
-/// ACCURACY its TARGET_ACCURACY, PARAMETERS each its own, Oracle's HNSW
+/// ACCURACY its TARGET_ACCURACY, PARAMETERS each its own, its HNSW
 /// and IVF names as the methods name them, QUANTIZATION and PQ(m) its
 /// QUANTIZER and PQ_BYTES, RERANK its RERANK; LOCAL, GLOBAL, ONLINE and
 /// PARALLEL nothing.
 #[test]
-fn oracle_forms_desugar_to_a_method_and_options_10_2() {
+fn clause_forms_desugar_to_a_method_and_options_10_2() {
     let (db, _) = methods();
     let s = session(&db);
     for (sql, expected) in [
@@ -76,13 +76,13 @@ fn oracle_forms_desugar_to_a_method_and_options_10_2() {
     }
 }
 
-/// Verifies: [EXTENSION] vector_standard §10.3: SQL Server's WITH form
+/// Verifies: [EXTENSION] vector_standard §10.3: the WITH form
 /// names the method by TYPE, its METRIC, TARGET_ACCURACY and QUANTIZATION
 /// the method's options; MAXDOP and ONLINE nothing; and an option with a
 /// period is the method's as written. CREATE INDEX ... USING names a
 /// vector method too, SPARSE the method inverted.
 #[test]
-fn sql_server_form_and_using_desugar_10_3() {
+fn with_form_and_using_desugar_10_3() {
     let (db, _) = methods();
     let s = session(&db);
     s.run("CREATE VECTOR INDEX J1 ON T (X) WITH (METRIC = 'cosine', TYPE = 'HNSW', TARGET_ACCURACY = 90, QUANTIZATION = 'SQ8', MAXDOP = 4, ONLINE = ON)").unwrap();

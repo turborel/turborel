@@ -1,13 +1,13 @@
 //! The mutations of the core's reads (RULES.md R-TEST-9): index-only
 //! scans' zones and the index entries collection owes, ordered reads of
 //! the column store, and its columns of runs; and how the planner prices
-//! reads by the pages they miss; and of D1173, a group's header read for
-//! some columns.
+//! reads by the pages they miss; of D1173, a group's header read for
+//! some columns; and of D1175, text judged UTF-8 on AVX2 as it is read.
 
 use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 36] = [
+pub const READS: [Mutation; 39] = [
     Mutation {
         name: "zone-write-visible",
         package: Package::Core,
@@ -367,5 +367,35 @@ pub const READS: [Mutation; 36] = [
         replacement: "            Some(None) => Ok(Some(&[])),",
         integration: &[],
         unit: &["engine::columns::group::tests::wanted::headers_read_for_some_columns_hold_theirs_alone"],
+    },
+    Mutation {
+        name: "utf8-surrogate-unmarked",
+        package: Package::Simd,
+        breaks: "UTF-8 judged on AVX2 refuses 0xED before a continuation of 0xA0 or more, a surrogate (RULES.md D1175)",
+        file: "simd/src/x86/utf8.rs",
+        original: "    CARRY | TOO_LARGE | TOO_LARGE_1000 | SURROGATE,",
+        replacement: "    CARRY | TOO_LARGE | TOO_LARGE_1000,",
+        integration: &[],
+        unit: &["tests::every_available_set_keeps_the_contract"],
+    },
+    Mutation {
+        name: "utf8-open-forgotten",
+        package: Package::Simd,
+        breaks: "a character a step of UTF-8 on AVX2 begins must be ended by the next, though that one is ASCII (RULES.md D1175)",
+        file: "simd/src/x86/utf8.rs",
+        original: "            self.errors = _mm256_or_si256(self.errors, self.open);",
+        replacement: "            self.errors = _mm256_or_si256(self.errors, _mm256_setzero_si256());",
+        integration: &[],
+        unit: &["tests::every_available_set_keeps_the_contract"],
+    },
+    Mutation {
+        name: "utf8-third-unchecked",
+        package: Package::Simd,
+        breaks: "the third byte of a character of three bytes, judged on AVX2, must be a continuation (RULES.md D1175)",
+        file: "simd/src/x86/utf8.rs",
+        original: "_mm256_or_si256(third, fourth)",
+        replacement: "_mm256_or_si256(fourth, fourth)",
+        integration: &[],
+        unit: &["tests::every_available_set_keeps_the_contract"],
     },
 ];

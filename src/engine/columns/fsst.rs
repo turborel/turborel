@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use super::fields::Cells;
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
+use crate::kernels::Kernels;
 
 /// \[DESIGN\] The most symbols of a table: 64 of 8 bytes take 577 with
 /// their lengths and count, a fourteenth of a page of 8 KiB.
@@ -413,13 +414,14 @@ impl<'a> Coded<'a> {
 
     /// The texts at positions `from` to `to`, pushed to `text` and where
     /// each ends to `ends`, of those `null` says are not nulls: decoded one
-    /// after another, then checked UTF-8 at once, each one's end on a
-    /// character's boundary, so each is UTF-8 alone.
+    /// after another, then checked UTF-8 at once by `kernels` (RULES.md
+    /// D1175), each one's end on a character's boundary, so each is UTF-8
+    /// alone.
     pub(super) fn texts(
         &self,
         (from, to): (usize, usize),
         (text, ends): (&mut String, &mut Vec<usize>),
-        null: impl Fn(usize) -> bool,
+        (null, kernels): (impl Fn(usize) -> bool, &dyn Kernels),
     ) -> Option<()> {
         let (base, mut decoded) = (text.len(), Vec::new());
         for n in from..to {
@@ -429,7 +431,7 @@ impl<'a> Coded<'a> {
             }
             ends.push(base.checked_add(decoded.len())?);
         }
-        let decoded = std::str::from_utf8(&decoded).ok()?;
+        let decoded = kernels.utf8(&decoded)?;
         let start = ends.len().checked_sub(to.checked_sub(from)?)?;
         if !ends.get(start..)?.iter().all(|&end| decoded.is_char_boundary(end.checked_sub(base).unwrap_or(usize::MAX))) {
             return None;

@@ -762,11 +762,13 @@ verification approach DO-178C expects (§8).
 | D1171 | A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time |
 | D1172 | COUNT of a column known not null, or of a literal not null, counts rows and reads no value |
 | D1173 | A group's header is read for the columns its reader asks for, the others passed over undecoded |
+| D1175 | A column's texts are judged UTF-8 by the database's kernels, on AVX2 32 bytes a step |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
 | D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
 | D1185 | A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets |
+| D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -20748,6 +20750,35 @@ nulls. The pages of a group, its summary and its rewriting read every
 column, and ask for all. The format is unchanged, so no table is loaded
 again.
 
+#### D1175. A column's texts are judged UTF-8 by the database's kernels, on AVX2 32 bytes a step
+
+A batch holds a column's strings as text (D361), and text read of the
+store is judged UTF-8 before it is given as a `str`: the varying fields
+read, once for their range (D1131), and the texts an FSST chunk decodes,
+once for the run of them. The core forbids `unsafe` (R-SAFE-1), so it
+cannot take octets for text without judging them, though only text was
+written. The standard library judges a byte at a time past the first
+octet above 127, so text of other scripts than Latin, as of the titles
+and phrases of a web log, took the judging longer than the reading.
+
+The judging is now a kernel (`Kernels::utf8`, D354), its portable body
+`str::from_utf8`. `turborel-simd` judges 32 bytes a step on AVX2 and on
+AVX-512's level, as Keiser and Lemire, "Validating UTF-8 In Less Than
+One Instruction Per Byte" (2021), §5, judge them: each byte's high
+nibble and the byte before's high and low nibbles each look up the
+errors their pair may make, the errors all three allow are the pair's,
+and the bytes two and three back say where a continuation must be. A
+step of no octet above 127 looks nothing up. A step whose last bytes
+begin a character the next must end, and the text's end must end every
+character (`simd/src/x86/utf8.rs`). The text so judged is given as a
+`str` only where `str::from_utf8` gives one: the contract tests
+(`turborel-test-support`, `kernels.rs`) hold every set to it, of every
+pair of octets and every lead of three and four with every second octet
+at each place on and across a lane's and a step's edges, of text cut
+within its characters, and of octets of no structure. A column's texts
+read by the varying fields, an FSST chunk, a constant or a dictionary
+are judged by the set the table opened with (D570).
+
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
 A table that froze rows or held groups was counted by its scan. A count
@@ -20965,6 +20996,53 @@ anything but scalar values, and a sort whose input is no projection are
 left alone. Each refusal is tested
 (`pruned::octets::tests::a_key_read_above_or_not_of_octets_stays_made`,
 `octets_sorts::ties_and_expressions_sort_by_octets_7_17`).
+#### D1186. A part of a built-in set function is kept in that function's column of states, and gives its part of each group
+
+A query with a DISTINCT set function is computed by two groupings
+(D340), and its set functions without DISTINCT are computed in parts
+(D341). The first grouping computes PARTIAL of each, whose value of a
+group is the function's state as bytes, and the second merges them. The
+first grouping has a group for every distinct value of every group of
+the second, by far the more groups of the two. D356 keeps COUNT, SUM,
+AVG, MAX and MIN in columns of states, a slot a group, fed a batch's
+rows in one loop. PARTIAL told the table nothing of what it is a part
+of (`AggregateFunction::columnar` gives none of it), so each group of
+the first grouping held an accumulator of each part on the heap, and a
+batch's rows were sorted by group and fed to each group's accumulator in
+turn.
+
+A part now tells the built-in function it is a part of and that
+function's result type (`AggregateFunction::part_of`, none by default),
+and the table keeps its states in that function's column
+(`States::Part`, `exec/table/states/parts.rs`). A part's accumulator
+forwards everything it is fed, merged and asked to write to its
+function's, so the column is fed, grown, merged with another table's,
+written past a work area and sent to another thread as the function's
+own column is, by the same code. Two things differ.
+
+- What a group gives is its part, the function's state after the tag of
+  a state, or its result after the tag of a result where the function
+  writes no state, as a sum of approximate numbers does. The part's
+  accumulator and the column both make it by `functions::part_value`, so
+  the bytes are the same whichever held the group.
+- A column fed values it does not hold, integers of another scale, turns
+  into the part's accumulators, each holding the function's accumulator
+  the group would have had (`functions::part_acc`). A column that comes
+  back from another thread is a part's again (`States::thawed`). One read
+  back from a spill (D1226) is read as the column of the function the
+  part is of (`Typed::read`).
+
+A group's state was written by making the accumulator the group would
+have had and asking it. A grouping of parts writes every group's state
+as it gives its groups, so that made an accumulator of each on the heap
+after all. A count's, a sum's and a mean's state are now written by the
+accumulator's own code of the slot the column holds, with none made on
+the heap (`typed/stated.rs`, `functions::count_written`,
+`sum_written`, `avg_written`). An extreme's still goes through its
+accumulator.
+
+The second grouping is as it was. It reads each part as a binary string
+and merges it into its own accumulator, of which there are few.
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 
@@ -21268,7 +21346,7 @@ and are held in the spill the same way. A pair's second grouping that
 crosses the first's partitions still merges its groups on the
 statement's thread, all in memory (D1133). DISTINCT set functions and
 that second grouping are the next to be held in the spill, as
-ClickBench's COUNT(DISTINCT) groupings meet them at a small grant.
+COUNT(DISTINCT) groupings of many groups meet them at a small grant.
 
 The groups a part finishes go to a run of the same area, each numbered
 by its first row, and the statement's thread reads the runs back as it
