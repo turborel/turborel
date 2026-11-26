@@ -29,6 +29,11 @@ const FLAGS: [&str; 5] = ["", "s", "m", "i", "sm"];
 /// groups, by `^`, by `$` and by the wildcard beside a CR.
 const BESIDE: [(&str, &str); 5] = [("(^a)|(a)", ""), ("(a$)|(a)", ""), ("(.)|(\\r)", "s"), ("(^b)|(b)", "m"), ("b(^a)?a", "m")];
 
+/// Patterns that end by taking the rest of the text, and ones like them
+/// that do not: under the flag `s` and without, of each line, in a group.
+const TAILS: [(&str, &str); 8] =
+    [("a.*$", "s"), ("(a)(.*)$", "s"), ("^(a|b)(.+)$", "s"), ("b.*$", "sm"), ("a.*$", ""), (".*$", "s"), ("(b.*$)", "s"), ("\\r.*$", "s")];
+
 /// The characters of the short texts: two letters, both characters of a
 /// CRLF, and a letter of two octets.
 const ALPHABET: [char; 5] = ['a', 'b', '\r', '\n', 'é'];
@@ -89,7 +94,7 @@ fn branch(state: &mut u64) -> String {
 /// together of branches, alone, in alternation, or in a group taken a
 /// quantity of times before more pieces.
 fn patterns(made: usize) -> Vec<(String, &'static str)> {
-    let mut all: Vec<(String, &'static str)> = PATTERNS.iter().chain(&BESIDE).map(|(p, f)| ((*p).to_owned(), *f)).collect();
+    let mut all: Vec<(String, &'static str)> = PATTERNS.iter().chain(&BESIDE).chain(&TAILS).map(|(p, f)| ((*p).to_owned(), *f)).collect();
     let mut state = 0x9E37_79B9_7F4A_7C15_u64;
     for flag in FLAGS.iter().cycle().take(made) {
         let pattern = match next(&mut state) % 6 {

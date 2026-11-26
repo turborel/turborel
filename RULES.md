@@ -21066,6 +21066,20 @@ A subject whose characters are all ASCII's is matched where it lies, its
 octets its characters (`regex::Ascii`), so no vector of characters is
 made of it.
 
+A pattern that ends `.*$` under the flag `s` takes the rest of any text.
+Its program ends with a greedy loop of the wildcard that matches every
+character, CRLF as one, and then asks only that the string ends
+(`regex/compile/rest.rs`). From the loop's first instruction the way
+preferred takes every character to the string's end, where `$` holds,
+whatever the characters are, and no way preferred to it matches, since
+the loop's fork takes its other branch only where the first fails. So
+the matcher that marks goes from that instruction to the string's end
+and walks no character between. The loop is found in the instructions,
+by its shape, and only where nothing but closing groups and the match
+follows `$`. A reluctant loop, a loop of a class, `$` of each line and a
+loop in a branch are walked as before, and so is every loop on the first
+matchers, which the corpus holds this one to.
+
 OCCURRENCES_REGEX, POSITION_REGEX and SUBSTRING_REGEX take the matcher
 that marks and the text in place through the same `Regex` methods, each
 call of a row a search of one text alone.

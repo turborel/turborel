@@ -150,3 +150,36 @@ fn it_follows_each_instruction_at_a_position_once() {
     let found = search(&Regex::new("(a)c", "").unwrap().program, later.as_slice(), (0, 7), true, &mut Scratch::default()).unwrap();
     assert_eq!(found, Some(vec![Some(4), Some(6), Some(4), Some(5)]));
 }
+
+/// Verifies: [DESIGN] RULES.md D1188 [ISO/IEC 9075-2:2023 §9.28 GR9a i]:
+/// a program has a loop that takes the rest of any text if it ends with a
+/// greedy loop of the wildcard of the flag `s` and then `$` of the whole
+/// string, groups closing around them or not, and of XQuery 1.0's
+/// wildcard too; not of a wildcard that stops at a newline, of `$` of
+/// each line, of a reluctant loop, of a loop of a class, of anything
+/// asked after the loop, nor of a branch. From such a loop the matcher
+/// that marks goes to the string's end and marks no character between,
+/// finds what the matcher of threads finds, and finds nothing where its
+/// match is known to end before the string does.
+#[test]
+fn the_rest_of_a_text_is_taken_without_walking_it() {
+    let has = [("a.*$", "s"), ("(a)(.+)$", "s"), ("^(.*)$", "s"), ("(a.*$)", "s")];
+    let none = [(".*$", ""), (".*$", "sm"), (".*?$", "s"), (".*a$", "s"), (".*$|b", "s"), ("[ab]*$", "s"), (".*", "s"), ("a$|b.*$", "s")];
+    for (pattern, flag) in has {
+        assert!(Regex::new(pattern, flag).unwrap().program.rest.is_some(), "{pattern:?} {flag:?}");
+    }
+    for (pattern, flag) in none {
+        assert!(Regex::new(pattern, flag).unwrap().program.rest.is_none(), "{pattern:?} {flag:?}");
+    }
+    assert!(Regex::xquery("a.*$", "s").unwrap().program.rest.is_some());
+    assert!(Regex::xquery("a.*$", "").unwrap().program.rest.is_none());
+    let regex = Regex::new("^a(.*)$", "s").unwrap();
+    let text: Vec<char> = format!("a{}", "x\r\n".repeat(400)).chars().collect();
+    let mut kept = Scratch::default();
+    let reads = positions(&regex.program, text.len(), 0).unwrap();
+    let found = search(&regex.program, text.as_slice(), (0, reads), true, &mut kept).unwrap();
+    assert_eq!(found, pike::search(&regex.program, text.as_slice(), 0, true).unwrap());
+    let marked: u32 = kept.marks.iter().map(|word| word.count_ones()).sum();
+    assert!(marked < 16, "the characters between are not marked: {marked}");
+    assert_eq!(search(&regex.program, text.as_slice(), (0, 5), true, &mut kept).unwrap(), None, "known to end before the end");
+}

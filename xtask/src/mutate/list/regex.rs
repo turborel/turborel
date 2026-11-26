@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of regular expressions, in the order they run.
-pub const REGEX: [Mutation; 38] = [
+pub const REGEX: [Mutation; 40] = [
     Mutation {
         name: "regex-dot-all-splits-crlf",
         package: Package::Core,
@@ -400,5 +400,25 @@ pub const REGEX: [Mutation; 38] = [
         replacement: "                None => nulls.set(rows),",
         integration: &[],
         unit: &["functions::regex::tests::a_vector_of_values_is_matched_as_each_row_is"],
+    },
+    Mutation {
+        name: "regex-rest-walked",
+        package: Package::Core,
+        breaks: "the matcher that marks walks every character of the rest of a text a loop takes whole (D1188)",
+        file: "src/regex/bounded.rs",
+        original: "program.rest.filter(|(first, _)| *first == pc)",
+        replacement: "program.rest.filter(|(first, _)| *first == pc && *first != pc)",
+        integration: &[],
+        unit: &["regex::bounded::tests::the_rest_of_a_text_is_taken_without_walking_it"],
+    },
+    Mutation {
+        name: "regex-rest-of-any-class",
+        package: Package::Core,
+        breaks: "a loop of any class is taken for one that takes the rest of a text, so characters not of the class are passed (D1188)",
+        file: "src/regex/compile/rest.rs",
+        original: "Inst::LoopCheck(_)] => *set == all,",
+        replacement: "Inst::LoopCheck(_)] => *set == all || *set != all,",
+        integration: &[],
+        unit: &["regex::bounded::tests::the_rest_of_a_text_is_taken_without_walking_it"],
     },
 ];

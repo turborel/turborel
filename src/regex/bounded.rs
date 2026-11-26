@@ -156,6 +156,17 @@ impl<T: Text + ?Sized> Search<'_, T> {
         fresh
     }
 
+    /// Of the loop that takes the rest of any text (`compile/rest.rs`), if
+    /// `pc` is its first instruction: the instruction after it and the
+    /// string's end, where the way preferred from here goes, whatever the
+    /// characters between, so none of them is walked; no end if the match
+    /// is known to end before the string does.
+    fn rest(&self, pc: usize) -> Option<(usize, Option<usize>)> {
+        let (_, after) = self.program.rest.filter(|(first, _)| *first == pc)?;
+        let end = self.text.len();
+        Some((after, (end.saturating_sub(self.from) < self.positions).then_some(end)))
+    }
+
     /// Follows one way from `pc` at `at` until it matches, true, or fails
     /// or meets an instruction at a position met before, false, forks
     /// kept to try.
@@ -165,6 +176,11 @@ impl<T: Text + ?Sized> Search<'_, T> {
                 return Ok(false);
             }
             let program = self.program;
+            if let Some((after, end)) = self.rest(pc) {
+                let Some(end) = end else { return Ok(false) };
+                (pc, at) = (after, end);
+                continue;
+            }
             let Some(inst) = program.insts.get(pc) else { return Ok(false) };
             let after = pc.saturating_add(1);
             match inst {
