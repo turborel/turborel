@@ -182,7 +182,7 @@ impl Waves<'_> {
     fn finished(mut self) -> Result<Runs> {
         if !self.waved && self.wave.is_empty() {
             let Some(table) = self.direct.take() else { return Ok(Held::Kept(Vec::new())) };
-            let groups = self.grouping.kept_of(&table, &Runner::new(self.run.0, self.run.1))?;
+            let groups = self.grouping.kept_of(table, &Runner::new(self.run.0, self.run.1))?;
             return Ok(Held::Kept(vec![groups]));
         }
         if !self.flushed()? {
@@ -251,7 +251,7 @@ fn finished_wave(
     let (grouping, kept, wave, db_for) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), db.clone());
     let finish = Box::new(move |p: usize| {
         let table = thawed_and_merged(&grouping, (&kept, p), &wave)?;
-        grouping.kept_of(&table, &Runner::new(&db_for, tx))
+        grouping.kept_of(table, &Runner::new(&db_for, tx))
     });
     Morsels::start(db, tx, (PARTS, degree), finish).collect()
 }

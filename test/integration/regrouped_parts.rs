@@ -159,3 +159,73 @@ fn explain_analyze_counts_the_first_grouping_of_a_part() {
         analyzed.operators.iter().map(|o| &o.label).collect::<Vec<_>>()
     );
 }
+
+/// Table T, of the column store in groups of 2048: K, a key; B, a
+/// CHARACTER(4) of 3 values of different lengths, null for every 37th; V,
+/// a VARCHAR of 40 values; F, an approximate number; N, one of 9, null
+/// for every 11th.
+fn texts() -> (Database, Session) {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE T (K INTEGER PRIMARY KEY, B CHARACTER(4), V VARCHAR(10), F DOUBLE PRECISION, N INTEGER)
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    let values: Vec<String> = (0_i64..12_000)
+        .map(|k| {
+            let b = if k % 37 == 0 {
+                "NULL".to_owned()
+            } else {
+                format!("'{}'", ["a", "bc", "def"].get(usize::try_from(k % 3).unwrap()).unwrap())
+            };
+            let n = if k % 11 == 0 { "NULL".to_owned() } else { (k % 9).to_string() };
+            format!("({k}, {b}, 'v{}', {}E{}, {n})", k * 13 % 40, k % 17 + 1, k % 31 - 15)
+        })
+        .collect();
+    a.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    (db, a)
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §10.9 GR7b i] (RULES.md D1123) the
+/// second grouping of a pair, made in the executor's table of the first's
+/// groups given as a batch, gives the groups the plan run alone gives, in
+/// their order: grouped by a padded text with nulls, by two texts, of
+/// many groups of the first in one group of the second, of exact sums
+/// and means, of a text's greatest value, which no column of states
+/// holds, and beside a null a set function eliminates.
+#[test]
+fn a_second_grouping_made_in_a_table_gives_the_plans_groups() {
+    let (_db, a) = texts();
+    for sql in [
+        "SELECT B, COUNT(DISTINCT N) FROM T GROUP BY B",
+        "SELECT B, V, COUNT(DISTINCT N), COUNT(*) FROM T GROUP BY B, V",
+        "SELECT B, COUNT(DISTINCT K / 2), SUM(N) FROM T GROUP BY B",
+        "SELECT V, SUM(DISTINCT K / 3), AVG(DISTINCT N) FROM T GROUP BY V",
+        "SELECT B, MAX(DISTINCT V), COUNT(DISTINCT V), MIN(F) FROM T GROUP BY B",
+        "SELECT N, COUNT(DISTINCT B), SUM(DISTINCT K / 5) FROM T GROUP BY N HAVING COUNT(DISTINCT B) > 2",
+    ] {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(regrouped_part(&shown), "{sql}\n{shown}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §10.9 GR4] (RULES.md D1123) a second
+/// grouping whose set function is filtered, which a grouping by batch
+/// does not read, is made of the first's groups a row at a time, and
+/// gives the groups the plan run alone gives.
+#[test]
+fn a_second_grouping_no_batch_reads_is_made_of_rows() {
+    let (_db, a) = texts();
+    let sql = "SELECT B, COUNT(DISTINCT N) FILTER (WHERE N > 3), COUNT(DISTINCT N) FROM T GROUP BY B";
+    let (alone, together, _) = both(&a, sql);
+    assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+    assert_eq!(alone, together, "{sql}");
+}

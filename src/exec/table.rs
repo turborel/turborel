@@ -18,6 +18,7 @@
 //! probe of every group each (RULES.md D357); its groups, their numbers and
 //! so the order it gives them in are unchanged.
 
+mod given;
 mod hash;
 mod join;
 mod keys;
