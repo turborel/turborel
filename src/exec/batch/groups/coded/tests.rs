@@ -67,15 +67,16 @@ fn groups_of(batches: &[Batch], coded: bool) -> String {
 /// its texts: batches of one dictionary, then of another that orders its
 /// entries otherwise (the memo made anew, so the first row of the other,
 /// R and F, makes a group of its own where the place of its codes held
-/// that of N and F), nulls of either column in a
-/// group of their own, and two entries equal as keys, a text and the same
-/// with trailing spaces, in one group.
+/// that of N and F), nulls of either column in a group of their own, a
+/// null's place apart from its column's first entry's (N and O after a
+/// null and O), and two entries equal as keys, a text and the same with
+/// trailing spaces, in one group.
 #[test]
 fn rows_grouped_by_their_codes_make_the_groups_of_their_texts() {
     let (flags, other, status) = (dictionary(&["N", "R", "A"]), dictionary(&["R", "N", "A  ", "A"]), dictionary(&["F", "O"]));
     let rows: [Rows<'_>; 3] = [
         (&flags, vec![Some(0), Some(1), Some(0), Some(2), None, Some(1)], vec![Some(0), Some(1), Some(0), Some(0), Some(1), None]),
-        (&flags, vec![Some(2), Some(2), Some(0), None], vec![Some(0), Some(1), Some(0), Some(1)]),
+        (&flags, vec![Some(2), Some(2), Some(0), None, Some(0)], vec![Some(0), Some(1), Some(0), Some(1), Some(1)]),
         (&other, vec![Some(0), Some(1), Some(2), Some(3), Some(0)], vec![Some(0), Some(0), Some(0), Some(0), None]),
     ];
     let batch = |coded: bool| -> Vec<Batch> {

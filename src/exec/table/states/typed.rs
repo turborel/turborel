@@ -18,6 +18,7 @@ use crate::storage::{Batch, Column, Ints, Mask};
 use crate::value::codec::value;
 use crate::value::{DataType, Decimal, Value};
 
+mod few;
 mod merged;
 
 use super::super::Pending;
@@ -292,6 +293,12 @@ fn null_at(nulls: Option<&Mask>, n: usize) -> bool {
 /// by `runner`: whether it could, false of an expression evaluated a row at
 /// a time.
 fn counted(counts: &mut [i64], pending: &Pending, (batch, take, lane): (&Batch, &Taken, Option<&Fed<'_>>), runner: &Runner) -> bool {
+    // [X3.135-1986 §5.8 GR4b] COUNT(*) of few groups, by lanes (`few.rs`).
+    if let Taken::Count = take
+        && few::counted(counts, &pending.groups)
+    {
+        return true;
+    }
     let rows = pending.read.iter().zip(&pending.given).map(|(&r, &n)| (crate::storage::mask::index(r), crate::storage::mask::index(n)));
     let null: Box<dyn Fn(usize, usize) -> bool + '_> = match (take, lane) {
         // [X3.135-1986 §5.8 GR4b] COUNT(*) counts rows.
@@ -335,6 +342,14 @@ impl Exact {
         };
         if *self.scale.get_or_insert(ints.scale) != ints.scale {
             return Ok(false);
+        }
+        // Of sums of few groups and no null, by lanes (`few.rs`).
+        let sums = self.kind == ColumnarKind::Sum || self.kind == ColumnarKind::Avg;
+        if sums
+            && ints.nulls.is_none()
+            && let Some(over) = few::summed(&mut self.units, &mut self.counts, (&ints.units, places, &pending.groups))
+        {
+            return if over { beyond() } else { Ok(true) };
         }
         let mut any = false;
         for (&at, &g) in places.iter().zip(&pending.groups) {

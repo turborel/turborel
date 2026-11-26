@@ -1,6 +1,7 @@
 //! The mutations of the row store's count and its scans read in place
 //! (RULES.md R-TEST-9, D350, D351), the zones counted by their flag, none
-//! counted twice, the read noted, a table that freezes left to its scan,
+//! counted twice, the read noted, a table that holds groups counted from
+//! its directory (D1180), the rows the tree shadows and past the groups,
 //! what the scan reads in place and what after its leaf's latch, where a
 //! visit goes on, the aggregations the executor counts so, and their
 //! staying off the parallel path.
@@ -10,13 +11,20 @@ use super::super::{Mutation, Package};
 /// The zone count's unit tests, and the integration test of its levels.
 const COUNTED: &str = "engine::rows::count::tests::a_count_is_the_scans_for_every_reader";
 const LEVELS: &str = "row_count::a_count_is_the_scans_at_every_isolation_level";
+/// The grouped count's unit test, and the integration test of its levels
+/// (RULES.md D1180).
+const GROUPED: &str = "engine::rows::frozen::tests::counted::a_grouped_count_is_the_scans_for_every_reader";
+const GROUPED_LEVELS: &str = "row_count::a_grouped_count_is_the_scans_at_every_isolation_level";
+/// The summaries' integration tests (RULES.md D1181).
+const SUMMARIZED: &str = "summarized::min_and_max_by_summaries_are_the_scans";
+const SUMMARIZED_PLAN: &str = "summarized::explain_notes_min_and_max_by_summaries";
 /// The scan in place's unit test.
 const IN_PLACE: &str = "engine::rows::in_place::tests::batches_read_in_place_are_the_rows_each_reader_sees";
 /// The tree's visit's unit test.
 const VISITED: &str = "engine::tree::tests::a_visit_reads_what_a_scan_gives";
 
 /// Mechanisms whose removal must fail the count's requirements.
-pub const COUNT: [Mutation; 12] = [
+pub const COUNT: [Mutation; 19] = [
     Mutation {
         name: "count-zone-flag",
         package: Package::Core,
@@ -48,14 +56,44 @@ pub const COUNT: [Mutation; 12] = [
         unit: &["engine::rows::count::tests::a_count_read_conflicts_with_an_insert_as_a_scan_does"],
     },
     Mutation {
-        name: "count-freezing",
+        name: "count-grouped-zones",
         package: Package::Core,
-        breaks: "a table that freezes rows is counted from its zones",
+        breaks: "a table that holds groups is counted from its zones",
         file: "src/engine/rows/count.rs",
-        original: "        if freezes || !self.frozen.directory()",
-        replacement: "        if !self.frozen.directory()",
+        original: "if table.holds_groups() { table.grouped_counts(tx) } else { table.counts(tx) }",
+        replacement: "table.counts(tx)",
+        integration: &[GROUPED_LEVELS],
+        unit: &[GROUPED],
+    },
+    Mutation {
+        name: "count-grouped-shadowed",
+        package: Package::Core,
+        breaks: "a group's rows the tree's entries stand for are counted as the group holds them",
+        file: "src/engine/rows/frozen/counts.rs",
+        original: "Ok(rows.saturating_sub(as_count(replaced)).saturating_add(seen))",
+        replacement: "Ok(rows.saturating_add(seen).saturating_sub(as_count(replaced.min(0))))",
+        integration: &[GROUPED_LEVELS],
+        unit: &[GROUPED],
+    },
+    Mutation {
+        name: "count-grouped-outside",
+        package: Package::Core,
+        breaks: "the tree's entries in a group's range are counted again with the rows past the groups",
+        file: "src/engine/rows/frozen/counts.rs",
+        original: "        from = entry.summary.last.saturating_add(1);\n",
+        replacement: "",
         integration: &[],
-        unit: &["engine::rows::count::tests::a_count_of_a_table_opened_reads_until_settled"],
+        unit: &["engine::rows::frozen::tests::counted::a_grouped_count_is_the_scans_for_every_reader"],
+    },
+    Mutation {
+        name: "count-grouped-note-read",
+        package: Package::Core,
+        breaks: "a count of a table that holds groups is not noted as a read of the whole table",
+        file: "src/engine/rows/frozen/counts.rs",
+        original: "self.reader(tx).and_then(|reader| self.note_read(tx, || Read::All(EVERY_COLUMN)).map(|()| reader));",
+        replacement: "self.reader(tx);",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::counted::a_grouped_count_conflicts_with_an_insert_as_a_scan_does"],
     },
     Mutation {
         name: "in-place-sees",
@@ -132,9 +170,49 @@ pub const COUNT: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a bare COUNT(*) the storage counts is planned in parallel, its scan split into morsels",
         file: "src/physical/parallel.rs",
-        original: "    if depth >= MAX_DEPTH || crate::exec::storage_counted(plan, asked.db).is_some() {",
-        replacement: "    if depth >= MAX_DEPTH {",
+        original: "crate::exec::storage_counted(plan, asked.db).or_else(",
+        replacement: "None.or_else(",
         integration: &["row_count::explain_notes_a_count_by_the_storage"],
+        unit: &[],
+    },
+    Mutation {
+        name: "summarized-shadowed-whole",
+        package: Package::Core,
+        breaks: "a group the tree's entries shadow is given whole by its summary",
+        file: "src/engine/rows/frozen/summarized.rs",
+        original: ".partition(|e| self.shadow_ranges(e).is_empty());",
+        replacement: ".partition(|e| e.summary.rows > 0);",
+        integration: &[SUMMARIZED],
+        unit: &["engine::rows::frozen::tests::counted::a_group_no_entry_shadows_is_given_whole"],
+    },
+    Mutation {
+        name: "summarized-least",
+        package: Package::Core,
+        breaks: "MIN is fed a whole group's greatest value and MAX its least",
+        file: "src/exec/batch/count.rs",
+        original: "state.update(if least_of { least } else { greatest })?;",
+        replacement: "state.update(if least_of { greatest } else { least })?;",
+        integration: &[SUMMARIZED],
+        unit: &[],
+    },
+    Mutation {
+        name: "summarized-types",
+        package: Package::Core,
+        breaks: "MIN and MAX of a text are taken from summaries, compared as values, not by the text's collation",
+        file: "src/exec/batch/count.rs",
+        original: "let ordered = matches!(a.result, DataType::Exact { .. } | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. });",
+        replacement: "let ordered = !matches!(a.result, DataType::Boolean);",
+        integration: &[SUMMARIZED_PLAN],
+        unit: &[],
+    },
+    Mutation {
+        name: "summarized-parallel",
+        package: Package::Core,
+        breaks: "MIN and MAX summaries answer are planned in parallel, never summarized",
+        file: "src/physical/parallel.rs",
+        original: ".or_else(|| crate::exec::storage_summarized(plan, asked.db))",
+        replacement: "",
+        integration: &[SUMMARIZED_PLAN],
         unit: &[],
     },
 ];

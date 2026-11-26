@@ -79,7 +79,8 @@ behind it, and each can be replaced or added to.
   match, and a row-store COUNT(*) is summed from its settled zones.
 - Column store skipping that survives writes: shadow bits and zones over
   the delta, optional column imprints, column sketches of compressed
-  texts, and sorted dictionaries judged by codes.
+  texts, and sorted dictionaries judged by codes. COUNT(*), MIN and MAX
+  come from the groups' directory and summaries.
 - Bulk loads by INSERT or copy that build empty indexes whole and, if
   asked, write column store rows straight into frozen groups.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)

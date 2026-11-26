@@ -55,11 +55,20 @@ enough rows ([Parallel queries](../../operator/04-settings.md#parallel-queries))
 A query that only counts a table's rows, `SELECT COUNT(*) FROM T` with
 no WHERE clause or grouping, may be answered by the table's storage
 without reading each row. The row store sums the rows of the blocks of
-rows every transaction sees alike, and reads only the others, so the
-count is the one a scan makes at any isolation level. The plan then ends
-with a line `-- counted by storage:` naming the table. A table of the
-column store, and any query with EXECUTOR.BATCHES OFF, is counted by its
-scan and has no such line.
+rows every transaction sees alike, and reads only the others. The column
+store adds the rows of its frozen groups as its directory records them,
+and reads only the rows not frozen and those changed or deleted since.
+Either way the count is the one a scan makes at any isolation level. The
+plan then ends with a line `-- counted by storage:` naming the table.
+
+A query of only MIN, MAX and COUNT(*) of a table of the column store,
+with no WHERE clause or grouping, takes each column's least and greatest
+values of each frozen group from the group's summary, held in memory,
+and reads only the groups changed since they were frozen and the rows
+not yet frozen. MIN and MAX are taken so of numbers of exact type and of
+dates and times. The plan then ends with a line `-- summarized by
+storage:` naming the table. A query with EXECUTOR.BATCHES OFF reads
+every row and has neither line.
 
 EXPLAIN is direct SQL, as a query is. The `turborel` client shows its
 rows as it shows a query's. A program reaches the same text by the

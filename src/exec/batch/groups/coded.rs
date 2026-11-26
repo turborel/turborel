@@ -37,6 +37,9 @@ pub(super) struct Memo {
     entries: Vec<Arc<Texts>>,
     strides: Vec<usize>,
     groups: Vec<u32>,
+    /// Of the batch being grouped, each row's place, made a column at a
+    /// time (RULES.md D1120).
+    places: Vec<usize>,
 }
 
 /// The coded texts of `column`, if its rows are codes of a dictionary.
@@ -49,10 +52,20 @@ fn coded(column: Option<&Column>) -> Option<&Texts> {
 }
 
 impl Memo {
-    /// Readies it for `batch`, grouped by its columns `at`: whether every
-    /// one is coded and their places are few enough. Of dictionaries other
-    /// than its own, it is made anew.
-    pub(super) fn ready(&mut self, batch: &Batch, at: &[usize]) -> bool {
+    /// Readies it for the rows `rows`, or all, of `batch`, grouped by its
+    /// columns `at`, each row placed: whether every column is coded and
+    /// their places are few enough.
+    pub(super) fn ready(&mut self, batch: &Batch, at: &[usize], rows: Option<&[u32]>) -> bool {
+        let ready = self.holds(batch, at);
+        if ready {
+            self.placed(batch, at, rows);
+        }
+        ready
+    }
+
+    /// Whether every column of `batch` at `at` is coded and their places
+    /// are few enough. Of dictionaries other than its own, it is made anew.
+    fn holds(&mut self, batch: &Batch, at: &[usize]) -> bool {
         let mut texts = Vec::with_capacity(at.len());
         for &c in at {
             let Some(t) = coded(batch.columns.get(c)) else { return false };
@@ -79,21 +92,37 @@ impl Memo {
         true
     }
 
-    /// The place of row `r` of `batch`'s columns `at`, ready for it.
-    fn place(&self, batch: &Batch, at: &[usize], r: usize) -> Option<usize> {
-        let mut place = 0_usize;
+    /// \[DESIGN\] (RULES.md D1120) Makes the place of each row of `rows`,
+    /// or all, of `batch`'s columns `at`, ready for them: a column at a
+    /// time, each its codes read in one loop, a null's place past its
+    /// dictionary's codes; past the memo's places of a code past them.
+    fn placed(&mut self, batch: &Batch, at: &[usize], rows: Option<&[u32]>) {
+        let count = rows.map_or(batch.rows, <[u32]>::len);
+        self.places.clear();
+        self.places.resize(count, 0);
         for ((&c, &stride), entries) in at.iter().zip(&self.strides).zip(&self.entries) {
-            let texts = coded(batch.columns.get(c))?;
-            let code = if texts.is_null(r) { entries.len() } else { usize::try_from(*texts.coded.as_ref()?.codes.get(r)?).ok()? };
-            place = place.checked_add(code.checked_mul(stride)?)?;
+            let codes = coded(batch.columns.get(c)).and_then(|texts| Some((texts, texts.coded.as_ref()?.codes.as_slice())));
+            let Some((texts, codes)) = codes else {
+                // No place of a column not coded, as none is below the
+                // memo's.
+                self.places.fill(usize::MAX);
+                return;
+            };
+            // A code past the codes read has no place.
+            let code = |r: usize| {
+                let entry = codes.get(r).map_or(usize::MAX, |&e| usize::try_from(e).unwrap_or(usize::MAX));
+                if texts.is_null(r) { entries.len() } else { entry }
+            };
+            for (n, place) in self.places.iter_mut().enumerate() {
+                *place = place.saturating_add(code(nth(rows, n)).saturating_mul(stride));
+            }
         }
-        (place < self.groups.len()).then_some(place)
     }
 
-    /// Of row `r` of `batch`'s columns `at`, ready for it, its place and
-    /// the group its codes went to, if one did.
-    pub(super) fn found(&self, batch: &Batch, at: &[usize], r: usize) -> (Option<usize>, Option<u32>) {
-        let place = self.place(batch, at, r);
+    /// Of row `n` of those placed, its place and the group its codes went
+    /// to, if one did.
+    pub(super) fn found(&self, n: usize) -> (Option<usize>, Option<u32>) {
+        let place = self.places.get(n).copied().filter(|&p| p < self.groups.len());
         (place, place.and_then(|p| self.groups.get(p)).copied().filter(|&g| g != NONE))
     }
 
@@ -128,12 +157,12 @@ pub(super) fn grouped(
     (first, seed, kernels): (u64, &Seed, &dyn Kernels),
     hashes: &mut Vec<u64>,
 ) -> bool {
-    if !memo.ready(batch, at) {
+    if !memo.ready(batch, at, rows) {
         return false;
     }
     for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
         let r = nth(rows, n);
-        let (place, known) = memo.found(batch, at, r);
+        let (place, known) = memo.found(n);
         let g = known.unwrap_or_else(|| {
             let hash = hash_of(batch, (at, r), (seed, kernels), hashes);
             let g = table.found_or_made(hash, Key::Row(batch, at, r), first.saturating_add(u64::try_from(n).unwrap_or(u64::MAX)));

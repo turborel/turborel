@@ -50,11 +50,11 @@ use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
 use crate::functions::Accumulator;
-use crate::logical::{AggCall, Cond, Truth};
+use crate::logical::{AggCall, Cond, Expr, Truth};
 use crate::physical::Plan;
 use crate::storage::Row;
 use crate::txn::TxId;
-use crate::value::Value;
+use crate::value::{CompOp, Value};
 
 /// \[DESIGN\] The bits of a group's number its row's place in its morsel
 /// takes: more than any morsel's rows need.
@@ -131,15 +131,38 @@ impl Grouping {
     /// (`ended`).
     fn kept_of(&self, table: &GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
         let cond = self.having.as_ref().filter(|_| self.outer.is_none());
-        let mut groups = match cond {
-            Some(cond) => table.finished_if(|row| Ok(eval_cond(cond, row, runner)? == Truth::True))?,
-            None => table.finished()?,
+        let mut groups = match (cond, cond.and_then(|c| self.bounded(c))) {
+            (_, Some(bounded)) => table.finished_above(bounded)?,
+            (Some(cond), None) => table.finished_if(|row| Ok(eval_cond(cond, row, runner)? == Truth::True))?,
+            (None, None) => table.finished()?,
         };
         groups.sort_unstable_by_key(|g| g.0);
         if self.outer.is_none() {
             return Ok(groups);
         }
         self.ended(groups, runner)
+    }
+
+    /// \[DESIGN\] (RULES.md D1135) Of `cond`, a HAVING condition that
+    /// compares the one set function of a grouping by some columns with a
+    /// constant, the comparison, the set function's value first: judged
+    /// of each group's value alone (`GroupTable::finished_above`).
+    fn bounded<'a>(&self, cond: &'a Cond) -> Option<(CompOp, &'a Value)> {
+        let Cond::Compare(a, op, b) = cond else { return None };
+        let one = self.spec.aggs.len() == 1 && !self.distinct && !self.spec.groups.is_empty();
+        let at = self.spec.groups.len();
+        let column = |e: &Expr| if let Expr::Column(c) = e { *c == at } else { false };
+        if let Expr::Const(v) = b
+            && column(a)
+        {
+            return one.then_some((*op, v));
+        }
+        if let Expr::Const(v) = a
+            && column(b)
+        {
+            return one.then_some((op.flip(), v));
+        }
+        None
     }
 
     /// The groups a partition gives of `groups`, its own finished, in the
@@ -498,3 +521,8 @@ fn finished(states: Vec<Box<dyn Accumulator>>, mut row: Row) -> Result<Row> {
     }
     Ok(row)
 }
+
+// Unit tests: which HAVING conditions a part judges of a value alone
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;
