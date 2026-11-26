@@ -111,15 +111,26 @@ fn a_grouping_or_distinct_column_of_a_class_is_a_key() {
 }
 
 /// Verifies: [DESIGN] RULES.md D1204: no edge is implied from a column
-/// that is no key of its relation; P and PS are then joined only through
-/// L, and the rows are the same.
+/// that is no key of its relation, nor from a key whose constraint is
+/// deferrable, which may be broken until it is checked [ISO/IEC
+/// 9075-2:2023 §4.25.2]; P and PS are then joined only through L, and the
+/// rows are the same. With the deferred key broken in an open
+/// transaction, two parts of one K, the lines of that K are counted for
+/// each of the two.
 #[test]
 fn no_edge_is_implied_without_an_immediate_key() {
-    let db = parts("K INTEGER");
-    let s = db.session("E");
-    let (joined, plan) = joins_p_to_ps(&s, &lines_of(TABLE));
-    assert!(!joined, "{plan}");
-    assert_eq!(agreed(&s, &lines_of(TABLE)), expected());
+    for key in ["K INTEGER", "K INTEGER CONSTRAINT LATE UNIQUE DEFERRABLE INITIALLY DEFERRED"] {
+        let db = parts(key);
+        let s = db.session("E");
+        let (joined, plan) = joins_p_to_ps(&s, &lines_of(TABLE));
+        assert!(!joined, "{key}\n{plan}");
+        assert_eq!(agreed(&s, &lines_of(TABLE)), expected(), "{key}");
+        s.run("INSERT INTO P0 VALUES (0, 0)").unwrap();
+        let lines = (PARTS / 20 + 1) * SUPPLIERS * LINES;
+        let twice = vec![format!("{lines},{}", (PARTS / 20 + 1) * SUPPLIERS * (0..LINES).sum::<i64>())];
+        assert_eq!(agreed(&s, &lines_of(TABLE)), twice, "{key}");
+        s.rollback().unwrap();
+    }
 }
 
 /// Verifies: [X3.135-1986 §5.11 GR4]; [DESIGN] RULES.md D1204, D387: an

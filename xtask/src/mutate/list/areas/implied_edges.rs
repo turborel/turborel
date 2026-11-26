@@ -1,7 +1,8 @@
 //! The mutations of the edges a class of equalities implies (RULES.md
 //! R-TEST-9, D1204): a star taken from a column that is no key, the
-//! implied edges joining nothing, a star past the budget kept, and the
-//! stars offered from the relation of most rows.
+//! implied edges joining nothing, a star past the budget kept, the stars
+//! offered from the relation of most rows, and the unique index of a
+//! deferrable constraint taken for a key (D1205).
 
 use super::super::{Mutation, Package};
 
@@ -17,7 +18,7 @@ const JOINED: &str = "physical::enumerate::tests::a_key_of_a_class_joins_its_oth
 const BUDGETED: &str = "physical::enumerate::tests::stars_are_taken_only_within_the_budget";
 
 /// Mechanisms of the implied edges whose removal must fail their tests.
-pub const IMPLIED_EDGES: [Mutation; 4] = [
+pub const IMPLIED_EDGES: [Mutation; 5] = [
     Mutation {
         name: "implied-edges-of-any-column",
         package: Package::Core,
@@ -57,5 +58,15 @@ pub const IMPLIED_EDGES: [Mutation; 4] = [
         replacement: "self.rows(b.0).total_cmp(&self.rows(a.0))",
         integration: &[],
         unit: &[BUDGETED],
+    },
+    Mutation {
+        name: "implied-edges-deferrable-key",
+        package: Package::Core,
+        breaks: "the unique index of a deferrable constraint is a key to the estimates, so its column gives a star",
+        file: "src/physical/cardinality/keys.rs",
+        original: "indexed.filter(|key| !late.contains(key)).collect()",
+        replacement: "indexed.collect()",
+        integration: &["implied_edges::no_edge_is_implied_without_an_immediate_key"],
+        unit: &[],
     },
 ];

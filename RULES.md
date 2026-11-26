@@ -754,6 +754,7 @@ verification approach DO-178C expects (§8).
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
+| D1205 | The unique index of a deferrable constraint is no key to the estimates |
 
 ### The project
 
@@ -20663,6 +20664,27 @@ planned as it was. A rule taking a star only from a filtered relation
 was not taken. It bounds nothing, as twelve filtered relations are a
 clique still, and a relation with no filter of its own may be reduced
 by a join below, as a nation is by its region.
+
+#### D1205. The unique index of a deferrable constraint is no key to the estimates
+
+The estimates take a table's keys from the catalog (D384): the columns
+of each UNIQUE or PRIMARY KEY constraint not deferrable, and of each
+unique index. But every such constraint has a unique index, a
+deferrable one too, and that index holds two rows of one key from the
+statement that breaks the constraint until its check [ISO/IEC
+9075-2:2023 §4.25.2]. So a deferrable key was taken for a key through
+its index, against D384's own words. A column of it was counted as of
+one row a value, and its join as giving no more rows than its other
+side.
+
+The index of a deferrable constraint is now left out of a table's keys
+(`cardinality/keys.rs`), told by its columns, which are the
+constraint's, with its period's if it has one. Only estimates read
+these keys, a row bound, a class's distinct values, the choice of a
+hash or an index join, and the implied edges (D1204), so no query gave
+wrong rows. The rules that rewrite a query by a key read the
+constraints themselves and pass a deferrable one by (D1117, D1201,
+D1202).
 
 ## 2. Project layout
 
