@@ -746,6 +746,7 @@ verification approach DO-178C expects (§8).
 | D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
 | D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
 | D1157 | A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone |
+| D1158 | A plan asking for a table's first statistics while the maintenance thread gathers them waits for that pass |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -20288,6 +20289,23 @@ already makes of a guess joined with a key. The columns a class equates
 are taken to hold values of one domain, the key's. A referential constraint makes
 it exact. A UNIQUE of a column that may be null bounds nothing, nor does
 a statistics count, and a class of no such key is left as it was.
+
+#### D1158. A plan asking for a table's first statistics while the maintenance thread gathers them waits for that pass
+
+D1092 has the plan that first asks for the statistics of a table opened
+gather them, and plans asking meanwhile wait on the lock that pass
+holds. The maintenance thread's pass of the same table did not take
+that lock. A plan asking while it ran saw the pass under way, noted its
+own as tried and was made without statistics, on the fixed
+selectivities, so the first plans after a start could differ by
+whether the maintenance thread happened to be gathering.
+
+A pass of a table opened, by the maintenance thread too, now holds the
+lock the asking plan's holds, taken before the flag that says a pass
+runs. A plan asking for the first statistics during it waits for the
+pass and is given what it gathered. Plans that find statistics never
+take the lock, so later passes do not hold them up
+(`engine/rows/stats.rs`).
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
