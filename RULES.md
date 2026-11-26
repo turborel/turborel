@@ -769,6 +769,7 @@ verification approach DO-178C expects (§8).
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
+| D1218 | A sort that reads its input whole passes it no row goal |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
@@ -21090,6 +21091,53 @@ its word and no wrong result. An index join weighed at the margin's
 times the estimate is exposed past it. Of rows a hundred times the
 estimate it makes a hundred times the probes, where the margin weighed
 eight.
+
+#### D1218. A sort that reads its input whole passes it no row goal
+
+A FETCH FIRST tells the plan under it how many of its first rows are
+read (D552), and a node that gives its rows as it reads them passes the
+count to its input, which is then priced by the share of it read. A
+sort passed it on as it was, on the ground that an input read in the
+sort's order gives the sort's first rows as its own. That holds of such
+an input alone. When the input did not give the order, the planner put
+a sort over it and kept the plan it had made of the input under the
+goal, though the sort reads every row of it before it gives one.
+
+So a statement that sorts a grouping's results and keeps the first few,
+ORDER BY a set function with FETCH FIRST, planned its grouping for a
+few rows. Of a table kept in the order of the grouping column that
+picked the grouping streamed over the ordered read, priced at the rows
+of the few groups asked, over the grouping by hash run in parallel, and
+then read the whole table on one thread, a row at a time.
+
+The planner now builds a sort's input under the goal as before, and if
+that plan does not give the sort's order, builds it again with no goal
+(`physical/ordered.rs` `read_for_sort`). A grouping asked an order by
+every one of its columns did the same one level down, its input built
+under the goal and then hashed, or sorted and streamed, when it did not
+give the order. That input too is built again with no goal
+(`physical/streamed.rs` `grouped`). An input that gives the order keeps
+the goal, and a streamed grouping under FETCH FIRST with no sort between
+stops its read as before (D551).
+
+Each node `goals::passes` lets a goal through was read against what its
+executor does. A scan, a projection and a filter give rows as they read
+them. A product and a hash join probe by their left operand and build
+their right, which is planned whole. UNION ALL reads its operands in
+turn. A grouping or DISTINCT passes a goal only to an input read in its
+keys' order, and plans a hashed one's input whole. A window, a set
+operation other than UNION ALL, an outer, semi or mark join stop it.
+The sort was the one that passed a goal to an input it reads whole. The
+other places that put a sort over a plan, a window's, a row pattern's, a
+merge join's operand and a partitioned table's part, are under nodes
+that stop the goal or over a read of one table, whose plan a goal
+changes only when it is read in an order asked.
+
+Tests in `test/integration/streamed_grouping.rs`: the grouping under a
+sort and FETCH FIRST is the plan of the same statement without FETCH
+FIRST, a part run in parallel, under HAVING too, and a grouping whose
+own order is asked stays streamed with no sort. Mutation
+`row-goal-under-sort`.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 
