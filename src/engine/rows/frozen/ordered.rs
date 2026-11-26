@@ -189,8 +189,8 @@ impl Ordered {
         self.sources.push(Source { part: tree, runs: None });
         let groups = self.directory.groups.clone();
         for entry in groups.iter().filter(|e| e.summary.may_match(self.condition.as_ref())) {
-            let pages = self.table.group_pages()?;
             let group = self.table.group_of(entry)?;
+            let pages = self.table.pages_for(&group)?;
             let ids = group.row_ids(&pages)?;
             let runs: VecDeque<(u32, u32)> = read_candidates(&group, &pages, self.condition.as_ref())?.into_iter().collect();
             let in_order = group.order.starts_with(&self.decoded_keys());
@@ -267,7 +267,7 @@ impl Ordered {
     /// for and the condition matches, in the order read; none once none
     /// is left.
     fn read_part(&self, runs: &mut Unread) -> Result<Option<Part>> {
-        let pages = self.table.group_pages()?;
+        let pages = self.table.pages_for(&runs.group)?;
         let types = self.table.format.types();
         while let Some((from, to)) = next_part(&mut runs.runs, self.backward) {
             let mut part = Part::default();

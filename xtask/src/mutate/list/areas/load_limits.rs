@@ -5,13 +5,16 @@
 //! value out of line freed only once no read may fetch it (D1140), a
 //! long log record written after what the log's buffer holds (D1141), and
 //! loads at once each writing their own groups (D1142), and a clean
-//! close keeping the groups of loads committed (D1143), and each chunk
-//! of a column sized once (D1144).
+//! close keeping the groups of loads committed (D1143), each chunk of a
+//! column sized once (D1144), and a load's groups written to segments,
+//! synced by a checkpoint, logged whole, redone and backed up (D1146),
+//! and a load into a table that qualifies going to groups by default
+//! (D1147).
 
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 12] = [
+pub const LOAD_LIMITS: [Mutation; 17] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -131,5 +134,55 @@ pub const LOAD_LIMITS: [Mutation; 12] = [
         replacement: "                return if n == 0 { (1, None) } else { (n.saturating_add(1), fits) };",
         integration: &[],
         unit: &["engine::columns::tests::chunks_sized_once_are_the_chunks_sized_twice"],
+    },
+    Mutation {
+        name: "segments-synced",
+        package: Package::Core,
+        breaks: "a checkpoint commits directories naming extents its segments may not hold after a crash",
+        file: "src/engine/rows/engine.rs",
+        original: "            files.segments.as_ref().map_or(Ok(()), |p| p.sync(Durability::Full))?;\n            shadows.commit_sealed()?;",
+        replacement: "            shadows.commit_sealed()?;",
+        integration: &["bulk_durable::a_loads_committed_rows_outlive_the_end_of_the_database"],
+        unit: &[],
+    },
+    Mutation {
+        name: "group-redone",
+        package: Package::Core,
+        breaks: "a committed load's group logged since the last checkpoint is not made again from its record",
+        file: "src/engine/rows/frozen/loaded.rs",
+        original: "        if head.first != first || self.frozen.directory()?.holding(first).is_some() {",
+        replacement: "        if true {",
+        integration: &["standby::a_standby_makes_a_loads_groups_from_the_log"],
+        unit: &[],
+    },
+    Mutation {
+        name: "group-record-length",
+        package: Package::Core,
+        breaks: "a group's record cut short is read as a group of the bytes left",
+        file: "src/log/record/groups.rs",
+        original: "    if extent.len() != length {",
+        replacement: "    if false {",
+        integration: &[],
+        unit: &["log::record::tests::what_is_not_a_record_is_refused"],
+    },
+    Mutation {
+        name: "segments-exported",
+        package: Package::Core,
+        breaks: "a segment is of no kind of file the database knows, so a backup refuses the database",
+        file: "src/files/classes.rs",
+        original: "        } else if dir == \"groups\" {",
+        replacement: "        } else if dir == \"no groups\" {",
+        integration: &["backups::a_backup_restores_the_groups_of_loads"],
+        unit: &[],
+    },
+    Mutation {
+        name: "load-groups-default",
+        package: Package::Core,
+        breaks: "a load into a table that qualifies for extents goes through its tree unless it asks for groups",
+        file: "src/engine/rows/frozen/stamped.rs",
+        original: "            LoadTo::Default => qualifies,",
+        replacement: "            LoadTo::Default => false,",
+        integration: &["bulk_groups::a_load_into_a_table_that_qualifies_goes_to_groups_by_default"],
+        unit: &[],
     },
 ];

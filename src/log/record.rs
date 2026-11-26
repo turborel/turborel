@@ -75,6 +75,7 @@ pub const RECORD_VERSION: u8 = 1;
 
 mod batch;
 mod definitions;
+mod groups;
 mod images;
 mod kinds;
 mod lobs;
@@ -89,13 +90,14 @@ use definitions::{
     create_index, defined, dropped, put_altered, put_create_index, put_creator, put_defined, put_dropped, put_schema, put_sequence,
     put_user, schema, sequence, user,
 };
+pub use groups::{GroupLoaded, group_record_head};
 pub use images::put_update_of;
 use lobs::{lob_change, put_lob_change};
 
 use kinds::{
-    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, INSERT, INSERT_ROWS, LOB_PUT,
-    LOB_STALE, OWNER, RECONFIGURATION, RESTORE_POINT, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, SPATIAL, STALE, STATEMENT_UNDONE, UPDATE,
-    USER,
+    ABORT, ALTER_INDEX, ALTER_TABLE, CHECKPOINT, COMMIT, CREATE_INDEX, DEFINED, DELETE, DROP, DROP_INDEX, GROUP_LOADED, INSERT,
+    INSERT_ROWS, LOB_PUT, LOB_STALE, OWNER, RECONFIGURATION, RESTORE_POINT, ROLE_CREATOR, SCHEMA, SEQUENCE, SETTING, SPATIAL, STALE,
+    STATEMENT_UNDONE, UPDATE, USER,
 };
 pub use kinds::{KINDS, REPLICATED};
 
@@ -123,6 +125,8 @@ pub enum Change {
         /// Each row's id and the row inserted.
         rows: Vec<(RowId, Row)>,
     },
+    /// \[EXTENSION\] A load's group, as its segment holds it (RULES.md D1146).
+    GroupLoaded(GroupLoaded),
     /// A row updated, as it was and as it became.
     Update {
         /// Its table.
@@ -420,6 +424,7 @@ impl Record {
         match &self.change {
             Change::Insert { table, generation, row, after } => put_row_change(out, (table, *generation, *row), &[after]),
             Change::InsertRows { .. } => batch::put_change(out, &self.change),
+            Change::GroupLoaded(loaded) => groups::put_change(out, loaded),
             Change::Update { table, generation, row, before, after } => {
                 images::put_update(out, (table, *generation, *row), before, after);
             }
@@ -483,6 +488,7 @@ impl Record {
         let change = match tag {
             INSERT => Change::Insert { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, after: row(&mut r)? },
             INSERT_ROWS => batch::rows_change(&mut r)?,
+            GROUP_LOADED => groups::loaded_change(&mut r)?,
             UPDATE => images::update(&mut r)?,
             DELETE => Change::Delete { table: table(&mut r)?, generation: r.u32()?, row: r.u64()?, before: row(&mut r)? },
             COMMIT => marks::commit(&mut r)?,

@@ -45,6 +45,7 @@
 mod header;
 mod ids;
 mod pax;
+pub mod sink;
 mod summary;
 mod zones;
 
@@ -52,7 +53,7 @@ use std::borrow::Cow;
 
 pub use header::{put_summary, read, read_summaries};
 use ids::{write_by_id, write_ids};
-pub use summary::{Overall, Summary};
+pub use summary::{Overall, Placed, Summary};
 use zones::{bounds_of, put_filters, write_column, zone_of};
 
 use super::{Chunk, imprints, sketch};
@@ -117,11 +118,24 @@ pub struct Pages<'a, S> {
     /// Whether groups are written with imprints of the columns that take
     /// them (`columns/imprints.rs`).
     pub imprints: bool,
+    /// Where its group's extent starts in its segment, the file, whose
+    /// pages are numbered from there; 0 for pages of a pager file
+    /// (RULES.md D1146).
+    pub base: u64,
+    /// The extent a group is written to, rather than new pages of the
+    /// pool, if it is a load's (`group/sink.rs`).
+    pub sink: Option<&'a sink::Sink>,
 }
 
 impl<S: Seal> Pages<'_, S> {
     /// A new page holding `content`, sealed.
     pub(super) fn put(&self, content: &[u8], written: &mut Vec<PageId>) -> Result<PageId> {
+        if let Some(sink) = self.sink {
+            // [DESIGN] RULES.md D1146: sealed by its number within the extent.
+            let at = sink.put(&self.sealing.seal(sink.next(), content)?)?;
+            written.push(at);
+            return Ok(at);
+        }
         let (page, mut held) = self.pool.new_page(self.file)?;
         written.push(page);
         *held = self.sealing.seal(page.0, content)?;
@@ -151,7 +165,7 @@ impl<S: Seal> Pages<'_, S> {
     /// the page having passed through no encoding: it is then read again
     /// as cheaply, with no copy to keep.
     fn with_told<T>(&self, page: PageId, read: impl FnOnce(&[u8], bool) -> Result<T>) -> Result<T> {
-        let stored = self.pool.read(self.file, page.0)?;
+        let stored = self.pool.read(self.file, self.base.saturating_add(page.0))?;
         let opened = self.sealing.open(page.0, &stored)?;
         let in_place = matches!(opened, Cow::Borrowed(_));
         read(&opened, in_place)
@@ -184,6 +198,10 @@ impl<S: Seal> Pages<'_, S> {
 
     /// Frees `pages`; one that cannot be is left.
     pub fn free(&self, pages: &[PageId]) {
+        // An extent's pages are its segment's, given up with it.
+        if self.sink.is_some() || self.base != 0 {
+            return;
+        }
         for &page in pages {
             let _ = self.pool.free(self.file, page);
         }
@@ -296,6 +314,9 @@ pub struct Group {
     pub sketches: Vec<sketch::Edges>,
     /// The pages of its header.
     pub header: Vec<PageId>,
+    /// Where its pages are read: the file, and the place its page numbers
+    /// count from, of an extent of a segment (RULES.md D1146).
+    pub place: (FileId, u64),
 }
 
 fn count32(n: usize) -> Result<u32> {
@@ -367,6 +388,7 @@ impl Group {
             sketched: named.to_vec(),
             sketches,
             header: Vec::new(),
+            place: (pages.file, pages.base),
         };
         group.header = put_chain(pages, &header::encode(&group, types)?, written)?;
         Ok(group)

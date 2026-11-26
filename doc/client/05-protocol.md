@@ -676,7 +676,9 @@ until the copy's transaction ends; reading it, they do not wait. Each
 such index is built whole from the copy's rows as CopyEnd ends it, which
 is faster than adding its entries one row at a time. A copy into a
 table of the column store that holds no row yet to be frozen, and sets
-COLUMNSTORE.LOAD to GROUPS writes the rows it inserts straight into frozen groups, which other
+COLUMNSTORE.LOAD to GROUPS, or leaves it as DEFAULT and has no index, no
+constraint but NOT NULL and no large object column, writes the rows it
+inserts straight into frozen groups, which other
 transactions see once it commits. It takes the lock alone only if it builds an index, so several copies
 at once each write their own groups.
 

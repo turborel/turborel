@@ -208,6 +208,11 @@ impl BufferPool {
     /// Reads `pages` of `file`, in ascending order, ahead: each run of
     /// pages one after another in one read of the file. The pages read.
     fn read_listed(&self, file: FileId, pages: &[u64]) -> usize {
+        // [DESIGN] RULES.md D1146: a block file's blocks are apart by their
+        // lengths, so all are read together, those near one another at once.
+        if self.blocks(file).is_some() {
+            return self.read_run(file, pages);
+        }
         let mut read = 0_usize;
         let mut rest = pages;
         while !rest.is_empty() {
@@ -219,15 +224,18 @@ impl BufferPool {
         read
     }
 
-    /// Reads ahead those of `ids`, pages of pager file `file` in ascending
-    /// order, not in the pool, in one read of the file, each into a frame
+    /// Reads ahead those of `ids`, pages of pager file `file`, or blocks of
+    /// a block file, in ascending order, not in the pool, in one read of the file, each into a frame
     /// of its own, unpinned: up to the first whose frame cannot be had.
     /// The pages read.
     fn read_run(&self, file: FileId, ids: &[u64]) -> usize {
-        let Ok(pager) = self.pager(file) else { return 0 };
         let claims = self.claim_ahead(file, ids);
         let claimed: Vec<PageId> = claims.iter().map(|&(id, _)| PageId(id)).collect();
-        let contents = pager.read_ahead(&claimed).unwrap_or_default();
+        let contents = match (self.blocks(file), self.pager(file)) {
+            (Some(blocks), _) => blocks.read_near(&claims.iter().map(|&(id, _)| id).collect::<Vec<_>>()),
+            (None, Ok(pager)) => pager.read_ahead(&claimed).unwrap_or_default(),
+            (None, Err(_)) => Vec::new(),
+        };
         let mut read = 0_usize;
         let mut contents = contents.into_iter();
         for (id, claim) in claims {

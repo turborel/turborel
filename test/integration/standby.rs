@@ -3,7 +3,8 @@
 //! spilling what it holds past its budget, serves once promoted, ending
 //! the transactions left open, and writes nothing once deposed; an export
 //! of a database, its last checkpoint's image and durable files, is
-//! installed by a database following in place of its own state.
+//! installed by a database following in place of its own state; a load's
+//! groups are made again from their records (D1146).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -11,7 +12,9 @@ use std::sync::Arc;
 use turborel::db::{Database, OpenOptions, Standby};
 use turborel::error::Code;
 use turborel::log::record::Record;
-use turborel::log::{Log, Lsn, MemoryLog};
+use turborel::log::{FileLog, FileLogOptions, Log, Lsn, MemoryLog};
+use turborel::params::Load;
+use turborel::value::Value;
 use turborel::value::types::TypeRegistry;
 
 use crate::common::{Counted, Kept, Scratch, Watched, exec, number, os, rows};
@@ -381,5 +384,48 @@ impl turborel::db::StateSource for Nothing {
     }
     fn read(&mut self, _: usize, _: u64, _: &mut [u8]) -> turborel::error::Result<usize> {
         Ok(0)
+    }
+}
+
+/// Loads 9,000 rows into G, a table of the column store of no index, in
+/// a database opened from files in `dir`, two groups and a short batch,
+/// closed after; G's rows.
+fn loaded_groups(dir: &Path) -> Vec<String> {
+    let db = Database::new();
+    db.open_files(&os(), dir, &OpenOptions::default()).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION APP CREATE TABLE G (K INTEGER NOT NULL, V INTEGER) USING columnstore \
+         WITH (COLUMNSTORE.GROUP_ROWS = 4096, COLUMNSTORE.LOAD = 'GROUPS')",
+    )
+    .unwrap();
+    let s = db.session("APP");
+    let p = s.prepare("INSERT INTO G (K, V) VALUES (?, ?)").unwrap();
+    let given: Vec<Vec<Value>> = (0..9_000_i64).map(|k| vec![number(k), number(k % 7)]).collect();
+    for batch in given.chunks(4096) {
+        s.execute_prepared_rows(&p, batch, Load::Going).unwrap();
+    }
+    s.execute_prepared_rows(&p, &[], Load::Ending).unwrap();
+    s.commit().unwrap();
+    let held = rows(&s, "SELECT COUNT(*), SUM(K), SUM(V) FROM G").unwrap();
+    s.commit().unwrap();
+    db.close().unwrap();
+    held
+}
+
+/// Verifies: [DESIGN] RULES.md D57, D1146: the groups a load wrote to its
+/// table's segments, logged as group records, are made again from the log
+/// alone by a standby, of files or in memory, which holds the rows the
+/// primary held.
+#[test]
+fn a_standby_makes_a_loads_groups_from_the_log() {
+    let scratch = Scratch::new("standby-groups");
+    let dir = scratch.path("primary");
+    let held = loaded_groups(&dir);
+    let (log, _) = FileLog::open(os(), &dir.join("log"), &turborel::hash::builtin(), &[], FileLogOptions::default()).unwrap();
+    let on_files = Database::new();
+    on_files.open_files(&os(), &scratch.path("standby"), &OpenOptions::default()).unwrap();
+    for standby in [following(), on_files] {
+        Standby::replay(&standby, &mut log.read_from(Lsn(0))).unwrap();
+        assert_eq!(rows(&standby.session("APP"), "SELECT COUNT(*), SUM(K), SUM(V) FROM G").unwrap(), held);
     }
 }

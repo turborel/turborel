@@ -162,6 +162,8 @@ fn scans_by_sketches_keep_what_values_keep() {
         pax: false,
         imprints: false,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
     let rows: Vec<Row> = (0..ROWS).map(|n| vec![Value::Exact(Decimal::new(i128::from(n), 0)), url(n)]).collect();
@@ -201,6 +203,8 @@ fn few_rows_asked_for_are_compared_without_the_sketch() {
         pax: false,
         imprints: false,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
     let rows: Vec<Row> = (0..ROWS).map(|n| vec![Value::Exact(Decimal::new(i128::from(n), 0)), url(n)]).collect();
