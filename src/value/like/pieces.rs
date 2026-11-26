@@ -26,7 +26,7 @@ pub(super) struct Pieces {
     first: String,
     /// The pieces a value holds past the first and before the last, none
     /// empty, each made once to be searched for (RULES.md D1118).
-    between: Vec<Finder>,
+    pub(super) between: Vec<Finder>,
     /// What a value ends with, of a pattern of some `%`.
     last: Option<String>,
 }
@@ -48,12 +48,12 @@ impl Pieces {
         Some(Pieces { first, between: rest.filter_map(|piece| Finder::of(&piece)).collect(), last })
     }
 
-    /// [X3.135-1986 §5.14 GR5] Whether `value` matches the pattern.
-    pub(super) fn matches(&self, value: &str) -> bool {
-        let Some(last) = &self.last else { return value == self.first };
-        let Some(after) = value.strip_prefix(self.first.as_str()) else { return false };
-        let Some(rest) = after.strip_suffix(last.as_str()) else { return false };
-        let mut rest = rest.as_bytes();
+    /// [X3.135-1986 §5.14 GR5] Whether the value of the bytes `value`
+    /// matches the pattern.
+    pub(super) fn matches(&self, value: &[u8]) -> bool {
+        let Some(last) = &self.last else { return value == self.first.as_bytes() };
+        let Some(after) = value.strip_prefix(self.first.as_bytes()) else { return false };
+        let Some(mut rest) = after.strip_suffix(last.as_bytes()) else { return false };
         for piece in &self.between {
             let Some(at) = piece.find(rest) else { return false };
             rest = rest.get(at.saturating_add(piece.len())..).unwrap_or_default();
@@ -111,7 +111,7 @@ mod tests {
             let pattern = LikePattern::new(p, None).unwrap();
             let pieces = Pieces::of(&pattern.specs).unwrap_or_else(|| panic!("{p:?} has no pieces"));
             for v in values {
-                assert_eq!(pieces.matches(v), slowly(v, &pattern), "{v:?} LIKE {p:?}");
+                assert_eq!(pieces.matches(v.as_bytes()), slowly(v, &pattern), "{v:?} LIKE {p:?}");
                 assert_eq!(pattern.matches(v), slowly(v, &pattern), "{v:?} LIKE {p:?}, as the pattern matches");
             }
         }
@@ -127,7 +127,7 @@ mod tests {
         }
         let escaped = LikePattern::new("%50!%!_%", Some('!')).unwrap();
         let pieces = Pieces::of(&escaped.specs).unwrap();
-        assert!(pieces.matches("at 50%_ off") && !pieces.matches("at 50%x off") && !pieces.matches("at 500_ off"));
+        assert!(pieces.matches(b"at 50%_ off") && !pieces.matches(b"at 50%x off") && !pieces.matches(b"at 500_ off"));
         assert!(escaped.matches("at 50%_ off") && !escaped.matches("at 500_ off"));
     }
 }

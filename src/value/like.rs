@@ -15,6 +15,7 @@
 //! padding is involved: a `CHARACTER(5)` value 'ABC  ' does not match the
 //! pattern 'ABC', but matches 'ABC%' and 'ABC  '.
 
+mod arena;
 mod collated;
 mod finder;
 mod octets;
@@ -25,6 +26,7 @@ use std::collections::HashMap;
 
 use super::Value;
 use crate::error::{Code, Result, SqlState, fail_with};
+pub use arena::BytesLike;
 pub use collated::collated;
 pub use octets::OctetPattern;
 
@@ -107,7 +109,7 @@ impl LikePattern {
     /// characters.
     pub fn matches(&self, value: &str) -> bool {
         if let Some(pieces) = &self.pieces {
-            return pieces.matches(value);
+            return pieces.matches(value.as_bytes());
         }
         if value.is_ascii() {
             return matched(&self.specs, value.as_bytes(), |b, c| u32::from(b) == u32::from(c));

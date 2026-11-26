@@ -196,6 +196,14 @@ pub trait Kernels: Send + Sync {
     fn crc32c(&self, register: u32, data: &[u8]) -> u32 {
         portable::crc::crc32c(register, data)
     }
+
+    /// The first place of `haystack` that holds `needle`, if one does,
+    /// as a substring search finds it; 0 of an empty needle (RULES.md
+    /// D1121). A filter's LIKE searches a batch's values all at once by
+    /// it (`value/like/arena.rs`).
+    fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        portable::find::find_bytes(haystack, needle)
+    }
 }
 
 /// \[DESIGN\] The term a distance kernel sums over each pair of elements

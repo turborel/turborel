@@ -237,3 +237,10 @@ pub(crate) fn crc32c(isa: Isa, register: u32, data: &[u8]) -> u32 {
 fn crc32c_crc(register: u32, data: &[u8]) -> u32 {
     crate::crc::crc32c_by(|r: u32, w: u64| __crc32cd(r, w), register, data)
 }
+
+/// `Kernels::find_bytes`: by the portable body, eight places a step, as
+/// NEON has no instruction that gathers a compare's lanes into a mask of
+/// bits as x86's do (RULES.md D1121).
+pub(crate) fn find_bytes(_isa: Isa, haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    portable::find::find_bytes(haystack, needle)
+}

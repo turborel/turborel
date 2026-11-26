@@ -713,6 +713,7 @@ verification approach DO-178C expects (§8).
 | D1117 | A grouping over a LEFT outer join by a key of its left table, its right grouped first, is a projection of the joined rows |
 | D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
 | D1119 | A morsel whose first batch finds its keys nearly all apart makes each of its other rows a group of its own, which the partitions find |
+| D1121 | A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19475,6 +19476,47 @@ A morsel whose first batch made half its rows' groups or fewer is grouped
 as before, as are keys of codes of dictionaries (D354) and a morsel of
 one batch. Lineitem grouped by order, whose rows come in order, makes a
 group of four rows in a morsel and is grouped as before.
+
+#### D1121. A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them
+
+A batch keeps its strings one after another in one arena, each row's end
+noted. A pattern of a piece between two `%`s, as TPC-H Q13's
+`'%special%requests%'`, was matched a value at a time, each value's
+pieces searched for alone (D1074, D1118). A comment is a few dozen
+bytes, so the search spent much of itself starting, finishing a word
+and comparing the bytes past its last whole word one at a time.
+
+The longest piece between is now searched for in the batch's whole
+arena by a kernel, `Kernels::find_bytes` (`value/like/arena.rs`). A
+place found is in the row whose end is the first past it. If the piece
+ends past that row's end, the row does not hold it there. Otherwise the
+row is matched whole by its pieces, as a value alone is, and the search
+goes on from the row's end. A row the search never stops in lacks the
+piece, and any value that matches holds every piece, so no such row
+matches. The rows are those a match of each value alone gives, as a
+test compares the two over rows that hold the piece across their ends,
+twice, out of order and not at all.
+
+The kernel's portable body is the search of D1118, moved to the
+kernels (`kernels/portable/find.rs`), and a value alone is still
+searched by it. On AVX2 and AVX-512 the kernel loads the 32 or 64 bytes
+from a place and as many from the needle's length less one further on,
+compares them with the needle's first and last bytes, and compares each
+place where both are equal with the whole needle, in order
+(`simd/src/x86/find.rs`). The places past the last whole step are left
+to the portable body. NEON has no instruction that gathers a compare's
+lanes into a mask of bits, so it runs the portable body. The contract
+and differential tests hold each set to the portable body, of needles
+of every length to past a step and haystacks of few letters.
+
+The arena is searched of a filter's conjunct when it judges at least
+half the batch's rows, and of a program's LIKE, which NOT LIKE is
+judged by. Neither searches a store's dictionaries, whose entries are
+each matched once (D31). A pattern of no piece between, as `'PROMO%'`,
+compares only a value's ends, and a pattern with `_` has no pieces, so
+each is matched a value at a time as before. A scan that decodes each
+value into its own buffer matches it by its bytes (`BytesLike`), the
+pieces made once for its conjunct.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 

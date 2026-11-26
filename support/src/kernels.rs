@@ -93,6 +93,7 @@ pub fn contract(kernels: &dyn Kernels) {
     }
     distances(kernels);
     crc32c(kernels);
+    finding(kernels);
 }
 
 /// Checks the hashes of texts `kernels` makes against XXH3-64 of each
@@ -420,4 +421,41 @@ fn crc32c(kernels: &dyn Kernels) {
         let (head, rest) = input.split_at(split);
         assert_eq!(kernels.crc32c(kernels.crc32c(u32::MAX, head), rest), whole, "CRC-32C split at {split}");
     }
+}
+
+/// The first place of `haystack` that holds `needle`, a place at a time.
+fn plainly(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Checks the substring search of `kernels` (RULES.md D1121) against a
+/// search a place at a time: of needles of 0 to 70 bytes, a needle's first
+/// and last bytes alike, at every place of haystacks of every length to
+/// past two steps of 64, the haystack of one byte repeated, a needle
+/// found only past a near miss, and none found.
+fn finding(kernels: &dyn Kernels) {
+    let text: Vec<u8> = pattern(300, 7).iter().map(|b| b'a' + b % 4).collect();
+    for len in 0..=150 {
+        let haystack = &text[..len];
+        for width in [0, 1, 2, 3, 7, 8, 9, 31, 32, 33, 63, 64, 65, 70] {
+            for at in (0..len.saturating_sub(width)).step_by(5) {
+                let needle = &text[at..at + width];
+                assert_eq!(kernels.find_bytes(haystack, needle), plainly(haystack, needle), "{width} bytes from {at} of {len}");
+            }
+            let missing = vec![b'z'; width];
+            assert_eq!(kernels.find_bytes(haystack, &missing), plainly(haystack, &missing), "{width} absent bytes of {len}");
+        }
+    }
+    let same = vec![b'q'; 200];
+    assert_eq!(kernels.find_bytes(&same, b"qq"), Some(0));
+    assert_eq!(kernels.find_bytes(&same, b"qxq"), None);
+    let mut near = vec![b'q'; 200];
+    near[150] = b'x';
+    assert_eq!(kernels.find_bytes(&near, b"qqxqq"), Some(148));
+    let mut late = b"abcab".repeat(40);
+    late.extend_from_slice(b"abcabd");
+    assert_eq!(kernels.find_bytes(&late, b"abcabd"), Some(200));
 }

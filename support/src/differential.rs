@@ -142,6 +142,7 @@ pub fn differential(kernels: &dyn Kernels, seeds: Range<u64>) {
         distances(kernels, rng, seed);
         crc(kernels, rng, seed);
         blooms(kernels, rng, (seed, len));
+        finds(kernels, rng, seed);
     }
 }
 
@@ -390,4 +391,27 @@ fn crc(kernels: &dyn Kernels, rng: &mut Rng, seed: u64) {
     let register = if rng.below(2) == 0 { u32::MAX } else { rng.next() as u32 };
     let data = &data[skip..];
     assert_eq!(kernels.crc32c(register, data), Portable.crc32c(register, data), "crc32c of {len} bytes, seed {seed}");
+}
+
+/// Checks the substring search of `kernels` (RULES.md D1121): of a
+/// haystack of two to four letters, of every length to 300 most often, at
+/// times longer, from an unaligned start, and a needle of 0 to 80 bytes
+/// taken from it or not.
+fn finds(kernels: &dyn Kernels, rng: &mut Rng, seed: u64) {
+    let len = if rng.below(8) == 0 { rng.below(5000) as usize } else { rng.below(300) as usize };
+    let letters = 2 + rng.below(3);
+    let (data, skip) = unaligned(rng, len, |r| b'a' + r.below(letters) as u8);
+    let haystack = &data[skip..];
+    let width = rng.below(81) as usize;
+    let needle: Vec<u8> = if rng.below(2) == 0 && width <= haystack.len() {
+        let at = rng.below((haystack.len() - width + 1) as u64) as usize;
+        haystack[at..at + width].to_vec()
+    } else {
+        (0..width).map(|_| b'a' + rng.below(letters) as u8).collect()
+    };
+    assert_eq!(
+        kernels.find_bytes(haystack, &needle),
+        Portable.find_bytes(haystack, &needle),
+        "find_bytes of {width} bytes in {len}, seed {seed}"
+    );
 }
