@@ -16,6 +16,13 @@
 //! straight into one table, with no partition's thread to wake nor table
 //! to make; the morsels after it of many groups take that table to the
 //! partitions first, so each partition still merges its morsels in order.
+//!
+//! Partitions that outgrow the grant are held in the spill from then on,
+//! each partition's table written by the thread that merged it, and merged
+//! back a partition at a time at the end (`spilled.rs`), so the threads'
+//! work is kept and the grouping does not give way.
+
+mod spilled;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -32,6 +39,7 @@ use crate::exec::table::{GroupTable, Made};
 use crate::exec::{Runner, broken};
 use crate::storage::Row;
 use crate::txn::TxId;
+use spilled::Spilled;
 
 /// \[DESIGN\] The rows of a morsel each of its groups stands for, on each
 /// thread, at least, for the statement's thread to merge the morsel's
@@ -65,6 +73,8 @@ struct Waves<'a> {
     waved: bool,
     direct: Option<GroupTable>,
     direct_bytes: usize,
+    /// Where the partitions are held once they outgrow the grant.
+    spilled: Option<Arc<Spilled>>,
 }
 
 /// The groups of each partition of `grouping`'s pipeline, each finished
@@ -103,6 +113,7 @@ pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degre
         waved: false,
         direct: None,
         direct_bytes: 0,
+        spilled: None,
     };
     for morsel in Morsels::start(db, tx, (count, degree), work) {
         let held = match morsel? {
@@ -118,7 +129,8 @@ pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degre
 
 impl Waves<'_> {
     /// Merges `made`, a morsel's groups whole, into the statement thread's
-    /// table: whether the grant holds what that table holds.
+    /// table, handed to the partitions once the grant does not hold it:
+    /// whether the grant holds what is held.
     ///
     /// # Errors
     ///
@@ -131,7 +143,12 @@ impl Waves<'_> {
         let bytes = table.bytes();
         let more = bytes.saturating_sub(self.direct_bytes);
         self.direct_bytes = bytes;
-        Ok(self.limit.take(more))
+        if self.limit.take(more) {
+            return Ok(true);
+        }
+        // The table outgrows the grant: to the partitions, which go to the
+        // spill if they must.
+        self.flushed()
     }
 
     /// The statement thread's table, if any, handed to the partitions as a
@@ -159,17 +176,67 @@ impl Waves<'_> {
     fn parted(&mut self, made: Arc<Made>) -> Result<bool> {
         let bytes = made.bytes();
         if !self.limit.take(bytes) {
-            return Ok(false);
+            self.limit.give(bytes);
+            // What is held goes to the spill, to make room for it; if it
+            // does not fit even then, it goes there itself.
+            if !self.spilled_all()? {
+                return Ok(false);
+            }
+            if !self.limit.take(bytes) {
+                self.limit.give(bytes);
+                let Some(spilled) = &self.spilled else { return Ok(false) };
+                return spilled.write_parts(&made);
+            }
         }
         self.wave.push(made);
         self.wave_bytes = self.wave_bytes.saturating_add(bytes);
         if self.wave_bytes.saturating_mul(2) < self.limit.most().saturating_sub(self.parts_bytes) {
             return Ok(true);
         }
-        let held = frozen_wave((self.grouping, &self.frozen), std::mem::take(&mut self.wave), self.run)?;
+        self.merged()
+    }
+
+    /// Merges the wave into the partitions, held in memory while the grant
+    /// holds them, else in the spill: whether every group could be held.
+    ///
+    /// # Errors
+    ///
+    /// As merging a partition, or writing it to the spill, fails.
+    fn merged(&mut self) -> Result<bool> {
+        let wave = std::mem::take(&mut self.wave);
+        let Some(held) = frozen_wave((self.grouping, &self.frozen, self.spilled.as_ref()), wave, self.run)? else { return Ok(false) };
         self.limit.give(self.wave_bytes.saturating_add(self.parts_bytes));
         (self.wave_bytes, self.parts_bytes, self.waved) = (0, held, true);
-        Ok(self.limit.take(held))
+        if self.limit.take(held) {
+            return Ok(true);
+        }
+        self.limit.give(held);
+        self.spilled_all()
+    }
+
+    /// Writes every partition's table held in memory to the spill, each by
+    /// a thread, then the wave not yet merged, so the partitions are held
+    /// there from now on: whether every group could be written.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -918 if the spill area cannot be reserved; as writing to it
+    /// fails.
+    fn spilled_all(&mut self) -> Result<bool> {
+        if self.spilled.is_some() && self.wave.is_empty() {
+            return Ok(true);
+        }
+        let spilled = Arc::clone(self.spilled.get_or_insert_with(|| Arc::new(Spilled::new(self.run.0, self.run.1, self.limit))));
+        let (frozen, (db, tx, degree)) = (Arc::clone(&self.frozen), self.run);
+        let write = Box::new(move |p: usize| {
+            let held = frozen.get(p).and_then(|slot| slot.lock().unwrap_or_else(PoisonError::into_inner).take());
+            held.map_or(Ok(true), |made| spilled.write(p, &made))
+        });
+        let written =
+            Morsels::start(db, tx, (PARTS, degree), write).try_fold(true, |all, done| Ok::<_, crate::error::SqlError>(all && done?))?;
+        self.limit.give(self.parts_bytes);
+        self.parts_bytes = 0;
+        Ok(written && (self.wave.is_empty() || self.merged()?))
     }
 
     /// Each partition's groups finished, in the order of their first rows:
@@ -188,7 +255,15 @@ impl Waves<'_> {
         if !self.flushed()? {
             return Ok(Held::GaveWay);
         }
-        finished_wave((self.grouping, &self.frozen), self.wave, self.run).map(Held::Kept)
+        let Some(spilled) = self.spilled.clone() else {
+            return finished_wave((self.grouping, &self.frozen), self.wave, self.run).map(Held::Kept);
+        };
+        // The last wave to the spill too, then each partition read back.
+        if !self.wave.is_empty() && !self.merged()? {
+            return Ok(Held::GaveWay);
+        }
+        let finished = spilled::finished(self.grouping, spilled, self.run, self.limit.most())?;
+        Ok(finished.map_or(Held::GaveWay, Held::Kept))
     }
 }
 
@@ -218,22 +293,32 @@ fn thawed_and_merged(grouping: &Grouping, (frozen, p): (&Frozen, usize), wave: &
 }
 
 /// Merges the morsels of `wave` into each partition's table on up to
-/// `degree` threads, each frozen again: the bytes the tables hold.
+/// `degree` threads, each frozen again, or written to `spilled` if the
+/// partitions are held there: the bytes the tables held in memory hold;
+/// none if a table could not be written.
 ///
 /// # Errors
 ///
-/// As merging a partition fails.
-fn frozen_wave((grouping, frozen): (&Arc<Grouping>, &Frozen), wave: Vec<Arc<Made>>, (db, tx, degree): (&Db, TxId, usize)) -> Result<usize> {
-    let (grouping, kept, wave) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave));
+/// As merging a partition, or writing it to the spill, fails.
+fn frozen_wave(
+    (grouping, frozen, spilled): (&Arc<Grouping>, &Frozen, Option<&Arc<Spilled>>),
+    wave: Vec<Arc<Made>>,
+    (db, tx, degree): (&Db, TxId, usize),
+) -> Result<Option<usize>> {
+    let (grouping, kept, wave, spilled) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), spilled.cloned());
     let freeze = Box::new(move |p: usize| {
         let made = thawed_and_merged(&grouping, (&kept, p), &wave)?.frozen()?;
+        if let Some(spilled) = &spilled {
+            return Ok(spilled.write(p, &made)?.then_some(0));
+        }
         let bytes = made.bytes();
         if let Some(slot) = kept.get(p) {
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(made);
         }
-        Ok(bytes)
+        Ok(Some(bytes))
     });
-    Morsels::start(db, tx, (PARTS, degree), freeze).try_fold(0_usize, |sum, bytes| Ok(sum.saturating_add(bytes?)))
+    Morsels::start(db, tx, (PARTS, degree), freeze)
+        .try_fold(Some(0_usize), |sum, bytes| Ok(sum.zip(bytes?).map(|(sum, bytes)| sum.saturating_add(bytes))))
 }
 
 /// Merges the morsels of the last `wave` into each partition's table on up

@@ -323,11 +323,12 @@ mod tests {
         let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
         for step in 0..400_u64 {
             seed = seed.rotate_left(17).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ step;
-            if seed % 3 == 0 {
+            if seed.is_multiple_of(3) {
                 let _ = f.free(&[extent(seed % f.pages(), 1 + (seed >> 8) % 4)]);
             } else if seed % 7 == 1 {
-                let t = f.take_trailing();
-                t.into_iter().for_each(|t| f.release_trailing(t));
+                if let Some(trailing) = f.take_trailing() {
+                    f.release_trailing(trailing);
+                }
             } else {
                 f.allocate(1 + (seed >> 12) % 5);
             }
