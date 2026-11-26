@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 31] = [
+pub const OLTP: [Mutation; 33] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -319,5 +319,28 @@ pub const OLTP: [Mutation; 31] = [
         replacement: "        if !recorded || recorded {",
         integration: &["reopen::a_start_that_changes_nothing_records_no_image"],
         unit: &[],
+    },
+    Mutation {
+        name: "oltp-tally-counts-first-reads",
+        package: Package::Core,
+        breaks: "a page read into an empty frame counts as a miss, so a table the pool holds is priced as missed after a start (D1230)",
+        file: "src/disk/buffer/pool.rs",
+        original: "                return Ok((frame, claim.evicted));",
+        replacement: "                return Ok((frame, true));",
+        integration: &[],
+        unit: &[
+            "disk::buffer::tally::tests::a_tally_counts_the_misses_that_evict",
+            "physical::cost::warm_tests::a_table_the_pool_holds_is_planned_the_same_cold_and_warm",
+        ],
+    },
+    Mutation {
+        name: "oltp-tally-counts-no-eviction",
+        package: Package::Core,
+        breaks: "a miss that evicts another page is not counted, so a table larger than the pool is priced as held (D1230)",
+        file: "src/disk/buffer/pool/claim.rs",
+        original: "owed, evicted: old.is_some() })",
+        replacement: "owed, evicted: false })",
+        integration: &[],
+        unit: &["disk::buffer::tally::tests::a_tally_counts_the_misses_that_evict"],
     },
 ];

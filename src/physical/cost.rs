@@ -2,6 +2,8 @@
 //! what it guesses when statistics do not tell, each a setting's (RULES.md
 //! D36).
 
+#[cfg(test)]
+mod alone_tests;
 pub(super) mod conjuncts;
 mod hashed;
 pub(crate) mod parallel;
@@ -9,6 +11,8 @@ pub(crate) mod runtime;
 pub(crate) mod spill;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod warm_tests;
 
 use crate::error::{Code, Result, fail};
 
