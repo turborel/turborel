@@ -136,6 +136,33 @@ fn products_are_joined_in_the_cheapest_order() {
     assert_eq!(rows(&s, ordered), Ok(vec!["7,21".into(), "5,15".into()]));
 }
 
+/// Verifies: [DESIGN] RULES.md D35: the join order of a product is the
+/// same whichever of its tables have statistics, so it does not change as
+/// the background job reaches them. Regression test (R-TEST-7) of D1152,
+/// taken back: it bounded a column no statistics counted by those of the
+/// columns its class equates, so with T counted alone, its sketch a little
+/// under T's 300 values lowered U's to it, and T, not U, was read first,
+/// a test run's plan hanging on the moment the job reached T.
+#[test]
+fn a_join_order_is_the_same_whichever_tables_are_counted() {
+    let sql = "SELECT T.K, U.W FROM T, U, S WHERE T.K = S.K AND U.K = S.K ORDER BY 2 DESC";
+    let order = |counted: &[&str]| {
+        let db = large_and_small();
+        for t in counted {
+            db.analyze(&format!("J.{t}")).unwrap();
+        }
+        let plan = db.session("J").physical_plan(sql, &Params::new()).unwrap();
+        plan.lines()
+            .filter(|l| l.contains("Join") || l.contains("Scan J."))
+            .map(|l| l.trim().split("  ").next().unwrap_or("").to_owned())
+            .collect::<Vec<_>>()
+    };
+    let first = order(&[]);
+    for counted in [&["T"][..], &["U"], &["S"], &["T", "U"], &["T", "S"], &["U", "S"], &["T", "U", "S"]] {
+        assert_eq!(order(counted), first, "counted {counted:?}");
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D35, `PREDICATE_TRANSITIVITY`: a comparison
 /// of a column equated with another is made of the other too [X3.135-1986
 /// §5.11 GR4], so U's index answers `T.K = 7` through `T.K = U.K`, and a
@@ -162,6 +189,8 @@ fn comparisons_carry_across_equalities() {
 /// keys, two of them in T and U.
 fn large_and_small() -> Database {
     let db = Database::new();
+    // Statistics only as a test gathers them, never by the background job.
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION J
            CREATE TABLE T (K INTEGER NOT NULL, V INTEGER)
