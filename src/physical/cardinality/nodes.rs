@@ -123,7 +123,8 @@ impl Estimates<'_> {
             let local = map_cond_columns(c.clone(), &|col| places.iter().find(|&&(at, _)| at == col).map_or(col, |&(_, place)| place));
             return selectivity(&local, Known { stats: stats.as_deref(), cost: self.cost() });
         }
-        self.equality_share(over, c).unwrap_or_else(|| selectivity(c, Known { stats: None, cost: self.cost() }))
+        let default = || selectivity(c, Known { stats: None, cost: self.cost() });
+        self.equality_share(over, c).or_else(|| self.set_function_share(c, over)).unwrap_or_else(default)
     }
 
     /// The distinct values of `plan`'s column `column`: as its table's

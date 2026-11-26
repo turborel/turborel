@@ -739,6 +739,7 @@ verification approach DO-178C expects (§8).
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
+| D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 
 ### The project
 
@@ -20160,6 +20161,60 @@ digits an exact number has (D1060), would raise where the query does
 not (D15). Grouping first is sound only where every such join keeps
 every row, or no set function and no argument can raise. Fetching late
 needs neither.
+
+#### D1203. A set function compared with a constant keeps the groups its column's statistics give
+
+A HAVING condition that compares a set function with a constant kept a
+third of the groups, the default of an order comparison of which nothing
+is known (D31), whatever was compared. The orders whose quantities sum
+past 300, 624 of 15 million, were taken for 5 million, and the table
+joined to them was read into the hash table those few rows then probed.
+
+The share is now estimated from the statistics of the column the
+function is of (`cardinality/having.rs`). A grouping of n rows into G
+groups has m = n / G rows a group. A group has one row at least, and
+the rows past it are taken as a Poisson number of mean m - 1, each row's
+value of the column drawn alike and apart from the others, the
+independence the estimator assumes of rows everywhere. With F the
+column's distribution, as its statistics give the share of its values a
+comparison keeps, and mu and s2 its mean and variance:
+
+- MAX is at most c in F(c)^m of the groups and MIN above c in
+  (1 - F(c))^m, each being of m values, and the other comparisons are
+  their complements.
+- COUNT(*) has mean m and variance m - 1.
+- SUM is a sum of a number of values that has mean m and variance
+  m - 1, so it has mean m mu and variance m s2 + (m - 1) mu^2.
+- AVG has mean mu and variance s2 / m.
+
+The share of COUNT, SUM and AVG past c is the normal tail of those two
+moments, Q((c - mean) / deviation), which the central limit theorem gives
+a sum of values drawn alike. Q is half the complementary error function,
+computed by the rational approximation of Abramowitz and Stegun's
+formula 7.1.26. Of a column with nulls, m counts the values not null,
+and COUNT of the column has variance m. The mean and variance are those
+of the column's most common values, each at its share, and of its
+histogram, whose buckets hold equal shares, each spread evenly between
+its bounds; of no histogram, of values spread evenly between the least
+and the greatest. No constant is tuned.
+
+It is given only of a set function of a column alone, neither DISTINCT
+nor filtered, whose table's statistics were gathered, with bounds of the
+column among them. A set function of an expression, a comparison of two
+set functions or with a parameter not yet a value, and an equality keep
+the defaults. One group at least is kept.
+
+The estimate may be low, as of a column whose values are far from a
+normal sum's. It decides which operand of a hash join is built, the one
+estimated to give fewer rows (`physical/join.rs`), and whether an index
+join is weighed, and nothing reads it as a bound. The upper bound of the
+rows stays the grouping's, so an index join is weighed at the estimate
+times PLANNER.ESTIMATE_MARGIN, at most that bound, and taken only if it
+is the lesser regret there too (D386). A hash join's table is sized by
+the rows it is given, never by the estimate, and one that outgrows its
+work area is partitioned (D38). So an estimate a hundred times low builds
+the larger operand and costs a slower join, with no memory granted on
+its word and no wrong result.
 
 ## 2. Project layout
 

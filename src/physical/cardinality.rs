@@ -30,6 +30,7 @@
 mod bounds;
 mod composite;
 mod groups;
+mod having;
 mod injected;
 mod joins;
 mod keys;
