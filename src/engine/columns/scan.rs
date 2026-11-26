@@ -166,7 +166,8 @@ fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Ve
             | Conjunct::NotIn { .. }
             | Conjunct::Any(_)
             | Conjunct::Dynamic { .. }
-            | Conjunct::Spans { .. } => condition.may_match(&bounds),
+            | Conjunct::Spans { .. }
+            | Conjunct::Unpadded { .. } => condition.may_match(&bounds),
         };
         if !may {
             continue;

@@ -494,6 +494,7 @@ mod ungrouped_parts;
 mod unique_checks;
 mod unique_nulls;
 mod unnest;
+mod unpadded_collations;
 mod user_casts;
 mod users;
 mod uuids;

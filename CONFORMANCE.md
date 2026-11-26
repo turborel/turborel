@@ -496,6 +496,7 @@ collations). Citations here are of that edition unless marked.
 | Feature | Rules | What turborel does |
 |---|---|---|
 | `<collate clause>` | §10.7, §6.1 SR3, 92 §10.5 | In a column or domain definition, after its type or its constraints, in a value expression, ORDER BY and GROUP BY. It needs USAGE on a collation a definition made [AR1]. Built-ins are of INFORMATION_SCHEMA, and an unqualified name is of them [§5.4 SR13a]. |
+| NO PAD from UCS_BASIC or SQL_TEXT | §4.3.2, §8.2 GR3b | The strings' octets compared, a prefix the less, with no sort key made (RULES.md D1183): `'a'` is less than `'a '`, and below `'a'` followed by a tab, which is above it padded. `value/collation.rs`, `logical/pushed.rs`. |
 | Which collation applies | §9.15 | Explicit, then the session's, then implicit. Two explicit, or two implicit that differ, are refused (SQLCODE -103). |
 | A literal, parameter, CAST or USER | \[EXTENSION\] 92 §4.2.3 | Yields to a column's collation, as SQL-92's Coercible did. §9.15 SR4e alone would refuse `C = 'x'` of a collated column. A subquery's column of no collation of its own yields too. |
 | Comparisons | §9.15 | =, <>, <, >, BETWEEN, IN, CASE, NULLIF, quantified comparisons, MATCH, UNIQUE and join conditions. |

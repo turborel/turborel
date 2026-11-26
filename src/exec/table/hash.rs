@@ -18,9 +18,17 @@
 //! whatever the seed, so a table whose probe grows long hashes its keys
 //! anew by SipHash-1-3 keyed by the seed (`keyed`), which no key collides
 //! under unknown.
+//!
+//! [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) A grouping's seed also
+//! says which of its key's columns are grouped unpadded, under a collation
+//! of NO PAD that orders strings as their octets do (`Seed::unpadded`). A
+//! character string of such a column hashes whole, its trailing spaces
+//! among its bytes, and a table made by the seed compares it so
+//! (`keys.rs`), so `'a'` and `'a '` are two groups.
 
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
+use std::sync::Arc;
 
 use crate::hash::xxhash::Seeded;
 use crate::kernels::Kernels;
@@ -39,12 +47,15 @@ const NULL_WORD: u64 = 0x9e37_79b9_7f4a_7c15;
 pub(crate) struct Seed {
     seeded: Seeded,
     keyed: RandomState,
+    /// Of a grouping's seed, which of its key's columns are grouped
+    /// unpadded, if any is.
+    unpadded: Option<Arc<[bool]>>,
 }
 
 impl Default for Seed {
     fn default() -> Seed {
         let keyed = RandomState::new();
-        Seed { seeded: Seeded::new(keyed.hash_one(NULL_WORD)), keyed }
+        Seed { seeded: Seeded::new(keyed.hash_one(NULL_WORD)), keyed, unpadded: None }
     }
 }
 
@@ -52,7 +63,35 @@ impl Seed {
     /// A seed of the word `word`, for tests whose hashes are known.
     #[cfg(test)]
     pub(crate) fn fixed(word: u64) -> Seed {
-        Seed { seeded: Seeded::new(word), keyed: RandomState::new() }
+        Seed { seeded: Seeded::new(word), keyed: RandomState::new(), unpadded: None }
+    }
+
+    /// This seed for a grouping whose key's columns are grouped unpadded
+    /// where `flags` says: itself if none is.
+    pub(crate) fn unpadded(&self, flags: &[bool]) -> Seed {
+        let unpadded = flags.contains(&true).then(|| Arc::from(flags));
+        Seed { seeded: self.seeded.clone(), keyed: self.keyed.clone(), unpadded }
+    }
+
+    /// Whether the `place`th column of a key is grouped unpadded.
+    pub(super) fn is_unpadded(&self, place: usize) -> bool {
+        self.unpadded.as_ref().is_some_and(|flags| flags.get(place).copied().unwrap_or(false))
+    }
+
+    /// The hash of `cell`, the `place`th column of a key: a character
+    /// string's whole if the column is grouped unpadded, else as `cell`.
+    pub(super) fn key_cell(&self, place: usize, cell: Cell<'_>) -> u64 {
+        if self.is_unpadded(place) { self.whole(cell) } else { self.cell(cell) }
+    }
+
+    /// The hash of `cell`, a character string's whole, its trailing
+    /// spaces among its bytes; of any other value, as `cell`.
+    fn whole(&self, cell: Cell<'_>) -> u64 {
+        match cell {
+            Cell::Text(text) => self.bytes(text.as_bytes()),
+            Cell::Value(Value::Char(s)) => self.bytes(s.as_bytes()),
+            Cell::Value(_) | Cell::Exact(..) | Cell::Approx(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null => self.cell(cell),
+        }
     }
 
     /// The hash of a word `w`: XXH3-64 of its 8 bytes, little-endian.
@@ -161,7 +200,7 @@ pub(super) fn canonical(f: f64) -> u64 {
 /// The hash of a key of `values`, by `seed`, as of the same values in a
 /// batch's vectors.
 pub(in crate::exec) fn hash_values(seed: &Seed, values: &[Value]) -> u64 {
-    let mut hashes = values.iter().map(|v| seed.value(v));
+    let mut hashes = values.iter().enumerate().map(|(place, v)| seed.key_cell(place, Cell::Value(v)));
     let first = hashes.next().unwrap_or_else(|| seed.null());
     hashes.fold(first, |so_far, next| seed.joined(so_far, next))
 }
@@ -183,17 +222,21 @@ pub(in crate::exec) fn hash_rows(
     let mut column_hashes = Vec::new();
     for (place, &c) in at.iter().enumerate() {
         let target = if place == 0 { &mut *out } else { &mut column_hashes };
-        hash_column((batch, c, rows), (seed, kernels), target);
+        hash_column((batch, c, rows), (seed, kernels, seed.is_unpadded(place)), target);
         if place > 0 {
             kernels.combine_i64(out, &column_hashes, seed.seeded.seed());
         }
     }
 }
 
+/// How a column of a key is hashed: by a seed and kernels, and whether
+/// its character strings whole, as a column grouped unpadded.
+type How<'a> = (&'a Seed, &'a dyn Kernels, bool);
+
 /// Writes to `out`, emptied first, the hash of each row given, `rows` or
 /// all, of the column at `c` of `batch`: an integer's of scale 0 and a
 /// text's by the kernels, every other's as its cell's.
-fn hash_column((batch, c, rows): (&Batch, usize, Option<&[u32]>), (seed, kernels): (&Seed, &dyn Kernels), out: &mut Vec<u64>) {
+fn hash_column((batch, c, rows): (&Batch, usize, Option<&[u32]>), (seed, kernels, unpadded): How<'_>, out: &mut Vec<u64>) {
     out.clear();
     let given = rows.map_or(batch.rows, <[u32]>::len);
     let places = || (0..given).map(|n| crate::storage::sel::nth(rows, n));
@@ -207,7 +250,12 @@ fn hash_column((batch, c, rows): (&Batch, usize, Option<&[u32]>), (seed, kernels
         return;
     }
     if let Some(Column::Texts(texts)) = batch.columns.get(c) {
-        return hash_texts((texts, rows), (seed, kernels), out);
+        return hash_texts((texts, rows), (seed, kernels, unpadded), out);
+    }
+    if unpadded {
+        // Whatever vector holds a string, it hashes whole.
+        out.extend(places().map(|r| seed.whole(batch.cell(c, r))));
+        return;
     }
     out.extend(places().map(|r| seed.cell(batch.cell(c, r))));
 }
@@ -216,7 +264,15 @@ fn hash_column((batch, c, rows): (&Batch, usize, Option<&[u32]>), (seed, kernels
 /// as `Seed::text` hashes one, by the kernel: of texts coded by a store's
 /// dictionaries, each entry hashed once and each row's taken by its code;
 /// a null's the null's hash.
-fn hash_texts((texts, rows): (&Texts, Option<&[u32]>), (seed, kernels): (&Seed, &dyn Kernels), out: &mut Vec<u64>) {
+fn hash_texts((texts, rows): (&Texts, Option<&[u32]>), (seed, kernels, unpadded): How<'_>, out: &mut Vec<u64>) {
+    let by_kernel = |given: (&[u8], &[usize]), sel: Option<&[u32]>, into: &mut Vec<u64>| {
+        if unpadded {
+            kernels.hash_texts_unpadded(given, &seed.seeded, sel, into);
+        } else {
+            kernels.hash_texts(given, &seed.seeded, sel, into);
+        }
+    };
+    let one = |text: &str| if unpadded { seed.bytes(text.as_bytes()) } else { seed.text(text) };
     let given = rows.map_or(texts.len(), <[u32]>::len);
     let places = || (0..given).map(|n| crate::storage::sel::nth(rows, n));
     match &texts.coded {
@@ -226,13 +282,13 @@ fn hash_texts((texts, rows): (&Texts, Option<&[u32]>), (seed, kernels): (&Seed, 
             let entry = |r: usize| coded.codes.get(r).and_then(|&e| usize::try_from(e).ok());
             if coded.entries.len() <= given {
                 let mut entries = Vec::new();
-                kernels.hash_texts((coded.entries.text.as_bytes(), &coded.entries.ends), &seed.seeded, None, &mut entries);
+                by_kernel((coded.entries.text.as_bytes(), &coded.entries.ends), None, &mut entries);
                 out.extend(places().map(|r| entry(r).and_then(|e| entries.get(e)).copied().unwrap_or(0)));
             } else {
-                out.extend(places().map(|r| seed.text(entry(r).and_then(|e| coded.entries.get(e)).unwrap_or(""))));
+                out.extend(places().map(|r| one(entry(r).and_then(|e| coded.entries.get(e)).unwrap_or(""))));
             }
         }
-        None => kernels.hash_texts((texts.text.as_bytes(), &texts.ends), &seed.seeded, rows, out),
+        None => by_kernel((texts.text.as_bytes(), &texts.ends), rows, out),
     }
     if let Some(nulls) = &texts.nulls {
         out.iter_mut().zip(places()).filter(|&(_, r)| nulls.get(r)).for_each(|(h, _)| *h = seed.null());

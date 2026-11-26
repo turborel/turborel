@@ -170,8 +170,16 @@ fn liked(e: Expr, collation: &CollationRef) -> Expr {
 /// [ISO/IEC 9075-2:2023 §8.5] LIKE of `operands`, the match value, the
 /// pattern and the escape character if one was given, under `collation`:
 /// by each character folded if they compare one at a time, otherwise by
-/// substrings equal under it (IA060).
+/// substrings equal under it (IA060). LIKE is by the collation's NO PAD
+/// equivalent [§8.5 SR3d], so one that compares each character as itself
+/// folds nothing, whatever its pad characteristic: the operands stay as
+/// they are, a constant pattern a constant still (RULES.md D1183).
 pub(super) fn like_under(operands: Vec<Expr>, collation: &CollationRef) -> Cond {
+    if collation.is_scalar() {
+        let mut bare = operands.into_iter();
+        let (matched, against) = (bare.next().unwrap_or(Expr::Const(Value::Null)), bare.next().unwrap_or(Expr::Const(Value::Null)));
+        return Cond::Like(matched, against, bare.next());
+    }
     if collation.collation.fold('a').is_some() {
         let mut folded = operands.into_iter().map(|e| liked(e, collation));
         let (matched, against) = (folded.next().unwrap_or(Expr::Const(Value::Null)), folded.next().unwrap_or(Expr::Const(Value::Null)));
