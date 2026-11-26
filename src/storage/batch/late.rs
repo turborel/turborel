@@ -16,7 +16,7 @@
 use std::sync::{Arc, OnceLock};
 
 use super::mask::index;
-use super::{Batch, Column, Value};
+use super::{Batch, Column, Mask, Texts, Value};
 use crate::error::Result;
 
 /// \[DESIGN\] (RULES.md D361) Where a late column's values are decoded
@@ -129,7 +129,13 @@ impl Late {
     /// As `LateSource::decode`.
     fn kept(&self, rows: &[u32], kernels: &dyn crate::kernels::Kernels) -> Result<Column> {
         let wanted: Vec<u32> = rows.iter().filter_map(|&r| self.positions.get(index(r)).copied()).collect();
-        let decoded = self.source.decode(self.column, &wanted)?;
+        let mut decoded = self.source.decode(self.column, &wanted)?;
+        // Texts are laid out over the rows as decoded (RULES.md D1169).
+        if let Column::Texts(texts) = &mut decoded
+            && texts.coded.is_none()
+        {
+            return Ok(Column::Texts(spread(std::mem::take(texts), rows, self.len())));
+        }
         let mut picks = vec![super::NO_ROW; self.len()];
         let mut next = 0_u32;
         for &r in rows {
@@ -173,6 +179,30 @@ impl Late {
     pub fn values(&self) -> &[Value] {
         self.made().map_or(&[][..], Column::values)
     }
+}
+
+/// \[DESIGN\] (RULES.md D1169) `texts`, those of the rows `rows` kept,
+/// ascending and each once, laid out over `len` rows, the others null: the
+/// text as it was decoded, each row's end that of the last row kept at or
+/// before it, so no text is copied, as a gathering of them would copy
+/// each. Rows past `len` were not decoded and are left out.
+fn spread(texts: Texts, rows: &[u32], len: usize) -> Texts {
+    let (mut ends, mut nulls) = (Vec::with_capacity(len), Mask::none(len));
+    let mut kept = rows.iter().map(|&r| index(r)).filter(|&r| r < len).peekable();
+    let (mut k, mut end) = (0_usize, 0_usize);
+    for r in 0..len {
+        if kept.next_if_eq(&r).is_some() {
+            end = texts.ends.get(k).copied().unwrap_or(end);
+            if texts.is_null(k) {
+                nulls.set(r);
+            }
+            k = k.saturating_add(1);
+        } else {
+            nulls.set(r);
+        }
+        ends.push(end);
+    }
+    Texts::new(texts.text, ends, nulls.any().then_some(nulls))
 }
 
 impl Batch {

@@ -81,3 +81,39 @@ fn rows_kept_in_order_are_decoded_of_their_places_alone() {
     let joined = late.gathered(&[Some(4), Some(1)]);
     assert_eq!(shown(&joined.resolved(Some(&[0, 1]), &crate::kernels::Portable).unwrap()), ["90", "40"], "a join's picks");
 }
+
+/// A source of texts: of a place, its number spelled with as many
+/// letters, null of place 3; of place 0 an empty text.
+struct Spelled;
+
+impl LateSource for Spelled {
+    fn decode(&self, _column: usize, positions: &[u32]) -> Result<Column> {
+        let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Vec::new());
+        for &p in positions {
+            if p != 3 {
+                text.push_str(&"é".repeat(usize::try_from(p).unwrap()));
+            }
+            ends.push(text.len());
+            nulls.push(p == 3);
+        }
+        Ok(Column::Texts(Texts::new(text, ends, Some(crate::storage::Mask::from_bools(&nulls)))))
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1169: of a column no join gathered, the
+/// texts of the rows kept, ascending and each once, are laid out over the
+/// rows as decoded, the others null: a null kept null, an empty text kept
+/// empty, the first and last rows, a row past the end left out; and as
+/// the rows of any order give them.
+#[test]
+fn texts_of_rows_kept_in_order_are_laid_out_as_decoded() {
+    let late = Late::new(Arc::new(Spelled), 0, vec![0, 2, 3, 5, 1].into());
+    let resolved = |rows: &[u32]| shown(&late.resolved(Some(rows), &crate::kernels::Portable).unwrap());
+    let laid = late.resolved(Some(&[0, 1, 2, 4, 9]), &crate::kernels::Portable).unwrap();
+    let Column::Texts(texts) = &laid else { panic!("texts") };
+    assert_eq!(texts.text, "ééé", "the text as decoded, none copied twice");
+    assert_eq!(shown(&laid), ["", "éé", "NULL", "NULL", "é"]);
+    assert_eq!(resolved(&[4, 0, 1, 2]), shown(&laid), "out of order, alike");
+    assert_eq!(resolved(&[3]), ["NULL", "NULL", "NULL", "ééééé", "NULL"]);
+    assert_eq!(resolved(&[]), ["NULL"; 5]);
+}

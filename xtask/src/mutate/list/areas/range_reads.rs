@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 21] = [
+pub const RANGE_READS: [Mutation; 24] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -221,5 +221,35 @@ pub const RANGE_READS: [Mutation; 21] = [
         replacement: "        if live.iter().all(|c| reads.contains(c)) || reads.len() < usize::MAX {",
         integration: &[],
         unit: &["physical::blind::pruned::tests::a_joins_keys_are_given_null_after_it"],
+    },
+    Mutation {
+        name: "fsst-texts-past-their-ends",
+        package: Package::Core,
+        breaks: "each text of a range decoded in place is said to end a byte short, so its last byte is the next one's (D1168)",
+        file: "src/engine/columns/fsst.rs",
+        original: "            ends.push(text.len());",
+        replacement: "            ends.push(text.len().saturating_sub(1));",
+        integration: &[],
+        unit: &["engine::columns::fsst::tests::a_range_of_texts_is_decoded_in_place"],
+    },
+    Mutation {
+        name: "texts-ends-unchecked",
+        package: Package::Core,
+        breaks: "texts are taken whatever their ends split, so a text ending within a character is given (D1168)",
+        file: "src/engine/columns/scan.rs",
+        original: "    ends.iter().all(|&end| text.is_char_boundary(end)).then(|| Texts::new(text, ends, nulls))",
+        replacement: "    ends.iter().any(|&end| text.is_char_boundary(end)).then(|| Texts::new(text, ends, nulls))",
+        integration: &[],
+        unit: &["engine::columns::fsst::tests::a_range_of_texts_is_decoded_in_place"],
+    },
+    Mutation {
+        name: "late-texts-kept-unnulled",
+        package: Package::Core,
+        breaks: "a row not kept is laid out with an empty text, not a null, as texts kept are laid out as decoded (D1169)",
+        file: "src/storage/batch/late.rs",
+        original: "        } else {\n            nulls.set(r);\n        }",
+        replacement: "        } else {\n        }",
+        integration: &[],
+        unit: &["storage::batch::late::tests::texts_of_rows_kept_in_order_are_laid_out_as_decoded"],
     },
 ];

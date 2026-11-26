@@ -741,6 +741,8 @@ verification approach DO-178C expects (§8).
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
 | D1167 | Each operator carries only the columns read above it |
+| D1168 | A chunk's texts are decoded in place, their bytes reserved at once and checked UTF-8 once |
+| D1169 | The texts of rows kept in order are laid out over a batch's rows as decoded |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 
@@ -20126,6 +20128,37 @@ The plan is pruned in place, so the walk of a deep plan holds little
 on the stack. The texts gathered of a vector are found once and copied
 into a buffer made at their length (`storage/batch/gathered.rs`), not
 one grown as they are copied.
+
+#### D1168. A chunk's texts are decoded in place, their bytes reserved at once and checked UTF-8 once
+
+A run of a chunk's texts compressed by their symbols (D31) was decoded
+into a vector made for the run, grown as each code was copied, checked
+UTF-8, then copied into the batch's text. A filter's positions of few
+rows read many short runs, each with its own vector. Each text's bytes
+were copied twice and the vectors grown and let go for each run.
+
+The bytes of a column's texts read for a batch are now gathered in one
+vector (`engine/columns/scan.rs`). A run's codes are measured first, by
+their symbols' lengths, and the vector made room for them once, so each
+code is a copy of a word of 8 bytes and a cut, none of which grows it
+(`engine/columns/fsst.rs`). Texts of varying fields not padded are
+pushed as written. The vector is checked UTF-8 once, as it becomes the
+batch's text, and each text's end on a character's boundary, so each is
+UTF-8 alone. A text that is not makes the read give way to one value at
+a time, as before, which refuses it.
+
+#### D1169. The texts of rows kept in order are laid out over a batch's rows as decoded
+
+A late column (D361) of rows a filter kept, ascending and each once
+(D1162), was decoded of those rows' places, then gathered to the batch's
+rows, the others null. A gathering of texts copies each kept text into a
+buffer of its own, so each was copied once more after its decoding.
+
+Texts so decoded are now laid out over the batch's rows as they are
+(`storage/batch/late.rs`): the text is the one decoded, each row's end
+is that of the last row kept at or before it, and a row not kept is
+null. No text is copied. Texts of a store's dictionaries are gathered
+by their codes, as before, and so is a column a join gathered.
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
