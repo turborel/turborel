@@ -168,7 +168,7 @@ impl RowTable {
 
     /// The ranges of row ids, first and last, of `entry`'s group over which
     /// the tree may have entries, in order.
-    pub(super) fn shadow_ranges(&self, entry: &Entry) -> Vec<(RowId, RowId)> {
+    pub(in crate::engine::rows) fn shadow_ranges(&self, entry: &Entry) -> Vec<(RowId, RowId)> {
         if self.frozen.trust_bits.load(Ordering::Acquire) { entry.shadow.ranges() } else { vec![(entry.summary.first, entry.summary.last)] }
     }
 

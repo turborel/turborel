@@ -75,7 +75,18 @@ impl GroupTable {
     /// # Errors
     ///
     /// SQLCODE -910 if an accumulator writes no state.
-    pub(in crate::exec) fn made(mut self, parts: usize, lanes: &[usize]) -> Result<Made> {
+    pub(in crate::exec) fn made(self, parts: usize, lanes: &[usize]) -> Result<Made> {
+        self.made_of(parts, lanes, &[])
+    }
+
+    /// As `made`, of its groups `left` does not mark alone, those it marks
+    /// finished elsewhere (RULES.md D1121).
+    ///
+    /// # Errors
+    ///
+    /// As `made`.
+    pub(in crate::exec) fn made_of(mut self, parts: usize, lanes: &[usize], left: &[bool]) -> Result<Made> {
+        let gone = |g: usize| left.get(g).copied().unwrap_or(false);
         let by: Vec<u64> = if lanes.is_empty() {
             std::mem::take(&mut self.hashes)
         } else {
@@ -84,7 +95,7 @@ impl GroupTable {
         // Counted, then placed: each partition's places one after another
         // in one vector made once (RULES.md D1110).
         let mut starts = vec![0_u32; parts.saturating_add(1)];
-        for &hash in &by {
+        for (_, &hash) in by.iter().enumerate().filter(|&(g, _)| !gone(g)) {
             if let Some(count) = starts.get_mut(part_of(hash, parts).saturating_add(1)) {
                 *count = count.saturating_add(1);
             }
@@ -94,8 +105,8 @@ impl GroupTable {
             sum = sum.saturating_add(*start);
             *start = sum;
         }
-        let (mut places, mut next) = (vec![0_u32; by.len()], starts.clone());
-        for (g, &hash) in by.iter().enumerate() {
+        let (mut places, mut next) = (vec![0_u32; crate::storage::mask::index(sum)], starts.clone());
+        for (g, &hash) in by.iter().enumerate().filter(|&(g, _)| !gone(g)) {
             let Some(at) = next.get_mut(part_of(hash, parts)) else { continue };
             if let Some(place) = places.get_mut(crate::storage::mask::index(*at)) {
                 *place = narrow(g);

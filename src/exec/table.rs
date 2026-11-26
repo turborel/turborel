@@ -429,9 +429,23 @@ impl GroupTable {
     /// # Errors
     ///
     /// As a set function's `finish`, or `kept`.
-    pub(in crate::exec) fn finished_if(&self, mut kept: impl FnMut(&Row) -> Result<bool>) -> Result<Vec<(u64, Row)>> {
+    pub(in crate::exec) fn finished_if(&self, kept: impl FnMut(&Row) -> Result<bool>) -> Result<Vec<(u64, Row)>> {
+        self.finished_if_among(None, kept)
+    }
+
+    /// As `finished_if`, of the groups `among` marks alone, if given
+    /// (RULES.md D1121).
+    ///
+    /// # Errors
+    ///
+    /// As `finished_if`.
+    pub(in crate::exec) fn finished_if_among(
+        &self,
+        among: Option<&[bool]>,
+        mut kept: impl FnMut(&Row) -> Result<bool>,
+    ) -> Result<Vec<(u64, Row)>> {
         let (mut groups, mut row) = (Vec::new(), Row::new());
-        for g in 0..self.len() {
+        for g in (0..self.len()).filter(|&g| marked(among, g)) {
             row.clear();
             self.keys.values_into(g, &mut row);
             for states in &self.states {
@@ -456,10 +470,24 @@ impl GroupTable {
     /// # Errors
     ///
     /// As finishing a set function's value fails.
-    pub(in crate::exec) fn finished_above(&self, (op, bound): (crate::value::CompOp, &crate::value::Value)) -> Result<Vec<(u64, Row)>> {
+    pub(in crate::exec) fn finished_above(&self, bound: (crate::value::CompOp, &crate::value::Value)) -> Result<Vec<(u64, Row)>> {
+        self.finished_above_among(None, bound)
+    }
+
+    /// As `finished_above`, of the groups `among` marks alone, if given
+    /// (RULES.md D1121).
+    ///
+    /// # Errors
+    ///
+    /// As `finished_above`.
+    pub(in crate::exec) fn finished_above_among(
+        &self,
+        among: Option<&[bool]>,
+        (op, bound): (crate::value::CompOp, &crate::value::Value),
+    ) -> Result<Vec<(u64, Row)>> {
         let [states] = self.states.as_slice() else { return Err(super::broken("a condition of one set function's value of more")) };
         let mut groups = Vec::new();
-        for g in 0..self.len() {
+        for g in (0..self.len()).filter(|&g| marked(among, g)) {
             let value = states.finish(g)?;
             if super::eval::compared_read(&value, op, bound)? != crate::logical::Truth::True {
                 continue;
@@ -469,6 +497,20 @@ impl GroupTable {
             groups.push((self.first(g), row));
         }
         Ok(groups)
+    }
+}
+
+/// Whether group `g` is among those `among` marks, every group of none.
+fn marked(among: Option<&[bool]>, g: usize) -> bool {
+    among.is_none_or(|marks| marks.get(g).copied().unwrap_or(false))
+}
+
+impl GroupTable {
+    /// \[DESIGN\] (RULES.md D1121) Whether each group's value of grouping
+    /// column `lane` lies strictly between `bounds`, as `Keys::inside`
+    /// says; none of a column of values of another kind.
+    pub(in crate::exec) fn inside(&self, lane: usize, bounds: (&crate::value::Value, &crate::value::Value)) -> Option<Vec<bool>> {
+        self.keys.inside(lane, bounds)
     }
 }
 

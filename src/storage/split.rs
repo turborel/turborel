@@ -6,6 +6,7 @@
 //! that asked for them sees it.
 
 use super::{Batches, Rows};
+use crate::value::Value;
 
 /// \[DESIGN\] A scan of a table split into morsels (`TableStorage::split`).
 /// It holds what the scan holds, its reader and the table's parts as they
@@ -28,6 +29,16 @@ pub trait Split: Send + Sync {
     /// hold the rows `morsel` gives, in its order.
     fn morsel_batches(&self, n: usize, late: &[usize]) -> Option<Batches> {
         let _ = (n, late);
+        None
+    }
+
+    /// \[DESIGN\] (RULES.md D1121) The least and greatest values not null
+    /// of column `column`, by its place in the table, that morsel `n`'s rows
+    /// may hold, as zones kept of its rows bound them, the values its scan
+    /// gives each within them: `Some(None)` if none of them holds one; none,
+    /// the default, if it cannot bound them.
+    fn bounds(&self, n: usize, column: usize) -> Option<Option<(Value, Value)>> {
+        let _ = (n, column);
         None
     }
 }
