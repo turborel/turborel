@@ -29,7 +29,11 @@ fn made(fs: &Arc<dyn FileSystem>) {
     let s = db.session("W");
     let pad = "x".repeat(90);
     for chunk in (0..100_000_usize).collect::<Vec<_>>().chunks(1_000) {
-        let rows = chunk.iter().map(|i| format!("({i}, {}, '{pad}{i:08}')", (i * 7_919) % 100_000)).collect::<Vec<_>>().join(", ");
+        let rows = chunk
+            .iter()
+            .map(|i| format!("({i}, {}, '{pad}{i:08}')", i.wrapping_mul(7_919).rem_euclid(100_000)))
+            .collect::<Vec<_>>()
+            .join(", ");
         s.run(&format!("INSERT INTO T VALUES {rows}")).unwrap();
     }
     s.commit().unwrap();

@@ -115,20 +115,21 @@ impl BufferPool {
 mod tests {
     use super::*;
 
-    /// `pages` pages of a pager file of their own on `fs`, written back,
+    /// `count` pages of a pager file of their own on `fs`, written back,
     /// so a pool they are added to reads each from the file; and their
     /// numbers.
     fn written(
         fs: &crate::disk::memory::MemoryFileSystem,
         name: &str,
-        pages: usize,
+        count: usize,
     ) -> (std::sync::Arc<crate::disk::pager::Pager>, Vec<u64>) {
         let crc = std::sync::Arc::new(crate::hash::crc::Crc::new(crate::hash::crc::CRC32_ISCSI).unwrap());
         let pipeline = crate::disk::encoding::Pipeline::none();
         let pager = std::sync::Arc::new(crate::disk::pager::Pager::create(fs, std::path::Path::new(name), crc, pipeline, 4096).unwrap());
-        let pool = BufferPool::new(pages + 1, Box::new(super::super::Clock::new(pages + 1))).unwrap();
+        let frames = count.saturating_add(1);
+        let pool = BufferPool::new(frames, Box::new(super::super::Clock::new(frames))).unwrap();
         let file = pool.add_pager(std::sync::Arc::clone(&pager));
-        let ids = (0..pages)
+        let ids = (0..count)
             .map(|n| {
                 let (id, mut page) = pool.new_page(file).unwrap();
                 page.extend_from_slice(&n.to_le_bytes());
