@@ -1,7 +1,7 @@
 //! The mutations of the buffer pool's and pager's I/O path (RULES.md
 //! R-TEST-9, D591): the pages in use read with no lock, as the free list
 //! holds them through allocation, freeing, the free list's record and
-//! open.
+//! open; and the free runs kept by size (D1122).
 
 use super::super::{Mutation, Package};
 
@@ -9,7 +9,7 @@ use super::super::{Mutation, Package};
 const IN_USE: &str = "pages::pages_in_use_are_those_the_free_list_holds";
 
 /// Mechanisms of the I/O path whose removal must fail their tests.
-pub const IO_PATH: [Mutation; 5] = [
+pub const IO_PATH: [Mutation; 6] = [
     Mutation {
         name: "io-freed-still-in-use",
         package: Package::Core,
@@ -59,5 +59,15 @@ pub const IO_PATH: [Mutation; 5] = [
         replacement: "            if e.start.0 < last_end.min(0) {",
         integration: &[],
         unit: &["disk::pager::free::tests::a_call_freeing_a_page_twice_frees_nothing"],
+    },
+    Mutation {
+        name: "io-free-runs-by-size-stale",
+        package: Package::Core,
+        breaks: "a free run removed stays among the runs by size, so a later request is given pages in use",
+        file: "src/disk/pager/free.rs",
+        original: "        self.by_size.remove(&(count, start));\n",
+        replacement: "",
+        integration: &[],
+        unit: &["disk::pager::free::tests::runs_kept_by_size_stay_the_runs"],
     },
 ];
