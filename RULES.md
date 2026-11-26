@@ -770,6 +770,7 @@ verification approach DO-178C expects (§8).
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
+| D1227 | A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
 ### The project
@@ -21117,6 +21118,34 @@ wait for its own thread.
 A stop that returns an error, or a close refused after it, is therefore
 a defect and never the node's ordinary end, and a caller has no reason
 to pass over either.
+
+#### D1227. A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read
+
+A window function split by row, EXCEPT and INTERSECT run in parallel
+split their rows into 64 partitions by key, each held in a list of its
+share of the grant that spills, and run the serial operator over each
+partition on a thread, in a share of the grant too (D295). The
+partitions' results, though, were each gathered whole as rows and
+merged into one more vector of every row before the statement read the
+first, none of it charged to the grant. A window over a table of a
+hundred million rows held them all twice at the end, past the memory
+the server was given, at any grant.
+
+Each partition's thread now pushes its result into a list of its own
+share of the grant, which spills past it as the partition's input does
+(`exec/parallel/partitioned.rs`), and the statement's thread merges the
+lists as it reads them (`partitioned/merged.rs`): of each list's next
+row, the least by the window's sort keys, or, of a set operation, by the
+place of the first operand's row carried after its columns, a tie taken
+from the earlier partition. A window's partitions are never tied, as
+its sort keys begin with its partitioning, and the place is a number
+each row has alone, so the rows come in the order the plan alone gives
+them. No more of the result is held at once than the lists hold in
+memory, one grant in all, and a row of each.
+
+A window computed over batches (D560) computes its partitions in
+pieces up to its work area and gives them as they are done; it gathers
+no partition's result, and is as it was.
 
 #### D1230. A structure's tally counts a miss only when the pool evicted a page for it
 

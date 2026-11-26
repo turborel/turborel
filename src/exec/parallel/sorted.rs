@@ -27,7 +27,6 @@
 //! is still sorted by the threads, and its rows are read once.
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex};
 
 use super::charged::{Taken, Tally, gather_batches, gather_rows};
@@ -342,57 +341,4 @@ fn splitters(runs: &[Vec<Row>], keys: &[SortKey], ranges: usize) -> Vec<Row> {
     // A splitter equal to the one before cuts no range.
     cuts.dedup_by(|a, b| compare_rows(keys, a, b) == Ordering::Equal);
     cuts
-}
-
-/// The head of a run in a merge: its next row, and the run's place.
-struct Head<'a> {
-    row: &'a Row,
-    run: usize,
-    at: usize,
-    keys: &'a [SortKey],
-}
-
-impl Ord for Head<'_> {
-    /// Reversed, so the heap's greatest is the least row, of the earliest
-    /// run of a tie.
-    fn cmp(&self, other: &Self) -> Ordering {
-        compare_rows(self.keys, other.row, self.row).then_with(|| other.run.cmp(&self.run))
-    }
-}
-
-impl PartialOrd for Head<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for Head<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        self.cmp(other) == Ordering::Equal
-    }
-}
-
-impl Eq for Head<'_> {}
-
-/// The rows of `outs`, each sorted by `keys`, merged, a tie taken from
-/// the earlier.
-pub(super) fn merge_by(outs: &[Vec<Row>], keys: &[SortKey]) -> Vec<Row> {
-    let slices: Vec<&[Row]> = outs.iter().map(Vec::as_slice).collect();
-    merge(&slices, keys)
-}
-
-/// The rows of `slices`, each sorted by `keys`, merged, a tie taken from
-/// the earlier slice.
-fn merge(slices: &[&[Row]], keys: &[SortKey]) -> Vec<Row> {
-    let mut out = Vec::with_capacity(slices.iter().map(|s| s.len()).sum());
-    let mut heap: BinaryHeap<Head<'_>> =
-        slices.iter().enumerate().filter_map(|(run, s)| Some(Head { row: s.first()?, run, at: 0, keys })).collect();
-    while let Some(Head { row: least, run, at, .. }) = heap.pop() {
-        out.push(least.clone());
-        let next = at.saturating_add(1);
-        if let Some(row) = slices.get(run).and_then(|s| s.get(next)) {
-            heap.push(Head { row, run, at: next, keys });
-        }
-    }
-    out
 }

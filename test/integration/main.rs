@@ -426,6 +426,7 @@ mod spilled_checks;
 mod spilled_order;
 mod spilled_rows;
 mod spilled_sorts;
+mod spilled_windows;
 mod spilling;
 mod standby;
 mod statement_ends;

@@ -30,9 +30,14 @@ const BUILDS: &str = "parallel::joins_build_by_batch";
 const JOINED: &str = "storage::batch::joined::tests::datetimes_and_truth_values_stay_vectors_of_words";
 /// The unit test of grants inside a statement's grant.
 const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
+/// The unit test of partitions' results merged as read back from lists
+/// that spilled.
+const MERGED: &str = "exec::parallel::partitioned::merged::tests::lists_spilled_are_merged_as_read_back";
+/// The test of windows and set operations at the smallest grant.
+const SPILLED_WINDOWS: &str = "spilled_windows::partitions_past_the_grant_give_their_results_in_order";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 25] = [
+pub const PARALLEL: [Mutation; 26] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -76,12 +81,12 @@ pub const PARALLEL: [Mutation; 25] = [
     Mutation {
         name: "parallel-sort-ties-later",
         package: Package::Core,
-        breaks: "the merge of a sort's runs takes a tie from the later run, peers out of their input order",
-        file: "src/exec/parallel/sorted.rs",
+        breaks: "the merge of partitions' results takes a tie from the later partition, peers out of their input order (RULES.md D1227)",
+        file: "src/exec/parallel/partitioned/merged.rs",
         original: ".then_with(|| other.run.cmp(&self.run))",
         replacement: ".then_with(|| self.run.cmp(&other.run))",
-        integration: &[SAME_ROWS],
-        unit: &[],
+        integration: &[],
+        unit: &[MERGED],
     },
     Mutation {
         name: "parallel-probe-reversed",
@@ -108,8 +113,8 @@ pub const PARALLEL: [Mutation; 25] = [
         package: Package::Core,
         breaks: "a window's partitions are given one after another, not merged by their sort keys",
         file: "src/exec/parallel/partitioned.rs",
-        original: "merge_by(&outs, &keys)",
-        replacement: "merge_by(&outs, &[])",
+        original: "Merged::of(outs, &keys)",
+        replacement: "Merged::of(outs, &[])",
         integration: &[SAME_ROWS],
         unit: &[],
     },
@@ -281,6 +286,16 @@ pub const PARALLEL: [Mutation; 25] = [
         original: "Ok(Taken::Past) => again(m),",
         replacement: "Ok(Taken::Past) => Box::new(std::iter::empty()),",
         integration: &["held_left::a_left_held_by_its_parts_past_the_work_area_is_read_once"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-merged-first-list-skipped",
+        package: Package::Core,
+        breaks: "the first partition's result is left out of the merge (RULES.md D1227)",
+        file: "src/exec/parallel/partitioned/merged.rs",
+        original: "for run in 0..merged.runs.len() {",
+        replacement: "for run in 1..merged.runs.len() {",
+        integration: &[SPILLED_WINDOWS],
         unit: &[],
     },
 ];
