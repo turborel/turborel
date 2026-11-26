@@ -47,7 +47,7 @@ impl Batched {
         }
         let shadowed = positions.is_some();
         let given = positions.map(|p| p.iter().map(|&q| q.saturating_sub(from)).collect());
-        let pages = self.table.group_pages()?;
+        let pages = self.table.pages_for(&group)?;
         let types = self.table.format.types();
         let judged = self.judgment.judge(&group, (&pages, &mut self.prepared), (types, (from, to)), given)?;
         let rows = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
@@ -94,7 +94,7 @@ impl Batched {
     /// many rows of, as those are decoded as cheaply whole as late.
     fn dense(&mut self, group: &Group, (from, to): (u32, u32), (mut decoded, late): (Vec<(usize, Column)>, bool)) -> Result<Batch> {
         let rows = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-        let pages = self.table.group_pages()?;
+        let pages = self.table.pages_for(group)?;
         let types = self.table.format.types();
         let mut places: Option<Arc<[u32]>> = None;
         let mut batch = Batch { columns: Vec::with_capacity(self.columns.len()), rows };
@@ -127,7 +127,7 @@ impl Batched {
     /// of `held` as they are, each other column decoded at them alone,
     /// late ones not decoded.
     fn at_positions(&mut self, group: &Group, positions: &[u32], mut held: Vec<(usize, Column)>) -> Result<Batch> {
-        let pages = self.table.group_pages()?;
+        let pages = self.table.pages_for(group)?;
         let types = self.table.format.types();
         let mut places: Option<Arc<[u32]>> = None;
         let mut batch = Batch { columns: Vec::with_capacity(self.columns.len()), rows: positions.len() };

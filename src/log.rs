@@ -135,6 +135,17 @@ pub trait Log: Send + Sync {
     fn append_run(&self, bytes: &[u8], ends: &[usize]) -> Result<Vec<Lsn>> {
         self.append_all(&run_records(bytes, ends).map(<[u8]>::to_vec).collect::<Vec<_>>())
     }
+    /// \[DESIGN\] (RULES.md D1146) Appends one record whose bytes are
+    /// `parts` end to end, as `append` appends one: a load's group, its
+    /// head and its extent, which a log on disk writes with no copy made.
+    /// Default: `append` of them joined.
+    ///
+    /// # Errors
+    ///
+    /// As `append`.
+    fn append_parts(&self, parts: &[&[u8]]) -> Result<Lsn> {
+        self.append(&parts.concat())
+    }
     /// Makes the record at `through`, and every earlier one, durable.
     ///
     /// # Errors

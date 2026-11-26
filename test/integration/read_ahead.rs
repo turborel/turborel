@@ -130,11 +130,11 @@ fn a_failed_read_ahead_reads_nothing() {
     assert_eq!(pool.counts().misses, 2);
 }
 
-/// Verifies: [DESIGN] RULES.md D30, D38, buffer pool: a read-ahead stops at
+/// Verifies: [DESIGN] RULES.md D30, D38, D1146, buffer pool: a read-ahead stops at
 /// the first frame it cannot have: none when every frame is held, refused
 /// (SQLCODE -918) for a read, never for it; none when the dirty page a
-/// frame holds cannot be written back, which stays in the pool, dirty; none
-/// of a block file. A page torn on the file is left to the read that wants
+/// frame holds cannot be written back, which stays in the pool, dirty. A
+/// block file's block is read ahead as a page is (D1146). A page torn on the file is left to the read that wants
 /// it, refused then (SQLCODE -916); a page of an encoded file is decoded.
 #[test]
 fn a_read_ahead_stops_where_it_cannot_go_on() {
@@ -159,7 +159,7 @@ fn a_read_ahead_stops_where_it_cannot_go_on() {
         Arc::new(BlockFile::create(&OsFileSystem, &scratch.path("b"), crc32c(), Pipeline::none(), BlockOptions::default()).unwrap());
     let block = blocks.append(b"block").unwrap();
     let of_blocks = pool.add_blocks(blocks);
-    assert_eq!(pool.read_ahead(of_blocks, block.0), 0, "a block file");
+    assert_eq!(pool.read_ahead(of_blocks, block.0), 1, "a block file's block");
 
     let torn = scratch.path("torn");
     let torn_pager = pager_on(&torn, Pipeline::none());

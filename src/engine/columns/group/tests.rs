@@ -10,6 +10,7 @@ use crate::engine::columns::scan::{candidates, read_candidates, rows};
 use crate::engine::{MEMORY_POOL_BYTES, memory_file};
 use crate::index::Probe;
 use crate::memory::MemoryBudget;
+use crate::storage::Row;
 use crate::storage::{Condition, Conjunct, Conjunction, Threshold};
 use crate::value::{CompOp, Decimal, Spelled};
 
@@ -93,6 +94,8 @@ fn groups_read_back() {
         pax: false,
         imprints: true,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     for (first, step) in [(100_u64, 1_u64), (7, 3)] {
         let group = written(&pages, (first, step), 4000);
@@ -140,6 +143,8 @@ fn scans_skip_chunks_a_condition_cannot_match() {
         pax: false,
         imprints: true,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let group = written(&pages, (1, 1), 4000);
     let between = Condition {
@@ -199,6 +204,8 @@ fn a_top_bound_skips_chunks_past_it() {
         pax: false,
         imprints: false,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let group = written(&pages, (1, 1), 4000);
     let read = |t: &Arc<Threshold>| {
@@ -236,8 +243,11 @@ fn what_groups_refuse() {
         pax: false,
         imprints: true,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
-    assert_eq!(Group::write(&pages, &TYPES, (&[], &[]), (&[], &[], &[])).err().map(|e| e.code), Some(Code::Api));
+    let none: &[Row] = &[];
+    assert_eq!(Group::write(&pages, &TYPES, (&[], none), (&[], &[], &[])).err().map(|e| e.code), Some(Code::Api));
     let wrong = vec![vec![Value::Char("x".into()), Value::Null, int(1)]];
     assert!(Group::write(&pages, &TYPES, (&[1], &wrong), (&[], &[], &[])).is_err(), "not of its types");
     let group = written(&pages, (1, 1), 10);
@@ -268,6 +278,8 @@ fn groups_of_rows_out_of_order_read_back() {
         pax: false,
         imprints: true,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let count = 4000_u64;
     let ids: Vec<RowId> = (0..count).map(|n| n.checked_mul(7).unwrap().checked_rem(count).unwrap().checked_add(100).unwrap()).collect();
@@ -309,6 +321,8 @@ fn groups_skip_parts_by_their_filters() {
         pax: false,
         imprints: false,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let ids: Vec<RowId> = (1..=4000_u64).collect();
     let all: Vec<Row> = (0..4000).map(row).collect();
@@ -355,6 +369,8 @@ fn summaries_read_back() {
         pax: false,
         imprints: true,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let group =
         Group::write(&pages, &TYPES, (&(1..=4000_u64).collect::<Vec<_>>(), &(0..4000).map(row).collect::<Vec<_>>()), (&[1], &[0], &[]))
@@ -372,10 +388,10 @@ fn summaries_read_back() {
     assert_eq!(code(&bytes[..bytes.len().saturating_sub(3)], &TYPES), Some(Code::Corrupt), "cut short");
     assert_eq!(code(&bytes, &TYPES[..2]), Some(Code::Corrupt), "other columns");
     let one = bytes.len() >> 1_u32;
-    // The first column's bounds flag: after header page, ids, rows, order
-    // of one, blooms of one, sketched of none, the layout, and the column
-    // count and its nulls.
-    let flag = 8 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + 4;
+    // The first column's bounds flag: after header page, extent, ids, rows,
+    // order of one, blooms of one, sketched of none, the layout, and the
+    // column count and its nulls.
+    let flag = 8 + 24 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4 + 1 + 4 + 4;
     let mut other = bytes[..one].to_vec();
     other[flag] = 2;
     assert_eq!(code(&other, &TYPES), Some(Code::Corrupt), "bounds of another format");
@@ -406,6 +422,8 @@ fn pax_groups_read_back_as_columns_do() {
         pax: false,
         imprints: false,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let pax = Pages { pax: true, ..columns };
     let (by_columns, hybrid) = (written(&columns, (100, 1), 4000), written(&pax, (100, 1), 4000));

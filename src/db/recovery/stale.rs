@@ -46,6 +46,7 @@ impl Database {
             Change::LobStale { .. }
             | Change::Insert { .. }
             | Change::InsertRows { .. }
+            | Change::GroupLoaded(_)
             | Change::Update { .. }
             | Change::Delete { .. }
             | Change::Commit { .. }
@@ -105,7 +106,16 @@ impl Database {
         let st = self.snapshot()?;
         let (Some(ix), Ok(index)) = (st.catalog.index(name), st.index_of(name)) else { return Ok(()) };
         take_back(&**index, key, row)?;
-        let change = RowChange { lsn: Lsn(0), tx: NO_TRANSACTION, table: ix.table.clone(), generation: 0, row, before: None, after: None };
+        let change = RowChange {
+            lsn: Lsn(0),
+            tx: NO_TRANSACTION,
+            table: ix.table.clone(),
+            generation: 0,
+            row,
+            before: None,
+            after: None,
+            group: None,
+        };
         st.restore_entry(&change, &|d: &IndexDesc| d.name == name)
     }
 

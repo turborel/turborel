@@ -157,7 +157,7 @@ impl RowTable {
             discarded: AtomicBool::new(false),
             sealing,
             kernels: files.kernels(),
-            frozen: Frozen::new(options.columns),
+            frozen: Frozen::new(options.columns).placed((files.segments.as_ref(), &files.work), meta.0),
             freezes: Arc::clone(&files.freezes),
             zones,
             headers: Arc::clone(&files.headers),

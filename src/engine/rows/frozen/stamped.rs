@@ -23,7 +23,7 @@
 //!             each group's summary (`group/header.rs`)
 //! ```
 
-use crate::engine::rows::options::LoadTo;
+use crate::engine::rows::options::{Columns, LoadTo};
 use std::mem;
 use std::ops::Bound;
 use std::sync::Arc;
@@ -31,13 +31,14 @@ use std::sync::atomic::Ordering;
 
 use super::freeze::ordered;
 use super::{Directory, Entry};
-use crate::engine::columns::group::Group;
+use crate::engine::columns::group::{Group, Pages};
 use crate::engine::rows::mvcc::Reader;
+use crate::engine::rows::sealing::Sealing;
 use crate::engine::rows::version::{Maker, Version};
 use crate::engine::rows::{RowTable, corrupt, key};
 use crate::engine::tree::Direction;
 use crate::error::Result;
-use crate::storage::{Loading, Row, RowId};
+use crate::storage::{Loaded, Loading, Row, RowId};
 use crate::sync::{lock_builtin, read, write};
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 
@@ -58,6 +59,9 @@ pub(in crate::engine::rows) struct Loads {
     /// Groups stored as made by a transaction open then, held apart until
     /// recovery settles them.
     doubtful: std::sync::Mutex<Vec<Arc<Entry>>>,
+    /// The segment each loading stream appends its groups to (RULES.md
+    /// D1146, `loaded.rs`).
+    pub(super) streams: std::sync::Mutex<Vec<(TxId, Arc<super::extents::Segment>)>>,
 }
 
 impl Entry {
@@ -226,6 +230,8 @@ impl RowTable {
             direct.swap_remove(at);
             self.frozen.loads.loading.store(direct.len(), Ordering::Release);
         }
+        drop(direct);
+        self.end_stream(tx);
     }
 
     /// Whether `tx`'s rows go straight to groups.
@@ -248,21 +254,27 @@ impl RowTable {
         Ok(())
     }
 
-    /// The group of `rows`, given `ids`, sorted as `columns` says, written.
-    fn group_from(&self, ids: Vec<RowId>, rows: &[Row], columns: &crate::engine::rows::options::Columns) -> Result<Group> {
+    /// The group of `rows`, given `ids`, sorted as `columns` says, written
+    /// to `pages`.
+    pub(super) fn group_from(&self, pages: &Pages<'_, Sealing>, ids: Vec<RowId>, rows: &[Row], columns: &Columns) -> Result<Group> {
         let (order, bloom, sketch) = (columns.order.places(), columns.bloom.places(), columns.sketch.places());
-        let pages = self.group_pages()?;
         if order.is_empty() {
-            return Group::write(&pages, self.format.types(), (&ids, rows), (&order, &bloom, &sketch));
+            return Group::write(pages, self.format.types(), (&ids, rows), (&order, &bloom, &sketch));
         }
-        let (ids, rows) = ordered(&columns.order, ids.into_iter().zip(rows.iter().cloned()).collect());
-        Group::write(&pages, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))
+        // [DESIGN] RULES.md D1145: the rows sorted where they are, by reference, none copied.
+        let (ids, rows) = ordered(&columns.order, ids.into_iter().zip(rows.iter()).collect());
+        Group::write(pages, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))
     }
 }
 
 impl Loading for RowTable {
-    fn begin_load(&self, tx: TxId) -> Result<Option<usize>> {
-        let Some(columns) = (*read(&self.frozen.columns)?).filter(|c| c.load == LoadTo::Groups) else { return Ok(None) };
+    fn begin_load(&self, tx: TxId, qualifies: bool) -> Result<Option<usize>> {
+        let to_groups = |c: &Columns| match c.load {
+            LoadTo::Groups => true,
+            LoadTo::Default => qualifies,
+            LoadTo::Tree => false,
+        };
+        let Some(columns) = (*read(&self.frozen.columns)?).filter(to_groups) else { return Ok(None) };
         let past = self.frozen.directory()?.last().map(|l| key(l.saturating_add(1)));
         let lower = past.as_ref().map_or(Bound::Unbounded, |k| Bound::Included(&k[..]));
         if self.tree.scan(lower, Bound::Unbounded, Direction::Forward).next().is_some() {
@@ -276,15 +288,25 @@ impl Loading for RowTable {
         Ok(Some(usize::try_from(columns.group_rows).unwrap_or(usize::MAX)))
     }
 
-    fn insert_group(&self, tx: TxId, rows: &[Row]) -> Result<Option<Vec<RowId>>> {
+    fn insert_group(&self, tx: TxId, rows: &[Row], whole: bool) -> Result<Option<Loaded>> {
         let direct = self.loads_directly(tx);
         let Some(columns) = (*read(&self.frozen.columns)?).filter(|_| direct && !rows.is_empty()) else { return Ok(None) };
         // One run of ids, so the groups of loads at once never share a range.
         let first = self.next_ids(rows.len())?;
         let ids: Vec<RowId> = (first..).take(rows.len()).collect();
-        let group = self.group_from(ids.clone(), rows, &columns)?;
-        let pages = group.pages();
-        let entry = self.entry_of(group)?;
+        // [DESIGN] RULES.md D1146: to its stream's segment, where it has one.
+        let made = if whole { self.extent_from(tx, (ids.clone(), rows), &columns)? } else { None };
+        let (entry, pages, extent, held) = if let Some((mut group, summary, segment, (extent, held))) = made {
+            let base = summary.extent.map_or(0, |p| p.base);
+            group.place = (segment.file, base);
+            let entry = self.entry_in(summary, Some((segment, base)));
+            self.headers.put(entry.header_key(), &entry.slot, &Arc::new(group));
+            (entry, Vec::new(), Some(extent), held)
+        } else {
+            let group = self.group_from(&self.group_pages()?, ids.clone(), rows, &columns)?;
+            let pages = group.pages();
+            (self.entry_of(group)?, pages, None, None)
+        };
         entry.made.store(OPEN | tx, Ordering::Release);
         // Noted first, so a group published is undone with the rest.
         if let Err(e) = self.note_group(tx, first) {
@@ -293,7 +315,11 @@ impl Loading for RowTable {
         }
         self.publish_entry((None, Some((entry, pages))), Vec::new())?;
         self.counted.live.fetch_add(rows.len(), Ordering::AcqRel);
-        Ok(Some(ids))
+        Ok(Some(Loaded { ids, extent, held }))
+    }
+
+    fn redo_group(&self, first: RowId, extent: &[u8]) -> Result<()> {
+        self.redo_extent(first, extent)
     }
 
     fn end_load(&self, tx: TxId) {

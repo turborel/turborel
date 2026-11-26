@@ -35,6 +35,20 @@ pub struct Summary {
     pub pax: bool,
     /// Of each column, its nulls and its least and greatest values.
     pub columns: Vec<Overall>,
+    /// The extent of a segment it is, if a load wrote it so (RULES.md
+    /// D1146); else it is on pages of its table's file.
+    pub extent: Option<Placed>,
+}
+
+/// \[DESIGN\] Where a group written as an extent is (RULES.md D1146).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Placed {
+    /// Its segment's number.
+    pub segment: u64,
+    /// Where the extent starts in it.
+    pub base: u64,
+    /// The extent's bytes.
+    pub length: u64,
 }
 
 /// Of a column of a group, its nulls, and its least and greatest values
@@ -70,6 +84,7 @@ impl Summary {
             sketched: group.sketched.clone(),
             pax: group.pax,
             columns,
+            extent: None,
         }
     }
 

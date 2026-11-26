@@ -25,7 +25,7 @@ use std::cmp::Ordering;
 use super::group::{Filter, Group, PART_ROWS, Pages, Seal, Zone};
 use crate::disk::pager::PageId;
 use crate::error::Result;
-use crate::storage::{Conjunct, Conjunction, Row};
+use crate::storage::{Conjunct, Conjunction};
 use crate::value::{DataType, Value, compare};
 
 /// Runs of a group's rows, each its first position and one past its last.
@@ -328,9 +328,9 @@ pub fn each_kept<S: Seal>(
 /// Writes the imprints of each column of `types` that takes them, of
 /// `rows`, if `pages` says groups have them, in its chunks `columns`: of
 /// each column, the edges of its bins, none if it has none.
-pub(super) fn put_all<S: Seal>(
+pub(super) fn put_all<S: Seal, R: AsRef<[Value]>>(
     pages: &Pages<'_, S>,
-    (types, rows): (&[DataType], &[Row]),
+    (types, rows): (&[DataType], &[R]),
     columns: &mut [Vec<Zone>],
     written: &mut Vec<PageId>,
 ) -> Result<Vec<Vec<Value>>> {
@@ -340,7 +340,7 @@ pub(super) fn put_all<S: Seal>(
             out.push(Vec::new());
             continue;
         }
-        let values: Vec<&Value> = rows.iter().map(|r| r.get(c).unwrap_or(&Value::Null)).collect();
+        let values: Vec<&Value> = rows.iter().map(|r| r.as_ref().get(c).unwrap_or(&Value::Null)).collect();
         let mut edges = edges(values.iter().copied());
         // A column scattered so its blocks fall in many bins gets none.
         if !useful(&edges, &values) {

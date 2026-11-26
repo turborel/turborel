@@ -329,6 +329,54 @@ impl Txn {
         tx_log.write(&self.origin.shared, self.id, None).map(|_| ())
     }
 
+    /// \[DESIGN\] RULES.md D1146: writes what it holds, then the record
+    /// whose bytes are `parts` end to end, apart from them, its parts
+    /// copied for neither: a load's group, the record of `changes` rows.
+    /// It is numbered among its records, as if held, so a place undone to
+    /// before it finds it written.
+    ///
+    /// # Errors
+    ///
+    /// As `write_with`; the log's, which leave it able only to roll back.
+    pub(crate) fn log_parts(&self, parts: &[&[u8]], changes: u64) -> Result<()> {
+        let Some(log) = &self.origin.log else { return Ok(()) };
+        let shared = &self.origin.shared;
+        shared.taking_changes()?;
+        let tx_log = self.tx_log(log);
+        let _gate = shared.gate.enter();
+        tx_log.write(shared, self.id, None)?;
+        let n = {
+            let mut st = self.state()?;
+            let mut held = lock_builtin(&tx_log.held);
+            let n = held.base;
+            held.base = n.saturating_add(1);
+            st.logged = true;
+            if st.logged_at(LogPos::Held(n)) {
+                held.wanted.push(n);
+            }
+            n
+        };
+        let bytes = parts.iter().fold(0_usize, |sum, p| sum.saturating_add(p.len()));
+        shared.logged_bytes.fetch_add(u64::try_from(bytes).unwrap_or(u64::MAX), Ordering::Relaxed);
+        let written = log.append_parts(parts);
+        let mut held = lock_builtin(&tx_log.held);
+        held.reached = true;
+        let at = written.inspect_err(|e| {
+            held.lost.get_or_insert_with(|| e.clone());
+        })?;
+        if held.wanted.contains(&n) {
+            held.found.push((n, at));
+        }
+        let first = !held.pinned;
+        held.pinned = true;
+        drop(held);
+        if first {
+            shared.first_logged(self.id, at);
+        }
+        shared.logged.fetch_add(changes, Ordering::Relaxed);
+        Ok(())
+    }
+
     /// Writes what it holds and then `last`, its commit record, in one run:
     /// `last`'s position.
     ///

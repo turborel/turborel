@@ -281,6 +281,8 @@ mod tests {
             pax: false,
             imprints: true,
             kernels: &crate::kernels::Portable,
+            base: 0,
+            sink: None,
         };
         let filters: Vec<Vec<u8>> = (0..7_i128).map(|n| filter_of(&[int(n)], FILTER_BYTES)).collect();
         let mut written = Vec::new();
