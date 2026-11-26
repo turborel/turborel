@@ -37,7 +37,7 @@ mod typed;
 
 use std::sync::Arc;
 
-pub(crate) use count::storage_counted;
+pub(crate) use count::{storage_counted, storage_summarized};
 use expr::Program;
 pub(super) use groups::morsel_groups;
 pub(super) use joined::{Filters, Frame, SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
@@ -183,6 +183,10 @@ pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
     };
     // A bare COUNT(*), counted by the table's storage if it can (`count.rs`).
     if let Some(row) = count::counted_table(&read, &input).and_then(|table| count::counted(table, &aggs, db, tx)) {
+        return Box::new(std::iter::once(row));
+    }
+    // MIN and MAX of whole groups by their summaries (`count.rs`).
+    if let Some(row) = count::bounded_table(&read, &aggs, &input).and_then(|table| count::bounded(table, (&read, &aggs), db, tx)) {
         return Box::new(std::iter::once(row));
     }
     let stream = match stream::open(*input, db, tx) {

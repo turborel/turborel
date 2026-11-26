@@ -25,7 +25,7 @@ const SET_COUNTS: &str = "set_tables::set_operations_keep_what_their_counts_say"
 const STATES: &str = "exec::table::states::tests::columns_of_states_are_their_accumulators";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 17] = [
+pub const GROUP_TABLE: [Mutation; 20] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -195,5 +195,35 @@ pub const GROUP_TABLE: [Mutation; 17] = [
         replacement: "",
         integration: &[],
         unit: &["exec::table::made::tests::partitions_merged_by_columns_hold_what_the_morsels_hold"],
+    },
+    Mutation {
+        name: "few-lanes-one-added",
+        package: Package::Core,
+        breaks: "the sums of few groups fed by lanes keep only the first lane's partials (RULES.md D1120)",
+        file: "src/exec/table/states/typed/few.rs",
+        original: "    for sum in &sums {",
+        replacement: "    for sum in sums.iter().take(1) {",
+        integration: &[],
+        unit: &["exec::table::states::typed::few::tests::sums_and_counts_by_lanes_are_those_fed_one_at_a_time"],
+    },
+    Mutation {
+        name: "few-lanes-nulls-fed",
+        package: Package::Core,
+        breaks: "a sum of few groups is fed by lanes past its nulls, each counted as a value of 0 (RULES.md D1120)",
+        file: "src/exec/table/states/typed.rs",
+        original: "            && ints.nulls.is_none()\n",
+        replacement: "",
+        integration: &["grouped_parts::a_having_condition_is_judged_by_its_part"],
+        unit: &[],
+    },
+    Mutation {
+        name: "coded-null-place-of-code",
+        package: Package::Core,
+        breaks: "a null key's place is that of its code, so it goes to the group of the dictionary's first entry (RULES.md D1120, D1161)",
+        file: "src/exec/batch/groups/coded.rs",
+        original: "if texts.is_null(r) { entries.len() } else { entry }",
+        replacement: "entry",
+        integration: &[],
+        unit: &["exec::batch::groups::coded::tests::rows_grouped_by_their_codes_make_the_groups_of_their_texts"],
     },
 ];
