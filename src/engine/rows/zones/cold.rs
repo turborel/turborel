@@ -31,6 +31,13 @@
 //! A table opened is warm if its last checkpoint saved zones, which only
 //! a warm table has: they are read, and recovery widens them. A table of
 //! the column store is warm from the first, its scans reading by zone.
+//!
+//! A table opened has its zones due summed up and settled only once one
+//! is asked for after it opens, by what warms a cold table (RULES.md
+//! D1212): the table notes the first ask, the transaction that asked
+//! notes it for maintenance as it ends, and until then the maintenance
+//! thread is not asked for, so a start does no pass over a table nothing
+//! reads. An ask after the first reads the note and writes nothing.
 
 use std::sync::atomic::Ordering;
 
@@ -44,14 +51,42 @@ impl Zones {
     }
 
     /// Makes the table warm from its first row, of one that holds no row
-    /// yet: every zone made is known.
+    /// yet: every zone made is known, and its zones are asked for from
+    /// the first, so the maintenance thread keeps them as it is written.
     pub(in crate::engine::rows) fn begin_warm(&self) {
         self.warm.store(true, Ordering::SeqCst);
+        self.asked.store(true, Ordering::Release);
     }
 
-    /// Warms the table, if it is cold: a zone not known for each block of
-    /// the row ids given so far (see the module's documentation).
+    /// Whether a zone was asked for since the table was made or opened
+    /// (RULES.md D1212): only then is the maintenance thread asked to sum
+    /// up or settle its zones.
+    pub(in crate::engine::rows) fn asked(&self) -> bool {
+        self.asked.load(Ordering::Acquire)
+    }
+
+    /// Notes the table opened, its zones read as saved: none asked for
+    /// yet, whatever made it warm (RULES.md D1212).
+    pub(super) fn opened(&self) {
+        self.asked.store(false, Ordering::Release);
+    }
+
+    /// Notes a zone asked for, warming the table if it is cold: a zone not
+    /// known for each block of the row ids given so far (see the module's
+    /// documentation). A table asked is warm, so every ask after the
+    /// first reads one flag and writes nothing, as a read of a row by an
+    /// index asks of each row (RULES.md D1212).
     pub(in crate::engine::rows) fn warm(&self) {
+        if self.asked() {
+            return;
+        }
+        self.warm_cold();
+        // After it is warm: a table asked is never cold.
+        self.asked.store(true, Ordering::Release);
+    }
+
+    /// `warm`'s work of a table cold.
+    fn warm_cold(&self) {
         if !self.cold() {
             return;
         }

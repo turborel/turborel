@@ -221,7 +221,8 @@ impl Database {
     }
 
     /// What is due as the database opens: the maintenance its tables have
-    /// due, as of zones to settle (`rows/zones.rs`), and the queue of
+    /// due, as of rows to freeze, their zones' once one is asked for
+    /// (`rows/zones/cold.rs`, RULES.md D1212), and the queue of
     /// embeddings after commit, if a column waits for it.
     ///
     /// # Errors

@@ -59,7 +59,9 @@
 //! Kept in memory, and with the table's pages at each checkpoint
 //! (`zones/saved.rs`), so a table opened knows the zones its last
 //! checkpoint saved, those it did not save read whole until the
-//! maintenance thread has summed each up. Kept are numbers, datetimes,
+//! maintenance thread has summed each up. That it does only once a zone
+//! of the table is asked for after it opens, so a start costs no pass
+//! over a table nothing reads (`zones/cold.rs`, RULES.md D1212). Kept are numbers, datetimes,
 //! intervals, and character strings of at most `SHORT` characters, so a
 //! zone takes a few bytes of each row.
 
@@ -163,6 +165,9 @@ pub(super) struct Zones {
     /// Whether zones are kept: not until one is asked for
     /// (`zones/cold.rs`, RULES.md D868).
     warm: AtomicBool,
+    /// Whether a zone was asked for since the table was made or opened:
+    /// until one is, a table opened has none summed up (RULES.md D1212).
+    asked: AtomicBool,
     /// The table's row ids given so far: one past them.
     given: Arc<AtomicU64>,
     /// The versions superseded while the table was cold, not yet collected.
@@ -282,6 +287,7 @@ impl Zones {
             growing: Mutex::new(()),
             unknown_below: AtomicU64::new(0),
             warm: AtomicBool::new(false),
+            asked: AtomicBool::new(false),
             given: Arc::default(),
             owed: Live::new(),
             stale: AtomicUsize::new(0),
@@ -568,3 +574,7 @@ mod rested;
 // R-TEST-7, R-TEST-8).
 #[cfg(test)]
 mod costs;
+// Unit tests: a table opened has no zone summed up until one is asked
+// for (RULES.md R-TEST-1, R-TEST-7, R-TEST-8).
+#[cfg(test)]
+mod asked;

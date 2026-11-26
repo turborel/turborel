@@ -17,7 +17,11 @@
 //! once while any did some; a table still due, though it did none, it
 //! looks at again a second later, as a freeze may be waiting out
 //! COLUMNSTORE.FREEZE_DELAY. `Database::maintain` does every table's now,
-//! until none does more.
+//! until none does more. As the database opens, each table with
+//! maintenance due is noted (`State::note_due_maintenance`); the zones of
+//! a table opened are due to the job only once one is asked for, so a
+//! table nothing reads is not noted for them (RULES.md D1212), while
+//! `Database::maintain` sums them up asked or not.
 //!
 //! The job first collects the garbage of every table awaiting collection
 //! (`State::collect_awaiting`, RULES.md D920): a transaction's end
