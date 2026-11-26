@@ -86,6 +86,33 @@ fn a_table_opened_gathers_its_first_statistics_as_a_plan_asks() {
     assert_eq!(table.gathered.passes(), 1, "made once");
 }
 
+/// Verifies: [DESIGN] RULES.md D1158, D1092: a plan asking for a table
+/// opened's first statistics while the maintenance thread makes that
+/// pass waits for it and is given them, not planned without them.
+/// Regression test (R-TEST-7): the asking plan saw the pass running,
+/// marked its own tried and went on with none.
+#[test]
+fn a_plan_asking_during_the_maintenance_threads_first_pass_waits_for_it() {
+    use std::sync::atomic::Ordering;
+    let table = Arc::new(table_of(1_000));
+    table.gathered.gather_when_asked();
+    table.gathered.asked.store(true, Ordering::Release);
+    // The statistics held, so the pass stops before keeping its own.
+    let held = crate::sync::write(&table.gathered.stats).unwrap();
+    let maintenance = Arc::clone(&table);
+    let pass = std::thread::spawn(move || maintenance.gather_if_due(true));
+    while !table.gathered.gathering.load(Ordering::Acquire) {
+        std::thread::yield_now();
+    }
+    assert!(table.gathered.first.try_lock().is_err(), "the first pass holds what the asking plan waits on");
+    let asking = Arc::clone(&table);
+    let plan = std::thread::spawn(move || asking.statistics().is_some());
+    drop(held);
+    assert!(plan.join().unwrap(), "given the maintenance thread's pass");
+    assert!(pass.join().unwrap());
+    assert_eq!(table.gathered.passes(), 1, "made once");
+}
+
 /// Verifies: [DESIGN] RULES.md D381: a pass notes of each column at
 /// how many passes in a row its greatest value rose, so a column
 /// growing with insertion is known after two, and one that did not
