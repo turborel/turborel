@@ -21449,7 +21449,12 @@ Tests in `test/integration/streamed_grouping.rs`: the grouping under a
 sort and FETCH FIRST is the plan of the same statement without FETCH
 FIRST, a part run in parallel, under HAVING too, and a grouping whose
 own order is asked stays streamed with no sort. Mutation
-`row-goal-under-sort`.
+`row-goal-under-sort`. The second site, the grouping's input built again
+in `grouped`, has no test that tells it from the code before and no
+mutation. Its input under a goal differs from its input with none only
+when something below the grouping plans otherwise for a few rows, as a
+join's left operand may, and no statement was found whose plan shows
+that difference there. It was changed by reading, as the same defect.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 
