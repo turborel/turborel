@@ -10,7 +10,7 @@
 //! of rows where it gives batches, one of the column store kept off the
 //! workers, a morsel's tree rows read of zones not judged, and a built
 //! operand's datetimes joined whatever their types or without their
-//! nulls.
+//! nulls, and a morsel of a semi join's held rows given past its range.
 
 use super::super::{Mutation, Package};
 
@@ -32,7 +32,7 @@ const JOINED: &str = "storage::batch::joined::tests::datetimes_and_truth_values_
 const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 25] = [
+pub const PARALLEL: [Mutation; 26] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -241,6 +241,16 @@ pub const PARALLEL: [Mutation; 25] = [
         original: "return self.failed.take().map(Err);",
         replacement: "return None;",
         integration: &["looped_parts::an_index_join_over_a_part_raises_as_alone"],
+        unit: &[],
+    },
+    Mutation {
+        name: "held-split-range-ignored",
+        package: Package::Core,
+        breaks: "a morsel of a semi join's held rows gives those kept past its range too (D1156)",
+        file: "src/exec/batch/joined/semi/split.rs",
+        original: "        while self.at < self.end && picks.len() < BATCH_ROWS {",
+        replacement: "        while self.at < self.held.batch.rows && picks.len() < BATCH_ROWS {",
+        integration: &["held_split::held_rows_split_into_morsels_are_each_given_once"],
         unit: &[],
     },
     Mutation {

@@ -730,6 +730,7 @@ verification approach DO-178C expects (§8).
 | D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
 | D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
 | D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
+| D1156 | A semi join that builds its left starts a pipeline, its held rows marked split into morsels |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -19854,6 +19855,30 @@ counted as seventeen. A part that fit its grant then gave way or not by
 how fast each thread was, and the plan ran again alone. Each caller now
 gives the bytes of the morsels taken (`Limit::on_course`), and what the
 part held before its morsels is read before a thread starts on one.
+
+#### D1156. A semi join that builds its left starts a pipeline, its held rows marked split into morsels
+
+A semi join or an antijoin that builds its left (D1070) held its left
+by the threads that read it (D1115) and marked its held rows by those
+that read its right. Then it gave the rows it kept on the statement's
+thread, and every operator above it ran there too, since only a hashed
+semi join was a step of a pipeline (D1075). A grouping over orders kept
+by their lines grouped each of them on one thread while the others
+waited.
+
+Such a join now starts a pipeline of its own (`exec/batch/joined/semi/split.rs`).
+As the pipeline is made, its left is held and its right read, each of
+the right's rows marking the held rows it matches, as a hash join's
+operand is built then. The held rows are split into morsels, each a
+range of them in their order, and a morsel gives those of its range
+marked, or of an antijoin those not. So a grouping, a sort or a join
+above takes them on the part's threads. Every mark is set before the
+reading of the right ends, which waits for each thread that marks, and
+a morsel is read only after that, so each held row is given by one
+morsel alone, once, and a held row of a null key, marked by none, is
+given by an antijoin alone. A left past the work area gives way, and
+the plan runs as before. The planner takes such a join for a stream of
+its left's rows (`physical/parallel.rs`), each operand a part of its own.
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 

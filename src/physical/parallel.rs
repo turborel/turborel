@@ -222,7 +222,13 @@ fn outside(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
         return built(asked, right, deeper);
     }
     if let Plan::SemiJoin(s) = plan {
-        outside(asked, &mut s.left, deeper);
+        // A semi join that builds its left holds it as a hash join's built
+        // operand is held (RULES.md D1115, D1156).
+        if s.method == SemiMethod::BuildLeft {
+            built(asked, &mut s.left, deeper);
+        } else {
+            outside(asked, &mut s.left, deeper);
+        }
         return built(asked, &mut s.right, deeper);
     }
     if let Plan::OuterJoin { left, right, .. } = plan {
@@ -384,9 +390,12 @@ fn stream_in(plan: &Plan, db: Option<&State>) -> Option<usize> {
         return (!keys.is_empty()).then(|| stream_in(left, db)).flatten();
     }
     // A hashed semi join's or antijoin's probe is a step of its left's
-    // pipeline (RULES.md D1075).
+    // pipeline (RULES.md D1075). One that builds its left starts a
+    // pipeline of its own, its held rows marked split into morsels
+    // (RULES.md D1156).
     if let Plan::SemiJoin(s) = plan {
-        return (s.method == SemiMethod::Hash && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream_in(&s.left, db)).flatten();
+        let method = matches!(s.method, SemiMethod::Hash | SemiMethod::BuildLeft);
+        return (method && s.cond.as_ref().is_none_or(calm_cond)).then(|| stream_in(&s.left, db)).flatten();
     }
     let Plan::Append { left, right, .. } = plan else { return None };
     Some(stream_in(left, db)?.saturating_add(stream_in(right, db)?))

@@ -13,6 +13,10 @@
 //! An index scan's morsels are parts of its range of keys
 //! (`parallel/indexed.rs`).
 //!
+//! A semi join or an antijoin that builds its left starts a pipeline, its
+//! morsels ranges of its held rows, marked as the pipeline is made
+//! (`batch/joined/semi/split.rs`, RULES.md D1156).
+//!
 //! The morsels of the operands of a UNION ALL are numbered on, the left's
 //! first, so their rows come in the order the append gives them. A filter
 //! over a table tells its scan its simple conditions, as `exec/scan.rs`
@@ -37,10 +41,10 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{Told, runtime_taken as taken, wanted};
+use crate::exec::batch::{Told, held_split, runtime_taken as taken, wanted};
 use crate::exec::{Runner, broken, eval};
 use crate::logical::{Cond, Expr, pushed_conjuncts};
-use crate::physical::{NodeCount, Plan};
+use crate::physical::{NodeCount, Plan, SemiMethod};
 use crate::settings::EXECUTOR_MORSEL_ROWS;
 use crate::storage::{Conjunct, Conjunction, Row, Split};
 use crate::txn::TxId;
@@ -199,6 +203,13 @@ fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Li
         let cond = settled(cond, (db, tx))?;
         let split = scan_branch(db, (table, columns), (tx, rows), (Some(&cond), &scanned), out);
         return Ok(split && counted_scan(input, out) && stepped(out, first, after));
+    }
+    if let Plan::SemiJoin(s) = plan
+        && s.method == SemiMethod::BuildLeft
+    {
+        let Some((split, scanned)) = held_split(s, &below, (db, tx), rows)? else { return Ok(false) };
+        out.push(Branch { split, steps: Vec::new(), scanned: Some(scanned) });
+        return Ok(stepped(out, first, judged(here)));
     }
     let mut filters = below;
     let Some((step, input)) = step_of(plan, (db, tx), limit, &mut filters)? else { return Ok(false) };

@@ -38,6 +38,7 @@ use super::super::held::{TABLE_ROW_BYTES, dense_wanted};
 use super::super::{gathered, in_order, left_late_batches};
 use super::Parts;
 use super::pairing::Pairing;
+use super::split::Given;
 use crate::error::Result;
 use crate::exec::batch::SharedTable;
 use crate::exec::parallel::{Held, Left, each_morsel, held_left, pipelined};
@@ -45,7 +46,7 @@ use crate::exec::table::{Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, key
 use crate::exec::work::Work;
 use crate::exec::{Db, Runner, broken, execute};
 use crate::physical::{JoinKey, Plan, SemiJoin, SemiMethod};
-use crate::storage::{BATCH_ROWS, Batch, Column, Row};
+use crate::storage::{Batch, Column, Row};
 use crate::txn::TxId;
 
 /// The columns of a left operand's batches and the keys it is joined on.
@@ -59,6 +60,15 @@ pub(super) enum Read {
     GaveWay(Box<Parts>, Batches),
 }
 
+/// A semi join's left operand held and marked, whether the join is an
+/// antijoin, and the work area the left is held in; or, the left past
+/// the work area, what the join that builds its right is made of and the
+/// left's batches, those read first.
+pub(super) enum Marked {
+    Held(Arc<HeldLeft>, bool, Work),
+    GaveWay(Box<Parts>, Batches),
+}
+
 /// Whether the semi join `s` builds its left: planned so.
 pub(super) fn builds_left(s: &SemiJoin) -> bool {
     s.method == SemiMethod::BuildLeft
@@ -66,8 +76,8 @@ pub(super) fn builds_left(s: &SemiJoin) -> bool {
 
 /// A left operand held: its rows as one batch, their table by key, and
 /// of each whether a right row matched it.
-struct HeldLeft {
-    batch: Arc<Batch>,
+pub(super) struct HeldLeft {
+    pub(super) batch: Arc<Batch>,
     /// The place in `batch` of each key's left column.
     places: Vec<usize>,
     /// Of each key, whether a null matches a null.
@@ -100,9 +110,26 @@ struct Marking {
 ///
 /// # Errors
 ///
+/// As `held_marked`.
+pub(super) fn batches(s: SemiJoin, read: (&[usize], &Deferred), (db, tx): (&Db, TxId)) -> Result<Read> {
+    Ok(match held_marked(s, read, (db, tx))? {
+        Marked::Held(held, anti, work) => {
+            let rows = held.batch.rows;
+            Read::Marked(Box::new(Given::of(held, anti, (0, rows), Some(work))))
+        }
+        Marked::GaveWay(parts, batches) => Read::GaveWay(parts, batches),
+    })
+}
+
+/// The left operand of the semi join `s` held and each of its rows a
+/// right row matches marked, with the work area it is held in; or, its
+/// left past the work area, what `batches` gives way with.
+///
+/// # Errors
+///
 /// An operand's; a key or a column of the condition a batch lacks
 /// (SQLCODE -910).
-pub(super) fn batches(s: SemiJoin, (left_columns, deferred): (&[usize], &Deferred), (db, tx): (&Db, TxId)) -> Result<Read> {
+pub(super) fn held_marked(s: SemiJoin, (left_columns, deferred): (&[usize], &Deferred), (db, tx): (&Db, TxId)) -> Result<Marked> {
     let SemiJoin { anti, left, right, keys, cond, widths, .. } = s;
     let work = Work::of(db, tx);
     let place = |c: usize, of: &[usize]| of.iter().position(|&h| h == c).ok_or_else(|| broken("a join key its operand's batch lacks"));
@@ -111,20 +138,20 @@ pub(super) fn batches(s: SemiJoin, (left_columns, deferred): (&[usize], &Deferre
     let told = deferred.filters().to_vec();
     let held = match read_left(left, (places, nulls, (left_columns, &keys)), (told, &work), (db, tx))? {
         LeftRead::Held(held) => held,
-        LeftRead::Rest(batches) => return Ok(Read::GaveWay(Box::new((anti, right, keys, cond, widths)), batches)),
+        LeftRead::Rest(batches) => return Ok(Marked::GaveWay(Box::new((anti, right, keys, cond, widths)), batches)),
     };
     // Of no left row, no right row is read.
     if held.batch.rows == 0 {
-        return Ok(Read::Marked(Box::new(std::iter::empty())));
+        return Ok(Marked::Held(Arc::from(held), anti, work));
     }
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
     let right_places = keys.iter().map(|k| place(k.right, &right_columns)).collect::<Result<Vec<usize>>>()?;
     let pairing = Pairing::of(cond, (left_columns, &right_columns), widths)?;
     let filters = held.filters(&keys, &right, db)?;
     let marking = Marking { held: Arc::from(held), right: right_places, pairing };
-    let given = Given { held: Arc::clone(&marking.held), anti, at: 0, _work: work };
+    let marks = Arc::clone(&marking.held);
     marked(right, marking, filters, (db, tx))?;
-    Ok(Read::Marked(Box::new(given)))
+    Ok(Marked::Held(marks, anti, work))
 }
 
 /// The left operand `left` read and held, its key columns of `keys` at
@@ -240,7 +267,7 @@ impl HeldLeft {
     }
 
     /// Whether held row `p` is marked.
-    fn marked(&self, p: usize) -> bool {
+    pub(super) fn marked(&self, p: usize) -> bool {
         self.marks.get(p).is_some_and(|mark| mark.load(Ordering::Relaxed))
     }
 }
@@ -312,34 +339,4 @@ fn serial(right: Plan, marking: &Marking, filters: Vec<Told>, (db, tx): (&Db, Tx
         runtime::applied(gathered(execute(right, db, tx), &columns), filters, &columns, (db, false))
     };
     marking.all(batches, (db, tx))
-}
-
-/// The held rows given: those marked, or of an antijoin those not, in
-/// their order, a batch of them at a time.
-struct Given {
-    held: Arc<HeldLeft>,
-    anti: bool,
-    /// The held row next looked at.
-    at: usize,
-    /// The work area the left operand is held in, held while it is.
-    _work: Work,
-}
-
-impl Iterator for Given {
-    type Item = Result<Kept>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut picks = Vec::with_capacity(BATCH_ROWS);
-        while self.at < self.held.batch.rows && picks.len() < BATCH_ROWS {
-            if self.held.marked(self.at) != self.anti {
-                picks.push(Some(self.at));
-            }
-            self.at = self.at.saturating_add(1);
-        }
-        if picks.is_empty() {
-            return None;
-        }
-        let columns = self.held.batch.columns.iter().map(|c| c.gathered(&picks)).collect();
-        Some(Ok((Batch { columns, rows: picks.len() }, None)))
-    }
 }

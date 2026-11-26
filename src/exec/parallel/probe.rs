@@ -169,7 +169,13 @@ pub(in crate::exec) fn pipelined(plan: &Plan) -> bool {
             *kind == crate::logical::OuterJoin::Left && on_keys && pipelined(left)
         }
         // A hashed semi join's probe is a step (RULES.md D1075).
-        Plan::SemiJoin(s) => s.method == crate::physical::SemiMethod::Hash && pipelined(&s.left),
+        // One that builds its left starts a pipeline whatever its left
+        // (RULES.md D1156).
+        Plan::SemiJoin(s) => match s.method {
+            crate::physical::SemiMethod::Hash => pipelined(&s.left),
+            crate::physical::SemiMethod::BuildLeft => true,
+            crate::physical::SemiMethod::Nested => false,
+        },
         Plan::Append { left, right, .. } => pipelined(left) && pipelined(right),
         Plan::Counted(c) => pipelined(&c.input),
         // A phase reads its leaves whole before its chain (RULES.md D665).

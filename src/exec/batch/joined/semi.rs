@@ -18,8 +18,10 @@
 
 mod marked;
 mod pairing;
+mod split;
 mod step;
 
+pub(in crate::exec) use split::held_split;
 pub(in crate::exec) use step::SemiStep;
 
 use std::sync::Arc;

@@ -200,6 +200,7 @@ mod guarded_reads;
 mod held_left;
 mod held_lobs;
 mod held_records;
+mod held_split;
 mod host_plugins;
 mod hybrid_layout;
 mod hypothetical;
