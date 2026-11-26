@@ -298,11 +298,10 @@ pub(super) fn grouped_asked(
         (runs, Vec::new())
     };
     // Of a second grouping crossing the first's partitions, its groups
-    // merged here of theirs, then those its HAVING keeps (RULES.md D1133).
+    // merged here of theirs, then those its HAVING keeps (RULES.md D1133, D1228).
     if let Some(crossing) = grouping.outer.as_ref().filter(|o| o.crosses()) {
-        let Some(merged) = crossing.merged()? else { return Ok(Held::GaveWay) };
-        runs = vec![grouping.kept(merged, &Runner::new(db, tx))?];
-        given = Vec::new();
+        let Some(merged) = crossing.merged(|groups| grouping.kept(groups, &Runner::new(db, tx)))? else { return Ok(Held::GaveWay) };
+        (runs, given) = merged;
     }
     if runs.iter().all(Vec::is_empty) && given.is_empty() && grouping.spec.groups.is_empty() && !grouping.distinct {
         // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.

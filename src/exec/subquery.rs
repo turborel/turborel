@@ -370,6 +370,11 @@ pub struct Runner {
 }
 
 impl Runner {
+    /// The database it runs in, and the transaction it runs for.
+    pub(in crate::exec) fn run(&self) -> (&Db, TxId) {
+        (&self.db, self.tx)
+    }
+
     /// The kernels its database's batches run on (RULES.md D354).
     pub(crate) fn kernels(&self) -> &dyn crate::kernels::Kernels {
         &*self.kernels
