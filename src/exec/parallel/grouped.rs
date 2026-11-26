@@ -134,7 +134,10 @@ impl Grouping {
     fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
         if let Some(outer) = self.outer.as_ref().filter(|outer| outer.tabled(&table)) {
             // Its groups come in the order of the first's (RULES.md D1123).
-            return self.kept(outer.regrouped_table(table, (runner, &self.seed))?, runner);
+            // Neither grouping of a pair is by a collation, so the
+            // second's keys are hashed padded, by a seed of no column
+            // grouped unpadded (RULES.md D1183).
+            return self.kept(outer.regrouped_table(table, (runner, &self.seed.unpadded(&[])))?, runner);
         }
         let cond = self.having.as_ref().filter(|_| self.outer.is_none());
         let mut groups = match (cond, cond.and_then(|c| self.bounded(c))) {
