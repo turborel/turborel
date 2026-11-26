@@ -3,10 +3,11 @@
 //! to serve a view, or deposed and opened again; a state transfer fetched
 //! imported (`driver/transfer.rs`).
 
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
+use std::thread;
 
 use turborel::db::Standby;
-use turborel::error::Result;
+use turborel::error::{Result, SqlError};
 
 use super::{Driver, Effect, misuse, position};
 use crate::{Input, Lsn};
@@ -28,6 +29,23 @@ impl Driver {
                 }
             }
             self.changed.notify_all();
+        }
+    }
+
+    /// \[EXTENSION\] Stops the driver as `halt` does, failing with `why`,
+    /// then waits for the turn of another thread that is carrying out
+    /// what the database is asked, if one is, to end (RULES.md D1225).
+    /// The driver asks the database nothing after it returns, so a
+    /// replay, a promotion or an opening again in flight cannot undo what
+    /// the caller then does to the database, deposing it before it
+    /// closes. Called from within such a turn it does not wait for
+    /// itself.
+    pub fn settle(&self, why: SqlError) {
+        self.halt(why);
+        let me = thread::current().id();
+        let mut applying = self.applying.lock().unwrap_or_else(PoisonError::into_inner);
+        while applying.is_some_and(|by| by != me) {
+            applying = self.applied.wait(applying).unwrap_or_else(PoisonError::into_inner);
         }
     }
 

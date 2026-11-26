@@ -113,6 +113,8 @@ pub struct Driver {
     wait: Arc<dyn Wait>,
     /// The thread carrying out what the database is asked, while one is.
     applying: Mutex<Option<ThreadId>>,
+    /// Signalled as a thread ends carrying out what the database is asked.
+    applied: Condvar,
     durable: bool,
     /// \[EXTENSION\] What brings its frames in first each turn, a plug-in
     /// transport's (RULES.md D271), if one does.
@@ -216,6 +218,7 @@ impl Driver {
             ticker: parts.ticker,
             wait: parts.wait,
             applying,
+            applied: Condvar::new(),
             durable,
             pump: Mutex::new(None),
             told: Mutex::new(None),
@@ -261,6 +264,7 @@ impl Driver {
         }
         let applied = self.apply(db);
         *self.applying.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        self.applied.notify_all();
         if let Err(e) = &applied {
             self.fail_stop(e);
         }
@@ -326,7 +330,8 @@ impl Driver {
     }
 
     /// \[EXTENSION\] Stops the driver: it takes nothing from now on, failing
-    /// with `why`, as its replica stopped.
+    /// with `why`, as its replica stopped. What a turn in flight asked the
+    /// database already is still carried out (`settle` waits for it).
     pub fn halt(&self, why: SqlError) {
         let mut core = self.core.lock().unwrap_or_else(PoisonError::into_inner);
         core.failed.get_or_insert(why);
