@@ -453,9 +453,9 @@ mod tests {
     }
 
     /// Verifies: [DESIGN] RULES.md D1202: of a column fetched after FETCH
-    /// FIRST, the table's scan below the grouping needs its key alone, and
-    /// the scan above the key and the column; a column a filter below
-    /// still reads is needed by both.
+    /// FIRST, of tables of 20 and 200 rows, the table's scan below the
+    /// grouping needs its key alone, and the scan above the key and the
+    /// column; a column a filter below still reads is needed by both.
     #[test]
     fn the_scan_below_needs_the_columns_fetched_no_more() {
         let db = Database::new();
@@ -466,6 +466,11 @@ mod tests {
         )
         .unwrap();
         let s = db.session("O");
+        let rows = |n: i32, of: &dyn Fn(i32) -> String| (0_i32..n).map(of).collect::<Vec<_>>().join(", ");
+        s.run(&format!("INSERT INTO P VALUES {}", rows(20_i32, &|k| format!("({k}, 'n{k}', {k})")))).unwrap();
+        s.run(&format!("INSERT INTO C VALUES {}", rows(200_i32, &|k| format!("({k}, {})", k % 20_i32)))).unwrap();
+        s.commit().unwrap();
+        db.maintain().unwrap();
         let grouped = "FROM P, C WHERE C.P = P.K GROUP BY P.K, P.N, P.A ORDER BY 4 DESC FETCH FIRST 1 ROW ONLY";
         for (filter, below, above) in [("", vec![0], vec![0, 1, 2]), (" AND P.N <> 'x'", vec![0, 1], vec![0, 1, 2])] {
             let sql = format!("SELECT P.K, P.N, P.A, COUNT(*) {}", grouped.replace(" GROUP", &format!("{filter} GROUP")));
