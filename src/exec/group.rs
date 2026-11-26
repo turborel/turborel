@@ -53,6 +53,16 @@ pub(super) struct Spec {
     pub(super) seeds: Vec<Row>,
 }
 
+/// [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) Which grouping columns a
+/// grouping under `collations` that reads vectors groups unpadded, if it
+/// may read them: each column by no collation, or by one of NO PAD that
+/// orders strings as their octets do, whose strings a table hashes and
+/// compares in place. None if a column is by any other collation, whose
+/// sort keys rows alone are grouped by.
+pub(in crate::exec) fn unpadded_keys(collations: &[Option<CollationRef>]) -> Option<Vec<bool>> {
+    collations.iter().map(|c| c.as_ref().map_or(Some(false), |c| c.is_octets().then_some(true))).collect()
+}
+
 /// The key of a group of `values`: by their sort keys where `spec` says, so
 /// values equal by a collation are of one group, which keeps the first's
 /// [ISO/IEC 9075:1992 §8.2 GR3d].

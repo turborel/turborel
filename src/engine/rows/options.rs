@@ -48,7 +48,7 @@ const IMPRINTS: &str = "COLUMNSTORE.IMPRINTS";
 const SKETCH: &str = "COLUMNSTORE.SKETCH";
 const LOAD: &str = "COLUMNSTORE.LOAD";
 /// What COLUMNSTORE.LOAD takes.
-const LOADS: &[&str] = &["TREE", "GROUPS"];
+const LOADS: &[&str] = &["DEFAULT", "TREE", "GROUPS"];
 /// What COLUMNSTORE.COMPRESSION takes.
 const COMPRESSIONS: &[&str] = &["AUTO", "NONE"];
 /// What COLUMNSTORE.LAYOUT takes.
@@ -133,8 +133,12 @@ pub struct Columns {
 /// rows (RULES.md D533).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LoadTo {
-    /// Through its tree, frozen into groups in the background.
+    /// Straight as frozen groups if the table qualifies for extents (no
+    /// index, constraint but NOT NULL, or large object), else through its
+    /// tree (RULES.md D1147).
     #[default]
+    Default,
+    /// Through its tree, frozen into groups in the background.
     Tree,
     /// Each batch straight as a frozen group.
     Groups,
@@ -183,7 +187,7 @@ impl Default for Columns {
             pax: false,
             imprints: false,
             sketch: Places::default(),
-            load: LoadTo::Tree,
+            load: LoadTo::Default,
         }
     }
 }
@@ -347,9 +351,9 @@ fn skipping_declared(cols: Columns) -> Vec<TableOption> {
             "The columns, by commas, of which a table of the column store keeps a sketch of each group it freezes, a byte of each row ordered as its value, if the column is VARCHAR and its values are compressed by a table of symbols, so a comparison, IN or LIKE prefix compares the texts of few rows, groups frozen before written again so in the background; none if empty.",
         ),
         TableOption::new(
-            (LOAD, Kind::Choice(LOADS), Value::Char(if cols.load == LoadTo::Groups { "GROUPS" } else { "TREE" }.into())),
+            (LOAD, Kind::Choice(LOADS), Value::Char(load_name(cols.load).into())),
             Rebuild::No,
-            "How a load into a table of the column store holding no row past its groups writes its rows: TREE, through the table's tree, frozen into groups in the background as any rows; GROUPS, each batch straight as a frozen group, seen by others once its transaction commits, on the load's own time.",
+            "How a load into a table of the column store holding no row past its groups writes its rows: TREE, through the table's tree, frozen into groups in the background as any rows; GROUPS, each batch straight as a frozen group, seen by others once its transaction commits, on the load's own time; DEFAULT, as GROUPS if the table has no index, no constraint but NOT NULL and no large object column, else as TREE.",
         ),
     ]
 }
@@ -425,7 +429,25 @@ pub(super) fn resolved(desc: &TableDesc, base: TableOptions) -> TableOptions {
         pax: set(LAYOUT).map_or(c.pax, |v| v.to_string().trim_end() == "PAX"),
         imprints: set(IMPRINTS).map_or(c.imprints, |v| v.to_string().trim_end() != "OFF"),
         sketch: set(SKETCH).map_or(c.sketch, |v| places_of(desc, v)),
-        load: set(LOAD).map_or(c.load, |v| if v.to_string().trim_end() == "GROUPS" { LoadTo::Groups } else { LoadTo::Tree }),
+        load: set(LOAD).map_or(c.load, |v| load_of(&v.to_string())),
     });
     out
+}
+
+/// The name COLUMNSTORE.LOAD shows of `load`.
+fn load_name(load: LoadTo) -> &'static str {
+    match load {
+        LoadTo::Default => "DEFAULT",
+        LoadTo::Tree => "TREE",
+        LoadTo::Groups => "GROUPS",
+    }
+}
+
+/// The place COLUMNSTORE.LOAD set to `name` says.
+fn load_of(name: &str) -> LoadTo {
+    match name.trim_end() {
+        "GROUPS" => LoadTo::Groups,
+        "TREE" => LoadTo::Tree,
+        _ => LoadTo::Default,
+    }
 }

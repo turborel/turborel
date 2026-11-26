@@ -176,7 +176,7 @@ mod tests {
     /// scan's, a located scan or one in an order is not bare.
     #[test]
     fn only_a_bare_count_is_counted_by_the_storage() {
-        let read = |groups: Vec<usize>, taken: Vec<Taken>| Read { taken, groups };
+        let read = |groups: Vec<usize>, taken: Vec<Taken>| Read { taken, groups, unpadded: Vec::new() };
         let bare = scan(false, Vec::new());
         assert!(counted_table(&read(Vec::new(), vec![Taken::Count, Taken::Count]), &bare).is_some());
         assert!(counted_table(&read(vec![0], vec![Taken::Count]), &bare).is_none());

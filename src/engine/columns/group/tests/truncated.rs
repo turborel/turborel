@@ -29,6 +29,8 @@ fn every_header_prefix_is_refused() {
             pax,
             imprints: true,
             kernels: &crate::kernels::Portable,
+            base: 0,
+            sink: None,
         };
         let g = group(&pages);
         let bytes = header::encode(&g, &TYPES).unwrap();
@@ -66,6 +68,8 @@ fn every_summary_prefix_is_refused() {
         pax: false,
         imprints: true,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let g = group(&pages);
     let mut bytes = Vec::new();

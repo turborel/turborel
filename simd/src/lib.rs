@@ -150,6 +150,17 @@ impl Kernels for Simd {
             None => out.extend((0..given.1.len()).map(hashed)),
         }
     }
+    fn hash_texts_unpadded(&self, given: (&[u8], &[usize]), seeded: &Seeded, sel: Option<&[u32]>, out: &mut Vec<u64>) {
+        // As `hash_texts`, of each text whole.
+        let hashed = |n: usize| {
+            let text = portable::hash::whole_at(given, n);
+            if text.len() > LONG_PAST { seeded.bytes_on(self, text) } else { seeded.bytes(text) }
+        };
+        match sel {
+            Some(sel) => out.extend(sel.iter().map(|&r| hashed(index(r)))),
+            None => out.extend((0..given.1.len()).map(hashed)),
+        }
+    }
     fn alp_decode(&self, words: &mut [i64], scale: AlpScale) {
         arch::alp_decode(self.isa, words, scale);
     }

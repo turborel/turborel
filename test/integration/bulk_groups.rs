@@ -128,8 +128,8 @@ fn the_groups_of_a_load_are_undone_with_it() {
     assert!(all_frozen(&s), "no row through the tree");
 }
 
-/// Verifies: [EXTENSION] RULES.md D533: a load into a table of the
-/// column store that leaves COLUMNSTORE.LOAD as TREE goes through its tree,
+/// Verifies: [EXTENSION] RULES.md D533, D1147: a load into a table of the
+/// column store with a key that leaves COLUMNSTORE.LOAD unset goes through its tree,
 /// no group written, a copy told no group's rows; set to GROUPS in place,
 /// the next load goes straight to groups.
 #[test]
@@ -251,4 +251,45 @@ fn loads_at_once_each_write_their_own_groups() {
     let r = again.session("S");
     assert_eq!(count(&r, "SELECT K FROM T"), 16_096, "recovered, the groups' ranges apart");
     assert!(all_frozen(&r));
+}
+
+/// Verifies: [EXTENSION] RULES.md D533, D1147: of a table of the column
+/// store that qualifies for extents (no index, no constraint but NOT NULL,
+/// no large object), a load that names no place goes straight to groups;
+/// a single row's INSERT and a few rows' go to its tree, as does a load
+/// into one that sets COLUMNSTORE.LOAD to TREE, or one with a key.
+#[test]
+fn a_load_into_a_table_that_qualifies_goes_to_groups_by_default() {
+    let table = |with: &str| {
+        let db = Database::new();
+        db.set_job_policy(JobPolicy::Manual).unwrap();
+        db.schema(&format!(
+            "CREATE SCHEMA AUTHORIZATION S CREATE TABLE T (K INTEGER NOT NULL, A INTEGER NOT NULL, C INTEGER) \
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 4096{with})"
+        ))
+        .unwrap();
+        db
+    };
+    let loaded = |db: &Database| {
+        let s = db.session("S");
+        let p = s.prepare("INSERT INTO T (K, A, C) VALUES (?, ?, ?)").unwrap();
+        s.execute_prepared_rows(&p, &given(0, 5000), Load::Going).unwrap();
+        s.execute_prepared_rows(&p, &[], Load::Ending).unwrap();
+        s.commit().unwrap();
+        assert_eq!(found(&s).0, 5000);
+        all_frozen(&s)
+    };
+    assert!(loaded(&table("")), "straight to groups by default");
+    assert!(!loaded(&table(", COLUMNSTORE.LOAD = 'TREE'")), "through the tree when asked");
+    let small = table("");
+    let s = small.session("S");
+    s.run("INSERT INTO T VALUES (1, 2, 3)").unwrap();
+    inserted(&s, (2, 12));
+    s.commit().unwrap();
+    assert_eq!(found(&s).0, 11);
+    assert!(!all_frozen(&s), "a row's INSERT and a few rows' go to the tree");
+    let keyed = Database::new();
+    keyed.set_job_policy(JobPolicy::Manual).unwrap();
+    keyed.schema(&SCHEMA.replace(", COLUMNSTORE.LOAD = 'GROUPS'", "")).unwrap();
+    assert!(!loaded(&keyed), "a table with a key loads through its tree");
 }

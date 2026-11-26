@@ -40,6 +40,7 @@
 
 mod analysis;
 mod changes;
+mod groups;
 mod stale;
 
 use std::collections::HashMap;
@@ -205,29 +206,6 @@ impl Database {
         self.replay_records(&mut opened, definitions)
     }
 
-    /// Keeps or drops each table's groups of loads open as it was stored
-    /// (`Loading::recovered_loads`), by `analysis`.
-    fn settle_loads(&self, analysis: &Analysis) -> Result<()> {
-        for storage in self.snapshot()?.storage.values() {
-            let durable = storage.durable_through();
-            storage.loading().map_or(Ok(()), |l| l.recovered_loads(&|tx| analysis.redoes(tx, durable)))?;
-        }
-        Ok(())
-    }
-
-    /// \[DESIGN\] RULES.md D1143: reopened after a clean close, to serve, keeps each table's groups of loads stored
-    /// as made by a transaction open as committed. A clean close is taken with no transaction open, and a load
-    /// rolled back takes its groups out of the directory, so each group stored is of a load that committed.
-    pub(super) fn settle_closed_loads(&self, mode: super::files::Mode) -> Result<()> {
-        if mode != super::files::Mode::Serve {
-            return Ok(());
-        }
-        for storage in self.snapshot()?.storage.values() {
-            storage.loading().map_or(Ok(()), |l| l.recovered_loads(&|_| false))?;
-        }
-        Ok(())
-    }
-
     /// What opens a log's records: the database's encodings, of sealed
     /// ones (`log/sealed.rs`), and its types.
     pub(super) fn openers(&self) -> Result<(Arc<Encodings>, TypeRegistry)> {
@@ -289,13 +267,14 @@ impl Database {
     /// rows inserted together, one for each (RULES.md D530).
     fn replay_record(&self, lsn: Lsn, record: Record, replaying: &mut Replaying, report: &mut RecoveryReport) -> Result<Vec<RowChange>> {
         let tx = record.tx;
-        let one = |table, generation, row, before, after| RowChange { lsn, tx, table, generation, row, before, after };
+        let one = |table, generation, row, before, after| RowChange { lsn, tx, table, generation, row, before, after, group: None };
         let change = |table, generation, row, before, after| Some(one(table, generation, row, before, after));
         Ok(Vec::from_iter(match record.change {
             Change::Insert { table, generation, row, after } => change(table, generation, row, None, Some(after)),
             Change::InsertRows { table, generation, rows } => {
                 return Ok(rows.into_iter().map(|(row, after)| one(table.clone(), generation, row, None, Some(after))).collect());
             }
+            Change::GroupLoaded(g) => Some(groups::change((lsn, tx), g)),
             Change::Update { table, generation, row, before, after } => change(table, generation, row, Some(before), Some(after)),
             Change::Delete { table, generation, row, before } => change(table, generation, row, Some(before), None),
             definition @ (Change::Schema { .. }
@@ -409,6 +388,7 @@ impl Database {
                 }
                 Change::Insert { .. }
                 | Change::InsertRows { .. }
+                | Change::GroupLoaded(_)
                 | Change::Update { .. }
                 | Change::Delete { .. }
                 | Change::Commit { .. }
@@ -442,7 +422,9 @@ impl Database {
             Persistence::Forced => true,
             Persistence::External | Persistence::None => false,
         };
-        if lacks {
+        if let Some((_, extent)) = change.group.as_ref().filter(|_| lacks) {
+            storage.loading().map_or(Ok(()), |l| l.redo_group(change.row, extent))?;
+        } else if lacks {
             storage.apply(change.row, change.after.clone())?;
         }
         Ok(lacks)
@@ -462,7 +444,8 @@ impl Database {
             Persistence::Logged => undone_at.is_none_or(|at| at >= storage.durable_through()),
             Persistence::External | Persistence::None => false,
         };
-        if holds {
+        // A load's group is redone only if it stands, so never undone.
+        if holds && change.group.is_none() {
             storage.apply(change.row, change.before.clone())?;
         }
         Ok(holds)
@@ -533,6 +516,9 @@ impl State {
     fn restore_entry(&self, change: &RowChange, kept: &impl Fn(&IndexDesc) -> bool) -> Result<()> {
         if self.catalog.table(&change.table).is_none() {
             return Ok(());
+        }
+        if let Some((last, _)) = &change.group {
+            return (change.row..=*last).try_for_each(|row| self.restore_entry(&groups::row_of(change, row), kept));
         }
         let Some(now) = self.storage_of(&change.table)?.get(NO_TRANSACTION, change.row)? else { return Ok(()) };
         for (ix, partition) in self.table_indexes(&change.table).into_iter().filter(|(ix, _)| kept(ix)) {

@@ -42,7 +42,13 @@ impl GroupAhead {
     /// the pool of `pages` has room for.
     pub fn step<S>(&mut self, pages: &Pages<'_, S>) {
         let Some(rest) = self.pages.get(self.asked..).filter(|rest| !rest.is_empty()) else { return };
-        let used = pages.pool.ahead_pages(&mut self.ahead, pages.file, rest);
+        // [DESIGN] RULES.md D1146: an extent's pages, where its segment holds them.
+        let used = if pages.base == 0 {
+            pages.pool.ahead_pages(&mut self.ahead, pages.file, rest)
+        } else {
+            let placed: Vec<u64> = rest.iter().map(|&p| pages.base.saturating_add(p)).collect();
+            pages.pool.ahead_pages(&mut self.ahead, pages.file, &placed)
+        };
         self.asked = self.asked.saturating_add(used);
     }
 }
@@ -89,6 +95,7 @@ mod tests {
             sketched: Vec::new(),
             sketches: Vec::new(),
             header: Vec::new(),
+            place: (crate::disk::buffer::FileId(0), 0),
         };
         let mut ahead = GroupAhead::default();
         ahead.take_up(&group, &[1, 0], &[(0, 50), (210, 220)]);

@@ -8,7 +8,11 @@
 //! begin with `'a'`'s. Each text's symbols are compared instead with the
 //! constant's bytes as they are read, the first that differs deciding
 //! (`Symbols::compare_padded`), which orders as `compare_strings` does and
-//! reads, of most texts, a code or two.
+//! reads, of most texts, a code or two. A constant compared unpadded, as
+//! a collation of NO PAD that orders strings as their octets do compares
+//! (RULES.md D1183), is compared the same way with no pad
+//! (`Symbols::compare_unpadded`), by no dictionary's order and no sketch,
+//! which are of the padded order.
 //!
 //! A chunk of a dictionary in order is judged by its codes instead, of a
 //! column of any character string type (`sorted.rs`). Of a group with a
@@ -24,7 +28,7 @@ use super::super::group::{Group, Seal};
 use super::super::scan::Reading;
 use super::super::sketch::{Verdict, Verdicts};
 use super::super::{Chunk, padding};
-use super::{Pred, sketched, sorted, text_keeps};
+use super::{Against, Pred, sketched, sorted, text_keeps};
 use crate::error::Result;
 use crate::storage::mask::index;
 use crate::value::DataType;
@@ -133,8 +137,11 @@ fn judged(
             }
             continue;
         }
-        let order = |c: &str| {
-            let o = coded.compare_padded(n, c.as_bytes());
+        let order = |c: Against<'_>| {
+            let o = match c {
+                Against::Padded(text) => coded.compare_padded(n, text.as_bytes()),
+                Against::Unpadded(octets) => coded.compare_unpadded(n, octets),
+            };
             failed.set(failed.get() || o.is_none());
             o
         };

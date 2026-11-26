@@ -129,8 +129,8 @@ impl Merged {
             if !entry.summary.may_match(self.condition.as_ref()) {
                 continue;
             }
-            let pages = self.table.group_pages()?;
             let group = self.table.group_of(&entry)?;
+            let pages = self.table.pages_for(&group)?;
             let ids = group.row_ids(&pages)?;
             let candidates = read_candidates(&group, &pages, self.condition.as_ref())?;
             self.ahead.take_up(&group, &self.columns, &candidates);
@@ -158,7 +158,7 @@ impl Merged {
     /// rows the condition matches.
     fn read_run(&mut self, from: u32, to: u32) -> Result<()> {
         let Some((group, ids)) = &self.group else { return Ok(()) };
-        let pages = self.table.group_pages()?;
+        let pages = self.table.pages_for(group)?;
         self.ahead.step(&pages);
         let found = rows(group, &pages, self.table.format.types(), &self.columns, (from, to))?;
         let first = usize::try_from(from).unwrap_or(usize::MAX);

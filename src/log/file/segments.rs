@@ -13,6 +13,20 @@ use crate::log::Lsn;
 use crate::sync::lock_builtin;
 
 impl FileLog {
+    /// Writes in `hash` and `pipeline` from now on: a segment in them begun
+    /// before the next record appended, if they are not those of now.
+    pub(super) fn formats_from_now(&self, hash: Arc<dyn crate::hash::HashFunction>, pipeline: crate::disk::encoding::Pipeline) {
+        let changed = {
+            let mut formats = lock_builtin(&self.formats);
+            let changed = formats.0.key_name() != hash.key_name() || formats.1.ids() != pipeline.ids();
+            *formats = (hash, pipeline);
+            changed
+        };
+        if changed {
+            self.rotate_asked.store(true, Ordering::Release);
+        }
+    }
+
     /// Writes `count` records of `bytes` bytes to the active segment with
     /// `write`: its number, and what `write` returned. A segment that
     /// cannot be begun leaves this one growing past its size; the records

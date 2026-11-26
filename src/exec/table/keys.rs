@@ -195,6 +195,11 @@ impl Data {
 /// A grouping column's values of a table's groups, and which are null.
 #[derive(Debug, Default)]
 pub(super) struct Lane {
+    /// [ISO/IEC 9075-2:2023 §4.3.2] Whether its character strings are
+    /// equal only if their octets are, no space padding either, as a
+    /// column grouped under a collation of NO PAD that orders strings as
+    /// their octets do (RULES.md D1183).
+    unpadded: bool,
     data: Data,
     nulls: Vec<bool>,
     /// What its values hold apart from themselves (`spill::heap_bytes`).
@@ -234,6 +239,11 @@ impl Lane {
         let (null, other) = (self.is_null(g), cell.is_null());
         if null || other {
             return null && other;
+        }
+        if self.unpadded
+            && let (Some(mine), Some(theirs)) = (text_of(self.cell(g)), text_of(cell))
+        {
+            return mine == theirs;
         }
         if let Some(equal) = self.equal_typed(g, cell) {
             return equal;
@@ -438,6 +448,20 @@ impl Keys {
         self.lanes.len()
     }
 
+    /// No keys, of its width, each column compared as its own is.
+    pub(super) fn like(&self) -> Keys {
+        Keys { lanes: self.lanes.iter().map(|lane| Lane { unpadded: lane.unpadded, ..Lane::default() }).collect() }
+    }
+
+    /// These keys, each column `seed` says is grouped unpadded compared so
+    /// (`Seed::is_unpadded`).
+    pub(super) fn of_seed(mut self, seed: &Seed) -> Keys {
+        for (place, lane) in self.lanes.iter_mut().enumerate() {
+            lane.unpadded = seed.is_unpadded(place);
+        }
+        self
+    }
+
     /// Whether group `g`'s key equals `key`, bytes made in `scratch` where
     /// a lane cannot tell by its values.
     pub(in crate::exec) fn equal(&self, g: usize, key: Key<'_>, scratch: &mut Vec<u8>) -> bool {
@@ -481,7 +505,7 @@ impl Keys {
     /// of any vector: so the groups of every morsel that agree on them
     /// agree on it.
     pub(super) fn hash_of(&self, g: usize, lanes: &[usize], seed: &Seed) -> u64 {
-        let mut hashes = lanes.iter().map(|&at| seed.cell(self.lanes.get(at).map_or(Cell::Null, |lane| lane.cell(g))));
+        let mut hashes = lanes.iter().map(|&at| seed.key_cell(at, self.lanes.get(at).map_or(Cell::Null, |lane| lane.cell(g))));
         let first = hashes.next().unwrap_or_else(|| seed.null());
         hashes.fold(first, |so_far, next| seed.joined(so_far, next))
     }

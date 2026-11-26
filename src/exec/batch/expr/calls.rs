@@ -8,13 +8,16 @@
 //! calls it (`call_warned`), and a row that raises one gives none, as one
 //! that raises an error does, so the batch is evaluated a row at a time,
 //! its warnings in order. A sort key under a collation is made of the
-//! values of a vector together (`CollationRef::sort_keys`).
+//! values of a vector together (`CollationRef::sort_keys`), but under one
+//! whose key is the text itself, where each is the text's octets, taken
+//! from a vector of texts in place (RULES.md D1183).
 
 use super::vector::{Vector, values};
 use crate::exec::Subqueries;
 use crate::functions::{Arg, ScalarRef};
-use crate::value::Value;
+use crate::storage::Column;
 use crate::value::collation::CollationRef;
+use crate::value::{Binary, Value};
 
 /// `v` as a function's argument over vectors: its column, or its
 /// constant.
@@ -60,7 +63,24 @@ pub(super) fn called(function: &ScalarRef, args: &[Vector<'_>], (count, statemen
 /// The sort keys of each of `count` rows of `x` under `collation`, made
 /// together: none if making them would raise.
 pub(super) fn sort_keys(x: &Vector<'_>, collation: &CollationRef, count: usize) -> Option<Vector<'static>> {
+    if collation.is_octets() {
+        return Some(values(octets(x, count)));
+    }
     let seq = x.seq();
     let given: Vec<Value> = (0..count).map(|n| seq.get(n).clone()).collect();
     collation.sort_keys(&given).ok().map(values)
+}
+
+/// [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) The sort keys of each of
+/// `count` rows of `x` under a collation whose key is the text itself
+/// (`CollationRef::is_octets`): each string's octets as a binary string,
+/// read from a vector of texts with no value made of the text first; a
+/// null stays null, as `CollationRef::sort_key` leaves it.
+fn octets(x: &Vector<'_>, count: usize) -> Vec<Value> {
+    let keyed = |v: &Value| if let Value::Char(s) = v { Value::Binary(Binary::of(s.as_bytes())) } else { v.clone() };
+    if let Some(Column::Texts(texts)) = x.column() {
+        return (0..count).map(|n| texts.get(n).map_or(Value::Null, |t| Value::Binary(Binary::of(t.as_bytes())))).collect();
+    }
+    let seq = x.seq();
+    (0..count).map(|n| keyed(seq.get(n))).collect()
 }

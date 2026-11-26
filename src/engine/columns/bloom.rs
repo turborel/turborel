@@ -157,7 +157,12 @@ fn asked(condition: &Conjunct) -> Option<(usize, &[Value])> {
             }
         }
         Conjunct::In { column, values } => Some((*column, values.as_slice())),
-        Conjunct::Null { .. } | Conjunct::NotIn { .. } | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
+        Conjunct::Null { .. }
+        | Conjunct::NotIn { .. }
+        | Conjunct::Any(_)
+        | Conjunct::Dynamic { .. }
+        | Conjunct::Spans { .. }
+        | Conjunct::Unpadded { .. } => None,
     }
 }
 
@@ -276,6 +281,8 @@ mod tests {
             pax: false,
             imprints: true,
             kernels: &crate::kernels::Portable,
+            base: 0,
+            sink: None,
         };
         let filters: Vec<Vec<u8>> = (0..7_i128).map(|n| filter_of(&[int(n)], FILTER_BYTES)).collect();
         let mut written = Vec::new();

@@ -63,8 +63,18 @@ impl Seal for Flipped {
 
 /// A group of `ROWS` rows, its pages of 2,048 bytes, sealed by `sealing`.
 fn group<'a, S: Seal>(pool: &'a BufferPool, file: FileId, sealing: &'a S) -> (Pages<'a, S>, Group) {
-    let pages =
-        Pages { pool, file, capacity: 2048, sealing, compress: true, pax: false, imprints: true, kernels: &crate::kernels::Portable };
+    let pages = Pages {
+        pool,
+        file,
+        capacity: 2048,
+        sealing,
+        compress: true,
+        pax: false,
+        imprints: true,
+        kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
+    };
     let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
     let all: Vec<Row> = (0..ROWS).map(row).collect();
     let group = Group::write(&pages, &TYPES, (&ids, &all), (&[], &[], &[])).unwrap();

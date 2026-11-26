@@ -41,7 +41,8 @@ pub(in crate::db) fn clear_state_files(fs: &dyn FileSystem, dir: &Path) -> Resul
         let within = path.strip_prefix(dir).unwrap_or(&path);
         let kind = FileKind::of(within);
         // The mark of running too: of the state replaced, not the export's.
-        let replaced = matches!(kind, FileKind::Data | FileKind::Shadow | FileKind::Plugin | FileKind::Catalog | FileKind::Opened);
+        let replaced =
+            matches!(kind, FileKind::Data | FileKind::Shadow | FileKind::Plugin | FileKind::Catalog | FileKind::Opened | FileKind::Groups);
         if replaced && within != Path::new(LOCK) {
             fs.remove(&path)?;
         }
