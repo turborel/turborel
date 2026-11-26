@@ -38,6 +38,8 @@ behind it, and each can be replaced or added to.
 - Row and columnar storage, chosen per table, the columnar store's filters
   judged in place and its other columns decoded of the rows kept alone.
 - DISTINCT set functions computed by two groupings, read by batches.
+- Grouping columns a key decides carried, not grouped by, and read after
+  FETCH FIRST for the rows kept.
 - Groupings and DISTINCT streamed over rows in their keys' order, a group
   at a time, and FETCH FIRST's row goal passed through filters, joins and
   groupings to an ordered read.
@@ -77,7 +79,8 @@ behind it, and each can be replaced or added to.
   match, and a row-store COUNT(*) is summed from its settled zones.
 - Column store skipping that survives writes: shadow bits and zones over
   the delta, optional column imprints, column sketches of compressed
-  texts, and sorted dictionaries judged by codes.
+  texts, and sorted dictionaries judged by codes. COUNT(*), MIN and MAX
+  come from the groups' directory and summaries.
 - Bulk loads by INSERT or copy that build empty indexes whole and, if
   asked, write column store rows straight into frozen groups.
 - [Join ordering](doc/sql/06-queries.md#how-joins-are-planned-extension)

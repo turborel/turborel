@@ -1,9 +1,11 @@
 //! The mutations of the one estimator (RULES.md R-TEST-9, D370-D372): the
 //! floor of one row lost, Cardenas' formula taken as the lesser of the
-//! rows and the values, the whole table taken as a sample, an index's
-//! sketch ignored, an outer join's preserved rows lost, lineage stopped at
-//! a grouping, a table joined with itself taken as one relation, and the
-//! optimizer's local fixpoint lost.
+//! rows and the values, its power rounded to 1, the whole table taken as a
+//! sample, an index's sketch ignored, an outer join's preserved rows lost,
+//! lineage stopped at a grouping, a table joined with itself taken as one
+//! relation, the optimizer's local fixpoint lost, and of D1203 a set
+//! function compared kept a third, a sum's rows taken alike in number and
+//! an extreme taken of one value.
 
 use super::super::{Mutation, Package};
 
@@ -14,9 +16,12 @@ const GROUPS_FILE: &str = "src/physical/cardinality/groups.rs";
 /// The lineage of a column.
 const LINEAGE_FILE: &str = "src/physical/cardinality/lineage.rs";
 
+/// The test of set functions compared with constants.
+const HAVING: &str = "physical::cardinality::having::tests::a_set_function_compared_keeps_what_its_column_tells";
+
 /// Mechanisms of the estimator and the rule driver whose removal must fail
 /// their tests.
-pub const ESTIMATES: [Mutation; 8] = [
+pub const ESTIMATES: [Mutation; 12] = [
     Mutation {
         name: "estimates-one-row-floor",
         package: Package::Core,
@@ -32,10 +37,20 @@ pub const ESTIMATES: [Mutation; 8] = [
         package: Package::Core,
         breaks: "n rows of D values are taken to meet min(n, D) of them, not D(1 - (1 - 1/D)^n)",
         file: GROUPS_FILE,
-        original: "(d * (1.0_f64 - missed)).clamp(1.0_f64, n)",
+        original: "(d * met).clamp(1.0_f64, n)",
         replacement: "d.clamp(1.0_f64, n)",
         integration: &[],
         unit: &["physical::cardinality::tests::cardenas_at_its_boundaries"],
+    },
+    Mutation {
+        name: "estimates-cardenas-power-rounded",
+        package: Package::Core,
+        breaks: "rows drawn from far more values than a number tells from 1 are estimated to meet one of them",
+        file: GROUPS_FILE,
+        original: "let met = -((-1.0_f64 / d).ln_1p() * n).exp_m1();",
+        replacement: "let met = 1.0_f64 - ((-1.0_f64 / d).ln_1p() * n).exp();",
+        integration: &[],
+        unit: &["physical::cardinality::tests::cardenas_of_values_past_a_number_s_digits"],
     },
     Mutation {
         name: "estimates-whole-table-sampled",
@@ -96,5 +111,35 @@ pub const ESTIMATES: [Mutation; 8] = [
         replacement: "    for _ in 0..usize::from(*budget > 0) {",
         integration: &[],
         unit: &["optimizer::drivers::rewriting_a_node_again_takes_fewer_passes"],
+    },
+    Mutation {
+        name: "estimates-having-a-third",
+        package: Package::Core,
+        breaks: "a set function compared with a constant keeps a third of the groups, whatever its column tells (RULES.md D1203)",
+        file: "src/physical/cardinality/nodes.rs",
+        original: ".or_else(|| self.set_function_share(c, over))",
+        replacement: "",
+        integration: &[],
+        unit: &[HAVING],
+    },
+    Mutation {
+        name: "estimates-having-rows-alike-in-number",
+        package: Package::Core,
+        breaks: "a sum's variance leaves out the rows of a group varying in number (RULES.md D1203)",
+        file: "src/physical/cardinality/having.rs",
+        original: "m * x.variance() + (m - 1.0_f64).max(0.0_f64) * x.mean * x.mean",
+        replacement: "m * x.variance()",
+        integration: &[],
+        unit: &[HAVING],
+    },
+    Mutation {
+        name: "estimates-having-extreme-of-one-value",
+        package: Package::Core,
+        breaks: "a group's greatest value is within a bound as often as one value is (RULES.md D1203)",
+        file: "src/physical/cardinality/having.rs",
+        original: "share.clamp(0.0_f64, 1.0_f64).powf(m)",
+        replacement: "share.clamp(0.0_f64, 1.0_f64)",
+        integration: &[],
+        unit: &[HAVING],
     },
 ];

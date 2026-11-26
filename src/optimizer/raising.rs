@@ -149,7 +149,8 @@ mod tests {
     /// The rule applied to a filter of `cond` over `input`.
     fn applied(cond: Cond, input: LogicalPlan) -> Option<LogicalPlan> {
         let st = State::with_builtins(Box::new(MemoryCatalog::default()));
-        PushRaisingFilterIntoProduct.apply(&LogicalPlan::Filter { cond, input: Box::new(input) }, &RuleContext { db: &st })
+        let seen = crate::physical::Seen::default();
+        PushRaisingFilterIntoProduct.apply(&LogicalPlan::Filter { cond, input: Box::new(input) }, &RuleContext { db: &st, seen: &seen })
     }
 
     /// Verifies: [X3.135-1986 §5.20 GR2b]; [DESIGN] RULES.md D15: a

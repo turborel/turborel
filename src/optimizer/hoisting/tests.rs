@@ -44,7 +44,7 @@ fn greater(a: Expr, b: Expr) -> Cond {
 /// The rule applied to `plan`.
 fn applied(plan: &LogicalPlan) -> Option<LogicalPlan> {
     let st = State::with_builtins(Box::new(MemoryCatalog::default()));
-    HoistRaisingExpressions.apply(plan, &RuleContext { db: &st })
+    HoistRaisingExpressions.apply(plan, &RuleContext { db: &st, seen: &crate::physical::Seen::default() })
 }
 
 /// The filter of `cond` over `input`, hoisted.

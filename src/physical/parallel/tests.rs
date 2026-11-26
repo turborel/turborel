@@ -34,7 +34,7 @@ fn a_plan_reads_whole_first_under_a_grouping_a_distinct_or_a_sort() {
     // A run that stops at its first rows keeps such a plan as it is.
     let db = crate::db::Database::new();
     let state = db.snapshot().unwrap();
-    assert!(matches!(parallel_run(&state, project(*values()), false), Plan::Project { .. }));
+    assert!(matches!(parallel_run((&state, &Seen::default()), project(*values()), false), Plan::Project { .. }));
 }
 
 /// Verifies: [DESIGN] RULES.md D1166: an estimate past what a `u32`
@@ -84,7 +84,7 @@ fn a_grouping_over_one_holding_its_columns_is_a_pair() {
     let pair = |groups: Vec<usize>, aggs: Vec<AggCall>, input: Plan| grouping(groups, (aggs, Vec::new()), input, false);
     assert!(first_level(&pair(vec![0], vec![count(false)], first(Vec::new(), false))).is_some());
     assert!(first_level(&pair(vec![1, 0], Vec::new(), first(Vec::new(), false))).is_some(), "of every column, in any order");
-    let count_node = Arc::new(crate::physical::NodeCount::default());
+    let count_node = Arc::new(NodeCount::default());
     let counted = Plan::Counted(Box::new(crate::physical::Counted { count: count_node, input: first(Vec::new(), false) }));
     assert!(first_level(&pair(vec![0], Vec::new(), counted)).is_some(), "an analyzed plan's count between");
     assert!(first_level(&pair(Vec::new(), Vec::new(), first(Vec::new(), false))).is_none(), "of no grouping column");
@@ -141,4 +141,24 @@ fn workers_of_none_set_are_the_threads_kept_as_a_database_starts() {
     assert_eq!(Some(workers_of(&state)), kept);
     db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(3, 0))).unwrap();
     assert_eq!(workers_of(&db.snapshot().unwrap()), 3, "a setting is what it says");
+}
+
+/// Verifies: [DESIGN] RULES.md D1089: whether a grouping's exchange
+/// outweighs its threads counts its columns by its table's statistics as
+/// its statement first saw them. A statement that asked before they were
+/// gathered counts none, though they are gathered before it asks again,
+/// so on one thread the exchange does not outweigh; one asking after
+/// counts them, and on one thread it does.
+#[test]
+fn a_grouping_s_exchange_counts_by_the_statistics_its_statement_saw() {
+    let (db, st) = crate::physical::seen::ungathered(&[("T", 1_000, 1_000)]);
+    let seen = Seen::default();
+    assert!(seen.statistics(&st, &crate::physical::seen::named("T")).is_none());
+    db.analyze("X.T").unwrap();
+    let mut grouped = grouping(vec![0], (Vec::new(), Vec::new()), crate::physical::seen::scanned("T"), false);
+    if let Plan::Aggregate { est, .. } = &mut grouped {
+        *est = 1_000.0_f64;
+    }
+    assert!(!exchange::outweighs(&st, &seen, &grouped, 1_000, (100, 1)), "gathered since its statement asked");
+    assert!(exchange::outweighs(&st, &Seen::default(), &grouped, 1_000, (100, 1)), "a statement asking afresh");
 }

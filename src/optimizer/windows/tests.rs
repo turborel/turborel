@@ -19,7 +19,7 @@ fn applied(cond: Cond) -> Option<LogicalPlan> {
     let window = Window { partition: vec![0], order: Vec::new(), calls: Vec::new(), input: rows };
     let plan = LogicalPlan::Filter { cond, input: Box::new(LogicalPlan::Window(Box::new(window))) };
     let st = State::with_builtins(Box::new(MemoryCatalog::default()));
-    PushFilterThroughWindow.apply(&plan, &RuleContext { db: &st })
+    PushFilterThroughWindow.apply(&plan, &RuleContext { db: &st, seen: &crate::physical::Seen::default() })
 }
 
 /// Verifies: [ISO/IEC 9075-2:2023 §7.15 GR3]; [DESIGN] RULES.md D374,

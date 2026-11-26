@@ -38,7 +38,7 @@ use crate::db::prepared::{Learned, Learning, MOST_LEARNING_RUNS};
 use crate::logical::{Decorrelated, Expr, LogicalPlan, Slot, Subquery, filled, map_plan_exprs};
 use crate::optimizer::RuleContext;
 use crate::optimizer::prepared::budget;
-use crate::physical::{PhysicalPlanner, Plan, filled_plan_as_is, keepable};
+use crate::physical::{PhysicalPlanner, Plan, Seen, filled_plan_as_is, keepable};
 use crate::settings::{DECORRELATE_AFTER_RUNS, KEEP_SUBQUERY_PLANS};
 use crate::value::datetime::Moment;
 use crate::value::{
@@ -244,7 +244,7 @@ pub(super) fn places(outer: &[Expr]) -> Vec<usize> {
 impl Runner {
     /// `plan` optimized.
     fn optimized(&self, plan: LogicalPlan) -> LogicalPlan {
-        self.db.optimizer.optimize(plan, &RuleContext { db: &self.db }).0
+        self.db.optimizer.optimize(plan, &RuleContext { db: &self.db, seen: &Seen::default() }).0
     }
 
     /// The rows of a run of `subquery` for `outer`, by the plan it keeps,
@@ -254,7 +254,8 @@ impl Runner {
         if outer.is_empty() {
             let ahead = self.ready.borrow_mut().remove(&subquery.id());
             let Some(plan) = ahead else { return self.run_once(subquery.bound(outer), limit.is_none()) };
-            return execute(crate::physical::parallel_run(&self.db, plan, limit.is_none()), &self.db, self.tx);
+            let run = crate::physical::parallel_run((&self.db, &Seen::default()), plan, limit.is_none());
+            return execute(run, &self.db, self.tx);
         }
         if !self.db.settings.is_on(KEEP_SUBQUERY_PLANS) {
             return self.run(subquery.bound(outer));
@@ -284,9 +285,10 @@ impl Runner {
     /// (`physical::parallel_run`). The statement's thread runs it, as no
     /// part's worker evaluates a subquery (`physical/parallel.rs`).
     pub(super) fn run_once(&self, plan: LogicalPlan, all: bool) -> RowIter {
-        let (optimized, _) = self.db.optimizer.optimize(plan, &RuleContext { db: &self.db });
-        let planned = PhysicalPlanner::new(&self.db).plan(&optimized);
-        execute(crate::physical::parallel_run(&self.db, planned, all), &self.db, self.tx)
+        let seen = Seen::default();
+        let (optimized, _) = self.db.optimizer.optimize(plan, &RuleContext { db: &self.db, seen: &seen });
+        let planned = PhysicalPlanner::new(&self.db).plan_seeing(&optimized, Some(&seen));
+        execute(crate::physical::parallel_run((&self.db, &seen), planned, all), &self.db, self.tx)
     }
 
     /// \[DESIGN\] (RULES.md D1129) The physical plan of `subquery`, one
@@ -294,8 +296,9 @@ impl Runner {
     /// it, its parts not yet marked: what the filter holding it looks
     /// through for the groupings its input computes too (`exec/shared.rs`).
     pub(in crate::exec) fn planned_ahead(&self, subquery: &Subquery) -> Plan {
-        let (optimized, _) = self.db.optimizer.optimize(subquery.bound(&[]), &RuleContext { db: &self.db });
-        PhysicalPlanner::new(&self.db).plan(&optimized)
+        let seen = Seen::default();
+        let (optimized, _) = self.db.optimizer.optimize(subquery.bound(&[]), &RuleContext { db: &self.db, seen: &seen });
+        PhysicalPlanner::new(&self.db).plan_seeing(&optimized, Some(&seen))
     }
 
     /// Keeps `plan`, made ahead of the subquery `id`, for its run.

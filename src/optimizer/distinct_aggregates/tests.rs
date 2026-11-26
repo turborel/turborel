@@ -32,7 +32,7 @@ fn aggregation(aggs: Vec<AggCall>) -> LogicalPlan {
 /// What the rule makes of `plan`.
 fn applied(plan: &LogicalPlan) -> Option<LogicalPlan> {
     let db = state();
-    DistinctAggregates.apply(plan, &RuleContext { db: &db })
+    DistinctAggregates.apply(plan, &RuleContext { db: &db, seen: &crate::physical::Seen::default() })
 }
 
 /// Verifies: [DESIGN] RULES.md D340: the rule leaves alone a plan not an

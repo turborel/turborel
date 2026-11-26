@@ -88,7 +88,7 @@ fn parallel_session() -> (Database, Session) {
 /// its rows' values sorted, or its error's SQLSTATE.
 fn run(a: &Session, sql: &str) -> (String, Vec<String>) {
     let (st, optimized) = a.optimized(sql).unwrap();
-    let plan = crate::physical::parallel(&st, PhysicalPlanner::new(&st).plan(&optimized));
+    let plan = crate::physical::parallel(&st, &crate::physical::Seen::default(), PhysicalPlanner::new(&st).plan(&optimized));
     let shown = plan.explain();
     let gave = match execute(plan, &st, NO_TRANSACTION).collect::<crate::error::Result<Vec<_>>>() {
         Ok(rows) => {

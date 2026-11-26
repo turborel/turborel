@@ -7,8 +7,9 @@
 //! the piece before it ended, and the first place it is found is taken,
 //! which leaves the most of the value to the pieces after it, so no
 //! other choice finds a match this one misses. A piece is searched for as
-//! a substring (`str::find`), not a character at a time with the pattern
-//! begun again at each place it fails.
+//! a substring, by a finder made once for the pattern (`like/finder.rs`,
+//! RULES.md D1118), not a character at a time with the pattern begun
+//! again at each place it fails.
 //!
 //! A piece is whole characters, and the encoding of a character never
 //! begins inside another's, so a piece found among a value's bytes is
@@ -16,6 +17,7 @@
 //! by its bytes.
 
 use super::Spec;
+use super::finder::Finder;
 
 /// The pieces of a pattern of no `_`: more than one if it has a `%`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,8 +25,8 @@ pub(super) struct Pieces {
     /// What a value begins with; all of it, of a pattern of no `%`.
     first: String,
     /// The pieces a value holds past the first and before the last, none
-    /// empty.
-    between: Vec<String>,
+    /// empty, each made once to be searched for (RULES.md D1118).
+    pub(super) between: Vec<Finder>,
     /// What a value ends with, of a pattern of some `%`.
     last: Option<String>,
 }
@@ -43,16 +45,17 @@ impl Pieces {
         let last = if pieces.len() > 1 { pieces.pop() } else { None };
         let mut rest = pieces.into_iter();
         let first = rest.next()?;
-        Some(Pieces { first, between: rest.filter(|piece| !piece.is_empty()).collect(), last })
+        Some(Pieces { first, between: rest.filter_map(|piece| Finder::of(&piece)).collect(), last })
     }
 
-    /// [X3.135-1986 §5.14 GR5] Whether `value` matches the pattern.
-    pub(super) fn matches(&self, value: &str) -> bool {
-        let Some(last) = &self.last else { return value == self.first };
-        let Some(after) = value.strip_prefix(self.first.as_str()) else { return false };
-        let Some(mut rest) = after.strip_suffix(last.as_str()) else { return false };
+    /// [X3.135-1986 §5.14 GR5] Whether the value of the bytes `value`
+    /// matches the pattern.
+    pub(super) fn matches(&self, value: &[u8]) -> bool {
+        let Some(last) = &self.last else { return value == self.first.as_bytes() };
+        let Some(after) = value.strip_prefix(self.first.as_bytes()) else { return false };
+        let Some(mut rest) = after.strip_suffix(last.as_bytes()) else { return false };
         for piece in &self.between {
-            let Some(at) = rest.find(piece.as_str()) else { return false };
+            let Some(at) = piece.find(rest) else { return false };
             rest = rest.get(at.saturating_add(piece.len())..).unwrap_or_default();
         }
         true
@@ -108,7 +111,7 @@ mod tests {
             let pattern = LikePattern::new(p, None).unwrap();
             let pieces = Pieces::of(&pattern.specs).unwrap_or_else(|| panic!("{p:?} has no pieces"));
             for v in values {
-                assert_eq!(pieces.matches(v), slowly(v, &pattern), "{v:?} LIKE {p:?}");
+                assert_eq!(pieces.matches(v.as_bytes()), slowly(v, &pattern), "{v:?} LIKE {p:?}");
                 assert_eq!(pattern.matches(v), slowly(v, &pattern), "{v:?} LIKE {p:?}, as the pattern matches");
             }
         }
@@ -124,7 +127,7 @@ mod tests {
         }
         let escaped = LikePattern::new("%50!%!_%", Some('!')).unwrap();
         let pieces = Pieces::of(&escaped.specs).unwrap();
-        assert!(pieces.matches("at 50%_ off") && !pieces.matches("at 50%x off") && !pieces.matches("at 500_ off"));
+        assert!(pieces.matches(b"at 50%_ off") && !pieces.matches(b"at 50%x off") && !pieces.matches(b"at 500_ off"));
         assert!(escaped.matches("at 50%_ off") && !escaped.matches("at 500_ off"));
     }
 }

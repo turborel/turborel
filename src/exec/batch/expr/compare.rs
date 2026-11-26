@@ -17,6 +17,7 @@ use super::vector::{Marks, Vector, either, marks, some};
 use crate::exec::Subqueries;
 use crate::exec::eval::{compared_read, like_truth};
 use crate::exec::{Escape, like_escape};
+use crate::kernels::Kernels;
 use crate::logical::{InSet, Truth};
 use crate::storage::mask::{WORD_BITS, index};
 use crate::storage::{Bools, Column, Mask, Texts};
@@ -180,10 +181,18 @@ pub(super) fn distinct(x: &Vector<'_>, y: &Vector<'_>, count: usize) -> Option<V
 
 /// [X3.135-1986 §5.14 GR4, GR5] Whether each row's `x` matches
 /// `pattern`, unknown of a null or of no pattern: none of a value not a
-/// character string, which a row's evaluation reads otherwise.
-pub(super) fn liked(x: &Vector<'_>, pattern: Option<&LikePattern>, count: usize) -> Option<Vector<'static>> {
+/// character string, which a row's evaluation reads otherwise. A vector's
+/// text is searched at once by `kernels` for a piece between two `%`s
+/// (`value/like/arena.rs`, RULES.md D1119).
+pub(super) fn liked(x: &Vector<'_>, pattern: Option<&LikePattern>, count: usize, kernels: &dyn Kernels) -> Option<Vector<'static>> {
     let Some(pattern) = pattern else { return Some(Vector::Const(Value::Null)) };
     if let Some(Column::Texts(texts)) = x.column() {
+        if texts.coded.is_none()
+            && texts.ends.len() == count
+            && let Some(all) = pattern.matches_all((texts.text.as_bytes(), &texts.ends), kernels)
+        {
+            return Some(bools(judged(count, texts.nulls.clone(), |n| all.get(n).copied())));
+        }
         return Some(bools(judged(count, texts.nulls.clone(), |n| Some(texts.get(n).is_some_and(|s| pattern.matches(s))))));
     }
     let seq = x.seq();

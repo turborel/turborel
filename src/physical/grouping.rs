@@ -46,7 +46,7 @@ impl PhysicalPlanner<'_> {
 
 /// The columns a grouping reads of its input's rows: those it groups by,
 /// and those its set functions' arguments, filters and distributions read.
-fn reads(groups: &[usize], aggs: &[AggCall]) -> Vec<usize> {
+pub(super) fn reads(groups: &[usize], aggs: &[AggCall]) -> Vec<usize> {
     let mut reads = groups.to_vec();
     for a in aggs {
         if let Some(arg) = &a.arg {

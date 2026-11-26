@@ -26,6 +26,7 @@ mod judge;
 mod keyed;
 mod late;
 mod parted;
+mod picks;
 mod project;
 mod runtime;
 mod shaped;
@@ -36,7 +37,7 @@ mod typed;
 
 use std::sync::Arc;
 
-pub(crate) use count::storage_counted;
+pub(crate) use count::{storage_counted, storage_summarized};
 use expr::Program;
 pub(super) use groups::morsel_groups;
 pub(super) use joined::{Filters, Frame, SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
@@ -67,12 +68,30 @@ use crate::value::Value;
 /// What a set function takes of each row: a count of it, the value of the
 /// column at this place of the batch, or that of an expression of a row of
 /// the values at some places, its columns those of the row, compiled for
-/// vectors (`project::place_of`, `expr.rs`).
+/// vectors (`project::place_of`, `expr.rs`); or, of one that keeps its
+/// group's first row's value of a column (`functions::carried_column`,
+/// RULES.md D1201), the column at this place itself, a null too, no row
+/// made of it.
 #[derive(Debug, Clone)]
 pub(in crate::exec) enum Taken {
     Count,
     Column(usize),
     Expr(Arc<Program>),
+    Kept(usize),
+}
+
+/// The place in a batch of `columns` of the column `a` keeps its group's
+/// first row's value of, if it is such a set function and the batch holds
+/// the column.
+fn kept_place(a: &AggCall, columns: &[usize]) -> Option<usize> {
+    let c = crate::functions::carried_column(a)?;
+    columns.iter().position(|x| *x == c)
+}
+
+/// The row a set function that keeps its group's first row's value is
+/// given of the column at `at` of row `r` of `batch`.
+fn kept_row(batch: &Batch, at: usize, r: u32) -> Value {
+    Value::Row(std::slice::from_ref(&batch.cell(at, index(r)).to_value()).into())
 }
 
 /// What an aggregation read by batches reads: what each set function
@@ -90,10 +109,11 @@ fn taken(aggs: &[AggCall], columns: &[usize]) -> Option<Vec<Taken>> {
     aggs.iter()
         .map(|a| match (&a.arg, a.distinct || a.filter.is_some() || a.distribution.is_some()) {
             (None, false) => Some(Taken::Count),
-            (Some(e), false) => Some(match project::place_of(e, columns)? {
-                Place::Column(at) => Taken::Column(at),
-                Place::Const(v) => Taken::Expr(Arc::new(Program::of(Expr::Const(v), Vec::new()))),
-                Place::Expr(program) => Taken::Expr(program),
+            (Some(e), false) => Some(match (kept_place(a, columns), project::place_of(e, columns)?) {
+                (Some(at), _) => Taken::Kept(at),
+                (None, Place::Column(at)) => Taken::Column(at),
+                (None, Place::Const(v)) => Taken::Expr(Arc::new(Program::of(Expr::Const(v), Vec::new()))),
+                (None, Place::Expr(program)) => Taken::Expr(program),
             }),
             (Some(_), true) | (None, true) => None,
         })
@@ -184,6 +204,10 @@ pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
     if let Some(row) = count::counted_table(&read, &input).and_then(|table| count::counted(table, &aggs, db, tx)) {
         return Box::new(std::iter::once(row));
     }
+    // MIN and MAX of whole groups by their summaries (`count.rs`).
+    if let Some(row) = count::bounded_table(&read, &aggs, &input).and_then(|table| count::bounded(table, (&read, &aggs), db, tx)) {
+        return Box::new(std::iter::once(row));
+    }
     let stream = match stream::open(*input, db, tx) {
         Ok(stream) => stream,
         Err(e) => return failed(e),
@@ -226,6 +250,8 @@ pub(in crate::exec) fn fed_group<'s>(
                 }
             }
             (Taken::Expr(_), Some(Fed::Made(column))) => fed_column(state, (column, runner), Some(given))?,
+            // Its first row's, which is all it keeps.
+            (Taken::Kept(c), _) => read_rows.first().map_or(Ok(()), |&r| state.update(&kept_row(batch, *c, r)))?,
             (Taken::Expr(_), Some(Fed::Const(v))) => {
                 if !v.is_null() {
                     (0..given.len()).try_for_each(|_| state.update(v))?;
@@ -301,7 +327,8 @@ fn column_nulled(column: &Column, rows: Option<&[u32]>) -> bool {
 /// at a time is told as it is.
 fn group_nulled((take, lane): (&Taken, &Option<Fed<'_>>), batch: &Batch, (given, read_rows): (&[u32], &[u32])) -> bool {
     match (take, lane) {
-        (Taken::Count, _) | (Taken::Expr(_), None) => false,
+        // A value kept is kept a null too, none eliminated.
+        (Taken::Count | Taken::Kept(_), _) | (Taken::Expr(_), None) => false,
         (Taken::Column(c), _) => batch.columns.get(*c).is_some_and(|column| column_nulled(column, Some(read_rows))),
         (Taken::Expr(_), Some(Fed::Made(column))) => column_nulled(column, Some(given)),
         (Taken::Expr(_), Some(Fed::Const(v))) => v.is_null() && !given.is_empty(),
@@ -344,6 +371,11 @@ fn fed(batch: &Batch, (taken, runner): (&[Taken], &Runner), rows: Option<&[u32]>
                 }
                 None => state.update_many(&[], rows)?,
             },
+            // Its first row's, which is all it keeps.
+            Taken::Kept(at) => {
+                let first = rows.map_or((batch.rows > 0).then_some(0_u32), |rows| rows.first().copied());
+                first.map_or(Ok(()), |r| state.update(&kept_row(batch, *at, r)))?;
+            }
             // Its values evaluated a vector at a time (`expr.rs`), or, of a
             // batch of which that gives none, a row at a time.
             Taken::Expr(program) => match lane(program, batch, rows, runner) {

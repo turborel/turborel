@@ -24,10 +24,15 @@ pub(in crate::physical) fn cardenas(distinct: f64, n: f64) -> f64 {
     if n.is_nan() || n < 1.0_f64 {
         return 0.0_f64;
     }
-    let d = distinct.max(1.0_f64);
-    // (1 - 1/d)^n, by its logarithm, exact for a large d.
-    let missed = ((-1.0_f64 / d).ln_1p() * n).exp();
-    (d * (1.0_f64 - missed)).clamp(1.0_f64, n)
+    // The greatest finite number at most, so a product of distinct counts
+    // past every number is still one the formula multiplies by; and one
+    // value of a count that is no number.
+    let d = if distinct.is_nan() { 1.0_f64 } else { distinct.clamp(1.0_f64, f64::MAX) };
+    // 1 - (1 - 1/d)^n as -expm1(n ln(1 - 1/d)), which keeps the digits of
+    // a value near nothing (RULES.md D1200). The power itself rounds to 1
+    // once d is past 2^53 times n, and the groups to none.
+    let met = -((-1.0_f64 / d).ln_1p() * n).exp_m1();
+    (d * met).clamp(1.0_f64, n)
 }
 
 impl Estimates<'_> {
@@ -82,6 +87,6 @@ impl Estimates<'_> {
         let indexes = db.catalog.indexes(table);
         let ix = indexes.iter().find(|ix| !ix.is_collated() && !db.building.contains(&ix.name) && exact(&ix.columns))?;
         let found = std::sync::Arc::clone(db.index_of(&ix.name).ok()?);
-        db.distinct_keys(table, &*found)
+        self.seen().table_keys(db, (table, &ix.name), &*found)
     }
 }

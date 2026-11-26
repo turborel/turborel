@@ -6,19 +6,28 @@
 //! only while the statement is not cancelled (RULES.md D44). The counts
 //! are those of the rows the scan would give, so the result is the same;
 //! a storage that cannot count leaves the aggregation to the scan.
+//!
+//! An aggregation of one group whose set functions are COUNT(*), MIN and
+//! MAX, at least one of a column, of such a scan is fed in place of its
+//! batches what the storage summarizes (RULES.md D1181): of rows it holds
+//! whole, their count and each column's least and greatest values and
+//! nulls; of the rest, their batches. MIN and MAX are fed so only of a
+//! column whose values compare alike under every collation and as the
+//! storage's bounds compare them, a number of exact type or a datetime.
 
 use std::sync::Arc;
 
-use super::{Read, Taken};
+use super::{Read, Runner, Taken, eliminated, fed};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
-use crate::functions::Accumulator;
+use crate::functions::{Accumulator, ColumnarKind};
 use crate::logical::AggCall;
 use crate::physical::Plan;
-use crate::storage::Row;
+use crate::storage::{Piece, Row};
 use crate::txn::{NO_TRANSACTION, TxId, checked};
+use crate::value::{DataType, Value};
 
 /// The table whose rows the aggregation `read` reads of `input` would
 /// count alone, of one group, each of its set functions counting rows, of
@@ -44,6 +53,76 @@ pub(super) fn counted(table: &QualifiedName, aggs: &[AggCall], db: &Db, tx: TxId
     Some(fed.and_then(|()| states.iter().map(|s| s.finish()).collect()))
 }
 
+/// The table and columns whose summaries answer the aggregation `read`
+/// reads of `input`, `aggs` its set functions: of one group, each COUNT(*)
+/// or MIN or MAX of a column `bounded_by` admits, one at least of a
+/// column, of a bare scan of the table.
+pub(super) fn bounded_table<'p>(read: &Read, aggs: &[AggCall], input: &'p Plan) -> Option<(&'p QualifiedName, &'p [usize])> {
+    let extreme = |(t, a): (&Taken, &AggCall)| matches!(t, Taken::Column(_)) && bounded_by(a).is_some();
+    let each = read.taken.iter().zip(aggs).all(|(t, a)| matches!(t, Taken::Count) || extreme((t, a)));
+    if !read.groups.is_empty() || !each || !read.taken.iter().zip(aggs).any(extreme) {
+        return None;
+    }
+    let Plan::SeqScan { table, columns, order, located: false, .. } = input.bare() else { return None };
+    order.is_empty().then_some((table, columns.as_slice()))
+}
+
+/// Whether `a` is MIN, else MAX, if it is either, of a type whose values
+/// compare alike under every collation and as a summary's bounds do.
+fn bounded_by(a: &AggCall) -> Option<bool> {
+    let ordered = matches!(a.result, DataType::Exact { .. } | DataType::Date | DataType::Time { .. } | DataType::Timestamp { .. });
+    match a.func.0.columnar().map(|c| c.0) {
+        Some(ColumnarKind::Min) => ordered.then_some(true),
+        Some(ColumnarKind::Max) => ordered.then_some(false),
+        Some(ColumnarKind::Count | ColumnarKind::Sum | ColumnarKind::Avg) | None => None,
+    }
+}
+
+/// The finished set functions `aggs` of the rows of `table` that `tx`
+/// sees, of `columns`, as `read` says, fed the pieces its storage
+/// summarizes; none if it gives none.
+pub(super) fn bounded(table: (&QualifiedName, &[usize]), (read, aggs): (&Read, &[AggCall]), db: &Db, tx: TxId) -> Option<Result<Row>> {
+    let pieces = Arc::clone(db.storage_of(table.0).ok()?).summarized(tx, table.1)?;
+    let runner = Runner::new(db, tx);
+    let mut states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect();
+    let fed = checked(pieces, db.tx.stop_of(tx)).try_for_each(|piece| match piece? {
+        Piece::Whole { rows, columns } => whole((rows, &columns), (read, aggs), &runner, &mut states),
+        Piece::Batch(batch) => fed(&batch, (&read.taken, &runner), None, &mut states),
+    });
+    Some(fed.and_then(|()| states.iter().map(|s| s.finish()).collect()))
+}
+
+/// Of a column of rows given whole, its nulls and bounds (`Piece::Whole`).
+type Summary = (u64, Option<(Value, Value)>);
+
+/// Feeds `states` the rows given whole: `rows` to each COUNT(*), and to
+/// each MIN and MAX its column's least or greatest value, if any is not
+/// null, a null taken out raising its warning [X3.135-1986 §5.8 GR1].
+fn whole(
+    (rows, columns): (u64, &[Summary]),
+    (read, aggs): (&Read, &[AggCall]),
+    runner: &Runner,
+    states: &mut [Box<dyn Accumulator>],
+) -> Result<()> {
+    for ((state, take), a) in states.iter_mut().zip(&read.taken).zip(aggs) {
+        let column = match take {
+            Taken::Count => {
+                state.update_rows(usize::try_from(rows).unwrap_or(usize::MAX))?;
+                continue;
+            }
+            Taken::Column(at) => columns.get(*at),
+            // An expression, or a value kept of a row, is of no summary.
+            Taken::Expr(_) | Taken::Kept(_) => None,
+        };
+        let Some((nulls, bounds)) = column else { continue };
+        eliminated(*nulls > 0, runner);
+        if let Some(((least, greatest), least_of)) = bounds.as_ref().zip(bounded_by(a)) {
+            state.update(if least_of { least } else { greatest })?;
+        }
+    }
+    Ok(())
+}
+
 /// \[DESIGN\] The table whose rows the bare COUNT(*) at the top of `plan`
 /// counts by its storage, under the projections, sorts, limits and
 /// filters of its one row, if it is read by batches and the storage
@@ -58,6 +137,20 @@ pub(crate) fn storage_counted<'p>(plan: &'p Plan, db: &State) -> Option<&'p Qual
     let table = counted_table(&super::read_of(top, db)?, input)?;
     let counts = super::super::batched(db) && Arc::clone(db.storage_of(table).ok()?).count(NO_TRANSACTION).is_some();
     counts.then_some(table)
+}
+
+/// \[DESIGN\] The table whose summaries answer the MIN and MAX at the top
+/// of `plan`, as `storage_counted` finds a count's, if its storage
+/// summarizes (RULES.md D1181). Asking reads nothing.
+pub(crate) fn storage_summarized<'p>(plan: &'p Plan, db: &State) -> Option<&'p QualifiedName> {
+    let mut top = plan;
+    while let Plan::Project { input, .. } | Plan::Sort { input, .. } | Plan::Limit { input, .. } | Plan::Filter { input, .. } = top {
+        top = input;
+    }
+    let Plan::Aggregate { input, aggs, .. } = top else { return None };
+    let (table, columns) = bounded_table(&super::read_of(top, db)?, aggs, input)?;
+    let summarizes = super::super::batched(db) && Arc::clone(db.storage_of(table).ok()?).summarized(NO_TRANSACTION, columns).is_some();
+    summarizes.then_some(table)
 }
 
 // Unit tests: which aggregations are counted by the storage (RULES.md

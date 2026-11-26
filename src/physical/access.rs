@@ -311,7 +311,7 @@ impl PhysicalPlanner<'_> {
             return None;
         }
         let (all, cost) = (cost_of(storage.row_count()), self.weights());
-        let distinct = || self.db.distinct_keys(read.table, on.found);
+        let distinct = || self.table_keys((read.table, &ix.name), on.found);
         let most = (ix.method == BTREE_METHOD).then_some(BTreeMethod::MOST_COUNTED);
         let (est, probed_cost) =
             priced((on.found, &distinct, most), &c, (all, on.types.len(), cost.index_descent), (storage, read.needed.len()));

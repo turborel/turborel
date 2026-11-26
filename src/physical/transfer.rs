@@ -35,6 +35,7 @@ mod tree;
 
 use super::Plan;
 use crate::db::State;
+use crate::physical::Seen;
 use crate::settings::PREDICATE_TRANSFER;
 pub(crate) use chain::{leaves_mut, link};
 
@@ -104,16 +105,17 @@ impl Transfer {
 }
 
 /// `plan` with a phase of predicate transfer over each chain worth one,
-/// if PLANNER.PREDICATE_TRANSFER is ON.
-pub(crate) fn transferred(db: &State, mut plan: Plan) -> Plan {
+/// if PLANNER.PREDICATE_TRANSFER is ON, its leaves' statistics as the
+/// statement sees them, `seen` (RULES.md D1089).
+pub(crate) fn transferred(db: &State, seen: &Seen, mut plan: Plan) -> Plan {
     if db.settings.is_on(PREDICATE_TRANSFER) {
-        walk(db, &mut plan, 0);
+        walk((db, seen), &mut plan, 0);
     }
     plan
 }
 
 /// Plans a phase over each chain of `plan`, `depth` below the top.
-fn walk(db: &State, plan: &mut Plan, depth: usize) {
+fn walk(db: (&State, &Seen), plan: &mut Plan, depth: usize) {
     if depth >= MAX_DEPTH {
         return;
     }
