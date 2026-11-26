@@ -103,10 +103,10 @@ pub const READS: [Mutation; 36] = [
         package: Package::Core,
         breaks: "a chunk of runs says a run ends a row early",
         file: "src/engine/columns/runs.rs",
-        original: "            ends.push(base.checked_add(end.checked_sub(from)?)?);",
-        replacement: "            ends.push(base.checked_add(end.checked_sub(from)?)?.saturating_sub(usize::from(end < to)));",
+        original: "                ends.push(base.checked_add(end.checked_sub(from)?)?);",
+        replacement: "                ends.push(base.checked_add(end.checked_sub(from)?)?.saturating_sub(usize::from(end < to)));",
         integration: &["batches::runs::columns_of_runs_answer_as_row_by_row"],
-        unit: &["engine::columns::tests::chunks_of_runs_say_where_each_ends"],
+        unit: &["engine::columns::tests::chunks_of_runs_give_their_values_and_where_each_run_ends"],
     },
     Mutation {
         name: "runs-grouped",

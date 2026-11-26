@@ -20,9 +20,10 @@
 //! `PART_ROWS` rows together, as many parts' as a page holds, read only by
 //! a scan whose condition can use them; the edges in the group's header.
 
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 
-use super::group::{Filter, Group, PART_ROWS, Pages, Seal, Zone};
+use super::group::{Column, Filter, Group, PART_ROWS, Pages, Seal, Zone};
 use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::storage::{Conjunct, Conjunction};
@@ -94,18 +95,29 @@ fn order(a: &Value, b: &Value) -> Ordering {
 /// a bin of its own.
 pub fn edges<'v>(values: impl ExactSizeIterator<Item = &'v Value>) -> Vec<Value> {
     let step = values.len().div_ceil(SAMPLE).max(1);
-    let mut sample: Vec<&Value> = values.step_by(step).filter(|v| !v.is_null()).collect();
-    sample.sort_by(|a, b| order(a, b));
-    sample.dedup_by(|a, b| order(a, b) == Ordering::Equal);
+    of_sample(values.step_by(step).collect())
+}
+
+/// As `edges`, of the values of `column`, only those sampled read.
+fn edges_in<C: Column + ?Sized>(column: &C) -> Vec<Value> {
+    let step = column.len().div_ceil(SAMPLE).max(1);
+    of_sample((0..column.len()).step_by(step).map(|n| column.value(n)).collect())
+}
+
+/// The edges of the bins of `sample`, values taken evenly apart.
+fn of_sample<V: Borrow<Value>>(mut sample: Vec<V>) -> Vec<Value> {
+    sample.retain(|v| !v.borrow().is_null());
+    sample.sort_by(|a, b| order(a.borrow(), b.borrow()));
+    sample.dedup_by(|a, b| order((*a).borrow(), (*b).borrow()) == Ordering::Equal);
     let wanted = BINS.saturating_sub(1);
     if sample.len() <= wanted {
-        return sample.into_iter().cloned().collect();
+        return sample.iter().map(|v| v.borrow().clone()).collect();
     }
     let mut out: Vec<Value> = Vec::with_capacity(wanted);
     for n in 1..=wanted {
         let at = n.saturating_mul(sample.len()).checked_div(BINS).unwrap_or(0);
-        if let Some(v) = sample.get(at).filter(|v| out.last().is_none_or(|last| order(last, v) == Ordering::Less)) {
-            out.push((*v).clone());
+        if let Some(v) = sample.get(at).map(Borrow::borrow).filter(|v| out.last().is_none_or(|last| order(last, v) == Ordering::Less)) {
+            out.push(v.clone());
         }
     }
     out
@@ -116,10 +128,10 @@ fn bin(edges: &[Value], v: &Value) -> Option<usize> {
     (!v.is_null()).then(|| edges.partition_point(|e| order(e, v) == Ordering::Less))
 }
 
-/// Whether imprints of `values` by `edges` pay: their blocks fall in no
-/// more than `MOST_SET` bins on average.
-pub fn useful(edges: &[Value], values: &[&Value]) -> bool {
-    let words = words(edges, values.iter().copied());
+/// Whether imprints of the values of `column` by `edges` pay: their
+/// blocks fall in no more than `MOST_SET` bins on average.
+pub fn useful<C: Column + ?Sized>(edges: &[Value], column: &C) -> bool {
+    let words = words(edges, (0..column.len()).map(|n| column.value(n)));
     let set: usize = words.iter().map(|w| usize::try_from(w.count_ones()).unwrap_or(BINS)).sum();
     set <= MOST_SET.saturating_mul(words.len())
 }
@@ -138,11 +150,11 @@ pub fn bridged(runs: &[(u32, u32)]) -> Runs {
 }
 
 /// The words of `values`, a part's, a word of each `BLOCK` of them.
-pub fn words<'v>(edges: &[Value], values: impl Iterator<Item = &'v Value>) -> Vec<u64> {
+pub fn words<V: Borrow<Value>>(edges: &[Value], values: impl Iterator<Item = V>) -> Vec<u64> {
     let mut out = Vec::new();
     let (mut word, mut held) = (0_u64, 0_u32);
     for v in values {
-        if let Some(b) = bin(edges, v).and_then(|b| u32::try_from(b).ok()) {
+        if let Some(b) = bin(edges, v.borrow()).and_then(|b| u32::try_from(b).ok()) {
             word |= 1_u64.checked_shl(b).unwrap_or(0);
         }
         held = held.saturating_add(1);
@@ -180,23 +192,23 @@ pub fn mask(edges: &[Value], whole: Option<&(Value, Value)>, (column, conjunct):
     Some(mask)
 }
 
-/// Writes the words of each part of the chunks `zones`, of the column
-/// `values`, by `edges`, each part's `PART_WORDS` words long, on pages of
+/// Writes the words of each part of the chunks `zones`, of the values of
+/// `column`, by `edges`, each part's `PART_WORDS` words long, on pages of
 /// their own, as many as a page holds, and puts where each is in its part.
 ///
 /// # Errors
 ///
 /// As `Pages::put`.
-pub fn put_words<S: Seal>(
+pub fn put_words<S: Seal, C: Column + ?Sized>(
     pages: &Pages<'_, S>,
-    (edges, values): (&[Value], &[&Value]),
+    (edges, column): (&[Value], &C),
     zones: &mut [Zone],
     written: &mut Vec<PageId>,
 ) -> Result<()> {
     let mut each = Vec::new();
     for (from, to) in zones.iter().flat_map(parts_of) {
-        let held = values.get(usize::try_from(from).unwrap_or(usize::MAX)..usize::try_from(to).unwrap_or(0)).unwrap_or_default();
-        let mut bytes: Vec<u8> = words(edges, held.iter().copied()).iter().flat_map(|w| w.to_le_bytes()).collect();
+        let held = held_in(column, (from, to));
+        let mut bytes: Vec<u8> = words(edges, held.map(|n| column.value(n))).iter().flat_map(|w| w.to_le_bytes()).collect();
         bytes.resize(PART_WORDS.saturating_mul(WORD_BYTES), 0);
         each.push(bytes);
     }
@@ -205,6 +217,13 @@ pub fn put_words<S: Seal>(
         part.imprint = places.next();
     }
     Ok(())
+}
+
+/// The rows from `from` to `to` of `column`, none if it holds not all of
+/// them.
+pub(super) fn held_in<C: Column + ?Sized>(column: &C, (from, to): (u32, u32)) -> std::ops::Range<usize> {
+    let (from, to) = (usize::try_from(from).unwrap_or(usize::MAX), usize::try_from(to).unwrap_or(0));
+    if from > to || to > column.len() { 0..0 } else { from..to }
 }
 
 /// The runs of the parts of `zone`, in order.
@@ -326,28 +345,27 @@ pub fn each_kept<S: Seal>(
 }
 
 /// Writes the imprints of each column of `types` that takes them, of
-/// `rows`, if `pages` says groups have them, in its chunks `columns`: of
-/// each column, the edges of its bins, none if it has none.
-pub(super) fn put_all<S: Seal, R: AsRef<[Value]>>(
+/// its values `columns`, if `pages` says groups have them, in its chunks
+/// `chunks`: of each column, the edges of its bins, none if it has none.
+pub(super) fn put_all<S: Seal, C: Column>(
     pages: &Pages<'_, S>,
-    (types, rows): (&[DataType], &[R]),
-    columns: &mut [Vec<Zone>],
+    (types, columns): (&[DataType], &[C]),
+    chunks: &mut [Vec<Zone>],
     written: &mut Vec<PageId>,
 ) -> Result<Vec<Vec<Value>>> {
     let mut out = Vec::with_capacity(types.len());
-    for (c, (t, zones)) in types.iter().zip(columns.iter_mut()).enumerate() {
+    for ((t, zones), column) in types.iter().zip(chunks.iter_mut()).zip(columns) {
         if !pages.imprints || !imprinted(t) {
             out.push(Vec::new());
             continue;
         }
-        let values: Vec<&Value> = rows.iter().map(|r| r.as_ref().get(c).unwrap_or(&Value::Null)).collect();
-        let mut edges = edges(values.iter().copied());
+        let mut edges = edges_in(column);
         // A column scattered so its blocks fall in many bins gets none.
-        if !useful(&edges, &values) {
+        if !useful(&edges, column) {
             edges.clear();
         }
         if !edges.is_empty() {
-            put_words(pages, (&edges, &values), zones, written)?;
+            put_words(pages, (&edges, column), zones, written)?;
         }
         out.push(edges);
     }

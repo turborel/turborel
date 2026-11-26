@@ -58,7 +58,6 @@ fn inner(rows: &[f64], edges: &[(usize, usize, f64)]) -> (Vec<Shape>, Model) {
         want_class: None,
         injected: Vec::new(),
         implied: Vec::new(),
-        stars: Vec::new(),
         ranged: super::ranged::Ranges::default(),
     };
     let model = Model { implied: model.implied_classes(), ..model };
@@ -243,102 +242,4 @@ fn a_range_join_is_a_plan_of_no_order() {
     assert_eq!(ranged, [Order::None], "{:?}", entry.cands);
     let ordered = entry.of_order(Order::Class(0)).expect("a plan of the left's order");
     assert_eq!(how(ordered.tree), Some(Method::Nested));
-}
-
-/// `graph`, with the stars of `model`'s classes whose columns `keyed`
-/// holds, within `budget`.
-fn starred(shapes: &[Shape], model: &Model, keyed: &[usize], budget: usize) -> Graph {
-    graph(shapes, model).implying(&model.stars_of(&|c| keyed.contains(&c)), budget)
-}
-
-/// Verifies: [DESIGN] RULES.md D1204: of `p = l AND ps = l`, P's column a
-/// key of it, the graph joins P to PS by the key the class implies, and
-/// the cheapest plan joins the filtered P to PS before L; with no key the
-/// graph has no such edge and the two are never joined alone; a chain
-/// with an outer join has no class, so no star.
-#[test]
-fn a_key_of_a_class_joins_its_other_relations() {
-    let (p, l, ps) = (bit(0_usize), bit(1_usize), bit(2_usize));
-    let (shapes, mut model) = inner(&[100.0_f64, 60_000.0_f64, 8000.0_f64], &[(0, 1, 2000.0_f64), (1, 2, 2000.0_f64)]);
-    model.classes = Classes::new(vec![vec![(0_usize, 2000.0_f64), (1, 2000.0_f64), (2, 2000.0_f64)]]);
-    for c in &mut model.conjuncts {
-        c.class = Some(0_usize);
-    }
-    assert_eq!(model.stars_of(&|c| c == 0), vec![(0_usize, l | ps)]);
-    assert_eq!(model.stars_of(&|_| false), Vec::new());
-    let plain = graph(&shapes, &model);
-    assert!(!plain.connected(p, ps));
-    let mut unkeyed = Space::new(&plain, &model);
-    unkeyed.dphyp(plain.all());
-    assert!(!unkeyed.has(p | ps), "P joined to PS with no edge");
-    let g = starred(&shapes, &model, &[0], 10_000_usize);
-    assert!(g.connected(p, ps) && g.connected(ps, p));
-    let mut space = Space::new(&g, &model);
-    space.dphyp(g.all());
-    assert_eq!(space.table.get(&(p | ps)).map(|e| e.rows), Some(400.0_f64));
-    let applied = space.applies(p, ps).unwrap();
-    assert!(applied.conjuncts.is_empty() && applied.op.is_none());
-    assert_eq!(space.keys(&applied, (p, ps)), vec![(0, 2)]);
-    let best = space.chosen(g.all(), Order::None).unwrap();
-    let Some(&Tree::Join { sets, .. }) = space.trees.get(best.tree) else { panic!("no join") };
-    assert!(sets == (p | ps, l) || sets == (l, p | ps), "{sets:?}");
-    assert!(best.cost < unkeyed.chosen(plain.all(), Order::None).unwrap().cost);
-    let mut outer = model;
-    outer.kinds = vec![Kind::Left, Kind::Inner];
-    outer.implied = outer.implied_classes();
-    assert_eq!(outer.stars_of(&|_| true), Vec::new());
-}
-
-/// Verifies: [DESIGN] RULES.md D1204: the stars are offered from the
-/// relation of fewest rows and taken only within the budget. A chain of
-/// 12 relations each keyed, a clique of 261,625 pairs with every star,
-/// keeps its work within the budget, here its own 286 pairs as no star
-/// fits; a chain of 6 takes every star, the clique's 301 pairs; and a
-/// budget its own work passes leaves a graph as it was.
-#[test]
-fn stars_are_taken_only_within_the_budget() {
-    let chain = |n: usize| (1..n).map(|k| (k.saturating_sub(1), k, 10.0_f64)).collect::<Vec<_>>();
-    let all_keyed: Vec<usize> = (0..12).collect();
-    let dp = |g: &Graph, model: &Model| {
-        let mut space = Space::new(g, model);
-        space.dphyp(g.all());
-        assert!(space.has(g.all()));
-        space.pairs
-    };
-    let (shapes, model) = inner(&[10.0_f64; 12], &chain(12));
-    let bounded = starred(&shapes, &model, &all_keyed, 10_000_usize);
-    assert!(bounded.work(usize::MAX) <= 10_000_usize);
-    assert_eq!(dp(&bounded, &model), 286_usize);
-    let clique = starred(&shapes, &model, &all_keyed, usize::MAX);
-    // 4,095 connected subgraphs and (3^12 − 2^13 + 1)/2 pairs.
-    assert_eq!(clique.work(usize::MAX), 265_720_usize);
-    let (six, mut few) = inner(&[10.0_f64, 20.0_f64, 30.0_f64, 40.0_f64, 50.0_f64, 5.0_f64], &chain(6));
-    assert_eq!(dp(&starred(&six, &few, &all_keyed, 10_000_usize), &few), 301_usize);
-    // The chain's own work is 21 subgraphs and 35 pairs.
-    assert_eq!(graph(&six, &few).work(usize::MAX), 56_usize);
-    assert_eq!(dp(&starred(&six, &few, &all_keyed, 55_usize), &few), 35_usize);
-    // A budget of the work of the chain with one star takes the star of
-    // the relation of fewest rows, the last, and no other.
-    let with_one = starred(&six, &few, &[5], usize::MAX).work(usize::MAX);
-    let one = starred(&six, &few, &all_keyed, with_one);
-    assert!(one.connected(bit(5), bit(0)) && !one.connected(bit(1), bit(3)), "{}", one.work(usize::MAX));
-    few.rels[5].rows = 1e6_f64;
-    let with_first = starred(&six, &few, &[0], usize::MAX).work(usize::MAX);
-    let other = starred(&six, &few, &all_keyed, with_first);
-    assert!(other.connected(bit(0), bit(5)) && other.connected(bit(0), bit(3)) && !other.connected(bit(1), bit(3)));
-}
-
-/// Verifies: [X3.135-1986 §5.11]; [DESIGN] RULES.md D1206: columns are
-/// equal by the equalities judged if a chain of them joins the two, in
-/// either direction of each, and a column is equal to itself; columns no
-/// chain joins are not.
-#[test]
-fn equalities_judged_chain_their_columns() {
-    let pairs = [(0_usize, 1_usize), (2, 1), (3, 4)];
-    assert!(super::realize::chained(&pairs, 0, 2));
-    assert!(super::realize::chained(&pairs, 2, 0));
-    assert!(super::realize::chained(&pairs, 4, 3));
-    assert!(super::realize::chained(&pairs, 5, 5));
-    assert!(!super::realize::chained(&pairs, 0, 3));
-    assert!(!super::realize::chained(&[], 0, 1));
 }

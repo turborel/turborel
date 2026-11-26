@@ -40,7 +40,7 @@ fn equality_not_false(c: &Cond) -> Option<(usize, usize)> {
 /// table's column declared so, through the operators that pass a column
 /// on as it is and add no row of nulls; `depth` operators down, past
 /// `MAX_JUDGED_DEPTH` not known (RULES.md R-CF-6).
-pub(super) fn never_null(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: usize) -> bool {
+pub(in crate::optimizer) fn never_null(plan: &LogicalPlan, column: usize, catalog: &dyn Catalog, depth: usize) -> bool {
     if depth > MAX_JUDGED_DEPTH {
         return false;
     }

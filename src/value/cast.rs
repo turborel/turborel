@@ -3,6 +3,8 @@
 //! share.
 
 use super::{DataType, Decimal, MAX_EXACT_PRECISION, REAL_PRECISION, Value, pow10, round_to_single};
+use std::fmt::Write as _;
+
 use crate::error::{Code, Result, SqlState, fail_with};
 
 /// [ISO/IEC 9075:1992 §6.10 GR2-GR5] `v` cast to `to`, as its kind casts
@@ -117,7 +119,9 @@ pub(crate) fn padded(text: &str, length: u32) -> Result<Value> {
 }
 
 /// [ISO/IEC 9075:1992 §6.10 GR3b, GR4b] The `<signed numeric literal>` `s`
-/// is, its spaces trimmed, to cast to a number.
+/// is, its spaces trimmed, to cast to a number. It is read where it lies,
+/// with nothing allocated, as every cast of a string to a number reads one
+/// (RULES.md D1148).
 ///
 /// # Errors
 ///
@@ -127,7 +131,7 @@ pub(crate) fn padded(text: &str, length: u32) -> Result<Value> {
 /// ii, GR9b ii, GR9a ii], where written in a statement it breaks a Syntax
 /// Rule [§5.3 SR30] (RULES.md D970).
 pub(crate) fn numeric_literal(s: &str) -> Result<Value> {
-    let Some(lit) = numeric_parts(s.trim_matches(' ')) else {
+    let Some(lit) = literal_parts(s.trim_matches(' ')) else {
         return fail_with(
             Code::Data,
             SqlState::INVALID_CHARACTER_VALUE_FOR_CAST,
@@ -146,12 +150,21 @@ pub(crate) fn numeric_literal(s: &str) -> Result<Value> {
     )
 }
 
-/// [ISO/IEC 9075-2:2023 §5.3 SR22] The digits of `t` if it is an
-/// `<unsigned decimal integer>`, or empty, an `<underscore>` only between
-/// two digits: the same without its underscores.
-fn digits_of(t: &str) -> Option<String> {
-    let placed = !t.starts_with('_') && !t.ends_with('_') && !t.contains("__");
-    (placed && t.chars().all(|c| c.is_ascii_digit() || c == '_')).then(|| t.replace('_', ""))
+/// The separator a `<signed numeric literal>`'s digits may hold [ISO/IEC
+/// 9075-2:2023 §5.3 SR22].
+const UNDERSCORE: char = '_';
+
+/// [ISO/IEC 9075-2:2023 §5.3 SR22] Whether `t` is an `<unsigned decimal
+/// integer>`, or empty, an `<underscore>` only between two digits.
+fn placed(t: &str) -> bool {
+    let between = !t.starts_with(UNDERSCORE) && !t.ends_with(UNDERSCORE) && !t.contains("__");
+    between && t.chars().all(|c| c.is_ascii_digit() || c == UNDERSCORE)
+}
+
+/// The digits of `t`, an `<unsigned decimal integer>` `placed` approves,
+/// its underscores passed over: no string is made of them.
+fn digits_in(t: &str) -> impl Iterator<Item = u8> + Clone + '_ {
+    t.bytes().filter(u8::is_ascii_digit)
 }
 
 /// [ISO/IEC 9075:1992 §5.3] A `<signed numeric literal>`, read: its
@@ -169,11 +182,28 @@ pub(crate) struct NumericLiteral {
     pub exponent: Option<i64>,
 }
 
+/// A `<signed numeric literal>` read where it lies: its sign, its
+/// mantissa's text, its whole digits' and its fraction's, each perhaps
+/// with underscores, and its exponent, saturated, if it is approximate.
+struct LiteralParts<'a> {
+    /// Whether it is negative.
+    negative: bool,
+    /// Its text without its sign.
+    body: &'a str,
+    /// Its digits before the period.
+    whole: &'a str,
+    /// Its digits after the period.
+    fraction: &'a str,
+    /// Its exponent, if it is an approximate numeric literal.
+    exponent: Option<i64>,
+}
+
 /// The value of an `<exponent>`'s digits `unsigned`, of the sign
-/// `negative` says, saturated past an `i64`.
+/// `negative` says, saturated past an `i64`: as many digits no `i64`
+/// holds are its greatest.
 fn exponent_value(negative: bool, unsigned: &str) -> i64 {
     let magnitude =
-        unsigned.trim_start_matches('0').parse::<i64>().unwrap_or(if unsigned.trim_start_matches('0').is_empty() { 0 } else { i64::MAX });
+        digits_in(unsigned).fold(0_i64, |m, d| m.saturating_mul(i64::from(DECIMAL_BASE)).saturating_add(i64::from(d.wrapping_sub(b'0'))));
     if negative { magnitude.saturating_neg() } else { magnitude }
 }
 
@@ -182,7 +212,7 @@ fn exponent_value(negative: bool, unsigned: &str) -> i64 {
 /// them, or an approximate one, that followed by E and a signed integer;
 /// its digits perhaps with underscores [ISO/IEC 9075-2:2023 §5.3,
 /// §6.13 GR8b, GR9b, GR10b].
-pub(crate) fn numeric_parts(s: &str) -> Option<NumericLiteral> {
+fn literal_parts(s: &str) -> Option<LiteralParts<'_>> {
     let (negative, body) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
         None => (false, s.strip_prefix('+').unwrap_or(s)),
@@ -192,20 +222,59 @@ pub(crate) fn numeric_parts(s: &str) -> Option<NumericLiteral> {
         None => (body, None),
     };
     let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let (whole, fraction) = (digits_of(whole)?, digits_of(fraction)?);
-    if whole.is_empty() && fraction.is_empty() {
+    if !placed(whole) || !placed(fraction) || (whole.is_empty() && fraction.is_empty()) {
         return None;
     }
     let exponent = match exponent {
         Some(e) => {
             let e = e.strip_prefix('+').unwrap_or(e);
             let (minus, unsigned) = e.strip_prefix('-').map_or((false, e), |u| (true, u));
-            Some(exponent_value(minus, &digits_of(unsigned).filter(|u| !u.is_empty())?))
+            if !placed(unsigned) || unsigned.is_empty() {
+                return None;
+            }
+            Some(exponent_value(minus, unsigned))
         }
         None => None,
     };
-    Some(NumericLiteral { negative, fraction: fraction.len(), digits: format!("{whole}{fraction}"), exponent })
+    Some(LiteralParts { negative, body, whole, fraction, exponent })
 }
+
+/// [ISO/IEC 9075:1992 §5.3] `s` read, if it is a `<signed numeric
+/// literal>`, as `literal_parts` reads it, its digits gathered without
+/// underscores.
+pub(crate) fn numeric_parts(s: &str) -> Option<NumericLiteral> {
+    let lit = literal_parts(s)?;
+    let mut digits = String::with_capacity(lit.whole.len().saturating_add(lit.fraction.len()));
+    digits.extend(digits_in(lit.whole).chain(digits_in(lit.fraction)).map(char::from));
+    Some(NumericLiteral { negative: lit.negative, fraction: digits_in(lit.fraction).count(), digits, exponent: lit.exponent })
+}
+
+/// The nearest `f64` of the decimal `lit` writes, if finite. Of digits
+/// with no underscores, `body`, the literal's own text, is read where
+/// `f64`'s parsing takes its form, which writes the same number, so no
+/// text is made; else the digits are gathered, the exponent saturated.
+fn nearest(lit: &LiteralParts<'_>) -> Option<f64> {
+    let read = if lit.body.contains(UNDERSCORE) { None } else { lit.body.parse::<f64>().ok() };
+    let x = read.or_else(|| gathered(lit))?;
+    x.is_finite().then(|| if lit.negative { -x } else { x })
+}
+
+/// The nearest `f64` of the decimal `lit` writes, of its digits gathered
+/// without underscores and its exponent, saturated, written after them.
+fn gathered(lit: &LiteralParts<'_>) -> Option<f64> {
+    let mut text = String::with_capacity(lit.body.len().saturating_add(EXPONENT_ROOM));
+    text.extend(digits_in(lit.whole).map(char::from));
+    text.push('.');
+    text.extend(digits_in(lit.fraction).map(char::from));
+    write!(text, "E{}", lit.exponent.unwrap_or(0)).ok()?;
+    text.parse().ok()
+}
+
+/// The base of a literal's digits.
+const DECIMAL_BASE: u8 = 10;
+
+/// Room for an `i64` exponent's text and its sign and letter.
+const EXPONENT_ROOM: usize = 22;
 
 /// [ISO/IEC 9075:1992 §5.3] The value of the `<signed numeric literal>`
 /// `lit`, if a number of this implementation holds it. Of an exact one it
@@ -214,72 +283,24 @@ pub(crate) fn numeric_parts(s: &str) -> Option<NumericLiteral> {
 /// target truncates them \[GR3a, implementation-defined\]; of one whose
 /// whole digits are more than that, the approximate number nearest, as no
 /// exact one holds it. Of an approximate one it is approximate, if finite.
-fn literal_value(lit: &NumericLiteral) -> Option<Value> {
-    let (whole, fraction) = lit.digits.split_at(lit.digits.len().checked_sub(lit.fraction)?);
-    let signed = |x: f64| Value::Approx(if lit.negative { -x } else { x });
-    if let Some(e) = lit.exponent {
-        return format!("{whole}.{fraction}E{e}").parse().ok().filter(|x: &f64| x.is_finite()).map(signed);
+/// Its units are summed digit by digit: no text is made of them.
+fn literal_value(lit: &LiteralParts<'_>) -> Option<Value> {
+    if lit.exponent.is_some() {
+        return nearest(lit).map(Value::Approx);
     }
-    let whole = whole.trim_start_matches('0');
-    let Some(room) = usize::try_from(MAX_EXACT_PRECISION).ok()?.checked_sub(whole.len()) else {
-        return format!("{whole}.{fraction}").parse().ok().filter(|x: &f64| x.is_finite()).map(signed);
+    let whole = digits_in(lit.whole).skip_while(|&d| d == b'0');
+    let Some(room) = usize::try_from(MAX_EXACT_PRECISION).ok()?.checked_sub(whole.clone().count()) else {
+        return nearest(lit).map(Value::Approx);
     };
-    let kept = fraction.get(..fraction.len().min(room))?;
-    let scale = u32::try_from(kept.len()).ok()?;
-    let units: i128 = format!("0{whole}{kept}").parse().ok()?;
+    let kept = digits_in(lit.fraction).take(room);
+    let scale = u32::try_from(kept.clone().count()).ok()?;
+    // At most `MAX_EXACT_PRECISION` digits, so an `i128` holds them.
+    let units = whole
+        .chain(kept)
+        .try_fold(0_i128, |u, d| u.checked_mul(i128::from(DECIMAL_BASE))?.checked_add(i128::from(d.wrapping_sub(b'0'))))?;
     Some(Value::Exact(Decimal::new(if lit.negative { units.checked_neg()? } else { units }, scale)))
 }
 
 // Unit tests: the literals a cast reads and writes (RULES.md R-TEST-1).
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §5.3, §6.10 GR3b, GR5b i] what is a
-    /// `<signed numeric literal>`, and the shortest approximate literal;
-    /// [ISO/IEC 9075-2:2023 §5.3 SR22] its digits with underscores between them.
-    ///
-    /// `digits_of`'s decision, MC/DC pairs against "1_0", true: "_1" shows
-    /// the first underscore, "1_" the last, "1__0" two together, "A1" a
-    /// character neither digit nor underscore.
-    #[test]
-    fn numeric_literals() {
-        let literal_value = |s: &str| numeric_parts(s).and_then(|lit| literal_value(&lit));
-        let exact = |s: &str| if let Some(Value::Exact(d)) = literal_value(s) { Some((d.units, d.scale)) } else { None };
-        assert_eq!(exact("-12.50"), Some((-1250, 2)));
-        assert_eq!(exact(".5"), Some((5, 1)));
-        let Some(Value::Approx(x)) = literal_value("+1E-2") else { panic!("+1E-2 is approximate") };
-        assert!((x - 0.01_f64).abs() < 1e-12_f64);
-        assert_eq!(exact("1_000.000_5"), Some((10_000_005, 4)), "underscores between digits");
-        let Some(Value::Approx(y)) = literal_value("5.E1_0") else { panic!("5.E1_0 is approximate") };
-        assert!((y - 5e10_f64).abs() < 1.0_f64);
-        for bad in ["", ".", "1.2.3", "E1", "1E", "1E+", "A1", "--1", "_1", "1_", "1__0", "1_.5", "1._5", "1E_1", "_"] {
-            assert!(literal_value(bad).is_none(), "{bad}");
-        }
-        assert_eq!(approximate_literal(0.0), "0E0");
-        assert_eq!(approximate_literal(100.0), "1.0E2");
-        assert_eq!(approximate_literal(-1.5e-3), "-1.5E-3");
-    }
-
-    /// Verifies: [ISO/IEC 9075-2:2023 §6.13 GR8b, GR9b] RULES.md D970: a
-    /// literal's text no number holds is 22003, one that is no literal
-    /// 22018. Its leading zeros count toward no limit; a fraction past what
-    /// its whole digits leave of the maximum precision is truncated; whole
-    /// digits more than the maximum precision make the nearest approximate
-    /// number, and past every approximate number's range, none.
-    #[test]
-    fn literals_no_exact_number_holds() {
-        let exact = |s: &str| if let Ok(Value::Exact(d)) = numeric_literal(s) { Some((d.units, d.scale)) } else { None };
-        let state = |s: &str| numeric_literal(s).unwrap_err().sqlstate().to_string();
-        assert_eq!(exact(&format!("{}1", "0".repeat(60))), Some((1, 0)));
-        assert_eq!(exact(&format!("-0.{}", "3".repeat(60))), Some((-"3".repeat(38).parse::<i128>().unwrap(), 38)));
-        let whole = "9".repeat(36);
-        assert_eq!(exact(&format!("{whole}.125")), Some((pow10(38).unwrap() - 100 + 12, 2)), "two digits of the fraction left");
-        let Ok(Value::Approx(x)) = numeric_literal(&"9".repeat(39)) else { panic!("39 digits are approximate") };
-        assert!((x - 1e39_f64).abs() < 1e24_f64);
-        for beyond in ["9".repeat(400), "1E400".to_owned(), "-1e999".to_owned()] {
-            assert_eq!(state(&beyond), "22003", "{beyond}");
-        }
-        assert_eq!(state("1E"), "22018");
-    }
-}
+mod tests;

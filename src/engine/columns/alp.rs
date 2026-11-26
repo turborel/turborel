@@ -24,6 +24,7 @@
 
 mod decode;
 
+use super::fields::Cells;
 use super::packed::{bits_for, pack, packed_len};
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
@@ -209,7 +210,7 @@ impl Trials {
 
 /// Appends `fields`, approximate numbers, as decimals of factors
 /// `factors`, each n less `least` in `bits`, the others exceptions.
-pub(super) fn encode(fields: &[Option<Vec<u8>>], (factors, least, bits): (Factors, i64, u32), out: &mut Vec<u8>) -> Result<()> {
+pub(super) fn encode(fields: Cells<'_>, (factors, least, bits): (Factors, i64, u32), out: &mut Vec<u8>) -> Result<()> {
     if usize::from(factors.e) > MOST_E || factors.f > factors.e {
         return Err(corrupt("its exponent is too large"));
     }
@@ -223,7 +224,7 @@ pub(super) fn encode(fields: &[Option<Vec<u8>>], (factors, least, bits): (Factor
         let delta =
             number(f).and_then(|v| encoded(v, factors)).and_then(|n| u64::try_from(i128::from(n).saturating_sub(i128::from(least))).ok());
         if delta.is_none() {
-            exceptions.push((at, f.as_slice()));
+            exceptions.push((at, f));
         }
         deltas.push(delta.unwrap_or(0));
     }

@@ -30,32 +30,47 @@ pub(super) fn copies<S: Read + Write>(connection: &Connection<S>, insert: &State
     connection.granted().has(COPY) && !how.skip && !insert.inputs().iter().any(lob)
 }
 
+/// The message of a record of `fields` fields, for `wanted` columns.
+pub(super) fn miscounted(fields: usize, wanted: usize) -> String {
+    format!("[DESIGN] {fields} fields, for {wanted} columns")
+}
+
 /// The row of a copy `failure` names, from 1, if it names one.
 fn row_of(failure: &Failure) -> Option<usize> {
     let detail = failure.diagnostics.as_ref()?.detail.as_deref()?;
     detail.strip_prefix(ROW)?.strip_suffix(OF_THE_COPY)?.parse().ok()
 }
 
-/// An import by copy under way.
-struct Run<'a> {
-    how: &'a Import,
-    types: Vec<ParameterType>,
-    committed: u64,
-    /// Where each record of the batch under way began.
-    batch: Vec<Position>,
+/// What an import by copy has done: the rows committed, and where each
+/// record of the batch under way began.
+#[derive(Default)]
+pub(super) struct Kept {
+    pub(super) committed: u64,
+    pub(super) batch: Vec<Position>,
 }
 
-impl Run<'_> {
+impl Kept {
     /// Stops the import at `position` for `cause`, `rolled_back` rows of
     /// the batch undone.
-    fn stop(&self, position: Option<Position>, cause: Cause, rolled_back: usize) -> ImportError {
+    pub(super) fn stop(&self, position: Option<Position>, cause: Cause, rolled_back: usize) -> ImportError {
         let rolled_back = u64::try_from(rolled_back).unwrap_or(u64::MAX);
         ImportError { position, cause, committed: self.committed, rolled_back }
     }
 
+    /// Stops the import at `position` for `cause`, every row of the batch
+    /// under way undone.
+    pub(super) fn stopped(&self, position: Option<Position>, cause: Cause) -> ImportError {
+        self.stop(position, cause, self.batch.len())
+    }
+
+    /// Whether the batch under way is whole, of `how`'s rows.
+    pub(super) fn whole(&self, how: &Import) -> bool {
+        u64::try_from(self.batch.len()).unwrap_or(u64::MAX) == how.batch
+    }
+
     /// Ends `copying`, the batch's copy: its rows committed, or why it
     /// failed, at the row it names.
-    fn ended<S: Read + Write>(&mut self, copying: Copying<'_, S>) -> Result<(), ImportError> {
+    pub(super) fn ended<S: Read + Write>(&mut self, copying: Copying<'_, S>) -> Result<(), ImportError> {
         match copying.finish() {
             Ok(rows) => {
                 self.committed = self.committed.saturating_add(rows);
@@ -72,6 +87,13 @@ impl Run<'_> {
     }
 }
 
+/// An import by copy under way.
+struct Run<'a> {
+    how: &'a Import,
+    types: Vec<ParameterType>,
+    kept: Kept,
+}
+
 /// Imports `source`'s records into `table`'s `columns`, as SQL names them,
 /// of the parameters' types `types`, as `how` says, over `connection`,
 /// which has no transaction active.
@@ -85,24 +107,22 @@ pub(super) fn import<S: Read + Write, R: Source>(
     (how, table, columns): (&Import, &str, Vec<String>),
     types: Vec<ParameterType>,
 ) -> Result<Imported, ImportError> {
-    let mut run = Run { how, types, committed: 0, batch: Vec::new() };
+    let mut run = Run { how, types, kept: Kept::default() };
     while run.copied(connection, source, (table, &columns))? {}
-    Ok(Imported { rows: run.committed, rejected: 0 })
+    Ok(Imported { rows: run.kept.committed, rejected: 0 })
 }
 
 impl Run<'_> {
     /// The next of `source`'s records, checked as the INSERT's parameters
     /// take it: where it began, and its values.
     fn checked<R: Source>(&self, source: &mut R) -> Result<Option<(Position, Row)>, ImportError> {
-        let record = source.record().map_err(|e| self.stop(Some(e.position), Cause::Input(e.message), self.batch.len()))?;
+        let record = source.record().map_err(|e| self.kept.stopped(Some(e.position), Cause::Input(e.message)))?;
         let Some(record) = record else { return Ok(None) };
         let wanted = self.types.len();
         if record.values.len() != wanted {
-            let msg = format!("[DESIGN] {} fields, for {wanted} columns", record.values.len());
-            return Err(self.stop(Some(record.position), Cause::Input(msg), self.batch.len()));
+            return Err(self.kept.stopped(Some(record.position), Cause::Input(miscounted(record.values.len(), wanted))));
         }
-        let values =
-            assigned(&record.values, &self.types).map_err(|f| self.stop(Some(record.position), Cause::sql(f), self.batch.len()))?;
+        let values = assigned(&record.values, &self.types).map_err(|f| self.kept.stopped(Some(record.position), Cause::sql(f)))?;
         Ok(Some((record.position, values)))
     }
 
@@ -116,16 +136,16 @@ impl Run<'_> {
         (table, columns): (&str, &[String]),
     ) -> Result<bool, ImportError> {
         let Some(first) = self.checked(source)? else { return Ok(false) };
-        let mut copy = connection.copy_begin(table, columns.to_vec(), true).map_err(|f| self.stop(None, Cause::sql(f), 0))?;
+        let mut copy = connection.copy_begin(table, columns.to_vec(), true).map_err(|f| self.kept.stop(None, Cause::sql(f), 0))?;
         let mut next = Some(first);
         while let Some((at, values)) = next {
-            copy.send(values).map_err(|f| self.stop(Some(at), Cause::sql(f), self.batch.len()))?;
-            self.batch.push(at);
-            if u64::try_from(self.batch.len()).unwrap_or(u64::MAX) == self.how.batch {
-                return self.ended(copy).map(|()| true);
+            copy.send(values).map_err(|f| self.kept.stopped(Some(at), Cause::sql(f)))?;
+            self.kept.batch.push(at);
+            if self.kept.whole(self.how) {
+                return self.kept.ended(copy).map(|()| true);
             }
             next = self.checked(source)?;
         }
-        self.ended(copy).map(|()| false)
+        self.kept.ended(copy).map(|()| false)
     }
 }

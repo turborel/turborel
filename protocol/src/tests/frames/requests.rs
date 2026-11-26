@@ -1,13 +1,14 @@
 //! The sample frames of every request, each tail of one, and a request
 //! compressed.
 
+use turborel::storage::lanes::{Lane, Lanes};
 use turborel::value::Value;
 use turborel::value::lob::LobKind;
 
 use super::{Sample, Side, client, raw};
 use crate::capability::{
-    CHANGE_USER, COMPRESSION, CONNECTION_ATTRIBUTES, COPY, CURSORS, DECLARED_TYPES, DESCRIBE, MULTI_STATEMENT, PING, QUERY_ATTRIBUTES,
-    RESET, STATUS,
+    CHANGE_USER, COLUMNS, COMPRESSION, CONNECTION_ATTRIBUTES, COPY, CURSORS, DECLARED_TYPES, DESCRIBE, MULTI_STATEMENT, PING,
+    QUERY_ATTRIBUTES, RESET, STATUS,
 };
 use crate::compress::compress_frames;
 use crate::{CancelKey, Described, KEY_BYTES, LobRequest, MAX_ATTRIBUTE_NAME, MAX_ATTRIBUTE_VALUE, MAX_ATTRIBUTES, Request, VERSION};
@@ -205,6 +206,18 @@ fn renewals() -> Vec<Sample> {
             &[COPY],
             &Request::CopyData(vec![vec![Value::Char("1".into()), Value::Null], vec![Value::Char("2".into()), Value::Char("b".into())]]),
             "CopyData of two rows, 1 and null, 2 and b",
+        ),
+        client(
+            "copy-columns",
+            &[COPY, COLUMNS],
+            &Request::CopyColumns(Lanes {
+                rows: 2,
+                columns: vec![
+                    Lane { nulls: vec![0b10], ends: vec![1, 1], bytes: b"1".to_vec() },
+                    Lane { nulls: vec![0], ends: vec![1, 1], bytes: b"b".to_vec() },
+                ],
+            }),
+            "CopyColumns of two rows by column, 1 and null, b and the empty string",
         ),
         client("copy-end", &[COPY], &Request::CopyEnd { abandon: false }, "CopyEnd, abandon 0"),
         client("copy-end-abandon", &[COPY], &Request::CopyEnd { abandon: true }, "CopyEnd, abandon 1"),

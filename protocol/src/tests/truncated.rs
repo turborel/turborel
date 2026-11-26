@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use turborel::storage::lanes::{Lane, Lanes};
 use turborel::value::lob::{Lob, LobKind};
 use turborel::value::types::{self, Field, Structured, UdtName};
 use turborel::value::xml::XmlValue;
@@ -79,6 +80,7 @@ fn counted_requests() -> Vec<Request> {
         Request::ChangeUser { user: "Y".into(), mechanism: "password".into(), initial: vec![1, 2, 3] },
         Request::CopyIn { table: "T".into(), columns: vec!["A".into(), "B".into()], ends: true },
         Request::CopyData(nested_rows()),
+        Request::CopyColumns(Lanes { rows: 2, columns: vec![Lane { nulls: vec![0b10], ends: vec![2, 2], bytes: b"ab".to_vec() }] }),
         Request::Describe(Described::Cursor { statement: 3, cursor: 4 }),
         Request::Lob(LobRequest::Read { locator: 7, from: 1, count: 9, characters: true }),
         Request::Lob(LobRequest::Create(LobKind::Binary)),

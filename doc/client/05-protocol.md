@@ -389,6 +389,7 @@ mechanism of its own ([Plug-ins](04-plugins.md)).
 | `declared-types` | a Prepared and a Description carry each column's declared type, tag 19 |
 | `parameter-modes` | a Prepared of a CALL carries its procedure and each `?` with its parameter's mode, tag 20 |
 | `debugger` | the request Debug, answered by Debugged or a Complete, and the Event the server sends unasked *(extension)* |
+| `columns` | the request CopyColumns, with `copy` |
 
 The server ignores a name it does not know. A client never sends a
 request, or a tail field, of a capability it was not granted. One that
@@ -637,9 +638,10 @@ CopyIn 'I'
 ```
 
 With `copy`. Begins a copy of rows into a table. It has no reply. From
-here until CopyEnd the client sends only CopyData and CopyEnd. Another
-request that a worker would run, or CopyData or CopyEnd with no copy
-under way, fails the connection. Ping is answered as ever.
+here until CopyEnd the client sends only CopyData, CopyColumns and
+CopyEnd. Another request that a worker would run, or CopyData,
+CopyColumns or CopyEnd with no copy under way, fails the connection.
+Ping is answered as ever.
 
 ### CopyData 'J'
 
@@ -651,6 +653,41 @@ CopyData 'J'
 Rows of the copy, as many at a time as the client likes. It has no
 reply. Each value is assigned to its column as INSERT assigns it, so a
 string too long fails rather than being cut.
+
+### CopyColumns 'O'
+
+```text
+CopyColumns 'O'
+  rows           u32, the rows it carries
+  columns        a list, a column for each of the copy's, in order:
+    nulls        bytes, a bit for each row, set if its cell is null;
+                 row 0 is the low bit of the first byte
+    ends         a list of u32, where each row's cell ends in text
+    text         bytes, the cells' UTF-8 one after another
+```
+
+With `copy` and `columns`. Rows of the copy by column, as text, in
+place of CopyData. A cell begins where the one before it ends, the
+first at 0, and holds what a field of a file holds. A null cell ends
+where the one before it ends. It has no reply. The server parses each
+column's cells straight into the column's type, so a cell is taken as
+the character string of its text would be in CopyData: cast to the
+column's type, and assigned as INSERT assigns it, so one too long fails
+rather than being cut. A copy may mix CopyData and CopyColumns.
+
+Each column has exactly `(rows + 7) / 8` bytes of null bits, with every
+bit past the last row clear, and an end for each row. The ends never
+fall, and the last is the length of the text. A CopyColumns of rows has
+at least one column. Any other fails the connection before a row of it
+is taken.
+
+The two rows `1, null` and `2, 'ab'` are sent as:
+
+```text
+rows 2, columns 2
+  nulls [0b00]  ends [1, 2]  text "12"
+  nulls [0b01]  ends [0, 2]  text "ab"
+```
 
 ### CopyEnd 'N'
 
@@ -1097,6 +1134,16 @@ client  CopyData   500 rows
 client  CopyData   500 rows
 client  CopyEnd    abandon 0
 server  Complete   0, 00000, active 0, rows 1000, time
+```
+
+A copy by column, of a client granted `columns`.
+
+```text
+client  CopyIn       table "T", columns [], ends 1
+client  CopyColumns  4000 rows
+client  CopyColumns  1200 rows
+client  CopyEnd      abandon 0
+server  Complete     0, 00000, active 0, rows 5200, time
 ```
 
 A copy whose 712th row breaks a constraint.

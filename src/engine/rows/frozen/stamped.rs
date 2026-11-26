@@ -30,6 +30,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use super::freeze::ordered;
+use super::records::{Batch, group_of_records};
 use super::{Directory, Entry};
 use crate::engine::columns::group::{Group, Pages};
 use crate::engine::rows::mvcc::Reader;
@@ -38,6 +39,7 @@ use crate::engine::rows::version::{Maker, Version};
 use crate::engine::rows::{RowTable, corrupt, key};
 use crate::engine::tree::Direction;
 use crate::error::Result;
+use crate::storage::lanes::Records;
 use crate::storage::{Loaded, Loading, Row, RowId};
 use crate::sync::{lock_builtin, read, write};
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
@@ -254,16 +256,54 @@ impl RowTable {
         Ok(())
     }
 
-    /// The group of `rows`, given `ids`, sorted as `columns` says, written
+    /// The group of `batch`, given `ids`, sorted as `columns` says, written
     /// to `pages`.
-    pub(super) fn group_from(&self, pages: &Pages<'_, Sealing>, ids: Vec<RowId>, rows: &[Row], columns: &Columns) -> Result<Group> {
+    pub(super) fn group_from(&self, pages: &Pages<'_, Sealing>, ids: Vec<RowId>, batch: Batch<'_>, columns: &Columns) -> Result<Group> {
         let (order, bloom, sketch) = (columns.order.places(), columns.bloom.places(), columns.sketch.places());
+        let rows = match batch {
+            Batch::Rows(rows) => rows,
+            Batch::Records(records) => {
+                return group_of_records(pages, self.format.types(), (ids, records), (&columns.order, &bloom, &sketch));
+            }
+        };
         if order.is_empty() {
             return Group::write(pages, self.format.types(), (&ids, rows), (&order, &bloom, &sketch));
         }
         // [DESIGN] RULES.md D1145: the rows sorted where they are, by reference, none copied.
         let (ids, rows) = ordered(&columns.order, ids.into_iter().zip(rows.iter()).collect());
         Group::write(pages, self.format.types(), (&ids, &rows), (&order, &bloom, &sketch))
+    }
+
+    /// Writes `batch`, of `tx`, as a group, as `Loading::insert_group` says
+    /// of rows and `Loading::insert_records` of rows by column.
+    fn insert_batch(&self, tx: TxId, batch: Batch<'_>, whole: bool) -> Result<Option<Loaded>> {
+        let direct = self.loads_directly(tx);
+        let Some(columns) = (*read(&self.frozen.columns)?).filter(|_| direct && !batch.is_empty()) else { return Ok(None) };
+        // One run of ids, so the groups of loads at once never share a range.
+        let first = self.next_ids(batch.len())?;
+        let ids: Vec<RowId> = (first..).take(batch.len()).collect();
+        // [DESIGN] RULES.md D1146: to its stream's segment, where it has one.
+        let made = if whole { self.extent_from(tx, (ids.clone(), batch), &columns)? } else { None };
+        let (entry, pages, extent, held) = if let Some((mut group, summary, segment, (extent, held))) = made {
+            let base = summary.extent.map_or(0, |p| p.base);
+            group.place = (segment.file, base);
+            let entry = self.entry_in(summary, Some((segment, base)));
+            self.headers.put(entry.header_key(), &entry.slot, &Arc::new(group));
+            (entry, Vec::new(), Some(extent), held)
+        } else {
+            let group = self.group_from(&self.group_pages()?, ids.clone(), batch, &columns)?;
+            let pages = group.pages()?;
+            (self.entry_of(group)?, pages, None, None)
+        };
+        entry.made.store(OPEN | tx, Ordering::Release);
+        // Noted first, so a group published is undone with the rest.
+        if let Err(e) = self.note_group(tx, first) {
+            entry.retire(pages);
+            return Err(e);
+        }
+        self.publish_entry((None, Some((entry, pages))), Vec::new())?;
+        self.counted.live.fetch_add(batch.len(), Ordering::AcqRel);
+        Ok(Some(Loaded { ids, extent, held }))
     }
 }
 
@@ -289,33 +329,11 @@ impl Loading for RowTable {
     }
 
     fn insert_group(&self, tx: TxId, rows: &[Row], whole: bool) -> Result<Option<Loaded>> {
-        let direct = self.loads_directly(tx);
-        let Some(columns) = (*read(&self.frozen.columns)?).filter(|_| direct && !rows.is_empty()) else { return Ok(None) };
-        // One run of ids, so the groups of loads at once never share a range.
-        let first = self.next_ids(rows.len())?;
-        let ids: Vec<RowId> = (first..).take(rows.len()).collect();
-        // [DESIGN] RULES.md D1146: to its stream's segment, where it has one.
-        let made = if whole { self.extent_from(tx, (ids.clone(), rows), &columns)? } else { None };
-        let (entry, pages, extent, held) = if let Some((mut group, summary, segment, (extent, held))) = made {
-            let base = summary.extent.map_or(0, |p| p.base);
-            group.place = (segment.file, base);
-            let entry = self.entry_in(summary, Some((segment, base)));
-            self.headers.put(entry.header_key(), &entry.slot, &Arc::new(group));
-            (entry, Vec::new(), Some(extent), held)
-        } else {
-            let group = self.group_from(&self.group_pages()?, ids.clone(), rows, &columns)?;
-            let pages = group.pages()?;
-            (self.entry_of(group)?, pages, None, None)
-        };
-        entry.made.store(OPEN | tx, Ordering::Release);
-        // Noted first, so a group published is undone with the rest.
-        if let Err(e) = self.note_group(tx, first) {
-            entry.retire(pages);
-            return Err(e);
-        }
-        self.publish_entry((None, Some((entry, pages))), Vec::new())?;
-        self.counted.live.fetch_add(rows.len(), Ordering::AcqRel);
-        Ok(Some(Loaded { ids, extent, held }))
+        self.insert_batch(tx, Batch::Rows(rows), whole)
+    }
+
+    fn insert_records(&self, tx: TxId, columns: &[Records], whole: bool) -> Result<Option<Loaded>> {
+        self.insert_batch(tx, Batch::Records(columns), whole)
     }
 
     fn redo_group(&self, first: RowId, extent: &[u8]) -> Result<()> {

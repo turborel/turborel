@@ -14,7 +14,8 @@ use std::io::{Read, Write};
 use std::mem;
 
 use turborel::storage::Row;
-use turborel_protocol::capability::COPY;
+use turborel::storage::lanes::Lanes;
+use turborel_protocol::capability::{COLUMNS, COPY};
 use turborel_protocol::{Request, row_size};
 
 use crate::connection::{Connection, Result};
@@ -83,6 +84,24 @@ impl<S: Read + Write> Copying<'_, S> {
         self.bytes = self.bytes.saturating_add(row_size(&row));
         self.waiting.push(row);
         if self.bytes >= CHUNK_BYTES { self.flush() } else { Ok(()) }
+    }
+
+    /// \[DESIGN\] RULES.md D1148: sends `lanes`, rows of the copy by
+    /// column, in a CopyColumns, and gives its buffers back as they were,
+    /// to be filled again.
+    ///
+    /// # Errors
+    ///
+    /// A connection failure: `columns` not granted, or the server gone. A
+    /// row the server refuses comes as `finish`'s failure.
+    pub(crate) fn send_columns(&mut self, lanes: &mut Lanes) -> Result<()> {
+        self.connection.needs(false, COLUMNS)?;
+        let request = Request::CopyColumns(mem::take(lanes));
+        let sent = self.connection.send(&request);
+        if let Request::CopyColumns(back) = request {
+            *lanes = back;
+        }
+        sent
     }
 
     /// Sends the rows waiting.

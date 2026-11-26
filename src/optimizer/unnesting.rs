@@ -43,6 +43,7 @@
 mod calls;
 mod domain;
 mod filled;
+pub(super) use filled::never_null;
 mod found;
 mod joined;
 mod marked;

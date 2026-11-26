@@ -37,6 +37,7 @@ mod freeze;
 mod late;
 mod merge;
 mod ordered;
+mod records;
 mod rewrite;
 mod sampled;
 pub(super) use sampled::Chosen;

@@ -24,7 +24,7 @@ use dynamic::Dynamic;
 pub(crate) use dynamic::conformed;
 pub use dynamic::{DynamicParameter, ParameterType};
 pub use given::Load;
-pub(crate) use given::{Given, conformed_row, taken};
+pub(crate) use given::{Gift, Given, conformed_row, taken};
 
 use crate::ast::{LexicallyScopedOptions, ParameterSpecification, TargetKind};
 use crate::error::{Code, Result, SqlError};

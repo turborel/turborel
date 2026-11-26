@@ -3,11 +3,20 @@
 //! CSV and as native rows, Describe, several cursors of one statement, and
 //! the log position of a commit a replica's session waits for.
 
+use std::fmt::Write as _;
+use std::net::TcpStream;
+
 use turborel::db::Database;
 use turborel::value::{Decimal, Value};
+use turborel_client::connection::Connection;
 use turborel_client::export::{ExportFormat, read_native};
+use turborel_client::import::{Delimited, Dialect, Import, import};
+use turborel_client::told::Offer;
+use turborel_protocol::Capabilities;
+use turborel_protocol::capability::{COLUMNS, COMPRESSION};
 
 use crate::common::{Scratch, rows, start, state};
+use crate::negotiated::offering;
 
 /// A database whose schema X holds T, of an INTEGER K NOT NULL and a
 /// VARCHAR(3) S.
@@ -133,4 +142,50 @@ fn a_session_reads_after_a_commits_position() {
     assert_eq!(state(&late), ("TBR01", -920));
     reader.query("SET REPLICATION.READ_AFTER = 0").unwrap();
     assert_eq!(rows(&reader.query("SELECT COUNT(*) FROM T").unwrap()), ["1"], "a SET never waits, so it is cleared");
+}
+
+/// An import of `text`, CSV, into T over `c`, `batch` rows at a time: the
+/// rows T then holds, in order, or why the import stopped; T emptied
+/// after.
+fn imported(c: &mut Connection<TcpStream>, text: &str, batch: u64) -> Result<Vec<String>, String> {
+    let mut source = Delimited::new(text.as_bytes(), Dialect::csv().with_null("-"));
+    let done = import(c, &mut source, &Import { batch, ..Import::into("T") }, &mut |_| {});
+    let held = rows(&c.query("SELECT K, S FROM T ORDER BY K").unwrap());
+    c.query("DELETE FROM T").unwrap();
+    c.query("COMMIT").unwrap();
+    done.map(|_| held).map_err(|e| e.to_string())
+}
+
+/// Verifies: [DESIGN] RULES.md D1148, D195: where `columns` is granted, an
+/// import goes by column and inserts the rows an import by row does: each
+/// field's text cast to its column's type, a field written as the null
+/// text null, a quoted one its text, doubled quotes one; and stops where
+/// one by row stops, telling the same record, failure and rows committed
+/// and rolled back: a value its column refuses, a string too long, a
+/// record of too few fields. Many rows go in several CopyColumns, and in
+/// several batches.
+#[test]
+fn an_import_by_column_is_an_import_by_row() {
+    let db = database();
+    let server = start(&db, &[]);
+    let mut by_column = server.connect("X");
+    let asked = Capabilities::all().without(COLUMNS).without(COMPRESSION).names();
+    let mut by_row = offering(&server, Offer { capabilities: asked, ..Offer::none() });
+    assert!(by_column.granted().has(COLUMNS) && !by_row.granted().has(COLUMNS));
+    let many = (0..30_000_u32).fold(String::new(), |mut many, k| {
+        writeln!(many, "{k},s{}", k % 10).unwrap();
+        many
+    });
+    let texts = ["1,\"a\"\"b\"\n2,-\n3,\"-\"\n4,\n5,\"\"\n", "1,a\n2,b\nthree,c\n4,d\n", "1,a\n2,long\n", "1,a\n2\n", many.as_str()];
+    for text in texts {
+        let batches: &[u64] = if text.len() > 100 { &[0, 7000] } else { &[0, 2, 7000] };
+        for &batch in batches {
+            let (column, row) = (imported(&mut by_column, text, batch), imported(&mut by_row, text, batch));
+            assert_eq!(column, row, "{batch} a batch, of {}", text.get(..40).unwrap_or(text));
+        }
+    }
+    let first = imported(&mut by_column, texts[0], 0).unwrap();
+    assert_eq!(first, ["1,a\"b", "2,NULL", "3,-", "4,", "5,"].map(String::from).to_vec());
+    assert!(imported(&mut by_column, texts[2], 0).unwrap_err().starts_with("record 2, line 2: SQLCODE -301 (SQLSTATE 22001)"));
+    assert_eq!(imported(&mut by_column, &many, 7000).unwrap().len(), 30_000);
 }
