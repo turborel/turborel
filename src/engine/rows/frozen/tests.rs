@@ -574,22 +574,12 @@ fn groups_are_written_again_when_their_layout_changes() {
     assert!(table.maintenance_due(), "groups to write again");
     // A few calls, two groups each: bounded, so a layout never reached
     // fails here rather than calling for ever.
-    for _ in 0_u32..4 {
-        table.maintain(1, true).unwrap();
-    }
+    let _: Vec<bool> = (0_u32..4).map(|_| table.maintain(1, true).unwrap()).collect();
     assert_eq!(layouts(&table), [true; 3], "every group of the hybrid layout");
     assert!(!table.maintenance_due(), "none left to write again");
-    let directory = table.frozen.directory().unwrap();
-    let group = table.group_of(&directory.groups[0], None).unwrap();
-    assert!(
-        group
-            .zones(1)
-            .unwrap()
-            .unwrap()
-            .iter()
-            .zip(group.zones(0).unwrap().unwrap())
-            .all(|(text, key)| text.run.page == key.run.page && text.run.len > 0)
-    );
+    let group = table.group_of(&table.frozen.directory().unwrap().groups[0], None).unwrap();
+    let (texts, keys) = (group.zones(1).unwrap().unwrap(), group.zones(0).unwrap().unwrap());
+    assert!(texts.iter().zip(keys).all(|(text, key)| text.run.page == key.run.page && text.run.len > 0));
     assert_eq!(table.get(NO_TRANSACTION, ids[4321]).unwrap().map(|r| r[1].to_string()), Some("v4321".to_owned()));
     let in_order: Vec<String> = (0_i32..7_000_i32).map(|n| n.to_string()).collect();
     assert_eq!(scanned(&table, NO_TRANSACTION), in_order);
