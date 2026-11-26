@@ -222,9 +222,13 @@ impl Consensus for Scripted {
     }
 }
 
-/// A standby that holds nothing and counts its calls.
+/// What a `Counted` standby does while it is promoted.
+type Promoting = Box<dyn Fn() + Send + Sync>;
+
+/// A standby that holds nothing and counts its calls, doing what it was
+/// given, if anything, while it is promoted.
 #[derive(Default)]
-struct Counted(AtomicU64);
+struct Counted(AtomicU64, Option<Promoting>);
 
 impl Standby for Counted {
     fn replay(&self, records: &mut dyn Iterator<Item = Result<(Lsn, Vec<u8>)>>) -> Result<Lsn> {
@@ -233,6 +237,9 @@ impl Standby for Counted {
     }
     fn promote(&self, _log: Arc<dyn Log>) -> Result<()> {
         self.0.fetch_add(1_u64, Ordering::SeqCst);
+        if let Some(promoting) = &self.1 {
+            promoting();
+        }
         Ok(())
     }
     fn retire(&self) -> Result<()> {
@@ -297,6 +304,63 @@ fn a_driver_carries_out_its_consensus() {
     let halted = scripted(Vec::new(), &told);
     halted.halt(SqlError::new(Code::Io, "[TOOL] stopped"));
     assert_eq!((halted.serving(), halted.log().sync(Lsn(1_u64)).err().map(|e| e.code)), (None, Some(Code::Io)));
+}
+
+/// The failure a test stops a driver with.
+fn stopped() -> SqlError {
+    SqlError::new(Code::Io, "[TOOL] stopped")
+}
+
+/// Verifies: [EXTENSION] RULES.md D1225, D57: a driver settled is halted,
+/// and its turn in flight on another thread has ended before `settle`
+/// returns: a promotion that began before, and lasts past the halt, is
+/// done by then, and the turn then fails as the driver was halted. With
+/// no turn in flight, or called from within the turn itself, it returns
+/// at once (the pairs of R-TEST-8: a thread carrying out or none, another
+/// thread or this one). Regression (R-TEST-7): a node's stop halted its
+/// driver and deposed its database while the driver's job was still
+/// promoting or opening it again, which left it serving or following, so
+/// its close asked the halted log for a checkpoint and failed with "the
+/// node stopped" (the server's `targets_find_the_primary_and_a_replica`,
+/// on a slow runner). The test fails without the wait.
+#[test]
+fn a_driver_settled_waits_for_its_turn_in_flight() {
+    let told = Arc::new(Told::default());
+    let idle = scripted(Vec::new(), &told);
+    idle.settle(stopped());
+    assert_eq!(idle.failed().map(|e| e.code), Some(Code::Io), "no turn in flight: halted, at once");
+
+    let serve = || vec![Output::Role(Role::Primary { view: 1_u64 })];
+    let driver = scripted(serve(), &told);
+    let (begun, done) = (Arc::new(AtomicU64::new(0_u64)), Arc::new(AtomicU64::new(0_u64)));
+    let promoting: Promoting = {
+        let (halted, begun, done) = (Arc::clone(&driver), Arc::clone(&begun), Arc::clone(&done));
+        Box::new(move || {
+            begun.store(1_u64, Ordering::SeqCst);
+            while halted.failed().is_none() {
+                std::thread::sleep(Duration::from_millis(1_u64));
+            }
+            // Long enough that a stop not waiting has returned meanwhile.
+            std::thread::sleep(Duration::from_millis(100_u64));
+            done.store(1_u64, Ordering::SeqCst);
+        })
+    };
+    let standby = Counted(AtomicU64::new(0_u64), Some(promoting));
+    let turning = {
+        let turned = Arc::clone(&driver);
+        std::thread::spawn(move || turned.turn(&standby).err().map(|e| e.code))
+    };
+    while begun.load(Ordering::SeqCst) == 0_u64 {
+        std::thread::sleep(Duration::from_millis(1_u64));
+    }
+    driver.settle(stopped());
+    assert_eq!(done.load(Ordering::SeqCst), 1_u64, "the promotion in flight ended before the driver settled");
+    assert_eq!(turning.join().unwrap(), Some(Code::Io), "its turn fails, the driver halted");
+
+    let own = scripted(serve(), &told);
+    let within = Arc::clone(&own);
+    let settling = Counted(AtomicU64::new(0_u64), Some(Box::new(move || within.settle(stopped()))));
+    assert_eq!(own.turn(&settling).err().map(|e| e.code), Some(Code::Io), "from within its turn, it waits for none");
 }
 
 /// Verifies: [DESIGN] RULES.md D57: the built-in seams: an inbox gives its
