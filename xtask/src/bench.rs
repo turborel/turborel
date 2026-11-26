@@ -12,14 +12,20 @@
 //! replacing those of the benchmarks run and keeping the others, and
 //! `--compare LABEL` shows each result's change from it, calling a change
 //! real only when it is larger than the spread of the runs on either side,
-//! and than `NOISE_FLOOR`.
+//! and than `NOISE_FLOOR`. A benchmark may keep, beside a rate, a line of
+//! what the work gave (`RESULT`); a comparison names the work whose result
+//! is not the saved one's. A suite of a benchmark runs alone by its own
+//! name, with its own options (`bench/suites.rs`).
 
+use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::thread;
 
 use crate::command;
 use crate::error::{Error, Result};
+
+mod suites;
 
 /// Where results are kept, relative to the workspace root.
 const OUT_DIR: &str = "target/bench";
@@ -36,6 +42,9 @@ const COMPARE: &str = "--compare";
 const HEADER: &str = "# ";
 /// Per-operation latency metadata from the shared harness, kept with its benchmark.
 const LATENCY: &str = "@latency\t";
+/// What a measurement's work gave, kept with its benchmark: the benchmark,
+/// the operation, the threads, then the result as the benchmark words it.
+const RESULT: &str = "@result\t";
 /// The smallest change called real: results move this much between runs
 /// on one machine (a cooler or busier machine, other processes), more than
 /// the spread within one run shows.
@@ -67,6 +76,8 @@ struct Options<'a> {
     save: Option<&'a str>,
     /// Compare the results with those kept under this label.
     compare: Option<&'a str>,
+    /// A suite's options: the variable each is handed in, and its value.
+    settings: Vec<(&'static str, &'a str)>,
 }
 
 /// Runs `cargo xtask bench` with the arguments after `bench`.
@@ -76,8 +87,14 @@ pub fn run(root: &Path, args: &[&str]) -> Result<()> {
     fs::create_dir_all(&dir).map_err(|e| Error::new(format!("cannot create {}: {e}", dir.display())))?;
     let last = dir.join(results_file(LAST));
     write(&last, &header(root)?)?;
-    let envs = [(OUT_VAR, last.as_os_str())];
-    let runs: Vec<Vec<&str>> = match options.bench {
+    let suite = options.bench.and_then(suites::named);
+    if suite.is_none() && !options.settings.is_empty() {
+        return Err(usage());
+    }
+    let mut envs: Vec<(&str, &OsStr)> = vec![(OUT_VAR, last.as_os_str())];
+    envs.extend(suite.map(|s| (s.chosen_by.0, OsStr::new(s.chosen_by.1))));
+    envs.extend(options.settings.iter().map(|(variable, value)| (*variable, OsStr::new(value))));
+    let runs: Vec<Vec<&str>> = match suite.map(|s| s.bench).or(options.bench) {
         Some(name) => vec![bench_args(name)],
         None => {
             std::iter::once(vec!["bench", "--quiet", "--benches"]).chain(SERVED.iter().map(|name| served_args(name).to_vec())).collect()
@@ -108,6 +125,11 @@ fn options<'a>(args: &[&'a str]) -> Result<Options<'a>> {
     let mut options = Options::default();
     let mut rest = args;
     while let Some((first, after)) = rest.split_first() {
+        if let (Some(variable), [value, more @ ..]) = (suites::setting(first), after) {
+            options.settings.push((variable, value));
+            rest = more;
+            continue;
+        }
         rest = match (*first, after) {
             (SAVE, [label, more @ ..]) => {
                 options.save = Some(label);
@@ -121,10 +143,16 @@ fn options<'a>(args: &[&'a str]) -> Result<Options<'a>> {
                 options.bench = Some(name);
                 more
             }
-            _ => return Err(Error::new(format!("usage: cargo xtask bench [NAME] [{SAVE} LABEL] [{COMPARE} LABEL]"))),
+            _ => return Err(usage()),
         };
     }
     Ok(options)
+}
+
+/// The error that shows how the tool is used.
+fn usage() -> Error {
+    let suites = suites::usage();
+    Error::new(format!("usage: cargo xtask bench [NAME] [{SAVE} LABEL] [{COMPARE} LABEL]; of the suite weblog also{suites}"))
 }
 
 /// The file name of the results kept as `label`.
@@ -195,7 +223,7 @@ fn merged(before: &str, now: &str) -> String {
 
 /// The benchmark owning a throughput row or latency metadata row.
 fn benchmark_of(line: &str) -> Option<&str> {
-    if line.starts_with(LATENCY) {
+    if line.starts_with(LATENCY) || line.starts_with(RESULT) {
         return line.split('\t').nth(1);
     }
     rows(line).first().map(|row| row.key[0])
@@ -229,6 +257,35 @@ fn comparison(base: &str, now: &str) -> Vec<String> {
         };
         lines.push(format!("{what:<60} {:>+7.1}%  {verdict}", change * 100.0_f64));
     }
+    lines.extend(differing(base, now));
+    lines
+}
+
+/// What each measurement's work gave, of the lines of `text` that keep
+/// it: the benchmark, operation and threads, then the result.
+fn results(text: &str) -> Vec<([&str; 3], &str)> {
+    text.lines().filter_map(|line| line.strip_prefix(RESULT)).filter_map(result).collect()
+}
+
+/// The fields of a line that keeps a result, its mark taken off.
+fn result(line: &str) -> Option<([&str; 3], &str)> {
+    let mut fields = line.splitn(4, '\t');
+    Some(([fields.next()?, fields.next()?, fields.next()?], fields.next()?))
+}
+
+/// A line for each measurement of `now` whose work gave another result
+/// than the same one's in `base`: both results, as their benchmark words
+/// them.
+fn differing(base: &str, now: &str) -> Vec<String> {
+    let before = results(base);
+    let mut lines = Vec::new();
+    for (key, result) in results(now) {
+        let saved = before.iter().find(|(k, _)| *k == key).map(|(_, r)| *r);
+        if let Some(saved) = saved.filter(|saved| *saved != result) {
+            let [bench, operation, _] = key;
+            lines.push(format!("{bench}: {operation} gave another result: {saved} before, {result} now"));
+        }
+    }
     lines
 }
 
@@ -245,8 +302,9 @@ mod tests {
     fn options_are_read() {
         assert_eq!(options(&[]).ok(), Some(Options::default()));
         let all = options(&["pages", "--save", "a", "--compare", "b"]).ok();
-        assert_eq!(all, Some(Options { bench: Some("pages"), save: Some("a"), compare: Some("b") }));
-        assert_eq!(options(&["--compare", "b", "pages"]).ok(), Some(Options { bench: Some("pages"), compare: Some("b"), save: None }));
+        assert_eq!(all, Some(Options { bench: Some("pages"), save: Some("a"), compare: Some("b"), settings: Vec::new() }));
+        let compared = Options { bench: Some("pages"), compare: Some("b"), ..Options::default() };
+        assert_eq!(options(&["--compare", "b", "pages"]).ok(), Some(compared));
         assert!(options(&["--save"]).is_err());
         assert!(options(&["pages", "tree"]).is_err());
         assert!(options(&["--fast"]).is_err());
@@ -314,5 +372,27 @@ mod tests {
         assert!(kept.contains("\t5\t5\t10\t15\tus"));
         assert_eq!(rows(&kept).len(), 2);
         assert!(comparison(before, now).iter().all(|line| !line.contains("@latency")));
+    }
+
+    /// Verifies: [TOOL] R-BENCH-1 a suite's options are read with their
+    /// values, each to the variable it is handed in; a comparison names
+    /// the work whose result is not the saved one's, and no other; saving
+    /// keeps the results of the benchmarks not run.
+    #[test]
+    fn a_suites_options_and_results_are_read() {
+        let read = options(&["weblog", "--only", "q02,q29", "--save", "a", "--threads", "8"]).ok();
+        let settings = vec![("TURBOREL_BENCH_WEBLOG_ONLY", "q02,q29"), ("TURBOREL_BENCH_WEBLOG_THREADS", "8")];
+        assert_eq!(read, Some(Options { bench: Some("weblog"), save: Some("a"), compare: None, settings }));
+        assert!(options(&["weblog", "--only"]).is_err());
+        let before = "w\tq01\t8\t0\tqueries\t1\t1\t1\n@result\tw\tq01\t8\t1 rows, checksum 0a\n@result\tw\tq02\t8\t1 rows, checksum 0b\n";
+        let now = "w\tq01\t8\t0\tqueries\t1\t1\t1\n@result\tw\tq01\t8\t1 rows, checksum 0a\n@result\tw\tq02\t8\t2 rows, checksum 0c\n";
+        let lines = comparison(before, now);
+        assert_eq!(lines.iter().filter(|l| l.contains("another result")).count(), 1, "{lines:?}");
+        assert!(
+            lines.iter().any(|l| l.contains("w: q02") && l.contains("1 rows, checksum 0b before, 2 rows, checksum 0c now")),
+            "{lines:?}"
+        );
+        let kept = merged("@result\tother\tx\t1\t3 rows\nother\tx\t1\t0\tqueries\t1\t1\t1\n", now);
+        assert!(kept.contains("@result\tother") && kept.contains("@result\tw\tq02\t8\t2 rows"), "{kept}");
     }
 }

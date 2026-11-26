@@ -104,6 +104,41 @@ empty inputs.
 For the wire protocol (D45) and settings (D36), say what an older client or
 an existing database sees.
 
+## Web log benchmark
+
+`cargo xtask bench weblog --save before` runs the 43 queries of a web
+analytics service on a log of page views, a column store table of 105
+columns. Its use is to rank the queries by time, to profile one, and to
+tell whether a change moved one, on a developer's machine in a few
+minutes. The rows are made from a seed in the shape measured of a
+reference log too large for that, so the suite stands in for runs on the
+reference log between measurements there. It does not say how fast the
+database is, and a change it shows is confirmed on the reference log
+before it is claimed.
+
+Each query runs once untimed and three times timed. The table at the end
+ranks the queries by their fastest run, with the rows each gave and a
+checksum of them. `--compare before` then shows each query's change, and
+names the queries whose result is not the saved one's. A query that
+cuts its rows off among ties, or has no ORDER BY, may give other rows
+from one build to the next and still be right.
+
+- `--rows N` sets the rows made, 5,000,000 if not given. The queries'
+  thresholds follow the rows, so each returns rows at any size.
+- `--only q02,q29` runs those queries alone. Saving after it keeps only
+  those under the label.
+- `--threads N` sets the threads a query runs on at most, the system's
+  if not given.
+- `--dir PATH` keeps the table in that directory, so only the first run
+  makes and loads it. Remove the directory after a change to the stored
+  format.
+- `--profile q29` runs that query in a loop and measures nothing. It
+  prints the process's number and waits five seconds first, so `perf
+  record -g -p NUMBER` can attach. `--secs N` sets how long the loop
+  lasts, 30 if not given.
+- `--plan q10,q29` runs those queries once and prints the plan of each
+  with what each step did, as EXPLAIN ANALYZE gives it.
+
 ## Spatial benchmarks
 
 `cargo xtask bench geometry --save initial` separates direct geometry
