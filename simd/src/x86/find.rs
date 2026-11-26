@@ -1,4 +1,4 @@
-//! \[DESIGN\] The substring search on AVX2 and AVX-512 (RULES.md D1121),
+//! \[DESIGN\] The substring search on AVX2 and AVX-512 (RULES.md D1119),
 //! the place found the one `portable::find::find_bytes` finds. Each step
 //! loads the 32 or 64 bytes from a place and as many from the needle's
 //! length less one further on, compares the first with the needle's first

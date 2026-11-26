@@ -712,8 +712,8 @@ verification approach DO-178C expects (§8).
 | D1116 | An analyzed grouping over another that crosses its partitions passes the counts of the projections between them |
 | D1117 | A grouping over a LEFT outer join by a key of its left table, its right grouped first, is a projection of the joined rows |
 | D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
+| D1119 | A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them |
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
-| D1121 | A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19454,33 +19454,7 @@ that holds the piece is taken, as the substring search took it, so the
 rows are those D1074 gives, as a test compares the finder with that
 search over pieces and values.
 
-#### D1120. The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time
-
-A grouping of few groups, as TPC-H Q1 groups its lines into four, gives
-each group many rows in turn. A typed SUM, AVG or COUNT state added
-each row's value to its group's total, and the add of one row waited on
-the store of the row before it of the same group. Each row also matched
-the set function's kind, and COUNT(*) asked a boxed closure whether the
-row was null.
-
-A sum of at most 64 groups, of a vector with no null, is now fed in
-lanes: rows go in turn to four partial totals and counts of each group,
-so the adds of a lane do not wait on the others, and the partials are
-added to the groups' states once the batch is fed
-(`exec/table/states/typed/few.rs`). COUNT(*) of at most 64 groups
-counts its rows the same way. A sum of at most 2^63 numbers below 2^63
-each stays below 2^126, so no partial or total reaches the 128 bits the
-states sum in; the overflow is still checked, and the totals are those
-the rows fed one at a time give. A vector with a null, or more groups,
-is fed a row at a time as before.
-
-Grouping by dictionary codes (D1161) made each row's place by asking
-each key column for its vector and code, row by row. The places of a
-batch's rows are now made a column at a time, each column's codes read
-in one loop into a vector of places, and the rows then look their
-places up in the memo (`exec/batch/groups/coded.rs`).
-
-#### D1121. A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them
+#### D1119. A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them
 
 A batch keeps its strings one after another in one arena, each row's end
 noted. A pattern of a piece between two `%`s, as TPC-H Q13's
@@ -19520,6 +19494,32 @@ compares only a value's ends, and a pattern with `_` has no pieces, so
 each is matched a value at a time as before. A scan that decodes each
 value into its own buffer matches it by its bytes (`BytesLike`), the
 pieces made once for its conjunct.
+
+#### D1120. The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time
+
+A grouping of few groups, as TPC-H Q1 groups its lines into four, gives
+each group many rows in turn. A typed SUM, AVG or COUNT state added
+each row's value to its group's total, and the add of one row waited on
+the store of the row before it of the same group. Each row also matched
+the set function's kind, and COUNT(*) asked a boxed closure whether the
+row was null.
+
+A sum of at most 64 groups, of a vector with no null, is now fed in
+lanes: rows go in turn to four partial totals and counts of each group,
+so the adds of a lane do not wait on the others, and the partials are
+added to the groups' states once the batch is fed
+(`exec/table/states/typed/few.rs`). COUNT(*) of at most 64 groups
+counts its rows the same way. A sum of at most 2^63 numbers below 2^63
+each stays below 2^126, so no partial or total reaches the 128 bits the
+states sum in; the overflow is still checked, and the totals are those
+the rows fed one at a time give. A vector with a null, or more groups,
+is fed a row at a time as before.
+
+Grouping by dictionary codes (D1161) made each row's place by asking
+each key column for its vector and code, row by row. The places of a
+batch's rows are now made a column at a time, each column's codes read
+in one loop into a vector of places, and the rows then look their
+places up in the memo (`exec/batch/groups/coded.rs`).
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 

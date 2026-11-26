@@ -431,7 +431,7 @@ fn plainly(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Checks the substring search of `kernels` (RULES.md D1121) against a
+/// Checks the substring search of `kernels` (RULES.md D1119) against a
 /// search a place at a time: of needles of 0 to 70 bytes, a needle's first
 /// and last bytes alike, at every place of haystacks of every length to
 /// past two steps of 64, the haystack of one byte repeated, a needle

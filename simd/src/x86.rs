@@ -320,7 +320,7 @@ fn crc32c_sse42(register: u32, data: &[u8]) -> u32 {
 }
 
 /// `Kernels::find_bytes`: 32 or 64 places a step on AVX2 or AVX-512, each
-/// marked by its first and last byte (RULES.md D1121).
+/// marked by its first and last byte (RULES.md D1119).
 pub(crate) fn find_bytes(isa: Isa, haystack: &[u8], needle: &[u8]) -> Option<usize> {
     match isa {
         Isa::Portable | Isa::Sse2 => portable::find::find_bytes(haystack, needle),

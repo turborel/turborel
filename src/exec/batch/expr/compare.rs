@@ -183,7 +183,7 @@ pub(super) fn distinct(x: &Vector<'_>, y: &Vector<'_>, count: usize) -> Option<V
 /// `pattern`, unknown of a null or of no pattern: none of a value not a
 /// character string, which a row's evaluation reads otherwise. A vector's
 /// text is searched at once by `kernels` for a piece between two `%`s
-/// (`value/like/arena.rs`, RULES.md D1121).
+/// (`value/like/arena.rs`, RULES.md D1119).
 pub(super) fn liked(x: &Vector<'_>, pattern: Option<&LikePattern>, count: usize, kernels: &dyn Kernels) -> Option<Vector<'static>> {
     let Some(pattern) = pattern else { return Some(Vector::Const(Value::Null)) };
     if let Some(Column::Texts(texts)) = x.column() {

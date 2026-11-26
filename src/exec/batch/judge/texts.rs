@@ -1,7 +1,7 @@
 //! \[DESIGN\] RULES.md D31: a conjunct judged over a vector of character
 //! strings as their text (`storage::Texts`), no value made of each: LIKE a
 //! constant pattern of each text in place [X3.135-1986 §5.14], or of all
-//! at once by its piece between two `%`s (RULES.md D1121); a
+//! at once by its piece between two `%`s (RULES.md D1119); a
 //! comparison with a constant string, IN and NOT IN a list of them, each
 //! padded with spaces as strings compare [§5.11 GR5]; IS NULL [§5.15]; of
 //! a store's dictionaries, each once of each entry, a row then kept by its
@@ -72,7 +72,7 @@ pub(super) fn kept(judged: &Judged, texts: &Texts, over: Option<&[u32]>, kernels
 
 /// The rows of `over`, or of all, of `texts` that match `pattern`, the
 /// batch's text searched at once by `kernels` (`value/like/arena.rs`,
-/// RULES.md D1121): none of a store's dictionaries, whose entries are
+/// RULES.md D1119): none of a store's dictionaries, whose entries are
 /// each matched once, of rows `over` keeps fewer than half of, or of a
 /// pattern of no piece between two `%`s.
 fn arena(pattern: &LikePattern, texts: &Texts, over: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {

@@ -6,7 +6,7 @@
 //! A value's piece is searched for by the portable body of the substring
 //! search kernel (`kernels/portable/find.rs`), eight places at a time; a
 //! batch's values are searched all at once by a database's kernels
-//! (`like/arena.rs`, RULES.md D1121).
+//! (`like/arena.rs`, RULES.md D1119).
 
 use crate::kernels::portable::find::find_bytes;
 

@@ -199,7 +199,7 @@ pub trait Kernels: Send + Sync {
 
     /// The first place of `haystack` that holds `needle`, if one does,
     /// as a substring search finds it; 0 of an empty needle (RULES.md
-    /// D1121). A filter's LIKE searches a batch's values all at once by
+    /// D1119). A filter's LIKE searches a batch's values all at once by
     /// it (`value/like/arena.rs`).
     fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
         portable::find::find_bytes(haystack, needle)

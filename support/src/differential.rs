@@ -393,7 +393,7 @@ fn crc(kernels: &dyn Kernels, rng: &mut Rng, seed: u64) {
     assert_eq!(kernels.crc32c(register, data), Portable.crc32c(register, data), "crc32c of {len} bytes, seed {seed}");
 }
 
-/// Checks the substring search of `kernels` (RULES.md D1121): of a
+/// Checks the substring search of `kernels` (RULES.md D1119): of a
 /// haystack of two to four letters, of every length to 300 most often, at
 /// times longer, from an unaligned start, and a needle of 0 to 80 bytes
 /// taken from it or not.

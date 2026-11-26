@@ -1,5 +1,5 @@
 //! The mutations of a LIKE pattern matched by its pieces (RULES.md
-//! R-TEST-9, D1074, D1118, D1121): pieces found apart, the last piece
+//! R-TEST-9, D1074, D1118, D1119): pieces found apart, the last piece
 //! past the first, the substring search, and a batch's values matched at
 //! once.
 
@@ -59,7 +59,7 @@ pub const LIKE_PIECES: [Mutation; 6] = [
     Mutation {
         name: "like-arena-found-is-matched",
         package: Package::Core,
-        breaks: "a row of a batch that holds the longest piece between is taken as a match, its other pieces unmatched (RULES.md D1121)",
+        breaks: "a row of a batch that holds the longest piece between is taken as a match, its other pieces unmatched (RULES.md D1119)",
         file: "src/value/like/arena.rs",
         original: "*slot = text.get(start..end).is_some_and(|value| self.matches(value));",
         replacement: "*slot = text.get(start..end).is_some();",
@@ -69,7 +69,7 @@ pub const LIKE_PIECES: [Mutation; 6] = [
     Mutation {
         name: "simd-find-last-byte-unmarked",
         package: Package::Simd,
-        breaks: "the search on AVX2 marks a place by the needle's first byte at both ends, so a place holding it goes unmarked (RULES.md D1121)",
+        breaks: "the search on AVX2 marks a place by the needle's first byte at both ends, so a place holding it goes unmarked (RULES.md D1119)",
         file: "simd/src/x86/find.rs",
         original: "_mm256_cmpeq_epi8(behind, last)",
         replacement: "_mm256_cmpeq_epi8(behind, first)",

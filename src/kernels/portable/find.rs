@@ -1,5 +1,5 @@
 //! \[DESIGN\] The portable body of the substring search kernel (RULES.md
-//! D1118, D1121), the reference the wider bodies are held to.
+//! D1118, D1119), the reference the wider bodies are held to.
 //!
 //! It looks at eight places of the bytes at once. It reads the eight
 //! bytes from a place and the eight bytes the needle's length less one

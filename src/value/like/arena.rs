@@ -1,4 +1,4 @@
-//! \[DESIGN\] (RULES.md D1121) A batch's values matched all at once, and a
+//! \[DESIGN\] (RULES.md D1119) A batch's values matched all at once, and a
 //! value matched by its bytes.
 //!
 //! A batch keeps its strings one after another in one arena, each row's
@@ -99,7 +99,7 @@ mod tests {
         (text, ends)
     }
 
-    /// Verifies: [DESIGN] RULES.md D1121: each value of an arena matches a
+    /// Verifies: [DESIGN] RULES.md D1119: each value of an arena matches a
     /// pattern of a piece between as it matches alone: a piece found in no
     /// row, in the first and the last row, ending past its row's end into
     /// the next, found twice in a row, after empty rows, a row holding the
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(LikePattern::new("%x%", None).unwrap().matches_all((&[], &[]), &Portable), Some(vec![]), "no rows");
     }
 
-    /// Verifies: [DESIGN] RULES.md D1121: a pattern of no piece between, or
+    /// Verifies: [DESIGN] RULES.md D1119: a pattern of no piece between, or
     /// with `_`, is not matched over the arena, and one with `_` has no
     /// match of bytes.
     #[test]
