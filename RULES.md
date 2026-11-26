@@ -753,6 +753,7 @@ verification approach DO-178C expects (§8).
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
+| D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
 
 ### The project
 
@@ -11447,9 +11448,11 @@ enumeration make, judges the equality of one column of each of every
 class with a column on each side (`Model::implied_keys`), and that
 equality is a key of its hash, merge or index join. The plan is then
 never a product of the two whose rows the estimate counts as joined.
-The classes are made once with the model, and the join graph takes no
-edge of its own for such a pair, since an edge of each pair of a large
-class makes a clique the enumeration's search grows past.
+The classes are made once with the model. The join graph takes no
+edge for each pair of a class, since an edge of each pair of a large
+class makes a clique the enumeration's search grows past. It takes
+those from a relation the class's column is a key of, within a budget
+(D1204).
 An equality implied is true of every row the stated ones keep, so the
 rows are those of the query as written [X3.135-1986 §5.20 GR2b]. A
 chain with an outer join takes no implied key, since its keys hold only
@@ -20598,6 +20601,68 @@ its word and no wrong result. An index join weighed at the margin's
 times the estimate is exposed past it. Of rows a hundred times the
 estimate it makes a hundred times the probes, where the margin weighed
 eight.
+
+#### D1204. A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget
+
+The enumeration joins two sets only where an edge of the graph joins
+them, and the graph had an edge only for a conjunct or an operator. So
+of `p.k = l.k AND ps.k = l.k` it never joined `p` to `ps` alone, though
+the class of the three columns (D302) makes `p.k = ps.k` true of every
+row the query keeps and D387 joins two such sets by that key. Where `p`
+is filtered and `l` is the largest table, joining `p` to `ps` first and
+`l` to their few rows is the cheaper plan, and no order of the stated
+conjuncts gives it.
+
+A relation whose column of a class is a key of it now has an edge to
+each other relation of the class (`enumerate/graph/implied.rs`). A key
+is what the estimates take for one (`cardinality/keys.rs`, D384). That
+is a PRIMARY KEY or UNIQUE constraint of the one column, not deferrable
+and of no period, a grouping by the column alone, or DISTINCT of it
+alone. A key matches at most one row of its relation to a row of the
+other, so the join gives no more rows than the other relation has, and
+fewer where the keyed one is filtered. A column that is no key gets no
+edge, as its join may multiply rows and its edges are what made D387's
+clique. A UNIQUE column that may be null is a key here. A null equals
+nothing [X3.135-1986 §5.11 GR2], so its rows of a null join no row, by
+the implied key as by the stated ones, and its other rows are each of a
+value of their own. A deferrable constraint is none, as it may be
+broken until it is checked [ISO/IEC 9075-2:2023 §4.25.2].
+
+The edge is of no operator and no conjunct. A join made over it alone
+judges the equality the class implies of a column of each side
+(`Model::implied_keys`), by a hash, merge or index join as cost
+chooses, and is an inner join like any other. The rows are those of the
+query as written [X3.135-1986 §5.20 GR2b]. The implied equality holds of
+every row the stated ones keep, since the stated ones are equalities of
+bare columns under one comparison, which is transitive, numbers of
+exact and approximate types comparing by algebraic value [§5.11 GR4].
+An equality by a collation is no bare column's and enters no class.
+Each stated conjunct is still judged where its relations first meet,
+so the join of `p` and `ps` to `l` judges both stated equalities. The
+rows do not rest on the key. Were it broken, the join would only give
+more rows than estimated, the same ones any other order gives. A chain
+with an outer join, a semi join or an antijoin has no class (D387), so
+no such edge.
+
+The edges of a relation are a star, and a class each relation of which
+is keyed, as tables split one to one on a shared key are, would have a
+star from each, a clique. Twelve such relations chained by their keys
+have 286 pairs of sets to join as written and 261,625 as a clique. So a
+star is taken only while the work exact dynamic programming does of the
+graph with it stays within PLANNER.DP_BUDGET (`Graph::work`). The work
+is the connected subgraphs the enumeration meets and the pairs it
+joins, counted by its own traversal with no table and stopped past the
+budget. The connected subgraphs alone would not do, as a clique of
+twelve has 4,095 of them and passes no budget of 10,000. The stars are
+offered from the relation of fewest estimated rows, whose join reduces
+most, and one that passes the budget is undone and the next offered. A
+graph past the budget with no star takes none. So a chain with stars
+does at most the budget's work, the adaptive switch (D304) never leaves
+exact dynamic programming for a star, and a chain no star fits is
+planned as it was. A rule taking a star only from a filtered relation
+was not taken. It bounds nothing, as twelve filtered relations are a
+clique still, and a relation with no filter of its own may be reduced
+by a join below, as a nation is by its region.
 
 ## 2. Project layout
 

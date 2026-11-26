@@ -41,6 +41,7 @@ mod alloc;
 mod estimates;
 mod group_table;
 mod hot_rows;
+mod implied_edges;
 mod insert_values;
 mod join_build;
 mod join_estimates;
@@ -364,7 +365,7 @@ fn plugins() -> [&'static [Mutation]; 10] {
 /// the memory budget's,
 /// the command-line client's, replication's, the server's, the native protocol's, the client library's,
 /// join enumeration's and the standard's gaps a benchmark found.
-fn last() -> [&'static [Mutation]; 48] {
+fn last() -> [&'static [Mutation]; 49] {
     [
         &super::graph_compat::GRAPH_COMPAT,
         &super::near::NEAR,
@@ -413,6 +414,7 @@ fn last() -> [&'static [Mutation]; 48] {
         &super::server::native::NATIVE,
         &super::client::CLIENT,
         &joins::JOINS,
+        &implied_edges::IMPLIED_EDGES,
         &super::std_gaps::STD_GAPS,
     ]
 }

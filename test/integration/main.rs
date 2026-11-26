@@ -204,6 +204,7 @@ mod host_plugins;
 mod hybrid_layout;
 mod hypothetical;
 mod identity;
+mod implied_edges;
 mod imprints;
 mod index_contracts;
 mod index_only;
