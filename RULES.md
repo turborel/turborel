@@ -772,6 +772,7 @@ verification approach DO-178C expects (§8).
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
+| D1216 | SUM of a value and a constant is computed from the value's sum and count, shared among such sums |
 | D1218 | A sort that reads its input whole passes it no row goal |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
@@ -21265,6 +21266,66 @@ HAVING, grouping sets, a DISTINCT set function and a sort give whole
 groups; a null eliminated, a sum past its range and a division by zero
 in a later group are raised still; and groups past the work area are
 whole. Mutations in `xtask/src/mutate/list/areas/first_groups.rs`.
+#### D1216. SUM of a value and a constant is computed from the value's sum and count, shared among such sums
+
+A statement of many sums of one column, each with a constant of its
+own added, evaluated each sum's argument a row, one vector of the
+column and its constant a batch for each. Repeats of one call were
+shared already, by their label, as the binder registers them. Calls
+whose arguments differ by a constant shared nothing.
+
+The sum of x + c over the rows where x is not null is the sum of x and
+c times the number of those rows. The rule `share_shifted_sums`
+(`optimizer/shifted.rs`) rewrites SUM(x + c) and SUM(c + x) as SUM(x) +
+c * COUNT(x), SUM(x - c) as SUM(x) - c * COUNT(x) and SUM(c - x) as
+c * COUNT(x) - SUM(x), in a projection over the grouping, which then
+computes one SUM(x) and one COUNT(x) for all of them, found by their
+labels among the calls the statement wrote. Both are fed the column as
+it is.
+
+The rewrite holds only where the two forms cannot differ, in value, in
+null or in what they raise (D15).
+
+It takes exact numbers, x of an exact type and c an exact literal.
+Exact arithmetic is exact, and both forms have the scale of x + c, the
+greater of the two scales. An approximate or DECFLOAT x or c is left, as
+their sums round and the two forms round apart.
+
+c is a literal that is not null, so x + c is null exactly where x is.
+COUNT(x) is then the number of values summed [ISO/IEC 9075-2:2023 §10.9
+GR7a, GR7c], the nulls eliminated raise the same warning, and of no
+value SUM(x) is null [GR7d ii], so the value computed of it is null and
+not c times 0.
+
+SUM raises once its result is past the range of its type [GR7d vi], 38
+digits at the argument's scale, summed on the way in 128 bits and judged
+once (D15). D1060's `total_fits` shows that a SUM cannot raise when its
+argument's declared digits and the 19 digits that count a statement's
+rows are within 38. The rule takes a SUM only if that holds of x + c and
+of x. Then SUM(x + c), SUM(x), c * COUNT(x) and their sum or difference
+are all within 38 digits, and x + c is within its own, so neither form
+raises, and no appeal to an order of evaluation is made. A SUM of a
+wider value is left.
+
+A filter clause goes to both shared calls, which are shared among the
+sums of one value under one filter. DISTINCT is left. So is AVG, which
+truncates its quotient toward zero at two digits past its argument's
+scale [X3.135-1986 §5.8 SR9c], so AVG(x + c) is not AVG(x) + c where the
+mean is below zero. Of -1, -1 and 1 with c of 1 the first is 0.66 and
+the second 0.67.
+
+x is columns and constants under arithmetic, negation and casts, so one
+evaluation of it for a row stands for each the sums made. A call or a
+subquery in it leaves the SUM as written. A grouping that makes groups
+before its rows, as grouping sets do, is left.
+
+Tests in `test/integration/rewrites/shifted.rs`: each form gives what it
+gives with the rule off, of both stores, by batches and row by row, with
+nulls and their warning, scales, a filter clause, groups, a group of
+nulls alone and no rows, and the plan shows one sum and one count; each
+case left is left and gives the same; and the mean's counterexample.
+Mutations `shifted-sum-minus-added`, `shifted-sum-unbounded`,
+`shifted-sum-distinct` and `shifted-sum-unshared`.
 #### D1218. A sort that reads its input whole passes it no row goal
 
 A FETCH FIRST tells the plan under it how many of its first rows are
