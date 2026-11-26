@@ -312,18 +312,18 @@ fn stars_are_taken_only_within_the_budget() {
     let clique = starred(&shapes, &model, &all_keyed, usize::MAX);
     // 4,095 connected subgraphs and (3^12 − 2^13 + 1)/2 pairs.
     assert_eq!(clique.work(usize::MAX), 265_720_usize);
-    let (shapes, mut model) = inner(&[10.0_f64, 20.0_f64, 30.0_f64, 40.0_f64, 50.0_f64, 5.0_f64], &chain(6));
-    assert_eq!(dp(&starred(&shapes, &model, &all_keyed, 10_000_usize), &model), 301_usize);
+    let (six, mut few) = inner(&[10.0_f64, 20.0_f64, 30.0_f64, 40.0_f64, 50.0_f64, 5.0_f64], &chain(6));
+    assert_eq!(dp(&starred(&six, &few, &all_keyed, 10_000_usize), &few), 301_usize);
     // The chain's own work is 21 subgraphs and 35 pairs.
-    assert_eq!(graph(&shapes, &model).work(usize::MAX), 56_usize);
-    assert_eq!(dp(&starred(&shapes, &model, &all_keyed, 55_usize), &model), 35_usize);
+    assert_eq!(graph(&six, &few).work(usize::MAX), 56_usize);
+    assert_eq!(dp(&starred(&six, &few, &all_keyed, 55_usize), &few), 35_usize);
     // A budget of the work of the chain with one star takes the star of
     // the relation of fewest rows, the last, and no other.
-    let with_one = starred(&shapes, &model, &[5], usize::MAX).work(usize::MAX);
-    let one = starred(&shapes, &model, &all_keyed, with_one);
+    let with_one = starred(&six, &few, &[5], usize::MAX).work(usize::MAX);
+    let one = starred(&six, &few, &all_keyed, with_one);
     assert!(one.connected(bit(5), bit(0)) && !one.connected(bit(1), bit(3)), "{}", one.work(usize::MAX));
-    model.rels[5].rows = 1e6_f64;
-    let with_first = starred(&shapes, &model, &[0], usize::MAX).work(usize::MAX);
-    let other = starred(&shapes, &model, &all_keyed, with_first);
+    few.rels[5].rows = 1e6_f64;
+    let with_first = starred(&six, &few, &[0], usize::MAX).work(usize::MAX);
+    let other = starred(&six, &few, &all_keyed, with_first);
     assert!(other.connected(bit(0), bit(5)) && other.connected(bit(0), bit(3)) && !other.connected(bit(1), bit(3)));
 }

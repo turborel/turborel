@@ -13,6 +13,8 @@ use crate::common::{exec, sorted};
 /// The parts P0 has, the suppliers of each in PS, and the lines of each
 /// of those in L.
 const PARTS: i64 = 400;
+/// The parts of F = 0, one in 20 of them.
+const KEPT: i64 = 20;
 const SUPPLIERS: i64 = 4;
 const LINES: i64 = 5;
 
@@ -72,10 +74,10 @@ fn agreed(s: &Session, sql: &str) -> Vec<String> {
     rows
 }
 
-/// The count and the sum of Q of the lines of the 20 parts of F = 0.
+/// The count and the sum of Q of the lines of the parts of F = 0.
 fn expected() -> Vec<String> {
-    let lines = PARTS / 20 * SUPPLIERS * LINES;
-    vec![format!("{lines},{}", PARTS / 20 * SUPPLIERS * (0..LINES).sum::<i64>())]
+    let lines = KEPT * SUPPLIERS * LINES;
+    vec![format!("{lines},{}", KEPT * SUPPLIERS * (0..LINES).sum::<i64>())]
 }
 
 /// Verifies: [DESIGN] RULES.md D1204: P's column a PRIMARY KEY, the
@@ -126,8 +128,8 @@ fn no_edge_is_implied_without_an_immediate_key() {
         assert!(!joined, "{key}\n{plan}");
         assert_eq!(agreed(&s, &lines_of(TABLE)), expected(), "{key}");
         s.run("INSERT INTO P0 VALUES (0, 0)").unwrap();
-        let lines = (PARTS / 20 + 1) * SUPPLIERS * LINES;
-        let twice = vec![format!("{lines},{}", (PARTS / 20 + 1) * SUPPLIERS * (0..LINES).sum::<i64>())];
+        let lines = (KEPT + 1) * SUPPLIERS * LINES;
+        let twice = vec![format!("{lines},{}", (KEPT + 1) * SUPPLIERS * (0..LINES).sum::<i64>())];
         assert_eq!(agreed(&s, &lines_of(TABLE)), twice, "{key}");
         s.rollback().unwrap();
     }
