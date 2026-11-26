@@ -15,6 +15,9 @@ use super::slots::MAX_PROBE;
 use super::states::{Sent, States};
 use super::{GroupTable, Key, Keys, Seed, narrow};
 
+mod written;
+pub(in crate::exec) use written::PIECE;
+
 /// \[DESIGN\] The bits of a hash below those a partition is found by, as
 /// a multiply-shift maps the high half onto any count of partitions.
 const HALF: u32 = 32;

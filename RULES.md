@@ -770,6 +770,7 @@ verification approach DO-178C expects (§8).
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
+| D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
 ### The project
@@ -21117,6 +21118,81 @@ wait for its own thread.
 A stop that returns an error, or a close refused after it, is therefore
 a defect and never the node's ordinary end, and a caller has no reason
 to pass over either.
+
+#### D1226. A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time
+
+A grouping run in parallel by batch merges its morsels in waves into 64
+partitions, each partition's table frozen between waves and held of the
+statement's grant (D355, D356). Once the tables held passed the grant,
+the grouping gave way: the threads' work was dropped and the plan run
+again on the statement's thread alone, as a grouping a row at a time
+that spills its rows (D38). Of a grouping of tens of millions of groups
+at a grant of a few GiB, that rerun was most of the statement's time.
+
+A partition's groups frozen already hold every state in a form that
+goes to another thread: columns of states, and the states of other
+accumulators written (D293). They now go to the spill as well
+(`exec/table/made/written.rs`, `keys/written.rs`,
+`states/written.rs`): a lane's or a column's values by their bits, a
+null's place and the unpadded flag of D1183 too, so groups read back are
+the groups written. A partition is written in pieces of at most `PIECE`
+groups, one record a piece, so neither writing nor reading it holds its
+groups twice.
+
+Once the partitions' tables after a wave pass the grant, or a morsel's
+groups or the statement thread's table (D355) do not fit beside them,
+each partition's thread writes the table it holds to a run of the
+grouping's spill area (`exec/parallel/grouped/waves/spilled.rs`), and
+the grant gives back what they held. Each wave after merges each
+partition's morsels into a table of that wave alone, which its thread
+writes to a run of its own. A morsel's groups, or the statement
+thread's table, that do not fit the grant even with nothing else held
+are written to the partitions' runs as they are, after the waves before
+them. The area is reserved of the budget as any
+operator's, of the grouping's own grant (`Work::of_grant`), and nothing
+of a partition in the spill is held of the grant.
+
+At the end the last wave goes to the spill too, and each partition's
+runs are read back a piece at a time and merged, in the order of the
+waves, into one table, which is finished as a partition held in memory
+is. A partition is weighed by what its groups held as they were
+written, and the partitions are merged on as many threads at once as
+half the grant holds the largest of. A partition that holds more than
+half the grant is split, a piece at a time, into 64 parts again by the
+next six bits of the hash it was found by (of a pair, the hash of the
+second grouping's columns, D1113), each part to a run of its own and
+finished alone, up to SPILL.PARTITION_DEPTH levels.
+
+The rows come in the order a grouping held in memory gives them. Waves
+take the morsels in order, so a group new to a later wave has a later
+first row than every group of the waves before. A group of several
+waves keeps the earliest first row of its pieces, as any merge of two
+tables keeps the earlier, so its first wave's. A partition read back in
+the order of its runs therefore holds its groups in the order of their
+first rows, and a part split from it holds its share in that order too.
+
+What still gives way: a value no run holds by its bytes alone, a large
+object, an XML value, a value of a type beyond the standard, or one
+that holds others, as a key or a value carried (D1201); a partition
+still past half the grant at
+SPILL.PARTITION_DEPTH levels; and the spill area refused (SQLCODE
+-918). A grouping of a set function that writes no state is not run
+in parallel by batch, as before. SELECT DISTINCT and the first grouping
+of a pair (D1113), as DISTINCT set functions are run (D340, D342), wave
+and are held in the spill the same way. A pair's second grouping that
+crosses the first's partitions still merges its groups on the
+statement's thread, all in memory (D1133). DISTINCT set functions and
+that second grouping are the next to be held in the spill, as
+ClickBench's COUNT(DISTINCT) groupings meet them at a small grant.
+
+The groups a part finishes go to a run of the same area, each numbered
+by its first row, and the statement's thread reads the runs back as it
+merges them in that order. No more groups are held at once than the
+threads finish together, so a grouping of nearly as many groups as rows
+holds no more than the grant at the end, where holding its finished rows
+until the statement read them outgrew the memory the server was given.
+Of a grouping that keeps the first rows a sort asks of its tables
+(D1124), a part's run holds those rows alone.
 
 #### D1230. A structure's tally counts a miss only when the pool evicted a page for it
 

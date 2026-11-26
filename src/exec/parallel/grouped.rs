@@ -91,6 +91,15 @@ type Chunks = Vec<Vec<Piece>>;
 /// their first rows; or that the grouping gave way.
 type Runs = Held<Vec<Vec<(u64, Row)>>>;
 
+/// A partition's groups, finished with their numbers, in the order of
+/// their first rows, read back one at a time from a run of the spill
+/// (RULES.md D1226).
+type Given = Box<dyn Iterator<Item = Result<(u64, Row)>> + Send>;
+
+/// Each partition's groups held in memory, and those read back from the
+/// spill; or that the grouping gave way.
+type Waved = Held<(Vec<Vec<(u64, Row)>>, Vec<Given>)>;
+
 /// What a grouping groups: by `Spec`, or, of DISTINCT, by every column;
 /// and, of a pipeline read by batch, what it reads of each batch
 /// (`exec/batch/groups/morsel.rs`) and the seed its keys are hashed by.
@@ -281,26 +290,27 @@ pub(super) fn grouped_asked(
     }
     grouping.top = top.cloned().filter(|_| top::fits(&grouping));
     let grouping = Arc::new(grouping);
-    let mut runs = if grouping.read.is_some() {
-        let Held::Kept(runs) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
-        runs
+    let (mut runs, mut given) = if grouping.read.is_some() {
+        let Held::Kept(waved) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
+        waved
     } else {
         let Held::Kept(runs) = merged_all(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
-        runs
+        (runs, Vec::new())
     };
     // Of a second grouping crossing the first's partitions, its groups
     // merged here of theirs, then those its HAVING keeps (RULES.md D1133).
     if let Some(crossing) = grouping.outer.as_ref().filter(|o| o.crosses()) {
         let Some(merged) = crossing.merged()? else { return Ok(Held::GaveWay) };
         runs = vec![grouping.kept(merged, &Runner::new(db, tx))?];
+        given = Vec::new();
     }
-    if runs.iter().all(Vec::is_empty) && grouping.spec.groups.is_empty() && !grouping.distinct {
+    if runs.iter().all(Vec::is_empty) && given.is_empty() && grouping.spec.groups.is_empty() && !grouping.distinct {
         // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
         runs = vec![grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?];
     }
     let rows = match top {
-        Some(top) => top.given(grouping.top.is_some(), runs),
-        None => Box::new(Ordered::of(runs)),
+        Some(top) => top.given(grouping.top.is_some(), (runs, given))?,
+        None => Box::new(Ordered::of(runs, given)?),
     };
     Ok(Held::Kept(limit.keeping(rows)))
 }
@@ -345,7 +355,7 @@ fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&
 /// first rows, given in that order: of the partitions' first groups not
 /// yet given, the earliest, as a merge of sorted runs takes them.
 struct Ordered {
-    runs: Vec<std::vec::IntoIter<(u64, Row)>>,
+    runs: Vec<Given>,
     /// Each run's group next given, if any.
     heads: Vec<Option<Row>>,
     /// The first rows' numbers of the heads, each with its run, earliest
@@ -354,19 +364,35 @@ struct Ordered {
 }
 
 impl Ordered {
-    /// The groups of the runs `runs`, each in order.
-    fn of(runs: Vec<Vec<(u64, Row)>>) -> Ordered {
-        let mut ordered = Ordered { runs: Vec::new(), heads: Vec::new(), order: BinaryHeap::with_capacity(runs.len()) };
-        for (at, run) in runs.into_iter().enumerate() {
-            let mut run = run.into_iter();
-            let head = run.next().map(|(first, row)| {
-                ordered.order.push(Reverse((first, at)));
-                row
-            });
-            ordered.runs.push(run);
-            ordered.heads.push(head);
+    /// The groups of the runs `held` and `given`, each in order.
+    ///
+    /// # Errors
+    ///
+    /// As reading a run back fails.
+    fn of(held: Vec<Vec<(u64, Row)>>, given: Vec<Given>) -> Result<Ordered> {
+        let held = held.into_iter().map(|run| -> Given { Box::new(run.into_iter().map(Ok)) });
+        let runs: Vec<Given> = held.chain(given).collect();
+        let mut ordered = Ordered { heads: runs.iter().map(|_| None).collect(), order: BinaryHeap::with_capacity(runs.len()), runs };
+        for at in 0..ordered.runs.len() {
+            ordered.advance(at)?;
         }
-        ordered
+        Ok(ordered)
+    }
+
+    /// Takes run `at`'s next group as its head, if it has one.
+    ///
+    /// # Errors
+    ///
+    /// As reading the run back fails.
+    fn advance(&mut self, at: usize) -> Result<()> {
+        let (Some(head), Some(run)) = (self.heads.get_mut(at), self.runs.get_mut(at)) else {
+            return Err(broken("a partition's groups are missing"));
+        };
+        *head = run.next().transpose()?.map(|(first, next)| {
+            self.order.push(Reverse((first, at)));
+            next
+        });
+        Ok(())
     }
 }
 
@@ -375,14 +401,10 @@ impl Iterator for Ordered {
 
     fn next(&mut self) -> Option<Result<Row>> {
         let Reverse((_, at)) = self.order.pop()?;
-        let (Some(head), Some(run)) = (self.heads.get_mut(at), self.runs.get_mut(at)) else {
-            return Some(Err(broken("a partition's groups are missing")));
-        };
-        let row = head.take();
-        *head = run.next().map(|(first, next)| {
-            self.order.push(Reverse((first, at)));
-            next
-        });
+        let row = self.heads.get_mut(at).and_then(Option::take);
+        if let Err(e) = self.advance(at) {
+            return Some(Err(e));
+        }
         row.map(Ok)
     }
 }
