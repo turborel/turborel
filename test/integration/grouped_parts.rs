@@ -189,3 +189,24 @@ fn a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups() {
         assert_eq!(alone, together, "{sql}");
     }
 }
+
+/// Verifies: [X3.135-1986 §5.22 GR2] (RULES.md D1125) a grouping run in
+/// parallel with no HAVING condition, whose partitions give their
+/// tables' groups as batches, gives the groups the plan run alone gives,
+/// in its order: of counts, sums and extremes, a null key and null
+/// values among them, of DISTINCT, and read by a join.
+#[test]
+fn a_grouping_run_in_parallel_gives_its_tables_groups() {
+    let (_db, a) = tables();
+    for sql in [
+        "SELECT G, COUNT(*), COUNT(N), SUM(N), MIN(N), MAX(K) FROM C GROUP BY G",
+        "SELECT N, COUNT(*), SUM(K) FROM C GROUP BY N",
+        "SELECT DISTINCT G, N FROM C",
+        "SELECT COUNT(*), SUM(X.S) FROM C JOIN (SELECT G, SUM(N) AS S FROM C GROUP BY G) AS X ON X.G = C.K",
+    ] {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(shown.contains("Parallel"), "{sql}\n{shown}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+}

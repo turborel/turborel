@@ -29,16 +29,17 @@
 //! morsels show, it gives way to the serial grouping, which spills, its
 //! rows read again in the statement's snapshot.
 
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 mod regrouped;
+mod runs;
 mod second;
 mod top;
 mod waves;
 
 use self::regrouped::Outer;
+use self::runs::{Ordered, Run};
 pub(super) use self::top::Top;
 
 use super::batched::ByBatch;
@@ -87,9 +88,9 @@ type Merging = (u64, Row, Vec<Box<dyn Accumulator>>);
 /// One partition's pieces, by morsel in order.
 type Chunks = Vec<Vec<Piece>>;
 
-/// Each partition's groups, finished with their numbers, in the order of
-/// their first rows; or that the grouping gave way.
-type Runs = Held<Vec<Vec<(u64, Row)>>>;
+/// Each partition's groups with their numbers, in the order of their
+/// first rows (`runs.rs`); or that the grouping gave way.
+type Runs = Held<Vec<Run>>;
 
 /// What a grouping groups: by `Spec`, or, of DISTINCT, by every column;
 /// and, of a pipeline read by batch, what it reads of each batch
@@ -133,15 +134,30 @@ impl Grouping {
     /// its HAVING condition is true of, or all of none, as `kept` keeps
     /// them: the condition judged of each group's row before the group
     /// takes a row of its own; in the order of their first rows. Of a
+    /// grouping under no condition, the table's groups as a batch
+    /// (RULES.md D1125), and of a sort's first rows asked, those (D1124). Of a
     /// pair, the second grouping's groups of them, then those kept: made
     /// in a table of the first's groups as a batch where the second reads
     /// them so (RULES.md D1123), else of their rows (`ended`).
-    fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+    fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Run> {
         if let Some(top) = &self.top {
             // Its first rows alone, the number each is merged by its last
             // column (RULES.md D1124).
-            return Ok(top.of_table(table)?.into_iter().map(|row| (0, row)).collect());
+            return Ok(Run::Rows(top.of_table(table)?.into_iter().map(|row| (0, row)).collect()));
         }
+        if self.having.is_none() && self.outer.is_none() && table.in_order() {
+            // Its groups as the table holds them, a row made of each
+            // only as it is given (RULES.md D1125).
+            let (batch, firsts) = table.into_batch()?;
+            return Ok(Run::Columns(batch, firsts));
+        }
+        self.rows_of(table, runner).map(Run::Rows)
+    }
+
+    /// The groups of `table` as rows, as `kept_of` gives them of a
+    /// grouping under a HAVING condition, of a pair, and of a table whose
+    /// groups are not in the order of their first rows, put in it.
+    fn rows_of(&self, table: GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
         if let Some(outer) = self.outer.as_ref().filter(|outer| outer.tabled(&table)) {
             // Its groups come in the order of the first's (RULES.md D1123).
             // Neither grouping of a pair is by a collation, so the
@@ -293,11 +309,11 @@ pub(super) fn grouped_asked(
     // merged here of theirs, then those its HAVING keeps (RULES.md D1133).
     if let Some(crossing) = grouping.outer.as_ref().filter(|o| o.crosses()) {
         let Some(merged) = crossing.merged()? else { return Ok(Held::GaveWay) };
-        runs = vec![grouping.kept(merged, &Runner::new(db, tx))?];
+        runs = vec![Run::Rows(grouping.kept(merged, &Runner::new(db, tx))?)];
     }
-    if runs.iter().all(Vec::is_empty) && grouping.spec.groups.is_empty() && !grouping.distinct {
+    if runs.iter().all(Run::is_empty) && grouping.spec.groups.is_empty() && !grouping.distinct {
         // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
-        runs = vec![grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?];
+        runs = vec![Run::Rows(grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?)];
     }
     let rows = match top {
         Some(top) => top.given(grouping.top.is_some(), runs),
@@ -337,55 +353,9 @@ fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&
     let (merging, db_for) = (Arc::clone(grouping), db.clone());
     let merge = Box::new(move |p: usize| {
         let taken = chunks.get(p).map(|c| std::mem::take(&mut *c.lock().unwrap_or_else(PoisonError::into_inner))).unwrap_or_default();
-        merging.ended(merged(&merging, p, taken)?, &Runner::new(&db_for, tx))
+        merging.ended(merged(&merging, p, taken)?, &Runner::new(&db_for, tx)).map(Run::Rows)
     });
     Morsels::start(db, tx, (PARTS, degree), merge).collect::<Result<Vec<_>>>().map(Held::Kept)
-}
-
-/// The groups of each partition, each partition's in the order of their
-/// first rows, given in that order: of the partitions' first groups not
-/// yet given, the earliest, as a merge of sorted runs takes them.
-struct Ordered {
-    runs: Vec<std::vec::IntoIter<(u64, Row)>>,
-    /// Each run's group next given, if any.
-    heads: Vec<Option<Row>>,
-    /// The first rows' numbers of the heads, each with its run, earliest
-    /// first.
-    order: BinaryHeap<Reverse<(u64, usize)>>,
-}
-
-impl Ordered {
-    /// The groups of the runs `runs`, each in order.
-    fn of(runs: Vec<Vec<(u64, Row)>>) -> Ordered {
-        let mut ordered = Ordered { runs: Vec::new(), heads: Vec::new(), order: BinaryHeap::with_capacity(runs.len()) };
-        for (at, run) in runs.into_iter().enumerate() {
-            let mut run = run.into_iter();
-            let head = run.next().map(|(first, row)| {
-                ordered.order.push(Reverse((first, at)));
-                row
-            });
-            ordered.runs.push(run);
-            ordered.heads.push(head);
-        }
-        ordered
-    }
-}
-
-impl Iterator for Ordered {
-    type Item = Result<Row>;
-
-    fn next(&mut self) -> Option<Result<Row>> {
-        let Reverse((_, at)) = self.order.pop()?;
-        let (Some(head), Some(run)) = (self.heads.get_mut(at), self.runs.get_mut(at)) else {
-            return Some(Err(broken("a partition's groups are missing")));
-        };
-        let row = head.take();
-        *head = run.next().map(|(first, next)| {
-            self.order.push(Reverse((first, at)));
-            next
-        });
-        row.map(Ok)
-    }
 }
 
 /// The pieces of `pipeline`'s rows under `grouping`, each morsel's made

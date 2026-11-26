@@ -718,6 +718,7 @@ verification approach DO-178C expects (§8).
 | D1122 | The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change |
 | D1123 | The second grouping of a pair is made in the executor's table, of the first's groups given as a batch |
 | D1124 | The first rows of a sort over a grouping run in parallel are taken from its partitions' tables |
+| D1125 | A partition of a grouping run in parallel gives its table's groups as a batch, a row made of a group as it is given |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19665,6 +19666,29 @@ a pair of groupings (D1113); the sort reads those groups as before. A
 grouping whose groups are made of rows gives its groups in order, which
 are projected and sorted. A part that gives way is grouped alone and its
 rows projected and sorted, the part not tried again.
+
+#### D1125. A partition of a grouping run in parallel gives its table's groups as a batch, a row made of a group as it is given
+
+Each partition of a grouping run in parallel finished its table into a
+row of values a group, every row made before the first was read. The
+rows were held beside the tables they were made of, in memory charged to
+no grant (D38), so a grouping of very many groups held several times its
+grant, and its threads spent their time growing the vectors of rows.
+
+A partition of a grouping with no HAVING condition and no second
+grouping over it now gives its table's groups as one batch (D1123) and
+their first rows' numbers (`exec/parallel/grouped/runs.rs`). The batch
+is the table's own vectors, which the grant was charged as the table was
+made, so the part holds nothing more to give its groups. The statement's
+thread still takes the partitions' groups in the order of their first
+rows, as a merge of sorted runs takes them, and makes a row of a group
+only as that group is given. A run read to its end gives back what it
+held.
+
+A grouping under a HAVING condition, a pair of groupings (D1113), a
+grouping whose groups are made of rows, and a table whose groups are not
+in the order of their first rows give rows as before. So does a
+partition asked a sort's first rows (D1124), which are few.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 

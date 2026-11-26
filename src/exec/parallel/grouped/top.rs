@@ -19,7 +19,8 @@
 //! the last row under the sort's own keys, which the number would part,
 //! so such a sort reads the grouping's rows as before.
 
-use super::{Grouping, Ordered};
+use super::Grouping;
+use super::runs::{Ordered, Run};
 use crate::error::Result;
 use crate::exec::sort::first_of_morsel;
 use crate::exec::table::GroupTable;
@@ -128,9 +129,9 @@ impl Top {
     /// grouping that took them from its tables (`fits`), the partitions'
     /// first rows; of any other, its groups in the order of their first
     /// rows, projected and sorted as the plan run alone sorts them.
-    pub(super) fn given(&self, from_tables: bool, runs: Vec<Vec<(u64, Row)>>) -> RowIter {
+    pub(super) fn given(&self, from_tables: bool, runs: Vec<Run>) -> RowIter {
         if from_tables {
-            return self.of_all(runs.into_iter().flatten().map(|group| group.1).collect());
+            return self.of_all(runs.into_iter().flat_map(Run::into_rows).map(|group| group.1).collect());
         }
         self.of_rows(Box::new(Ordered::of(runs)))
     }

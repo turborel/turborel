@@ -24,13 +24,13 @@ use super::super::pipeline::Pipeline;
 use super::super::probe::PARTS;
 use super::super::run::Morsels;
 use super::super::{Held, Limit};
+use super::runs::Run;
 use super::{Grouping, Runs, first_of};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::morsel_groups;
 use crate::exec::table::{GroupTable, Made};
 use crate::exec::{Runner, broken};
-use crate::storage::Row;
 use crate::txn::TxId;
 
 /// \[DESIGN\] The rows of a morsel each of its groups stands for, on each
@@ -247,7 +247,7 @@ fn finished_wave(
     (grouping, frozen): (&Arc<Grouping>, &Frozen),
     wave: Vec<Arc<Made>>,
     (db, tx, degree): (&Db, TxId, usize),
-) -> Result<Vec<Vec<(u64, Row)>>> {
+) -> Result<Vec<Run>> {
     let (grouping, kept, wave, db_for) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), db.clone());
     let finish = Box::new(move |p: usize| {
         let table = thawed_and_merged(&grouping, (&kept, p), &wave)?;

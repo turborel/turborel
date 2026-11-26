@@ -5,12 +5,13 @@
 //! another that a part makes whole, and one that crosses its partitions,
 //! merged by the statement's thread (D1133), and the second grouping of
 //! a pair made in a table of the first's groups given as a batch (D1123),
-//! and the first rows of a sort taken from a grouping's tables (D1124).
+//! the first rows of a sort taken from a grouping's tables (D1124), and
+//! a partition's groups given as a batch (D1125).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 22] = [
+pub const GROUPED_PARTS: [Mutation; 23] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -230,5 +231,15 @@ pub const GROUPED_PARTS: [Mutation; 22] = [
         replacement: "    if table.len() > 1 {",
         integration: &["ungrouped_parts::set_functions_of_no_grouping_are_fed_by_vectors_in_parallel"],
         unit: &[],
+    },
+    Mutation {
+        name: "run-of-columns-gives-its-first-group",
+        package: Package::Core,
+        breaks: "a partition's groups given as a batch are each given as the batch's first group (RULES.md D1125)",
+        file: "src/exec/parallel/grouped/runs.rs",
+        original: "firsts.get(g).map(|&first| (first, row_of(batch, g)))",
+        replacement: "firsts.get(g).map(|&first| (first, row_of(batch, 0)))",
+        integration: &["grouped_parts::a_grouping_run_in_parallel_gives_its_tables_groups"],
+        unit: &["exec::parallel::grouped::runs::tests::runs_of_rows_and_of_batches_are_given_in_one_order"],
     },
 ];
