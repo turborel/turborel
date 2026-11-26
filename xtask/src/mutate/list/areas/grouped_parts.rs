@@ -8,7 +8,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 15] = [
+pub const GROUPED_PARTS: [Mutation; 16] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -158,5 +158,15 @@ pub const GROUPED_PARTS: [Mutation; 15] = [
         replacement: "return None;",
         integration: &[],
         unit: &["exec::parallel::grouped::tests::a_having_of_one_set_function_and_a_constant_is_judged_of_its_value"],
+    },
+    Mutation {
+        name: "ungrouped-states-unwritten",
+        package: Package::Core,
+        breaks: "a morsel's set functions of no grouping are fed and never written into its one group (RULES.md D1170)",
+        file: "src/exec/batch/groups/morsel.rs",
+        original: "    if table.len() > 0 {",
+        replacement: "    if table.len() > 1 {",
+        integration: &["ungrouped_parts::set_functions_of_no_grouping_are_fed_by_vectors_in_parallel"],
+        unit: &[],
     },
 ];
