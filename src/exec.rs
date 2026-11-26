@@ -247,6 +247,10 @@ fn system_plan(plan: Plan, db: &Db, _tx: TxId) -> RowIter {
 fn sorted_plan(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Sort { keys, input, most, .. } = plan else { return failed(broken("a sort is not one")) };
     let Some(most) = most else { return sorted(&keys, *input, db, tx) };
+    // Of a grouping run in parallel, from its partitions' tables (RULES.md D1124).
+    if let Some(rows) = parallel::top_groups((&keys, most), &input, db, tx) {
+        return rows;
+    }
     // A stream's batches taken as they are, if it can be, the columns the
     // keys do not read late and the first key's bound told the scans
     // (`sort/top/batched.rs`, RULES.md D379, D380).

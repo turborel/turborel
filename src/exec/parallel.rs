@@ -172,6 +172,29 @@ pub(super) fn parallel(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     }
 }
 
+/// \[DESIGN\] (RULES.md D1124) The first rows a sort by `keys` asks,
+/// `most` of them, of `input`, if that is a grouping by hash run in
+/// parallel, or a projection of columns over one, and no peers are asked: each
+/// partition's thread takes its first rows from its table's columns, and
+/// the statement's thread sorts those (`grouped/top.rs`). A part that
+/// gives way is grouped alone, its rows projected and sorted. None of any
+/// other input, which the sort reads as it does.
+pub(super) fn top_groups(
+    (keys, most): (&[crate::logical::SortKey], crate::logical::Most),
+    input: &Plan,
+    db: &Db,
+    tx: TxId,
+) -> Option<RowIter> {
+    let (top, part) = grouped::Top::of((keys, most), input, (db, tx))?;
+    let Plan::Parallel(p) = part else { return None };
+    let top = Arc::new(top);
+    Some(match grouped::grouped_asked(&p.input, (db, tx, p.degree), &[], Some(&top)) {
+        Ok(Held::Kept(rows)) => rows,
+        Ok(Held::GaveWay) => top.of_rows(execute(p.input.clone(), db, tx)),
+        Err(e) => failed(e),
+    })
+}
+
 /// The rows of the stream `plan`, its morsels taken by up to `degree`
 /// threads, given in order: each morsel's gathered within the part's
 /// grant, or read by the reader as it is given if it outgrows it

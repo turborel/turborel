@@ -35,9 +35,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 mod regrouped;
 mod second;
+mod top;
 mod waves;
 
 use self::regrouped::Outer;
+pub(super) use self::top::Top;
 
 use super::batched::ByBatch;
 use super::pipeline::Pipeline;
@@ -112,6 +114,9 @@ struct Grouping {
     /// \[DESIGN\] (RULES.md D1113) The grouping over it, of a pair the
     /// part runs whole, which each partition's thread makes of its groups.
     outer: Option<Outer>,
+    /// \[DESIGN\] (RULES.md D1124) The first rows a sort over it asks,
+    /// which each partition's thread takes from its table (`top.rs`).
+    top: Option<Arc<Top>>,
 }
 
 impl Grouping {
@@ -141,6 +146,11 @@ impl Grouping {
     /// in a table of the first's groups as a batch where the second reads
     /// them so (RULES.md D1123), else of their rows (`ended`).
     fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+        if let Some(top) = &self.top {
+            // Its first rows alone, the number each is merged by its last
+            // column (RULES.md D1124).
+            return Ok(top.of_table(table)?.into_iter().map(|row| (0, row)).collect());
+        }
         if let Some(outer) = self.outer.as_ref().filter(|outer| outer.tabled(&table)) {
             // Its groups come in the order of the first's (RULES.md D1123).
             // Neither grouping of a pair is by a collation, so the
@@ -248,6 +258,22 @@ pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resu
 ///
 /// As `grouped`.
 pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: usize, told: &[Told]) -> Result<Held<RowIter>> {
+    grouped_asked(plan, (db, tx, degree), told, None)
+}
+
+/// \[DESIGN\] (RULES.md D1124) As `grouped_told`, asked the first rows
+/// `top` of its groups, if any: given those alone, sorted, taken from its
+/// partitions' tables where it makes its groups so (`top.rs`).
+///
+/// # Errors
+///
+/// As `grouped`.
+pub(super) fn grouped_asked(
+    plan: &Plan,
+    (db, tx, degree): (&Db, TxId, usize),
+    told: &[Told],
+    top: Option<&Arc<Top>>,
+) -> Result<Held<RowIter>> {
     let (plan, having) = if let Plan::Filter { cond, input, .. } = plan { (&**input, Some(cond.clone())) } else { (plan, None) };
     // Of a pair (RULES.md D1113), the part's pipeline is the first
     // grouping's input, told no filter, as those a join tells it are of
@@ -256,23 +282,14 @@ pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: 
         Some((outer, first)) => (first, Some(outer), &[][..]),
         None => (plan, None, told),
     };
-    let seed = db.functions.seed().clone();
-    let (grouping, input) = if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
-        let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
-        (Grouping { spec, having, distinct: false, read: None, seed, outer }, input)
-    } else if let Plan::Distinct { input, .. } = plan {
-        let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
-        (Grouping { spec, having, distinct: true, read: None, seed, outer }, input)
-    } else {
-        return Err(broken("not a grouping run in parallel"));
-    };
+    let (mut grouping, input) = grouping_of(plan, (having, outer), db.functions.seed().clone())?;
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, told)? else { return Ok(Held::GaveWay) };
-    let mut grouping = grouping;
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     if let Some(read) = &grouping.read {
         grouping.seed = grouping.seed.unpadded(&read.unpadded);
     }
+    grouping.top = top.cloned().filter(|_| top::fits(&grouping));
     let grouping = Arc::new(grouping);
     let (mut runs, mut given) = if grouping.read.is_some() {
         let Held::Kept(waved) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
@@ -292,7 +309,28 @@ pub(in crate::exec) fn grouped_told(plan: &Plan, (db, tx): (&Db, TxId), degree: 
         // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
         runs = vec![grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?];
     }
-    Ok(Held::Kept(limit.keeping(Box::new(Ordered::of(runs, given)?))))
+    let rows = match top {
+        Some(top) => top.given(grouping.top.is_some(), (runs, given))?,
+        None => Box::new(Ordered::of(runs, given)?),
+    };
+    Ok(Held::Kept(limit.keeping(rows)))
+}
+
+/// The grouping `plan` is, a grouping or DISTINCT, under the HAVING
+/// condition and the second grouping `over` it, its keys hashed by
+/// `seed`, and its input.
+///
+/// # Errors
+///
+/// SQLCODE -910 of a plan that is neither.
+fn grouping_of(plan: &Plan, (having, outer): (Option<Cond>, Option<Outer>), seed: Seed) -> Result<(Grouping, &Plan)> {
+    if let Plan::Aggregate { groups, collations, aggs, seeds, input, .. } = plan {
+        let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: seeds.clone() };
+        return Ok((Grouping { spec, having, distinct: false, read: None, seed, outer, top: None }, input));
+    }
+    let Plan::Distinct { input, .. } = plan else { return Err(broken("not a grouping run in parallel")) };
+    let spec = Spec { groups: Vec::new(), collations: Vec::new(), aggs: Vec::new(), seeds: Vec::new() };
+    Ok((Grouping { spec, having, distinct: true, read: None, seed, outer, top: None }, input))
 }
 
 /// The groups of each partition of `grouping`'s pipeline read a row at a

@@ -717,6 +717,7 @@ verification approach DO-178C expects (§8).
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
 | D1122 | The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change |
 | D1123 | The second grouping of a pair is made in the executor's table, of the first's groups given as a batch |
+| D1124 | The first rows of a sort over a grouping run in parallel are taken from its partitions' tables |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -747,6 +748,7 @@ verification approach DO-178C expects (§8).
 | D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
 | D1157 | A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone |
 | D1158 | A plan asking for a table's first statistics while the maintenance thread gathers them waits for that pass |
+| D1159 | A plan costs its spills at the grant of a statement running alone |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -763,8 +765,12 @@ verification approach DO-178C expects (§8).
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
+| D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
+| D1205 | The unique index of a deferrable constraint is no key to the estimates |
+| D1206 | An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
+| D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
 ### The project
 
@@ -11459,9 +11465,11 @@ enumeration make, judges the equality of one column of each of every
 class with a column on each side (`Model::implied_keys`), and that
 equality is a key of its hash, merge or index join. The plan is then
 never a product of the two whose rows the estimate counts as joined.
-The classes are made once with the model, and the join graph takes no
-edge of its own for such a pair, since an edge of each pair of a large
-class makes a clique the enumeration's search grows past.
+The classes are made once with the model. The join graph takes no
+edge for each pair of a class, since an edge of each pair of a large
+class makes a clique the enumeration's search grows past. It takes
+those from a relation the class's column is a key of, within a budget
+(D1204).
 An equality implied is true of every row the stated ones keep, so the
 rows are those of the query as written [X3.135-1986 §5.20 GR2b]. A
 chain with an outer join takes no implied key, since its keys hold only
@@ -19630,6 +19638,42 @@ pipeline read a row at a time, is grouped again of rows as before
 (`regrouped.rs`). The batch is made only as the last wave finishes a
 partition, so what the part holds and when it gives way are unchanged.
 
+#### D1124. The first rows of a sort over a grouping run in parallel are taken from its partitions' tables
+
+A sort of which only the first rows are asked for (D379), over a
+grouping run in parallel, read every group back. Each partition's thread
+made a row of values of each of its groups, the statement's thread
+merged the partitions' rows in the order of their first rows, and the
+sort kept its few. Of a grouping of many groups nearly all of that work,
+and all of the memory the rows took, which no grant was charged, was for
+rows the sort dropped.
+
+Each partition's thread now takes the first rows from its own table
+(`exec/parallel/grouped/top.rs`). The table gives its groups as a batch
+(D1123), the columns the projection over the grouping names in its
+order, and each group's first row's number as a column after them. The
+thread keeps that batch's first rows under the sort's keys and then the
+number, as a sort run in parallel keeps a morsel's
+(`sort::first_of_morsel`), so only those are made rows. The statement's
+thread sorts the partitions' rows the same way, gives the first asked
+for, and leaves the number out.
+
+The plan run alone sorts the groups stably, in the order of their first
+rows, so of two groups of equal keys the one whose first row came
+earlier comes first. The number as the last key orders any two groups
+so, in whatever partitions they are. The rows given and their order are
+therefore the plan's.
+
+It does so of a grouping by hash, alone at the top of its part, whose
+groups are made by batch, under a projection of its columns alone or
+none. A sort that asks the peers of its last row (WITH TIES) is not
+taken so, as the number would part groups that are peers. Neither is one
+over a HAVING condition, a projection that computes a value, DISTINCT or
+a pair of groupings (D1113); the sort reads those groups as before. A
+grouping whose groups are made of rows gives its groups in order, which
+are projected and sorted. A part that gives way is grouped alone and its
+rows projected and sorted, the part not tried again.
+
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
 A function with no body over vectors is called for each row of a batch
@@ -20308,6 +20352,32 @@ pass and is given what it gathered. Plans that find statistics never
 take the lock, so later passes do not hold them up
 (`engine/rows/stats.rs`).
 
+#### D1159. A plan costs its spills at the grant of a statement running alone
+
+The planner costs what an operator spills past its grant (D651), and took
+the grant as the executor would give it at that moment (D683). That is
+half of what the grants' share has free, after the grants other
+statements hold and after the standing reservations. Two things moved it
+that have nothing to do with the statement. Every grant held beside it
+halved it, so a grouping of sixty thousand rows was hashed over a scan
+when planned alone and streamed over its key's index in order when
+planned beside two others. The kept undo is a standing reservation that
+grows and shrinks with the writes (D746), so the same statement on an
+idle database was costed at a grant that depended on what had run
+before. One query was planned two ways, and a benchmark run and its
+rerun could time different plans.
+
+The planner now costs at the grant a statement running alone would be
+given. No grant is taken as held, and each standing reservation is taken
+at the bound it may grow to, a buffer pool at its bytes and the kept
+undo at its share of the budget (`Reservation::stand_up_to`,
+`MemoryBudget::planned`). The plan then depends on the settings alone,
+and EXPLAIN shows the plan the statement runs. The executor still takes
+what is free when an operator starts (`spill/grant.rs`), and spills or
+gives way as it must. So beside other statements an operator may spill
+more than it was costed for. That was chosen over a plan that changes
+with its neighbours.
+
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
 A value given for a `?` is cast to the parameter's type [ISO/IEC
@@ -20880,6 +20950,153 @@ times the estimate is exposed past it. Of rows a hundred times the
 estimate it makes a hundred times the probes, where the margin weighed
 eight.
 
+#### D1204. A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget
+
+The enumeration joins two sets only where an edge of the graph joins
+them, and the graph had an edge only for a conjunct or an operator. So
+of `p.k = l.k AND ps.k = l.k` it never joined `p` to `ps` alone, though
+the class of the three columns (D302) makes `p.k = ps.k` true of every
+row the query keeps and D387 joins two such sets by that key. Where `p`
+is filtered and `l` is the largest table, joining `p` to `ps` first and
+`l` to their few rows is the cheaper plan, and no order of the stated
+conjuncts gives it.
+
+A relation whose column of a class is a key of it now has an edge to
+each other relation of the class (`enumerate/graph/implied.rs`). A key
+is what the estimates take for one (`cardinality/keys.rs`, D384). That
+is a PRIMARY KEY or UNIQUE constraint of the one column, not deferrable
+and of no period, a grouping by the column alone, or DISTINCT of it
+alone. A key matches at most one row of its relation to a row of the
+other, so the join gives no more rows than the other relation has, and
+fewer where the keyed one is filtered. A column that is no key gets no
+edge, as its join may multiply rows and its edges are what made D387's
+clique. A UNIQUE column that may be null is a key here. A null equals
+nothing [X3.135-1986 §5.11 GR2], so its rows of a null join no row, by
+the implied key as by the stated ones, and its other rows are each of a
+value of their own. A deferrable constraint is none, as it may be
+broken until it is checked [ISO/IEC 9075-2:2023 §4.25.2].
+
+The edge is of no operator and no conjunct. A join made over it alone
+judges the equality the class implies of a column of each side
+(`Model::implied_keys`), by a hash, merge or index join as cost
+chooses, and is an inner join like any other. The rows are those of the
+query as written [X3.135-1986 §5.20 GR2b]. The implied equality holds of
+every row the stated ones keep, since the stated ones are equalities of
+bare columns under one comparison, which is transitive, numbers of
+exact and approximate types comparing by algebraic value [§5.11 GR4].
+An equality by a collation is no bare column's and enters no class.
+Each stated conjunct is still judged where its relations first meet,
+so the join of `p` and `ps` to `l` judges both stated equalities. The
+rows do not rest on the key. Were it broken, the join would only give
+more rows than estimated, the same ones any other order gives. A chain
+with an outer join, a semi join or an antijoin has no class (D387), so
+no such edge.
+
+The edges of a relation are a star, and a class each relation of which
+is keyed, as tables split one to one on a shared key are, would have a
+star from each, a clique. Twelve such relations chained by their keys
+have 286 pairs of sets to join as written and 261,625 as a clique. So a
+star is taken only while the work exact dynamic programming does of the
+graph with it stays within PLANNER.DP_BUDGET (`Graph::work`). The work
+is the connected subgraphs the enumeration meets and the pairs it
+joins, counted by its own traversal with no table and stopped past the
+budget. The connected subgraphs alone would not do, as a clique of
+twelve has 4,095 of them and passes no budget of 10,000. The stars are
+offered from the relation of fewest estimated rows, whose join reduces
+most, and one that passes the budget is undone and the next offered. A
+graph past the budget with no star takes none. So a chain with stars
+does at most the budget's work, the adaptive switch (D304) never leaves
+exact dynamic programming for a star, and a chain no star fits is
+planned as it was. A rule taking a star only from a filtered relation
+was not taken. It bounds nothing, as twelve filtered relations are a
+clique still, and a relation with no filter of its own may be reduced
+by a join below, as a nation is by its region.
+
+#### D1205. The unique index of a deferrable constraint is no key to the estimates
+
+The estimates take a table's keys from the catalog (D384): the columns
+of each UNIQUE or PRIMARY KEY constraint not deferrable, and of each
+unique index. But every such constraint has a unique index, a
+deferrable one too, and that index holds two rows of one key from the
+statement that breaks the constraint until its check [ISO/IEC
+9075-2:2023 §4.25.2]. So a deferrable key was taken for a key through
+its index, against D384's own words. A column of it was counted as of
+one row a value, and its join as giving no more rows than its other
+side.
+
+The index of a deferrable constraint is now left out of a table's keys
+(`cardinality/keys.rs`), told by its columns, which are the
+constraint's, with its period's if it has one. Only estimates read
+these keys, a row bound, a class's distinct values, the choice of a
+hash or an index join, and the implied edges (D1204), so no query gave
+wrong rows. The rules that rewrite a query by a key read the
+constraints themselves and pass a deferrable one by (D1117, D1201,
+D1202).
+
+#### D1206. An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all
+
+A hash join took every equality of a column of each operand for a key.
+Of `l.a = s.x AND l.a = ps.y`, as a join over an implied edge judges
+(D1204), both were keys, though they are of one column of `l`. Each row
+of either operand then hashed and compared `a` twice, and the scan of
+`l` was told two runtime filters of the one column (D369).
+
+An inner hash join now hashes at most one key of each left column and
+one of each right column (`physical/join/single.rs`). The equalities are
+taken in the order of the distinct values of their more distinct column,
+most first, which is how the estimates count the pairs an equality
+keeps (D302), so the key kept is the one that leaves the fewest pairs to
+judge. Equalities of equal counts are taken in the order stated, so a
+plan does not change with nothing. One is a key unless a key already
+taken is of its left column or of its right column. So an equality that
+shares no column with a key is always a key, and of
+`l.a = r.x AND l.b = r.y AND l.a = r.y` the first two are hashed where
+they rank first. The keys keep the order stated.
+
+An equality that is not a key is judged of the matched rows, in the
+filter over the join, which of an inner join is its condition and is
+judged a batch at a time. Nothing is dropped by this, so the rows are
+those of the query as written [X3.135-1986 §5.20 GR2b]. An equality is
+true of no null [§5.11 GR2], the same as a key, which matches no null.
+A key on which a null matches a null is judged as NOT (a IS DISTINCT
+FROM b) [ISO/IEC 9075-2:2023 §8.15 SR6].
+
+Such an equality is not judged at all where it is implied. Take the key
+`l.a = s.x` and the equality `l.a = ps.y`, the right operand a join that
+judged `ps.y = s.x`. That equality is true of every row of the right
+operand, and the key is true of every matched pair, so `l.a = ps.y` is
+true of every matched pair too. Both are true, so no value of the three
+is null, and equality of bare columns is transitive, numbers of exact
+and approximate types comparing by algebraic value [§5.11 GR4], as D1204
+relies on. The mirror holds of two left columns and one right. The
+planner knows what an operand's joins judged by construction. Each
+realized subtree carries the equalities of columns its inner joins
+judged (`Realized::equated`, `enumerate/realize.rs`), a LEFT join, a
+semi join and an antijoin passing their left's and a FULL join none,
+and an equality is implied only by a chain of those. An equality still
+to be judged above, or one a relation's own filter holds, implies
+nothing here, and the equality stays in the filter. The join the
+optimizer plans without the enumeration (`physical/join.rs`) carries no
+such record and filters every equality that is not a key.
+
+Outer joins, semi joins, antijoins and mark joins keep every equality
+as a key. They judge a condition beyond their keys of each pair inside
+the match, a row at a time, and a semi join with such a condition no
+longer keeps only the first row of each key (D540), so a key moved
+there would trade a hashed column for a condition judged pair by pair.
+A filter above an outer join would be wrong besides, as it would drop
+the rows the join preserves. Index and merge joins hash nothing and are
+as they were.
+
+A runtime filter is made of each key, from the values of its built
+column, and told of its left column (D369). Fewer keys make fewer
+filters, each still holding every built value of its column, so each
+keeps every row that matches. Predicate transfer steps along the same
+keys (D665) and takes fewer steps, each sound alone. The cost model
+needs no change. It prices each row hashed once whatever its keys
+(`HASH_ROW`), and counts a join's runtime filter once a class of
+equalities (D653), which is now what runs.
+
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 
 A node stops before its database closes (D57). Its transport ends, its
@@ -20980,6 +21197,36 @@ merges them in that order. No more groups are held at once than the
 threads finish together, so a grouping of nearly as many groups as rows
 holds no more than the grant at the end, where holding its finished rows
 until the statement read them outgrew the memory the server was given.
+Of a grouping that keeps the first rows a sort asks of its tables
+(D1124), a part's run holds those rows alone.
+
+#### D1230. A structure's tally counts a miss only when the pool evicted a page for it
+
+The planner prices a fetch, and an index's probe, by the share of its
+lookups that missed the pool, counted by each table and index once it has
+had LEAST_LOOKUPS lookups (D35). Before that, the share is reckoned from
+how much of the table the pool's frames could hold. Every miss was
+counted, the first read of a page into a pool still filling as well. The
+sampled statistics pass that follows a start begins each run of rows it
+reads with a lookup, into a pool that holds nothing yet, so nearly every
+one missed. A table of a few megabytes that a pool of 64 MiB holds three
+times over was priced as two thirds missed, and a range read through its
+index before the pass was planned as a scan of the whole table after it.
+It went back to the index only a few thousand lookups later, and paid for
+those first misses until the tally's window halved them. One query was
+planned two ways by what had touched the table first since the start.
+
+A miss is now counted only when the pool had no empty frame and evicted
+a page for it (`Claim::evicted`, `BufferPool::hold`). A page read into an
+empty frame says nothing about whether the pool holds the structure, and
+is not counted. A table the pool holds is then priced as held, cold and
+warm alike, as the reckoning before LEAST_LOOKUPS prices it. Once the
+pool is full, every miss evicts and is counted. That covers a table
+larger than the pool, and a table first read into a pool full of other
+tables' pages, which does not fit beside what the pool holds. The
+lookups are counted as before, so LEAST_LOOKUPS and the window are
+unchanged. A hit costs nothing more, and a miss only notes which way the
+pool found its frame (`disk/buffer/tally.rs`).
 
 ## 2. Project layout
 

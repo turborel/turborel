@@ -75,12 +75,14 @@ const SHARD_SHIFT: u32 = 56;
 
 /// A frame claimed for a page: its index, and the page it held, if that
 /// page was dirty and must be written back, or owed to a checkpoint's
-/// capture (`capture.rs`), and which.
+/// capture (`capture.rs`), and which; and whether it held a page at all,
+/// evicted for this one, or was empty (RULES.md D1230).
 #[derive(Clone, Copy)]
 struct Claim {
     frame: usize,
     write_back: Option<Key>,
     owed: bool,
+    evicted: bool,
 }
 
 impl BufferPool {
@@ -291,7 +293,7 @@ impl BufferPool {
     }
 
     /// Holds `key` for reading, as `read`; and whether the pool missed it
-    /// (`tally.rs`).
+    /// and evicted another page for it (`hold`, `tally.rs`).
     pub(super) fn read_noting(&self, key: Key) -> Result<(PageRef<'_>, bool)> {
         self.read_noting_at(key, super::hits::Hints::hash(key))
     }
@@ -424,7 +426,10 @@ impl BufferPool {
 
 impl BufferPool {
     /// Pins the frame holding `key`, filling one if none does; the hint of
-    /// `key` the frame. Whether it filled one.
+    /// `key` the frame. Whether it filled one that held another page,
+    /// evicted for it: a miss of a pool with no frame empty, which a
+    /// structure's tally counts, a first read into an empty frame not
+    /// (RULES.md D1230).
     pub(super) fn hold(&self, key: Key, fill: Fill) -> Result<(&Frame, bool)> {
         // Found by its hint, it is pinned with no shard locked (`hits.rs`).
         if let Some(frame) = self.pin_hinted(key) {
@@ -442,7 +447,7 @@ impl BufferPool {
             if let Some(claim) = self.claim(key)? {
                 let frame = self.fill(key, claim, fill)?;
                 self.hints.note(key, claim.frame);
-                return Ok((frame, true));
+                return Ok((frame, claim.evicted));
             }
         }
     }

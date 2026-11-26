@@ -18,7 +18,7 @@ use super::model::{Model, Order};
 use super::space::{Method, Space, Tree};
 use crate::logical::{Cond, Expr, OuterJoin, SortKey, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
 use crate::physical::indexed::{EquiKind, Equijoin, alike, index_join};
-use crate::physical::join::{JoinKey, Parted, hashed, hashed_outer};
+use crate::physical::join::{JoinKey, Parted, hashed, hashed_outer, implied, judged, single};
 use crate::physical::semi::{Semi, semi_plan};
 use crate::physical::shown::Shown;
 use crate::physical::{MergeJoin, PhysicalPlanner, Plan};
@@ -32,6 +32,45 @@ pub(super) struct Realized {
     pub(super) order: Order,
     /// The order of its joins, as EXPLAIN shows it, if the plan is shown.
     pub(super) shape: String,
+    /// The equalities of two of the chain's columns true of each of its
+    /// rows, as its joins judged them (RULES.md D1206).
+    pub(super) equated: Vec<(usize, usize)>,
+}
+
+/// The equalities of columns true of every row of a join of kind `kind`
+/// of `l` and `r` judging `conds`: an inner join's are its operands' and
+/// those it judges; a LEFT join, a semi join and an antijoin keep each
+/// row of the left or fewer, so the left's; a FULL join none.
+fn equated_below(kind: Kind, (l, r): (&Realized, &Realized), conds: &[Cond]) -> Vec<(usize, usize)> {
+    match kind {
+        Kind::Inner => {
+            let judged = conds.iter().filter_map(|c| {
+                let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c else { return None };
+                Some((*a, *b))
+            });
+            l.equated.iter().chain(&r.equated).copied().chain(judged).collect()
+        }
+        Kind::Left | Kind::Semi | Kind::Anti => l.equated.clone(),
+        Kind::Full => Vec::new(),
+    }
+}
+
+/// Whether the equalities `pairs` make the columns `a` and `b` equal,
+/// each to the next of a chain of them.
+pub(super) fn chained(pairs: &[(usize, usize)], a: usize, b: usize) -> bool {
+    let mut seen = vec![a];
+    let mut at = 0_usize;
+    while let Some(&from) = seen.get(at) {
+        for &(x, y) in pairs {
+            for (near, far) in [(x, y), (y, x)] {
+                if near == from && !seen.contains(&far) {
+                    seen.push(far);
+                }
+            }
+        }
+        at = at.saturating_add(1);
+    }
+    seen.contains(&b)
 }
 
 /// The shape of a join of `l` and `r`.
@@ -60,8 +99,28 @@ impl Context<'_> {
     /// The class of orders of the column at `place` of the columns of
     /// `layout`.
     fn class_at(&self, layout: &[usize], place: usize) -> Option<usize> {
-        let col = (0..self.query.columns()).find(|&c| self.place_of(layout, c) == Some(place))?;
-        self.model.order_of(col).map(|(class, _)| class)
+        self.model.order_of(self.column_at(layout, place)?).map(|(class, _)| class)
+    }
+
+    /// The chain's column at `place` of the columns of `layout`.
+    fn column_at(&self, layout: &[usize], place: usize) -> Option<usize> {
+        (0..self.query.columns()).find(|&c| self.place_of(layout, c) == Some(place))
+    }
+
+    /// Whether the columns at the places `a` and `b` of `side` are equal
+    /// in each of its rows, by the equalities its joins judged.
+    fn equal_below(&self, side: &Realized, a: usize, b: usize) -> bool {
+        match (self.column_at(&side.layout, a), self.column_at(&side.layout, b)) {
+            (Some(x), Some(y)) => chained(&side.equated, x, y),
+            (None | Some(_), None | Some(_)) => false,
+        }
+    }
+
+    /// Whether the equality `moved` of a column of each of `l` and `r` is
+    /// true of every pair the hashed `keys` match, by the equalities the
+    /// joins of `l` and of `r` judged (`physical/join/single.rs`).
+    fn implied(&self, (l, r): (&Realized, &Realized), keys: &[JoinKey], moved: JoinKey) -> bool {
+        implied(keys, moved, |a, b| self.equal_below(l, a, b), |a, b| self.equal_below(r, a, b))
     }
 
     /// The width of the columns of `layout`.
@@ -146,7 +205,9 @@ impl PhysicalPlanner<'_> {
                 let conds = cx.conds(op, sets);
                 let rows = (cx.rows(sets.0), cx.rows(sets.1));
                 let est = cx.rows(sets.0 | sets.1);
-                self.realize_join(cx, (how, kind), (l, r), (conds, rows, est))
+                let equated = equated_below(kind, (&l, &r), &conds);
+                let done = self.realize_join(cx, (how, kind), (l, r), (conds, rows, est))?;
+                Some(Realized { equated, ..done })
             }
         }
     }
@@ -166,10 +227,11 @@ impl PhysicalPlanner<'_> {
         let shape = if self.shown { label(&leaf.plan) } else { String::new() };
         // The model built the read of each order it costed (`enumerate/modeled.rs`).
         if let Some(plan) = cx.model.plan_of(rel, order) {
-            return Some(Realized { plan: plan.clone(), layout: vec![rel], order, shape });
+            return Some(Realized { plan: plan.clone(), layout: vec![rel], order, shape, equated: Vec::new() });
         }
         let built = self.build(&leaf.plan, &keys);
-        Some(Realized { plan: built.plan, layout: vec![rel], order: if built.ordered { order } else { Order::None }, shape })
+        let kept = if built.ordered { order } else { Order::None };
+        Some(Realized { plan: built.plan, layout: vec![rel], order: kept, shape, equated: Vec::new() })
     }
 
     /// The join of `l` and `r` by `how`, of kind `kind`, judging `conds`,
@@ -210,7 +272,8 @@ impl PhysicalPlanner<'_> {
                 let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
                 let shape = joined_shape(&l, &r);
                 let product = Plan::Product { left: Box::new(l.plan), right: Box::new(r.plan), est };
-                Some(Realized { plan: self.filter_over(cx, product, &conds, (&layout, est)), layout, order: l.order, shape })
+                let plan = self.filter_over(cx, product, &conds, (&layout, est));
+                Some(Realized { plan, layout, order: l.order, shape, equated: Vec::new() })
             }
         }
     }
@@ -225,17 +288,25 @@ impl PhysicalPlanner<'_> {
     }
 
     /// An inner hash join, the operand of fewer rows built unless the
-    /// left's order was chosen.
+    /// left's order was chosen. Of its equalities of one left column or of
+    /// one right column one is hashed (`physical/join/single.rs`, RULES.md
+    /// D1206). Another is judged of the matched rows, unless an operand's
+    /// joins judged its column equal to the hashed key's, which makes it
+    /// true of every matched pair.
     fn hash_realized(&self, cx: &Context<'_>, (l, r): (Realized, Realized), conds: &[Cond], (rows, est): ((f64, f64), f64)) -> Realized {
         let (l, r) = if l.order == Order::None && rows.0 < rows.1 { (r, l) } else { (l, r) };
         let (keys, rest) = cx.split_keys((&l.layout, &r.layout), conds);
         let layout: Vec<usize> = l.layout.iter().chain(&r.layout).copied().collect();
         let shape = joined_shape(&l, &r);
-        let keys = keys.into_iter().map(|(left, right)| JoinKey { left, right, nulls: false }).collect();
-        let rest = rest.iter().map(|c| cx.mapped(c, &layout)).collect();
+        let width = cx.width(&l.layout);
+        let keys: Vec<JoinKey> = keys.into_iter().map(|(left, right)| JoinKey { left, right, nulls: false }).collect();
+        let distinct = |side: &Realized, place: usize| cx.column_at(&side.layout, place).and_then(|c| self.chain_distinct(cx.query, c));
+        let (keys, moved) = single(keys, |k| distinct(&l, k.left).unwrap_or(1.0_f64).max(distinct(&r, k.right).unwrap_or(1.0_f64)));
+        let mut rest: Vec<Cond> = rest.iter().map(|c| cx.mapped(c, &layout)).collect();
+        rest.extend(moved.into_iter().filter(|&m| !cx.implied((&l, &r), &keys, m)).map(|m| judged(m, width)));
         let names = cx.names(&layout, self.shown);
-        let plan = hashed((l.plan, r.plan), keys, rest, (cx.width(&l.layout), Shown::of(names.as_deref()), est));
-        Realized { plan, layout, order: l.order, shape }
+        let plan = hashed((l.plan, r.plan), keys, rest, (width, Shown::of(names.as_deref()), est));
+        Realized { plan, layout, order: l.order, shape, equated: Vec::new() }
     }
 
     /// An outer join, hashed on its equalities: the operand of fewer rows
@@ -265,7 +336,7 @@ impl PhysicalPlanner<'_> {
         let order = if of == OuterJoin::Left { l.order } else { Order::None };
         let widths = (width, cx.width(&r.layout));
         let plan = hashed_outer(of, (l.plan, r.plan), Parted::of(&cond, width), (widths, detail, shown, est));
-        Realized { plan, layout, order, shape }
+        Realized { plan, layout, order, shape, equated: Vec::new() }
     }
 
     /// A semi join or an antijoin, hashed on its equalities, the left
@@ -285,7 +356,7 @@ impl PhysicalPlanner<'_> {
         let names = cx.names(&pair, self.shown);
         let semi = Semi { anti: kind == Kind::Anti, cond, widths, build_left: rows.0 < rows.1 };
         let plan = semi_plan(semi, (l.plan, r.plan), (Shown::of(names.as_deref()), est));
-        Realized { plan, layout: l.layout, order: l.order, shape }
+        Realized { plan, layout: l.layout, order: l.order, shape, equated: Vec::new() }
     }
 
     /// An index nested-loop join of `l` and the relation `r` reads, if an
@@ -320,7 +391,7 @@ impl PhysicalPlanner<'_> {
         let plan = index_join(probing, join, (l.plan.clone(), rows), Shown::of(names.as_deref()));
         // A semi join's columns are its left's alone.
         let layout = if join_alone(kind) { l.layout.clone() } else { layout };
-        Some(Realized { plan, layout, order: l.order, shape: joined_shape(l, r) })
+        Some(Realized { plan, layout, order: l.order, shape: joined_shape(l, r), equated: Vec::new() })
     }
 
     /// A merge join on the equality of `class`, each operand sorted by its
@@ -349,7 +420,7 @@ impl PhysicalPlanner<'_> {
         let key = JoinKey { left: at_left, right: at_right, nulls: false };
         let merged = MergeJoin { outer: kind == Kind::Left, left: left_plan, right: right_plan, key, cond, widths, detail, est };
         let plan = Plan::MergeJoin(Box::new(merged));
-        Some(Realized { plan, layout, order: Order::Class(class), shape })
+        Some(Realized { plan, layout, order: Order::Class(class), shape, equated: Vec::new() })
     }
 }
 
