@@ -715,6 +715,7 @@ verification approach DO-178C expects (§8).
 | D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
 | D1119 | A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them |
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
+| D1123 | The second grouping of a pair is made in the executor's table, of the first's groups given as a batch |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19568,6 +19569,47 @@ each key column for its vector and code, row by row. The places of a
 batch's rows are now made a column at a time, each column's codes read
 in one loop into a vector of places, and the rows then look their
 places up in the memo (`exec/batch/groups/coded.rs`).
+
+#### D1123. The second grouping of a pair is made in the executor's table, of the first's groups given as a batch
+
+A pair of groupings run as one part (D1113) finished each partition in
+three steps. The first grouping's table gave each of its groups as a row
+of values, the rows were put in the order of their first rows, and the
+second grouping keyed each row by the bytes of its grouping values in a
+map of accumulators, one a group. Of a DISTINCT set function the first
+grouping holds nearly a group a row of the query, so the part made a
+row, a key and a probe of the map for each, where the first grouping
+itself had made none.
+
+A table now gives its groups as one batch, a group a row in the order
+the groups were made (`exec/table/given.rs`). The lanes of its keys are
+the columns as they are, integers, approximate numbers and texts in
+vectors of their types with their nulls a mask, any other lane its
+values. Each set function's results are a column after them, COUNT's
+counts as integers and every other function's as its accumulator
+finishes each group, so each value is the one the group's row held. A
+set function that fails raises what the rows raised, the error of the
+first group that fails.
+
+The second grouping reads that batch as a grouping by batch reads a
+scan's (`exec/parallel/grouped/second.rs`). Its keys are hashed a vector
+at a time, each row's group is found or made by its key in the vectors,
+and each set function's states are fed the rows in one loop, in columns
+where a column holds them (D356). A group of the second is numbered by
+its first group of the first, as before, so the statement's thread
+merges the partitions' groups in the plan's order.
+
+It does so when three things hold. The second crosses no partition
+(D1133). Each of its set functions is one a grouping by batch reads
+(D354), which a filtered one is not. And the first's groups lie in the
+order of their first rows, which the table tells of its numbers
+(`GroupTable::in_order`) and which holds when its morsels were merged in
+order. That is the order the plan run alone feeds each set function in,
+so a set function whose result depends on that order gives the plan's
+result. Any other pair, and a
+pipeline read a row at a time, is grouped again of rows as before
+(`regrouped.rs`). The batch is made only as the last wave finishes a
+partition, so what the part holds and when it gives way are unchanged.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
