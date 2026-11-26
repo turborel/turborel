@@ -4,12 +4,13 @@
 //! the filters a grouping that takes none is told, a grouping over
 //! another that a part makes whole, and one that crosses its partitions,
 //! merged by the statement's thread (D1133), and the second grouping of
-//! a pair made in a table of the first's groups given as a batch (D1123).
+//! a pair made in a table of the first's groups given as a batch (D1123),
+//! and the first rows of a sort taken from a grouping's tables (D1124).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 18] = [
+pub const GROUPED_PARTS: [Mutation; 21] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -189,5 +190,35 @@ pub const GROUPED_PARTS: [Mutation; 18] = [
         replacement: "self.firsts.len() < usize::MAX",
         integration: &[],
         unit: &["exec::table::given::tests::a_table_tells_whether_its_groups_are_in_first_row_order"],
+    },
+    Mutation {
+        name: "top-groups-tie-by-later-row",
+        package: Package::Core,
+        breaks: "the first rows taken from a grouping's tables give, of groups that tie, the one of the later first row (RULES.md D1124)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "keys.push(SortKey::ascending(columns.len()));",
+        replacement: "keys.push(SortKey { descending: true, ..SortKey::ascending(columns.len()) });",
+        integration: &["grouped_parts::the_first_rows_of_a_sort_over_a_grouping_are_the_plans"],
+        unit: &[],
+    },
+    Mutation {
+        name: "top-groups-with-ties",
+        package: Package::Core,
+        breaks: "a sort that asks the peers of its last row takes its first rows from the tables, the peers lost (RULES.md D1124)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "(!most.ties).then(",
+        replacement: "(most.rows < usize::MAX).then(",
+        integration: &["grouped_parts::a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups"],
+        unit: &[],
+    },
+    Mutation {
+        name: "top-groups-of-a-pair",
+        package: Package::Core,
+        breaks: "first rows are taken from the tables of a pair's first grouping, its groups given for the second's (RULES.md D1124)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "grouping.read.is_some() && plain &&",
+        replacement: "grouping.read.is_some() &&",
+        integration: &["grouped_parts::a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups"],
+        unit: &[],
     },
 ];
