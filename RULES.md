@@ -765,6 +765,9 @@ verification approach DO-178C expects (§8).
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
+| D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
+| D1205 | The unique index of a deferrable constraint is no key to the estimates |
+| D1206 | An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
@@ -11461,9 +11464,11 @@ enumeration make, judges the equality of one column of each of every
 class with a column on each side (`Model::implied_keys`), and that
 equality is a key of its hash, merge or index join. The plan is then
 never a product of the two whose rows the estimate counts as joined.
-The classes are made once with the model, and the join graph takes no
-edge of its own for such a pair, since an edge of each pair of a large
-class makes a clique the enumeration's search grows past.
+The classes are made once with the model. The join graph takes no
+edge for each pair of a class, since an edge of each pair of a large
+class makes a clique the enumeration's search grows past. It takes
+those from a relation the class's column is a key of, within a budget
+(D1204).
 An equality implied is true of every row the stated ones keep, so the
 rows are those of the query as written [X3.135-1986 §5.20 GR2b]. A
 chain with an outer join takes no implied key, since its keys hold only
@@ -20943,6 +20948,153 @@ its word and no wrong result. An index join weighed at the margin's
 times the estimate is exposed past it. Of rows a hundred times the
 estimate it makes a hundred times the probes, where the margin weighed
 eight.
+
+#### D1204. A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget
+
+The enumeration joins two sets only where an edge of the graph joins
+them, and the graph had an edge only for a conjunct or an operator. So
+of `p.k = l.k AND ps.k = l.k` it never joined `p` to `ps` alone, though
+the class of the three columns (D302) makes `p.k = ps.k` true of every
+row the query keeps and D387 joins two such sets by that key. Where `p`
+is filtered and `l` is the largest table, joining `p` to `ps` first and
+`l` to their few rows is the cheaper plan, and no order of the stated
+conjuncts gives it.
+
+A relation whose column of a class is a key of it now has an edge to
+each other relation of the class (`enumerate/graph/implied.rs`). A key
+is what the estimates take for one (`cardinality/keys.rs`, D384). That
+is a PRIMARY KEY or UNIQUE constraint of the one column, not deferrable
+and of no period, a grouping by the column alone, or DISTINCT of it
+alone. A key matches at most one row of its relation to a row of the
+other, so the join gives no more rows than the other relation has, and
+fewer where the keyed one is filtered. A column that is no key gets no
+edge, as its join may multiply rows and its edges are what made D387's
+clique. A UNIQUE column that may be null is a key here. A null equals
+nothing [X3.135-1986 §5.11 GR2], so its rows of a null join no row, by
+the implied key as by the stated ones, and its other rows are each of a
+value of their own. A deferrable constraint is none, as it may be
+broken until it is checked [ISO/IEC 9075-2:2023 §4.25.2].
+
+The edge is of no operator and no conjunct. A join made over it alone
+judges the equality the class implies of a column of each side
+(`Model::implied_keys`), by a hash, merge or index join as cost
+chooses, and is an inner join like any other. The rows are those of the
+query as written [X3.135-1986 §5.20 GR2b]. The implied equality holds of
+every row the stated ones keep, since the stated ones are equalities of
+bare columns under one comparison, which is transitive, numbers of
+exact and approximate types comparing by algebraic value [§5.11 GR4].
+An equality by a collation is no bare column's and enters no class.
+Each stated conjunct is still judged where its relations first meet,
+so the join of `p` and `ps` to `l` judges both stated equalities. The
+rows do not rest on the key. Were it broken, the join would only give
+more rows than estimated, the same ones any other order gives. A chain
+with an outer join, a semi join or an antijoin has no class (D387), so
+no such edge.
+
+The edges of a relation are a star, and a class each relation of which
+is keyed, as tables split one to one on a shared key are, would have a
+star from each, a clique. Twelve such relations chained by their keys
+have 286 pairs of sets to join as written and 261,625 as a clique. So a
+star is taken only while the work exact dynamic programming does of the
+graph with it stays within PLANNER.DP_BUDGET (`Graph::work`). The work
+is the connected subgraphs the enumeration meets and the pairs it
+joins, counted by its own traversal with no table and stopped past the
+budget. The connected subgraphs alone would not do, as a clique of
+twelve has 4,095 of them and passes no budget of 10,000. The stars are
+offered from the relation of fewest estimated rows, whose join reduces
+most, and one that passes the budget is undone and the next offered. A
+graph past the budget with no star takes none. So a chain with stars
+does at most the budget's work, the adaptive switch (D304) never leaves
+exact dynamic programming for a star, and a chain no star fits is
+planned as it was. A rule taking a star only from a filtered relation
+was not taken. It bounds nothing, as twelve filtered relations are a
+clique still, and a relation with no filter of its own may be reduced
+by a join below, as a nation is by its region.
+
+#### D1205. The unique index of a deferrable constraint is no key to the estimates
+
+The estimates take a table's keys from the catalog (D384): the columns
+of each UNIQUE or PRIMARY KEY constraint not deferrable, and of each
+unique index. But every such constraint has a unique index, a
+deferrable one too, and that index holds two rows of one key from the
+statement that breaks the constraint until its check [ISO/IEC
+9075-2:2023 §4.25.2]. So a deferrable key was taken for a key through
+its index, against D384's own words. A column of it was counted as of
+one row a value, and its join as giving no more rows than its other
+side.
+
+The index of a deferrable constraint is now left out of a table's keys
+(`cardinality/keys.rs`), told by its columns, which are the
+constraint's, with its period's if it has one. Only estimates read
+these keys, a row bound, a class's distinct values, the choice of a
+hash or an index join, and the implied edges (D1204), so no query gave
+wrong rows. The rules that rewrite a query by a key read the
+constraints themselves and pass a deferrable one by (D1117, D1201,
+D1202).
+
+#### D1206. An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all
+
+A hash join took every equality of a column of each operand for a key.
+Of `l.a = s.x AND l.a = ps.y`, as a join over an implied edge judges
+(D1204), both were keys, though they are of one column of `l`. Each row
+of either operand then hashed and compared `a` twice, and the scan of
+`l` was told two runtime filters of the one column (D369).
+
+An inner hash join now hashes at most one key of each left column and
+one of each right column (`physical/join/single.rs`). The equalities are
+taken in the order of the distinct values of their more distinct column,
+most first, which is how the estimates count the pairs an equality
+keeps (D302), so the key kept is the one that leaves the fewest pairs to
+judge. Equalities of equal counts are taken in the order stated, so a
+plan does not change with nothing. One is a key unless a key already
+taken is of its left column or of its right column. So an equality that
+shares no column with a key is always a key, and of
+`l.a = r.x AND l.b = r.y AND l.a = r.y` the first two are hashed where
+they rank first. The keys keep the order stated.
+
+An equality that is not a key is judged of the matched rows, in the
+filter over the join, which of an inner join is its condition and is
+judged a batch at a time. Nothing is dropped by this, so the rows are
+those of the query as written [X3.135-1986 §5.20 GR2b]. An equality is
+true of no null [§5.11 GR2], the same as a key, which matches no null.
+A key on which a null matches a null is judged as NOT (a IS DISTINCT
+FROM b) [ISO/IEC 9075-2:2023 §8.15 SR6].
+
+Such an equality is not judged at all where it is implied. Take the key
+`l.a = s.x` and the equality `l.a = ps.y`, the right operand a join that
+judged `ps.y = s.x`. That equality is true of every row of the right
+operand, and the key is true of every matched pair, so `l.a = ps.y` is
+true of every matched pair too. Both are true, so no value of the three
+is null, and equality of bare columns is transitive, numbers of exact
+and approximate types comparing by algebraic value [§5.11 GR4], as D1204
+relies on. The mirror holds of two left columns and one right. The
+planner knows what an operand's joins judged by construction. Each
+realized subtree carries the equalities of columns its inner joins
+judged (`Realized::equated`, `enumerate/realize.rs`), a LEFT join, a
+semi join and an antijoin passing their left's and a FULL join none,
+and an equality is implied only by a chain of those. An equality still
+to be judged above, or one a relation's own filter holds, implies
+nothing here, and the equality stays in the filter. The join the
+optimizer plans without the enumeration (`physical/join.rs`) carries no
+such record and filters every equality that is not a key.
+
+Outer joins, semi joins, antijoins and mark joins keep every equality
+as a key. They judge a condition beyond their keys of each pair inside
+the match, a row at a time, and a semi join with such a condition no
+longer keeps only the first row of each key (D540), so a key moved
+there would trade a hashed column for a condition judged pair by pair.
+A filter above an outer join would be wrong besides, as it would drop
+the rows the join preserves. Index and merge joins hash nothing and are
+as they were.
+
+A runtime filter is made of each key, from the values of its built
+column, and told of its left column (D369). Fewer keys make fewer
+filters, each still holding every built value of its column, so each
+keeps every row that matches. Predicate transfer steps along the same
+keys (D665) and takes fewer steps, each sound alone. The cost model
+needs no change. It prices each row hashed once whatever its keys
+(`HASH_ROW`), and counts a join's runtime filter once a class of
+equalities (D653), which is now what runs.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 
