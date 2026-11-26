@@ -302,7 +302,7 @@ fn group_pages_of(types: &[DataType], make: impl Fn(i128) -> Row, compress: bool
         table.insert(NO_TRANSACTION, make(n)).unwrap();
     }
     ended(&table, 1);
-    let pages = table.frozen.directory().unwrap().groups.iter().map(|e| table.group_of(e).unwrap().pages().len()).sum();
+    let pages = table.frozen.directory().unwrap().groups.iter().map(|e| table.group_of(e, None).unwrap().pages().unwrap().len()).sum();
     let all: Vec<usize> = (0..types.len()).collect();
     let read = Arc::clone(&table)
         .scan(NO_TRANSACTION, &all)
@@ -382,7 +382,7 @@ fn a_read_by_batch_misses_no_entry_taken_out() {
 /// Whether `table`'s first group's rows are in order of their texts.
 fn sorted_by_text(table: &RowTable) -> bool {
     let directory = table.frozen.directory().unwrap();
-    let group = &*table.group_of(&directory.groups[0]).unwrap();
+    let group = &*table.group_of(&directory.groups[0], None).unwrap();
     let texts = crate::engine::columns::scan::values(
         group,
         (&table.group_pages().unwrap(), &mut crate::engine::columns::prepared::Prepared::default()),
@@ -508,7 +508,7 @@ fn a_group_is_read_ahead_of_its_scan() {
     let cold = TableFiles { pool: Arc::clone(&pool), file, headers: Arc::default(), ..files.clone() };
     let opened = Arc::new(RowTable::open(&cold, table.meta(), &TYPES, options(0)).unwrap());
     let directory = opened.frozen.directory().unwrap();
-    let (stored, group) = (opened.group_pages().unwrap(), opened.group_of(&directory.groups[0]).unwrap());
+    let (stored, group) = (opened.group_pages().unwrap(), opened.group_of(&directory.groups[0], None).unwrap());
     let mut ahead = GroupAhead::default();
     ahead.take_up(&group, &[0, 1], &[(0, group.rows)]);
     ahead.step(&stored);
@@ -580,8 +580,16 @@ fn groups_are_written_again_when_their_layout_changes() {
     assert_eq!(layouts(&table), [true; 3], "every group of the hybrid layout");
     assert!(!table.maintenance_due(), "none left to write again");
     let directory = table.frozen.directory().unwrap();
-    let group = table.group_of(&directory.groups[0]).unwrap();
-    assert!(group.columns[1].iter().zip(&group.columns[0]).all(|(text, key)| text.run.page == key.run.page && text.run.len > 0));
+    let group = table.group_of(&directory.groups[0], None).unwrap();
+    assert!(
+        group
+            .zones(1)
+            .unwrap()
+            .unwrap()
+            .iter()
+            .zip(group.zones(0).unwrap().unwrap())
+            .all(|(text, key)| text.run.page == key.run.page && text.run.len > 0)
+    );
     assert_eq!(table.get(NO_TRANSACTION, ids[4321]).unwrap().map(|r| r[1].to_string()), Some("v4321".to_owned()));
     let in_order: Vec<String> = (0_i32..7_000_i32).map(|n| n.to_string()).collect();
     assert_eq!(scanned(&table, NO_TRANSACTION), in_order);
@@ -597,3 +605,4 @@ mod morsels;
 mod published;
 mod retired;
 mod thawed;
+mod wanted;

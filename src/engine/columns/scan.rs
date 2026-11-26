@@ -27,15 +27,19 @@ pub type Reading<'p, 'a, S> = (&'p Pages<'a, S>, &'p mut Prepared);
 /// The runs of positions of `group`'s rows that each of `conditions` may
 /// match, in order: those every one of them keeps (`kept_by`), every row if
 /// there are none.
-pub fn candidates(group: &Group, conditions: Option<&Conjunction>) -> Vec<(u32, u32)> {
+///
+/// # Errors
+///
+/// SQLCODE -910 if `group`'s header was read without a column they read.
+pub fn candidates(group: &Group, conditions: Option<&Conjunction>) -> Result<Vec<(u32, u32)>> {
     let mut runs = vec![(0, group.rows)];
     for condition in conditions.iter().flat_map(|c| c.conjuncts()) {
-        runs = both(&runs, &kept_by(group, condition));
+        runs = both(&runs, &kept_by(group, condition)?);
         if runs.is_empty() {
             break;
         }
     }
-    runs
+    Ok(runs)
 }
 
 /// As `candidates`, and of those, the runs of the parts whose Bloom
@@ -64,7 +68,7 @@ pub fn read_ordered<S: Seal>(
     pages: &Pages<'_, S>,
     conditions: Option<&Conjunction>,
 ) -> Result<(imprints::Runs, Vec<usize>)> {
-    let mut runs = candidates(group, conditions);
+    let mut runs = candidates(group, conditions)?;
     let Some(conditions) = conditions.filter(|_| !runs.is_empty()) else { return Ok((runs, Vec::new())) };
     for condition in conditions.conjuncts() {
         if runs.is_empty() {
@@ -80,7 +84,10 @@ pub fn read_ordered<S: Seal>(
         return Ok((runs, Vec::new()));
     }
     let all = [(0, group.rows)];
-    let mut kept: Vec<(usize, u64)> = conditions.conjuncts().iter().map(|c| rows_of(&kept_by(group, c))).enumerate().collect();
+    let mut kept = Vec::with_capacity(conditions.conjuncts().len());
+    for (n, c) in conditions.conjuncts().iter().enumerate() {
+        kept.push((n, rows_of(&kept_by(group, c)?)));
+    }
     for (n, alone) in imprints::each_kept(group, pages, conditions, &all)? {
         if let Some(k) = kept.get_mut(n) {
             k.1 = rows_of(&alone);
@@ -122,7 +129,7 @@ pub(super) fn both(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
 /// for IS NULL and IS NOT NULL, their nulls; of a conjunct of several
 /// columns, those of the parts of each that it may match with the others'
 /// values anywhere in the group (RULES.md D511).
-fn kept_by(group: &Group, condition: &Conjunct) -> Vec<(u32, u32)> {
+fn kept_by(group: &Group, condition: &Conjunct) -> Result<Vec<(u32, u32)>> {
     let columns = condition.columns();
     let width = columns.iter().max().map_or(0, |c| c.saturating_add(1));
     // Of a conjunct of several columns, each column's parts with the
@@ -131,21 +138,21 @@ fn kept_by(group: &Group, condition: &Conjunct) -> Vec<(u32, u32)> {
     for &column in &columns {
         let mut bounds: Vec<Option<(Value, Value)>> = vec![None; width];
         for &other in columns.iter().filter(|&&o| o != column) {
-            if let (Some(slot), Some(zones)) = (bounds.get_mut(other), group.columns.get(other)) {
+            if let (Some(slot), Some(zones)) = (bounds.get_mut(other), group.zones(other)?) {
                 *slot = imprints::whole(zones);
             }
         }
-        runs = both(&runs, &kept_of(group, condition, (column, bounds)));
+        runs = both(&runs, &kept_of(group, condition, (column, bounds))?);
     }
-    runs
+    Ok(runs)
 }
 
 /// The runs of positions of `group`'s rows, of the parts of `column`'s
 /// chunks, `condition` may match, of `bounds` of the other columns it
 /// reads.
-fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Vec<Option<(Value, Value)>>)) -> Vec<(u32, u32)> {
+fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Vec<Option<(Value, Value)>>)) -> Result<Vec<(u32, u32)>> {
     let column = &column;
-    let Some(zones) = group.columns.get(*column) else { return vec![(0, group.rows)] };
+    let Some(zones) = group.zones(*column)? else { return Ok(vec![(0, group.rows)]) };
     let mut runs: Vec<(u32, u32)> = Vec::new();
     let parts = zones.iter().flat_map(|zone| {
         let end = zone.run.first.saturating_add(zone.run.rows);
@@ -179,7 +186,7 @@ fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Ve
             runs.push((from, to));
         }
     }
-    runs
+    Ok(runs)
 }
 
 /// The rows at positions `from` to `to` of `group`, its columns of
@@ -199,7 +206,7 @@ pub fn rows<S: Seal>(
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
     let mut out: Vec<Row> = (0..count).map(|_| vec![Value::Null; types.len()]).collect();
     for &column in columns {
-        let (Some(zones), Some(t)) = (group.columns.get(column), types.get(column)) else { continue };
+        let (Some(zones), Some(t)) = (group.zones(column)?, types.get(column)) else { continue };
         for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
             pages.with_run(&zone.run, |bytes| fill(&Chunk::parse(bytes)?, (column, t), (zone.run.first, from, to), &mut out))?;
         }
@@ -236,7 +243,7 @@ pub fn values<S: Seal>(
 ) -> Result<Vec<Value>> {
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
     let mut out = Vec::with_capacity(count);
-    let Some(zones) = group.columns.get(column) else { return Ok(vec![Value::Null; count]) };
+    let Some(zones) = group.zones(column)? else { return Ok(vec![Value::Null; count]) };
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         prepared.with(pages, (column, zone, t), |chunk, _| {
@@ -368,7 +375,7 @@ fn words<S: Seal>(
     (column, t): (usize, &DataType),
     (from, to): (u32, u32),
 ) -> Result<Option<RunWords>> {
-    let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    let Some(zones) = group.zones(column)? else { return Ok(None) };
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
     let (mut units, mut nulls) = (Vec::with_capacity(count), Mask::default());
     let mut runs = Some(Vec::new());
@@ -410,7 +417,7 @@ pub fn texts<S: Seal>(
     if padding(t).is_none() {
         return Ok(None);
     }
-    let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    let Some(zones) = group.zones(column)? else { return Ok(None) };
     if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), &(from..to).collect::<Vec<u32>>())? {
         return Ok(Some(coded));
     }

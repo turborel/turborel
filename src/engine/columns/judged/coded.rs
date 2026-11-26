@@ -55,7 +55,7 @@ pub(super) fn kept<S: Seal>(
     }
     // Symbols of VARCHAR alone, never padded, as the table codes no other.
     let symbols = padding(t) == Some(None);
-    let Some(zones) = group.columns.get(pred.column) else { return Ok(None) };
+    let Some(zones) = group.zones(pred.column)? else { return Ok(None) };
     let all = super::rows(usize::try_from(to.saturating_sub(from)).unwrap_or(0), given);
     let dense = all.len().saturating_mul(SPARSE) >= usize::try_from(to.saturating_sub(from)).unwrap_or(usize::MAX);
     let sketch = if symbols && dense { sketch_of(group, (pages, &mut *prepared), pred, (from, to))? } else { None };

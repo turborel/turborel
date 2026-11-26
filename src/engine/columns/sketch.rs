@@ -421,7 +421,7 @@ impl Held {
         let at = if let Some(at) = self.columns.iter().position(|l| l.column == column) {
             at
         } else {
-            let Some(zones) = group.columns.get(column) else { return Ok(None) };
+            let Some(zones) = group.zones(column)? else { return Ok(None) };
             let parts: Vec<((u32, u32), Option<Filter>)> =
                 zones.iter().flat_map(|z| parts_of(z).zip(z.parts.iter().map(|p| p.sketch))).collect();
             let read = vec![false; parts.len()];

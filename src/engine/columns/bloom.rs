@@ -178,7 +178,7 @@ fn asked(condition: &Conjunct) -> Option<(usize, &[Value])> {
 /// As `Pages::with`.
 pub fn kept<S: Seal>(group: &Group, pages: &Pages<'_, S>, condition: &Conjunct, within: &[(u32, u32)]) -> Result<Option<Vec<(u32, u32)>>> {
     let Some((column, values)) = asked(condition) else { return Ok(None) };
-    let Some(zones) = group.columns.get(column).filter(|z| z.iter().flat_map(|z| &z.parts).any(|p| p.filter.is_some())) else {
+    let Some(zones) = group.zones(column)?.filter(|z| z.iter().flat_map(|z| &z.parts).any(|p| p.filter.is_some())) else {
         return Ok(None);
     };
     let hashes: Vec<(u64, u64)> = values.iter().filter_map(hashed).collect();

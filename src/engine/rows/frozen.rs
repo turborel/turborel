@@ -371,16 +371,25 @@ impl RowTable {
         })
     }
 
-    /// The group of `entry`: its header as held, else read and held.
+    /// The group of `entry`, read for the columns `wanted`, or for every
+    /// column if none is given (RULES.md D1173): its header as held if it
+    /// was read for them, else read for them and those it was read for,
+    /// and held in its place.
     ///
     /// # Errors
     ///
     /// As `group::read`.
-    pub(super) fn group_of(&self, entry: &Entry) -> Result<Arc<Group>> {
-        if let Some(group) = entry.slot.get() {
-            return Ok(group);
+    pub(super) fn group_of(&self, entry: &Entry, wanted: Option<&[usize]>) -> Result<Arc<Group>> {
+        let held = entry.slot.get();
+        if let Some(group) = held.as_ref().filter(|g| g.holds(wanted)) {
+            return Ok(Arc::clone(group));
         }
-        let group = Arc::new(group::read(&self.pages_of(entry)?, entry.summary.header, self.format.types())?);
+        let all = match (&held, wanted) {
+            (Some(group), Some(wanted)) => Some(group.with_columns(wanted)),
+            (None, Some(wanted)) => Some(wanted.to_vec()),
+            (_, None) => None,
+        };
+        let group = Arc::new(group::read(&self.pages_of(entry)?, entry.summary.header, self.format.types(), all.as_deref())?);
         self.headers.put(entry.header_key(), &entry.slot, &group);
         Ok(group)
     }
@@ -389,7 +398,7 @@ impl RowTable {
     /// reader is done: the table is dropped.
     pub(super) fn retire_all(&self) -> Result<()> {
         for entry in &self.frozen.directory()?.groups {
-            entry.retire(self.group_of(entry)?.pages());
+            entry.retire(self.group_of(entry, None)?.pages()?);
         }
         Ok(())
     }
@@ -459,7 +468,7 @@ impl RowTable {
     /// `group`, just written, as an entry of the directory, its header held.
     fn entry_of(&self, group: Group) -> Result<Arc<Entry>> {
         let header = *group.header.first().ok_or_else(|| corrupt("a group has no header"))?;
-        let entry = self.entry_in(Summary::of(&group, header), None);
+        let entry = self.entry_in(Summary::of(&group, header)?, None);
         self.headers.put(entry.header_key(), &entry.slot, &Arc::new(group));
         Ok(entry)
     }
@@ -507,8 +516,10 @@ impl RowTable {
             .groups
             .iter()
             .filter(|e| e.summary.may_match(Some(conditions)))
-            .map(|e| match e.slot.peek() {
-                Some(group) => candidates(&group, Some(conditions)).iter().map(|(from, to)| u64::from(to.saturating_sub(*from))).sum(),
+            // Of a header held without a column the conditions read, every
+            // row, as of one not held (RULES.md D1173).
+            .map(|e| match e.slot.peek().and_then(|group| candidates(&group, Some(conditions)).ok()) {
+                Some(runs) => runs.iter().map(|(from, to)| u64::from(to.saturating_sub(*from))).sum(),
                 None => u64::from(e.summary.rows),
             })
             .sum();

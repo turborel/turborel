@@ -47,6 +47,7 @@ mod ids;
 mod pax;
 pub mod sink;
 mod summary;
+mod wanted;
 mod zones;
 
 use std::borrow::Cow;
@@ -294,8 +295,9 @@ pub struct Group {
     /// The chunks of its rows' positions by id, if its ids are not in
     /// increasing order; none if they are.
     pub by_id: Vec<Run>,
-    /// Each column's chunks, in order.
-    pub columns: Vec<Vec<Zone>>,
+    /// Each column's chunks, in order, of those its header was read for
+    /// (RULES.md D1173, `wanted.rs`): none of a column passed over.
+    pub columns: Vec<Option<Vec<Zone>>>,
     /// The places of the columns its rows are sorted by, ascending, as
     /// COLUMNSTORE.ORDER said as it was written; none, in row id order.
     pub order: Vec<usize>,
@@ -381,7 +383,7 @@ impl Group {
             rows: count32(rows.len())?,
             ids: id_runs,
             by_id,
-            columns,
+            columns: columns.into_iter().map(Some).collect(),
             order: order.to_vec(),
             pax: pages.pax,
             edges,
@@ -396,21 +398,35 @@ impl Group {
 
     /// Every page it is on, each once: chunks of the hybrid layout, and
     /// filters, share pages.
-    pub fn pages(&self) -> Vec<PageId> {
-        let chunks = self.columns.iter().flatten().map(|z| z.run.page);
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if its header was read without a column's chunks.
+    pub fn pages(&self) -> Result<Vec<PageId>> {
+        let chunks = self.every_zone()?.map(|z| z.run.page);
         let ids = self.ids.iter().chain(&self.by_id).map(|r| r.page);
-        let parts = self.columns.iter().flatten().flat_map(|z| &z.parts);
+        let parts = self.every_zone()?.flat_map(|z| &z.parts);
         let filters = parts.flat_map(|p| p.filter.into_iter().chain(p.imprint).chain(p.sketch)).map(|f| f.page);
         let mut all: Vec<PageId> = ids.chain(chunks).chain(filters).chain(self.header.iter().copied()).collect();
         all.sort_unstable_by_key(|p| p.0);
         all.dedup();
-        all
+        Ok(all)
     }
 
     /// The places of the columns it has Bloom filters of, in order.
-    pub fn blooms(&self) -> Vec<usize> {
-        let filtered = |zones: &Vec<Zone>| zones.iter().flat_map(|z| &z.parts).any(|p| p.filter.is_some());
-        self.columns.iter().enumerate().filter(|(_, zones)| filtered(zones)).map(|(c, _)| c).collect()
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if its header was read without a column's chunks.
+    pub fn blooms(&self) -> Result<Vec<usize>> {
+        let filtered = |zones: &[Zone]| zones.iter().flat_map(|z| &z.parts).any(|p| p.filter.is_some());
+        let mut out = Vec::new();
+        for c in 0..self.columns.len() {
+            if self.zones(c)?.is_some_and(filtered) {
+                out.push(c);
+            }
+        }
+        Ok(out)
     }
 
     /// Its row ids, in its rows' order.
@@ -489,7 +505,7 @@ impl Group {
     ///
     /// As `Pages::get`; SQLCODE -916 if its chunk is malformed.
     pub fn value<S: Seal>(&self, pages: &Pages<'_, S>, (column, t): (usize, &DataType), position: u32) -> Result<Value> {
-        let zones = self.columns.get(column).ok_or_else(|| corrupt("a column is missing"))?;
+        let zones = self.zones(column)?.ok_or_else(|| corrupt("a column is missing"))?;
         // Its chunks are in the order of their rows, so the one holding
         // the row is found by halving (RULES.md D1091).
         let zone = zones
