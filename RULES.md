@@ -766,6 +766,7 @@ verification approach DO-178C expects (§8).
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
+| D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
 ### The project
 
@@ -20970,6 +20971,34 @@ wait for its own thread.
 A stop that returns an error, or a close refused after it, is therefore
 a defect and never the node's ordinary end, and a caller has no reason
 to pass over either.
+
+#### D1230. A structure's tally counts a miss only when the pool evicted a page for it
+
+The planner prices a fetch, and an index's probe, by the share of its
+lookups that missed the pool, counted by each table and index once it has
+had LEAST_LOOKUPS lookups (D35). Before that, the share is reckoned from
+how much of the table the pool's frames could hold. Every miss was
+counted, the first read of a page into a pool still filling as well. The
+sampled statistics pass that follows a start begins each run of rows it
+reads with a lookup, into a pool that holds nothing yet, so nearly every
+one missed. A table of a few megabytes that a pool of 64 MiB holds three
+times over was priced as two thirds missed, and a range read through its
+index before the pass was planned as a scan of the whole table after it.
+It went back to the index only a few thousand lookups later, and paid for
+those first misses until the tally's window halved them. One query was
+planned two ways by what had touched the table first since the start.
+
+A miss is now counted only when the pool had no empty frame and evicted
+a page for it (`Claim::evicted`, `BufferPool::hold`). A page read into an
+empty frame says nothing about whether the pool holds the structure, and
+is not counted. A table the pool holds is then priced as held, cold and
+warm alike, as the reckoning before LEAST_LOOKUPS prices it. Once the
+pool is full, every miss evicts and is counted. That covers a table
+larger than the pool, and a table first read into a pool full of other
+tables' pages, which does not fit beside what the pool holds. The
+lookups are counted as before, so LEAST_LOOKUPS and the window are
+unchanged. A hit costs nothing more, and a miss only notes which way the
+pool found its frame (`disk/buffer/tally.rs`).
 
 ## 2. Project layout
 

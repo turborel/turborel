@@ -11,6 +11,8 @@ pub(crate) mod runtime;
 pub(crate) mod spill;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod warm_tests;
 
 use crate::error::{Code, Result, fail};
 
