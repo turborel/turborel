@@ -63,7 +63,7 @@ fn codes_match_as_the_decoded_values() {
         let table: Vec<&[u8]> = symbols.iter().map(Vec::as_slice).collect();
         for p in patterns {
             let pattern = LikePattern::new(p, None).unwrap();
-            let machine = pattern.on_codes(&table).unwrap_or_else(|| panic!("{p:?}"));
+            let mut machine = pattern.on_codes(&table).unwrap_or_else(|| panic!("{p:?}"));
             let bytes: BytesLike = pattern.bytes().unwrap_or_else(|| panic!("{p:?}"));
             for _ in 0..20_u32 {
                 let codes = codes_of(&mut rng, symbols.len());
@@ -79,7 +79,7 @@ fn codes_match_as_the_decoded_values() {
 #[test]
 fn malformed_codes_give_no_answer() {
     let table: Vec<&[u8]> = vec![b"ab", b"c"];
-    let machine = LikePattern::new("%zz%", None).unwrap().on_codes(&table).unwrap();
+    let mut machine = LikePattern::new("%zz%", None).unwrap().on_codes(&table).unwrap();
     assert_eq!(machine.matches(&[0, ESCAPE]), None);
     assert_eq!(machine.matches(&[0, 7]), None);
     assert_eq!(machine.matches(&[ESCAPE, b'z', ESCAPE, b'z']), Some(true));

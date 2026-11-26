@@ -45,7 +45,7 @@ pub fn liked_at<S: Seal>(
         let first = zone.run.first;
         let judged = prepared.with(pages, (column, zone, t), |chunk, _| {
             let Body::Fsst(coded) = &chunk.body else { return Ok(None) };
-            let Some(machine) = pattern.on_codes(&coded.symbols()) else { return Ok(None) };
+            let Some(mut machine) = pattern.on_codes(&coded.symbols()) else { return Ok(None) };
             for &p in these {
                 let n = usize::try_from(p.saturating_sub(first)).unwrap_or(usize::MAX);
                 if chunk.is_null(n) {

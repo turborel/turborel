@@ -55,11 +55,28 @@ pub struct ByteMachine {
 pub struct CodeMatcher {
     /// The pattern's machine over bytes.
     bytes: Arc<ByteMachine>,
-    /// Of each state, the state after each code's symbol.
+    /// Of each state, the state after each code, 256 to a state: a code's
+    /// step made as a value first takes it, `UNMADE` before; the escape's
+    /// `ESCAPED`, and a code of no symbol `NO_SYMBOL`.
     by_code: Vec<u16>,
-    /// The codes the table has symbols for.
-    codes: usize,
+    /// The symbols' bytes, one after another, and where each ends.
+    symbols: (Vec<u8>, Vec<usize>),
+    /// The first state that ends the match, every matching value's (the
+    /// states after are none's, then the marks above).
+    met: u16,
 }
+
+/// A code's step not yet made.
+const UNMADE: u16 = u16::MAX;
+
+/// The escape code's step: by the byte after it.
+const ESCAPED: u16 = u16::MAX - 1;
+
+/// A code of no symbol's step.
+const NO_SYMBOL: u16 = u16::MAX - 2;
+
+/// The most states a machine has, below the marks.
+const MOST_STATES: usize = 65_000;
 
 /// The machine over bytes of a pattern, made the first time a table asks
 /// for it and shared by the pattern's copies; none of a pattern with `_`
@@ -198,7 +215,7 @@ impl ByteMachine {
             last: pieces.last.as_ref().map(|l| (l.as_bytes(), failures(l.as_bytes()))),
         };
         let states = machine.states();
-        if states.len() > usize::from(u16::MAX) {
+        if states.len() > MOST_STATES {
             return None;
         }
         let places: HashMap<State, u16> = states.iter().zip(0_u16..).map(|(&s, n)| (s, n)).collect();
@@ -220,41 +237,58 @@ impl ByteMachine {
 
 impl CodeMatcher {
     /// The machine of `bytes` for a table of `symbols`, each code's bytes
-    /// by its place: each code's step that of its symbol's bytes in turn.
+    /// by its place. A code's step is that of its symbol's bytes in turn,
+    /// made as a value first takes it, as most values pass few states.
     fn of(bytes: Arc<ByteMachine>, symbols: &[&[u8]]) -> CodeMatcher {
-        let mut by_code = Vec::with_capacity(bytes.ends.len().saturating_mul(symbols.len()));
-        for state in 0..bytes.ends.len() {
-            by_code.extend(symbols.iter().map(|symbol| {
-                symbol.iter().try_fold(state, |s, &b| bytes.next(s, b).map(usize::from)).and_then(|s| u16::try_from(s).ok()).unwrap_or(0)
-            }));
+        let states = bytes.ends.len();
+        let mut row = [NO_SYMBOL; 256];
+        for slot in row.iter_mut().take(symbols.len()) {
+            *slot = UNMADE;
         }
-        CodeMatcher { bytes, by_code, codes: symbols.len() }
+        if let Some(slot) = row.get_mut(usize::from(ESCAPE)) {
+            *slot = ESCAPED;
+        }
+        let by_code = row.repeat(states);
+        let (mut flat, mut ends) = (Vec::new(), Vec::with_capacity(symbols.len()));
+        for symbol in symbols {
+            flat.extend_from_slice(symbol);
+            ends.push(flat.len());
+        }
+        // Met and none's states are the last two (`Machine::states`).
+        let met = u16::try_from(states.saturating_sub(2)).unwrap_or(0);
+        CodeMatcher { bytes, by_code, symbols: (flat, ends), met }
+    }
+
+    /// The state after code `code`'s symbol from `state`, made.
+    fn made(&mut self, state: usize, code: usize) -> Option<u16> {
+        let from = if code == 0 { 0 } else { *self.symbols.1.get(code.checked_sub(1)?)? };
+        let symbol = self.symbols.0.get(from..*self.symbols.1.get(code)?)?;
+        let next = symbol.iter().try_fold(u16::try_from(state).ok()?, |s, &b| self.bytes.next(usize::from(s), b))?;
+        *self.by_code.get_mut(state.checked_mul(256)?.checked_add(code)?)? = next;
+        Some(next)
     }
 
     /// [X3.135-1986 §5.14 GR5] Whether the value `codes` write matches the
     /// pattern; none if they end in an escape or a code is of no symbol,
-    /// which the value's decoding then reports.
-    pub fn matches(&self, codes: &[u8]) -> Option<bool> {
-        let mut state = usize::from(self.bytes.start);
+    /// which the value's decoding then reports. Each code takes one step
+    /// and one comparison, the rest only past the states that go on.
+    pub fn matches(&mut self, codes: &[u8]) -> Option<bool> {
+        let mut state = self.bytes.start;
         let mut rest = codes.iter();
-        while let Some(&c) = rest.next() {
-            match self.bytes.ends.get(state) {
-                Some(2) => return Some(true),
-                Some(3) => return Some(false),
-                _ => {}
+        while state < self.met {
+            let Some(&c) = rest.next() else { break };
+            let at = usize::from(state);
+            let mut next = *self.by_code.get(at.saturating_mul(256).saturating_add(usize::from(c)))?;
+            if next == UNMADE {
+                next = self.made(at, usize::from(c))?;
+            } else if next == ESCAPED {
+                next = self.bytes.next(at, *rest.next()?)?;
+            } else if next == NO_SYMBOL {
+                return None;
             }
-            let next = if c == ESCAPE {
-                self.bytes.next(state, *rest.next()?)
-            } else {
-                let code = usize::from(c);
-                if code >= self.codes {
-                    return None;
-                }
-                self.by_code.get(state.saturating_mul(self.codes).saturating_add(code)).copied()
-            };
-            state = usize::from(next?);
+            state = next;
         }
-        Some(matches!(self.bytes.ends.get(state), Some(1 | 2)))
+        Some(matches!(self.bytes.ends.get(usize::from(state)), Some(1 | 2)))
     }
 }
 
