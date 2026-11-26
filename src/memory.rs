@@ -21,7 +21,7 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::disk::encoding::Encodings;
 use crate::error::{Code, Result, SqlError};
@@ -47,6 +47,9 @@ struct Held {
     bytes: AtomicUsize,
     /// Whether it stands while the database is open (`Reservation::stand`).
     standing: AtomicBool,
+    /// The bytes it is planned at while it stands, if fixed
+    /// (`Reservation::stand_up_to`); else its bytes.
+    bound: OnceLock<usize>,
 }
 
 /// A shard of the list: entries by their reservation's number.
@@ -138,11 +141,12 @@ impl MemoryBudget {
     pub fn reserve(self: &Arc<Self>, bytes: usize, what: &str) -> Result<Reservation> {
         self.take(bytes, what)?;
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let held = Arc::new(Held { what: what.into(), bytes: AtomicUsize::new(bytes), standing: AtomicBool::new(false) });
+        let held =
+            Arc::new(Held { what: what.into(), bytes: AtomicUsize::new(bytes), standing: AtomicBool::new(false), bound: OnceLock::new() });
         if let Some(shard) = self.shard(id) {
             lock_builtin(shard).insert(id, Arc::clone(&held));
         }
-        Ok(Reservation { budget: Arc::clone(self), bytes, bound: None, held, id })
+        Ok(Reservation { budget: Arc::clone(self), bytes, held, id })
     }
 
     /// Counts `bytes` more reserved, for `what`, if they fit its limit, or
@@ -237,9 +241,6 @@ impl Host {
 pub struct Reservation {
     budget: Arc<MemoryBudget>,
     bytes: usize,
-    /// The bytes it is planned at while it stands, if fixed
-    /// (`stand_up_to`); else its bytes.
-    bound: Option<usize>,
     /// Its entry in the budget's list, shared with it.
     held: Arc<Held>,
     /// Its number in the budget's list.
@@ -296,7 +297,7 @@ impl Reservation {
     /// hold, whatever it holds now.
     pub fn stand_up_to(&mut self, bound: usize) {
         if !self.held.standing.swap(true, Ordering::AcqRel) {
-            self.bound = Some(bound);
+            let _set = self.held.bound.set(bound);
             self.budget.standing.fetch_add(self.bytes, Ordering::AcqRel);
             self.budget.planned.fetch_add(bound, Ordering::AcqRel);
         }
@@ -308,7 +309,7 @@ impl Reservation {
         if self.held.standing.load(Ordering::Acquire) {
             self.budget.standing.fetch_add(bytes, Ordering::AcqRel);
             self.budget.standing.fetch_sub(self.bytes, Ordering::AcqRel);
-            if self.bound.is_none() {
+            if self.held.bound.get().is_none() {
                 self.budget.planned.fetch_add(bytes, Ordering::AcqRel);
                 self.budget.planned.fetch_sub(self.bytes, Ordering::AcqRel);
             }
@@ -326,7 +327,7 @@ impl Drop for Reservation {
         self.budget.reserved.fetch_sub(self.bytes, Ordering::AcqRel);
         if self.held.standing.load(Ordering::Acquire) {
             self.budget.standing.fetch_sub(self.bytes, Ordering::AcqRel);
-            self.budget.planned.fetch_sub(self.bound.unwrap_or(self.bytes), Ordering::AcqRel);
+            self.budget.planned.fetch_sub(self.held.bound.get().copied().unwrap_or(self.bytes), Ordering::AcqRel);
         }
     }
 }

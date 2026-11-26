@@ -240,14 +240,14 @@ fn kept_in(log: &Arc<Hooked>, limit: usize) -> (UndoStore, Arc<MemoryBudget>) {
 fn batches_written_are_kept_until_truncated() {
     let log = Arc::new(Hooked::default());
     let (store, budget) = kept_in(&log, 1 << 30);
-    assert_eq!((budget.standing(), budget.planned()), (0, (1 << 30) / 16), "planned at its bound, none kept");
+    assert_eq!((budget.standing(), budget.planned()), (0, (1_usize << 30_u32) >> 4_u32), "planned at its bound, none kept");
     let at: Vec<Lsn> = (0_u32..100_u32).map(|n| store.append(&version(n)).unwrap()).collect();
     for (n, pos) in (0_u32..100_u32).zip(&at) {
         assert_eq!(&*store.read(*pos).unwrap(), version(n), "{n}");
     }
     assert_eq!((log.records(), log.reads.load(Ordering::Relaxed)), (10, 0), "every batch read from memory");
     assert_eq!((store.kept_bytes(), budget.reserved()), (10 * KEPT_BATCH, 10 * KEPT_BATCH));
-    assert_eq!((budget.standing(), budget.planned()), (10 * KEPT_BATCH, (1 << 30) / 16), "the same planned, ten kept");
+    assert_eq!((budget.standing(), budget.planned()), (10 * KEPT_BATCH, (1_usize << 30_u32) >> 4_u32), "the same planned, ten kept");
     at.iter().take(55).for_each(|done| store.release(*done));
     store.truncate().unwrap();
     assert_eq!((store.kept_bytes(), budget.reserved()), (5 * KEPT_BATCH, 5 * KEPT_BATCH), "five batches forgotten");

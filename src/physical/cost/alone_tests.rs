@@ -47,10 +47,10 @@ fn a_plan_is_costed_at_the_grant_of_a_statement_alone() {
     let sql = "SELECT K, S, COUNT(*) FROM T GROUP BY K, S";
     let st = db.snapshot().unwrap();
     // As the kept undo is: standing, empty, up to twice `WORK`.
-    let (standing, planned) = (st.memory.standing(), st.memory.planned());
+    let (standing, first) = (st.memory.standing(), st.memory.planned());
     let mut kept = st.memory.reserve(0, "a growing standing reservation").unwrap();
     kept.stand_up_to(2 * WORK);
-    assert_eq!((st.memory.standing(), st.memory.planned()), (standing, planned + 2 * WORK), "planned at its bound");
+    assert_eq!((st.memory.standing(), st.memory.planned()), (standing, first + 2 * WORK), "planned at its bound");
     // Four times `WORK` past the standing reservations as planned: a
     // statement alone granted `WORK`, one beside two others' the floor.
     st.memory.set_limit(st.memory.planned() + 4 * WORK);
