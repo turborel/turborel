@@ -9,16 +9,24 @@
 //! that holds the request; failing that, if the free pages hold it, free
 //! runs largest first; failing that, every free run, the one at the end of
 //! the file (if there is one) last and grown, so the new pages continue it.
+//!
+//! The runs are kept by size too, and their pages counted as they change,
+//! so the smallest run that holds a request is found, and the free pages
+//! counted, without a pass over every run. A spill frees and takes pages
+//! a page at a time, and its free runs are many (RULES.md D1122).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::{Extent, PageId};
 
-/// The free runs, by first page, the pages in the file, and whether either
-/// changed since the list was last recorded.
+/// The free runs, by first page and by size then first page, their pages,
+/// the pages in the file, and whether the runs or the pages changed since
+/// the list was last recorded.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(super) struct FreeList {
     runs: BTreeMap<u64, u64>,
+    by_size: BTreeSet<(u64, u64)>,
+    free: u64,
     pages: u64,
     changed: bool,
 }
@@ -26,7 +34,7 @@ pub(super) struct FreeList {
 impl FreeList {
     /// A file of `pages` pages, all in use.
     pub(super) fn new(pages: u64) -> FreeList {
-        FreeList { runs: BTreeMap::new(), pages, changed: false }
+        FreeList { runs: BTreeMap::new(), by_size: BTreeSet::new(), free: 0, pages, changed: false }
     }
 
     /// Pages in the file.
@@ -36,7 +44,25 @@ impl FreeList {
 
     /// Free pages.
     pub(super) fn free_pages(&self) -> u64 {
-        self.runs.values().fold(0, |sum, &count| sum.saturating_add(count))
+        self.free
+    }
+
+    /// Adds the free run of `count` pages at `start`.
+    fn insert_run(&mut self, start: u64, count: u64) {
+        if let Some(old) = self.runs.insert(start, count) {
+            self.by_size.remove(&(old, start));
+            self.free = self.free.saturating_sub(old);
+        }
+        self.by_size.insert((count, start));
+        self.free = self.free.saturating_add(count);
+    }
+
+    /// Removes the free run at `start`, giving its pages.
+    fn remove_run(&mut self, start: u64) -> Option<u64> {
+        let count = self.runs.remove(&start)?;
+        self.by_size.remove(&(count, start));
+        self.free = self.free.saturating_sub(count);
+        Some(count)
     }
 
     /// The free runs, in page order.
@@ -88,7 +114,7 @@ impl FreeList {
             return Vec::new();
         }
         self.changed = true;
-        if let Some((&start, _)) = self.runs.iter().filter(|&(_, &count)| count >= n).min_by_key(|&(_, &count)| count) {
+        if let Some(&(_, start)) = self.by_size.range((n, 0)..).next() {
             return vec![self.take(start, n)];
         }
         let enough = self.free_pages() >= n;
@@ -109,7 +135,7 @@ impl FreeList {
         if needed > 0 {
             // The free run at the end of the file, if any, grown by the rest.
             let start = trailing.map_or(self.pages, |t| {
-                self.runs.remove(&t);
+                self.remove_run(t);
                 t
             });
             self.pages = start.saturating_add(needed);
@@ -120,10 +146,10 @@ impl FreeList {
 
     /// Takes the first `n` pages of the run at `start`.
     fn take(&mut self, start: u64, n: u64) -> Extent {
-        if let Some(count) = self.runs.remove(&start)
+        if let Some(count) = self.remove_run(start)
             && count > n
         {
-            self.runs.insert(start.saturating_add(n), count.saturating_sub(n));
+            self.insert_run(start.saturating_add(n), count.saturating_sub(n));
         }
         Extent { start: PageId(start), count: n }
     }
@@ -187,13 +213,13 @@ impl FreeList {
         let before = self.runs.range(..start).next_back().map(|(&s, &c)| (s, s.saturating_add(c)));
         let mut run = (start, count);
         if let Some((before_start, before_end)) = before.filter(|&(_, before_end)| before_end == start) {
-            self.runs.remove(&before_start);
+            self.remove_run(before_start);
             run = (before_start, before_end.saturating_sub(before_start).saturating_add(count));
         }
-        if let Some(after_count) = self.runs.remove(&end) {
+        if let Some(after_count) = self.remove_run(end) {
             run.1 = run.1.saturating_add(after_count);
         }
-        self.runs.insert(run.0, run.1);
+        self.insert_run(run.0, run.1);
         Ok(())
     }
 
@@ -202,7 +228,7 @@ impl FreeList {
     /// page count stays until `release_trailing`.
     pub(super) fn take_trailing(&mut self) -> Option<Extent> {
         let (&start, &count) = self.runs.iter().next_back().filter(|&(&start, &count)| start.saturating_add(count) == self.pages)?;
-        self.runs.remove(&start);
+        self.remove_run(start);
         Some(Extent { start: PageId(start), count })
     }
 
@@ -283,6 +309,31 @@ mod tests {
         g.free(&[extent(0, 8), extent(10, 12), extent(30, 2)]).unwrap();
         assert_eq!(g.allocate(25), vec![extent(10, 12), extent(0, 8), extent(30, 2), extent(50, 3)]);
         assert_eq!((g.runs(), g.pages()), (vec![], 53), "every free page used first");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1122, free list: of runs of one size that
+    /// fit, the first is taken; through frees that merge runs, takes that
+    /// split them and the run that ends the file taken and released, the
+    /// runs by size and the free pages counted stay those of the runs.
+    #[test]
+    fn runs_kept_by_size_stay_the_runs() {
+        let mut f = FreeList::new(64);
+        f.free(&[extent(40, 3), extent(4, 3), extent(20, 5)]).unwrap();
+        assert_eq!(f.allocate(3), vec![extent(4, 3)], "the first of the smallest runs that fit");
+        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+        for step in 0..400_u64 {
+            seed = seed.rotate_left(17).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ step;
+            if seed % 3 == 0 {
+                let _ = f.free(&[extent(seed % f.pages(), 1 + (seed >> 8) % 4)]);
+            } else if seed % 7 == 1 {
+                let t = f.take_trailing();
+                t.into_iter().for_each(|t| f.release_trailing(t));
+            } else {
+                f.allocate(1 + (seed >> 12) % 5);
+            }
+            let by_size: BTreeSet<(u64, u64)> = f.runs.iter().map(|(&s, &c)| (c, s)).collect();
+            assert_eq!((&f.by_size, f.free), (&by_size, f.runs.values().sum::<u64>()), "step {step}");
+        }
     }
 
     /// Verifies: [DESIGN] RULES.md D30, free list: freeing an empty extent,
