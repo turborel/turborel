@@ -4,7 +4,11 @@
 //! much of what each table and index reads the pool holds, not by its
 //! file's share of the pool. A lookup is counted on a stripe by thread,
 //! each on its own cache lines, as the pool's hits are (`hits.rs`); a miss
-//! reads a file anyway.
+//! reads a file anyway. A miss is counted only when the pool had no frame
+//! empty and evicted a page for it: the first read of a page into a pool
+//! still filling says nothing of whether the pool holds the structure, and
+//! counted, a statistics pass after a start priced every fetch as a miss
+//! (RULES.md D1230).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -53,7 +57,8 @@ impl Tally {
         }
     }
 
-    /// Counts a page a lookup read that the pool missed.
+    /// Counts a page a lookup read that the pool missed, another page
+    /// evicted for it (RULES.md D1230).
     fn missed(&self) {
         if let Some(stripe) = self.stripe() {
             count(&stripe.misses);
@@ -109,6 +114,66 @@ impl BufferPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `pages` pages of a pager file of their own on `fs`, written back,
+    /// so a pool they are added to reads each from the file; and their
+    /// numbers.
+    fn written(
+        fs: &crate::disk::memory::MemoryFileSystem,
+        name: &str,
+        pages: usize,
+    ) -> (std::sync::Arc<crate::disk::pager::Pager>, Vec<u64>) {
+        let crc = std::sync::Arc::new(crate::hash::crc::Crc::new(crate::hash::crc::CRC32_ISCSI).unwrap());
+        let pipeline = crate::disk::encoding::Pipeline::none();
+        let pager = std::sync::Arc::new(crate::disk::pager::Pager::create(fs, std::path::Path::new(name), crc, pipeline, 4096).unwrap());
+        let pool = BufferPool::new(pages + 1, Box::new(super::super::Clock::new(pages + 1))).unwrap();
+        let file = pool.add_pager(std::sync::Arc::clone(&pager));
+        let ids = (0..pages)
+            .map(|n| {
+                let (id, mut page) = pool.new_page(file).unwrap();
+                page.extend_from_slice(&n.to_le_bytes());
+                id.0
+            })
+            .collect();
+        pool.flush().unwrap();
+        (pager, ids)
+    }
+
+    /// The share of `reads` of the pages of `file`, read by `tally` as
+    /// lookups of one page each, that `pool` missed and evicted for.
+    fn missed_reading(pool: &BufferPool, file: FileId, tally: &Tally, reads: impl Iterator<Item = u64>) -> Option<f64> {
+        for id in reads {
+            tally.lookup();
+            drop(pool.read_tallied(file, id, Some(tally)).unwrap());
+        }
+        tally.missed_share(1_u64)
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1230, D35: a tally counts a page read
+    /// into an empty frame as no miss, so a structure the pool holds is
+    /// all held from its first reads; once no frame is empty, each miss
+    /// evicts and is counted: of a structure first read into a pool full
+    /// of another's pages, and of one larger than the pool. Regression
+    /// test (R-TEST-7): a statistics pass into a pool just started counted
+    /// its first reads as misses, and fetches of a table the pool holds
+    /// were priced as misses until the tally's window forgot them.
+    #[test]
+    fn a_tally_counts_the_misses_that_evict() {
+        let fs = crate::disk::memory::MemoryFileSystem::new();
+        let (held, other, large) = (written(&fs, "/held", 8), written(&fs, "/other", 8), written(&fs, "/large", 32));
+        let pool = BufferPool::new(8, Box::new(super::super::Clock::new(8))).unwrap();
+        let files = [pool.add_pager(held.0), pool.add_pager(other.0), pool.add_pager(large.0)];
+        let tallies = [Tally::default(), Tally::default(), Tally::default()];
+        let twice = held.1.iter().chain(&held.1).copied();
+        assert_eq!(missed_reading(&pool, files[0], &tallies[0], twice), Some(0.0_f64), "read into empty frames, then held");
+        assert_eq!(
+            missed_reading(&pool, files[1], &tallies[1], other.1.iter().copied()),
+            Some(1.0_f64),
+            "each first read evicts the other's"
+        );
+        let cycled = large.1.iter().chain(&large.1).copied();
+        assert!(missed_reading(&pool, files[2], &tallies[2], cycled).is_some_and(|share| share > 0.9_f64), "larger than the pool");
+    }
 
     /// Verifies: [DESIGN] RULES.md D35: a tally gives no share before the
     /// lookups asked for; then its misses per lookup, as a share at most 1;
