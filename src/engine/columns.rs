@@ -354,15 +354,25 @@ impl<'a> Chunk<'a> {
         Some(())
     }
 
-    /// \[DESIGN\] Where each run of one value among its positions `from`
-    /// to `to` ends, past `base`, pushed to `ends`, as `ints` gives them:
-    /// none if its encoding does not keep its values as runs
-    /// (`encoded::Body::run_ends`).
-    pub fn run_ends(&self, (from, to): (usize, usize), base: usize, ends: &mut Vec<usize>) -> Option<()> {
-        if to > self.count {
+    /// \[DESIGN\] (RULES.md D1171) As `ints`, of runs or one value, and
+    /// where each run among positions `from` to `to` ends, past `base`,
+    /// pushed to `ends`, of one reading (`encoded::Body::ints_ending`):
+    /// whether its encoding keeps its values so, nothing pushed if not;
+    /// none if they are not there.
+    pub(super) fn ints_ending(
+        &self,
+        (from, to): (usize, usize),
+        (units, nulls): (&mut Vec<i64>, &mut Mask),
+        (ends, base): (&mut Vec<usize>, usize),
+    ) -> Option<bool> {
+        if to > self.count || from > to {
             return None;
         }
-        self.body.run_ends((from, to), base, ends)
+        let ran = self.body.ints_ending((from, to), units, (ends, base))?;
+        if ran {
+            self.nulls_of((from, to), nulls);
+        }
+        Some(ran)
     }
 
     /// \[DESIGN\] Its values at positions `from` to `to`, character strings
