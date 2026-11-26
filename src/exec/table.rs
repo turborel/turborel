@@ -445,6 +445,33 @@ impl GroupTable {
     }
 }
 
+impl GroupTable {
+    /// \[DESIGN\] (RULES.md D1135) Its groups, finished, of which its
+    /// one set function's value `op` the constant `bound` is true, each
+    /// with its first row's number: the set function's value of each
+    /// group finished and compared alone, and the group's row made only of
+    /// those kept. Of one set function, every group's value is finished,
+    /// as `finished_if` finishes it, so it raises what it raises.
+    ///
+    /// # Errors
+    ///
+    /// As finishing a set function's value fails.
+    pub(in crate::exec) fn finished_above(&self, (op, bound): (crate::value::CompOp, &crate::value::Value)) -> Result<Vec<(u64, Row)>> {
+        let [states] = self.states.as_slice() else { return Err(super::broken("a condition of one set function's value of more")) };
+        let mut groups = Vec::new();
+        for g in 0..self.len() {
+            let value = states.finish(g)?;
+            if super::eval::compared_read(&value, op, bound)? != crate::logical::Truth::True {
+                continue;
+            }
+            let mut row = self.keys.values(g);
+            row.push(value);
+            groups.push((self.first(g), row));
+        }
+        Ok(groups)
+    }
+}
+
 // Unit tests: groups found as their keys' bytes are equal, in the order
 // made, past growth and the keyed hash (RULES.md R-TEST-1).
 #[cfg(test)]

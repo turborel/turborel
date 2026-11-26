@@ -8,7 +8,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 11] = [
+pub const GROUPED_PARTS: [Mutation; 13] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -118,5 +118,25 @@ pub const GROUPED_PARTS: [Mutation; 11] = [
         replacement: "",
         integration: &["crossed_parts::other_set_functions_stay_above_and_a_raising_projection_gives_way"],
         unit: &[],
+    },
+    Mutation {
+        name: "having-bound-unflipped",
+        package: Package::Core,
+        breaks: "a HAVING condition of a constant compared with the set function is judged the other way round (RULES.md D1135)",
+        file: "src/exec/parallel/grouped.rs",
+        original: "return one.then_some((op.flip(), v));",
+        replacement: "return one.then_some((*op, v));",
+        integration: &["grouped_parts::a_having_condition_is_judged_by_its_part"],
+        unit: &[],
+    },
+    Mutation {
+        name: "having-bounded-by-rows",
+        package: Package::Core,
+        breaks: "a HAVING condition of one set function and a constant is judged of each group's row, made for it (RULES.md D1135)",
+        file: "src/exec/parallel/grouped.rs",
+        original: "return one.then_some((*op, v));",
+        replacement: "return None;",
+        integration: &[],
+        unit: &["exec::parallel::grouped::tests::a_having_of_one_set_function_and_a_constant_is_judged_of_its_value"],
     },
 ];

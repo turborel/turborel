@@ -709,6 +709,7 @@ verification approach DO-178C expects (§8).
 | D1113 | A grouping over another whose grouping columns hold its own runs in one part, each partition's thread making both |
 | D1114 | An index nested-loop join over a part run in parallel probes its index on the part's threads |
 | D1115 | A semi join that builds its left holds a left run in parallel by the threads that read it |
+| D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -717,6 +718,8 @@ verification approach DO-178C expects (§8).
 | D1131 | A chunk's varying texts are judged UTF-8 once for the range read, and IN a list of strings looks for a string by halving them |
 | D1132 | A filter whose scalar subqueries raise nothing and warn of nothing runs in parallel, each bound once before the morsels |
 | D1133 | A count over another grouping's groups crosses its partitions, each partition's counts merged by the statement's thread |
+| D1134 | A partition looks up every morsel's groups, as its morsels come to it out of their keys' order |
+| D1135 | A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone |
 | D1136 | A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512 |
 | D1137 | CHECKPOINT.AFTER_BYTES counts the bytes written to the log too |
 | D1138 | The rows an execution of a load is given are held, never spilled |
@@ -19359,6 +19362,32 @@ raised, after the rows before it are taken (D15). A pipeline whose
 morsels are not read by batch, or whose batches hold other columns
 than the plan's, and a left asked for in an order are read as before.
 
+#### D1120. The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time
+
+A grouping of few groups, as TPC-H Q1 groups its lines into four, gives
+each group many rows in turn. A typed SUM, AVG or COUNT state added
+each row's value to its group's total, and the add of one row waited on
+the store of the row before it of the same group. Each row also matched
+the set function's kind, and COUNT(*) asked a boxed closure whether the
+row was null.
+
+A sum of at most 64 groups, of a vector with no null, is now fed in
+lanes: rows go in turn to four partial totals and counts of each group,
+so the adds of a lane do not wait on the others, and the partials are
+added to the groups' states once the batch is fed
+(`exec/table/states/typed/few.rs`). COUNT(*) of at most 64 groups
+counts its rows the same way. A sum of at most 2^63 numbers below 2^63
+each stays below 2^126, so no partial or total reaches the 128 bits the
+states sum in; the overflow is still checked, and the totals are those
+the rows fed one at a time give. A vector with a null, or more groups,
+is fed a row at a time as before.
+
+Grouping by dictionary codes (D1161) made each row's place by asking
+each key column for its vector and code, row by row. The places of a
+batch's rows are now made a column at a time, each column's codes read
+in one loop into a vector of places, and the rows then look their
+places up in the memo (`exec/batch/groups/coded.rs`).
+
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
 A function with no body over vectors is called for each row of a batch
@@ -19597,6 +19626,36 @@ by the order its partitions are merged in, so a grouping of one stays
 above the part. A projection that fails in a partition gives the part
 way to the serial plan, which meets the rows in their order and raises
 what it raises (D15).
+
+#### D1134. A partition looks up every morsel's groups, as its morsels come to it out of their keys' order
+
+A grouping run in parallel merges each partition's groups of the
+morsels, each group looked up in the partition's table before it is
+made. A grouping by one integer column of a table kept in the order of
+that column, as TPC-H Q18 groups lines by their order, has morsels of
+keys apart from one another, so a morsel's lookups mostly miss. A
+partition's table was made to keep the least and greatest of its keys,
+and a morsel's groups lying wholly below or above them were made with
+no lookup.
+
+That cannot work. A partition merges its morsels in the order they
+are handed over, which is the order the threads finish them, not the
+order of their keys. So a morsel mostly lands in a gap between the
+morsels merged before it, inside their least and greatest keys though
+apart from every key there, and one pair of keys cannot see the gaps.
+It was taken out: every morsel's groups are looked up, as before.
+
+#### D1135. A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone
+
+A HAVING condition judged by a grouping's part (D1073) finished every
+group's row, its keys and each set function's value, and judged the
+condition of it. A condition that compares the grouping's one set
+function with a constant, as `HAVING SUM(L_QUANTITY) > 300`, needs only
+that value. Such a condition is now judged of the value as it is
+finished, by the comparison the condition makes, and the row is made
+only of a group kept (`GroupTable::finished_above`). Every group's
+value is still finished, so a set function that raises as it finishes
+raises as it did.
 
 #### D1136. A file the process has no descriptor left for closes one of the database's, and FILES.MAX_OPEN is 512
 
