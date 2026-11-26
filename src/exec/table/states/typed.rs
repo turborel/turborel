@@ -20,6 +20,7 @@ use crate::value::{DataType, Decimal, Value};
 
 mod few;
 mod merged;
+mod written;
 
 use super::super::Pending;
 use super::{Boxed, columns_of};
@@ -177,7 +178,13 @@ impl Typed {
     /// Each group's accumulator, as it would be, of the function and
     /// result of `agg`.
     pub(super) fn to_boxed(&self, agg: &AggCall) -> Boxed {
-        Boxed::made((0..self.len()).map(|g| self.boxed_of(g)).collect(), agg)
+        self.to_boxed_by(agg, |acc| acc)
+    }
+
+    /// As `to_boxed`, each accumulator given to `wrap` first: a part's,
+    /// which holds its function's (RULES.md D1186).
+    pub(super) fn to_boxed_by(&self, agg: &AggCall, wrap: impl Fn(Box<dyn Accumulator>) -> Box<dyn Accumulator>) -> Boxed {
+        Boxed::made((0..self.len()).map(|g| wrap(self.boxed_of(g))).collect(), agg)
     }
 
     /// How many groups.
@@ -187,12 +194,6 @@ impl Typed {
             Typed::Exact(exact) => exact.counts.len(),
             Typed::Approx(approx) => approx.counts.len(),
         }
-    }
-
-    /// Group `g`'s state, written as its accumulator writes it: whether it
-    /// has one.
-    pub(super) fn write(&self, g: usize, out: &mut Vec<u8>) -> bool {
-        self.boxed_of(g).write_state(out)
     }
 
     /// Group `g`'s result, as its accumulator finishes it.
