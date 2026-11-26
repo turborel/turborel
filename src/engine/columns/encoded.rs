@@ -31,14 +31,13 @@
 mod dictionary;
 mod words;
 
-use std::collections::HashMap;
-
 use super::alp::{Alp, Factors, Trials};
 use super::fsst::{Coded, Symbols, Table};
 use super::packed::{bits_for, dense, get, pack, packed_len, unpack_words};
 use super::runs::{Runs, runs_len};
 use super::{HEADER, WORD, corrupt, nulls_len, padded, read_word, too_large, word};
 use crate::error::Result;
+use crate::hash::xxhash::Xxh3Map;
 use crate::value::{DataType, Value};
 
 pub(super) const FIXED: u8 = 1;
@@ -95,7 +94,7 @@ pub(super) struct Sizer<'f> {
     runs: usize,
     last: Option<i64>,
     framed: bool,
-    entries: HashMap<&'f [u8], usize>,
+    entries: Xxh3Map<&'f [u8], usize>,
     entry_bytes: usize,
     /// The exponents tried, of approximate numbers.
     alp: Option<Trials>,
@@ -123,7 +122,7 @@ impl<'f> Sizer<'f> {
             runs: 0,
             last: None,
             framed: width == Some(FRAMED),
-            entries: HashMap::new(),
+            entries: Xxh3Map::default(),
             entry_bytes: 0,
             alp: (floats && compress && width == Some(FRAMED)).then(Trials::default),
             fsst: table.filter(|_| compress).map(|t| (t, 0)),
@@ -180,35 +179,41 @@ impl<'f> Sizer<'f> {
         if !self.compress {
             return plain;
         }
-        let mut found = vec![plain];
+        // [DESIGN] RULES.md D1144: the least kept as each is found, the first of the least as before, no list made.
+        let mut fewest = plain;
+        let mut found = |plan: (Plan, usize)| {
+            if plan.1 < fewest.1 {
+                fewest = plan;
+            }
+        };
         if self.same {
-            found.push((Plan::Constant, base.saturating_add(WORD).saturating_add(self.first.map_or(0, <[u8]>::len))));
+            found((Plan::Constant, base.saturating_add(WORD).saturating_add(self.first.map_or(0, <[u8]>::len))));
         }
         // One value throughout is a constant, though a frame of no bits
         // takes a few bytes fewer.
         if let (true, false, Some((lo, hi))) = (self.framed, self.same, self.range) {
             let bits = bits_for(u64::try_from(i128::from(hi).saturating_sub(i128::from(lo))).unwrap_or(u64::MAX));
             let packed = packed_len(self.count, bits).unwrap_or(usize::MAX);
-            found.push((Plan::Frame(lo, bits), base.saturating_add(1 + FRAMED).saturating_add(packed)));
+            found((Plan::Frame(lo, bits), base.saturating_add(1 + FRAMED).saturating_add(packed)));
             let runs = runs_len((self.count, self.runs, bits)).unwrap_or(usize::MAX);
-            found.push((Plan::Runs(lo, bits), base.saturating_add(runs)));
+            found((Plan::Runs(lo, bits), base.saturating_add(runs)));
         }
         if let Some(((factors, least, bits), bytes)) = self.alp.as_ref().and_then(|a| a.best(self.count)) {
-            found.push((Plan::Alp(factors, least, bits), base.saturating_add(bytes)));
+            found((Plan::Alp(factors, least, bits), base.saturating_add(bytes)));
         }
         if let Some((table, codes)) = &self.fsst {
             let offsets = self.count.saturating_add(1).saturating_mul(WORD);
-            found.push((Plan::Fsst, base.saturating_add(table.bytes()).saturating_add(offsets).saturating_add(*codes)));
+            found((Plan::Fsst, base.saturating_add(table.bytes()).saturating_add(offsets).saturating_add(*codes)));
         }
         if self.entries.len() < MOST_ENTRIES {
             let bits = bits_for(u64::try_from(self.entries.len().saturating_sub(1)).unwrap_or(u64::MAX));
             let table = self.entries.len().saturating_add(1).saturating_mul(WORD).saturating_add(self.entry_bytes);
-            found.push((
+            found((
                 Plan::Dictionary(bits),
                 base.saturating_add(1 + WORD).saturating_add(table).saturating_add(packed_len(self.count, bits).unwrap_or(usize::MAX)),
             ));
         }
-        found.into_iter().min_by_key(|&(_, bytes)| bytes).unwrap_or(plain)
+        fewest
     }
 }
 

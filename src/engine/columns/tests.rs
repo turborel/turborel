@@ -451,3 +451,37 @@ fn chunks_give_their_truth_values() {
     let bytes = ints.chunk(&INTEGER, 0, (10, false)).unwrap();
     assert_eq!(Chunk::parse(&bytes).unwrap().bools((0, 10), (&mut Mask::default(), &mut Mask::default())), None, "integers");
 }
+
+/// Verifies: [DESIGN] RULES.md D1144: a column's chunks, each sized once
+/// with the plan its fitting found, are byte for byte the chunks each
+/// fitting and then sizing again made: of integers in runs, of texts of
+/// few values and of many, nulls among them, compressed and plain, on
+/// pages too small for one chunk of all.
+///
+/// Decision `(n, fits)` in `fitting_planned`: the plan of the values that
+/// fit, of as many as fit; of one more, the chunk would pass its page.
+#[test]
+fn chunks_sized_once_are_the_chunks_sized_twice() {
+    let ints: Vec<Value> = (0..3000_i128)
+        .map(|n| if n % 97 == 5 { Value::Null } else { int(n.checked_div(40).unwrap_or(0).saturating_add((n % 7).saturating_mul(1000))) })
+        .collect();
+    let few: Vec<Value> = (0..2000).map(|n| Value::Char(["alpha", "beta", "gamma"][n % 3].into())).collect();
+    let many: Vec<Value> = (0..2000_usize)
+        .map(|n| if n % 50 == 0 { Value::Null } else { Value::Char(format!("text {n} {}", n.saturating_mul(7919)).into()) })
+        .collect();
+    for (t, values) in [(&INTEGER, &ints), (&TEXT, &few), (&TEXT, &many)] {
+        let fields = Fields::of(t, values.iter()).unwrap();
+        for compress in [true, false] {
+            let mut twice = Vec::new();
+            let mut from = 0;
+            while from < fields.len() {
+                let count = fields.fitting(t, from, (300, compress));
+                twice.push((from, count, fields.chunk(t, from, (count, compress)).unwrap()));
+                from = from.saturating_add(count);
+            }
+            assert!(twice.len() > 2, "{t:?}: several chunks");
+            assert!(twice.iter().all(|(_, count, chunk)| *count == 1 || chunk.len() <= 300), "{t:?}: each chunk fits its page");
+            assert_eq!(fields.chunks(t, (300, compress)).unwrap(), twice, "{t:?} compressed {compress}");
+        }
+    }
+}

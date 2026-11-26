@@ -83,7 +83,9 @@ transactions wait to write the table until its transaction ends, and
 builds each such index whole from its rows as it ends. A table with a
 trigger, a foreign key or an assertion over it builds no index so.
 Such an INSERT into a table of the column store that holds no row yet
-to be frozen, and sets COLUMNSTORE.LOAD to GROUPS, is a load too, and
+to be frozen, and sets COLUMNSTORE.LOAD to GROUPS, or leaves it as
+DEFAULT and has no index, no constraint but NOT NULL and no large object
+column, is a load too, and
 writes its rows straight into frozen groups, which other transactions
 see once it commits. If it builds no index, it takes no lock alone, so
 several such loads at once each write their own groups.

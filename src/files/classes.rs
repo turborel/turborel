@@ -74,6 +74,8 @@ pub enum FileKind {
     Log,
     /// A segment of the log of older row versions.
     Undo,
+    /// A segment loads write their groups to (RULES.md D1146).
+    Groups,
     /// A spill file.
     Spill,
     /// The mark of a database reopened clean and running (RULES.md
@@ -118,6 +120,8 @@ impl FileKind {
             FileKind::Log
         } else if dir == "undo" {
             FileKind::Undo
+        } else if dir == "groups" {
+            FileKind::Groups
         } else if dir == TRANSFER {
             FileKind::Transfer
         } else if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("spill")) {
@@ -135,6 +139,7 @@ impl FileKind {
             FileKind::Catalog => "CATALOG",
             FileKind::Log => "LOG",
             FileKind::Undo => "UNDO",
+            FileKind::Groups => "GROUPS",
             FileKind::Spill => "SPILL",
             FileKind::Opened => "OPENED",
             FileKind::Transfer => "TRANSFER",
@@ -148,7 +153,9 @@ impl FileKind {
     /// the database's: a server's, or one it does not lay out.
     pub fn class(self) -> Option<FileClass> {
         match self {
-            FileKind::Data | FileKind::Catalog | FileKind::Log | FileKind::Plugin | FileKind::Opened => Some(FileClass::Durable),
+            FileKind::Data | FileKind::Catalog | FileKind::Log | FileKind::Plugin | FileKind::Opened | FileKind::Groups => {
+                Some(FileClass::Durable)
+            }
             FileKind::Shadow => Some(FileClass::DurableAtCommit),
             FileKind::Undo => Some(FileClass::Unsynced),
             FileKind::Spill | FileKind::Transfer => Some(FileClass::Scratch),
@@ -160,7 +167,9 @@ impl FileKind {
     /// plug-in its directory is named for.
     pub fn owner(self, path: &Path) -> FileOwner {
         match self {
-            FileKind::Data | FileKind::Catalog | FileKind::Undo | FileKind::Transfer | FileKind::Opened => FileOwner::Database,
+            FileKind::Data | FileKind::Catalog | FileKind::Undo | FileKind::Transfer | FileKind::Opened | FileKind::Groups => {
+                FileOwner::Database
+            }
             FileKind::Shadow => plugin_of(path).map_or(FileOwner::Database, FileOwner::Plugin),
             FileKind::Log => FileOwner::Log,
             FileKind::Spill => FileOwner::Spill,

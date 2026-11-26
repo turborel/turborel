@@ -32,6 +32,7 @@ fn every_kind() -> Vec<Record> {
         Change::InsertRows { table: table(), generation: 3, rows: vec![(7, edge_row()), (9, vec![]), (u64::MAX, edge_row())] },
         Change::Update { table: table(), generation: u32::MAX, row: u64::MAX, before: vec![], after: edge_row() },
         Change::Delete { table: table(), generation: 7, row: 0, before: edge_row() },
+        Change::GroupLoaded(GroupLoaded { table: table(), generation: 4, first: 1, last: u64::MAX, extent: vec![0, 0xFF, 9] }),
         Change::Commit { at: 42, wall: 7 },
         Change::RestorePoint { name: "BEFORE".into(), wall: -3 },
         Change::Abort,

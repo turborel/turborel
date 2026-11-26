@@ -70,10 +70,10 @@ impl RowTable {
         (chosen, wanted): (Option<Chosen<'_>>, Vec<(RowId, RowId)>),
         each: &mut impl FnMut(RowId, Row) -> Result<()>,
     ) -> Result<()> {
-        let pages = self.group_pages()?;
         let types = self.format.types();
         let all: Vec<usize> = (0..types.len()).collect();
         let group = self.group_of(entry)?;
+        let pages = self.pages_for(&group)?;
         let place = |n: u64| u32::try_from(n).map_err(|_| corrupt("a group is too large"));
         // Each span of positions to decode, with its rows' ids.
         let mut spans: Vec<((u32, u32), Vec<RowId>)> = Vec::new();

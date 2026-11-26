@@ -10,6 +10,7 @@ use crate::disk::buffer::{BufferPool, FileId};
 use crate::engine::columns::group::{Group, read};
 use crate::engine::{MEMORY_POOL_BYTES, memory_file};
 use crate::memory::MemoryBudget;
+use crate::storage::Row;
 use crate::value::{CharUnits, Decimal, Spelled, compare_strings};
 
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
@@ -152,6 +153,8 @@ fn groups_keep_sketches_of_texts_coded_by_symbols() {
         pax: false,
         imprints: false,
         kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
     };
     let sketched = group(&pages, &[0, 1, 2, 3]);
     let has: Vec<bool> = sketched.sketches.iter().map(|e| !e.is_empty()).collect();

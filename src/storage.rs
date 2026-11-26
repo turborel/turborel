@@ -33,7 +33,7 @@ pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
 pub use image::{AfterImage, Patch};
 pub use kept::{COLUMN_BITS, Garbage, Kept, Needed, Removal, Removed, column_bit, same, unchanged};
-pub use loading::Loading;
+pub use loading::{Loaded, Loading};
 pub use newest::Newest;
 pub use options::{ENCODINGS, Rebuild, TableOption, chosen, encodings_of, encodings_option, needs_rebuild, option_value};
 pub use region::Region;
