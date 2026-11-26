@@ -383,17 +383,31 @@ impl Body<'_> {
 }
 
 impl Body<'_> {
-    /// \[DESIGN\] Where each run of one value among positions `from` to
-    /// `to` ends, past `base`, pushed to `ends`: of runs, theirs; of a
-    /// constant, one; none of another encoding.
-    pub(super) fn run_ends(&self, (from, to): (usize, usize), base: usize, ends: &mut Vec<usize>) -> Option<()> {
+    /// \[DESIGN\] (RULES.md D1171) Of runs, or one value, the values at
+    /// positions `from` to `to` pushed to `out`, as `ints` gives them, and
+    /// where each run among them ends, past `base`, pushed to `ends`, both
+    /// of one reading of its runs (`Runs::ints_ends`): whether it keeps
+    /// its values so, none if they are not there. Of another encoding,
+    /// nothing is pushed.
+    pub(super) fn ints_ending(
+        &self,
+        (from, to): (usize, usize),
+        out: &mut Vec<i64>,
+        (ends, base): (&mut Vec<usize>, usize),
+    ) -> Option<bool> {
         match self {
-            Body::Runs(runs) => runs.ends_in((from, to), base, ends),
-            Body::Constant { .. } => {
-                ends.push(base.checked_add(to.checked_sub(from)?)?);
-                Some(())
+            Body::Runs(runs) => runs.ints_ends((from, to), out, Some((ends, base))).map(|()| true),
+            Body::Constant { field } => {
+                // None if every value is null, its field empty.
+                out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), to.checked_sub(from)?));
+                if to > from {
+                    ends.push(base.checked_add(to.checked_sub(from)?)?);
+                }
+                Some(true)
             }
-            Body::Frame { .. } | Body::Alp(_) | Body::Dictionary { .. } | Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => None,
+            Body::Frame { .. } | Body::Alp(_) | Body::Dictionary { .. } | Body::Fixed { .. } | Body::Varying { .. } | Body::Fsst(_) => {
+                Some(false)
+            }
         }
     }
 

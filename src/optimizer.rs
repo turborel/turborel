@@ -20,6 +20,7 @@
 //! Rules are storage-agnostic. Anything that depends on engines, indexes or
 //! costs belongs in physical.rs.
 
+mod counted_rows;
 mod dependent_keys;
 mod disjunctions;
 mod distinct_aggregates;
@@ -68,6 +69,7 @@ pub const PUSH_HAVING_INTO_WHERE: &str = "push_having_into_where";
 /// See [`CONSTANT_FOLDING`].
 pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 
+pub use counted_rows::{COUNT_ROWS_OF_VALUES, CountRowsOfValues};
 pub use dependent_keys::{REDUCE_GROUPING_KEYS, ReduceGroupingKeys};
 pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
@@ -209,6 +211,7 @@ impl Optimizer {
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
         o.add(Box::new(ExtremesByOrder));
+        o.add(Box::new(CountRowsOfValues));
         // After the filters of a join's operand alone are moved into it.
         o.add(Box::new(GroupBeforeOuterJoin));
         o.add_late(Box::new(ReduceGroupingKeys));
