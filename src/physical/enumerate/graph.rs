@@ -11,14 +11,6 @@
 //!
 //! Each operator keeps the conflict rules CD-C gives it
 //! (`enumerate/conflicts.rs`), checked as a join is made of two sets.
-//!
-//! A relation whose column of a class of equalities is a key of it is
-//! joined to the class's other relations too, by the key the class
-//! implies, though no conjunct reads both (`graph/implied.rs`, RULES.md
-//! D1204). Such an edge is of no operator and no conjunct, so it is kept
-//! apart from the others.
-
-mod implied;
 
 use super::bits::{Set, bit, lowest_bit, within};
 use super::conflicts::{self, Kind, Rule, Shape};
@@ -65,9 +57,6 @@ pub(super) struct Graph {
     simple: Vec<Set>,
     /// The places of its hyperedges among `edges`.
     hyper: Vec<usize>,
-    /// Of each relation, the relations a class's key joins it to with no
-    /// conjunct of their own (RULES.md D1204).
-    implied: Vec<Set>,
 }
 
 impl Graph {
@@ -103,7 +92,7 @@ impl Graph {
                 hyper.push(e);
             }
         }
-        Graph { n, ops, edges, simple, hyper, implied: vec![0; n] }
+        Graph { n, ops, edges, simple, hyper }
     }
 
     /// All its relations.
@@ -133,10 +122,9 @@ impl Graph {
         out
     }
 
-    /// Whether an edge joins `a` to `b`, a conjunct's or an operator's,
-    /// or one a class's key implies.
+    /// Whether an edge joins `a` to `b`.
     pub(super) fn connected(&self, a: Set, b: Set) -> bool {
-        self.edges.iter().any(|e| e.joins(a, b)) || self.implies(a, b)
+        self.edges.iter().any(|e| e.joins(a, b))
     }
 
     /// The relations a simple edge joins to `r`.
