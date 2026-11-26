@@ -109,7 +109,7 @@ impl Read {
         for taken in &self.taken {
             match taken {
                 Taken::Count => {}
-                Taken::Column(at) => places.push(*at),
+                Taken::Column(at) | Taken::Kept(at) => places.push(*at),
                 Taken::Expr(program) => places.extend_from_slice(&program.inputs),
             }
         }
