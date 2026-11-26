@@ -136,6 +136,81 @@ fn products_are_joined_in_the_cheapest_order() {
     assert_eq!(rows(&s, ordered), Ok(vec!["7,21".into(), "5,15".into()]));
 }
 
+/// Verifies: [DESIGN] RULES.md D35: the join order of a product is the
+/// same whichever of its tables have statistics, so it does not change as
+/// the background job reaches them. Regression test (R-TEST-7) of D1152,
+/// taken back: it bounded a column no statistics counted by those of the
+/// columns its class equates, so with T counted alone, its sketch a little
+/// under T's 300 values lowered U's to it, and T, not U, was read first,
+/// a test run's plan hanging on the moment the job reached T.
+#[test]
+fn a_join_order_is_the_same_whichever_tables_are_counted() {
+    let sql = "SELECT T.K, U.W FROM T, U, S WHERE T.K = S.K AND U.K = S.K ORDER BY 2 DESC";
+    let order = |counted: &[&str]| {
+        let db = large_and_small();
+        for t in counted {
+            db.analyze(&format!("J.{t}")).unwrap();
+        }
+        let plan = db.session("J").physical_plan(sql, &Params::new()).unwrap();
+        plan.lines()
+            .filter(|l| l.contains("Join") || l.contains("Scan J."))
+            .map(|l| l.trim().split("  ").next().unwrap_or("").to_owned())
+            .collect::<Vec<_>>()
+    };
+    let first = order(&[]);
+    for counted in [&["T"][..], &["U"], &["S"], &["T", "U"], &["T", "S"], &["U", "S"], &["T", "U", "S"]] {
+        assert_eq!(order(counted), first, "counted {counted:?}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1157, D35: customers and suppliers joined
+/// through their nations, whose key is declared NOT NULL by a PRIMARY KEY
+/// or a UNIQUE, the columns no statistics count bounded by that key, are
+/// joined in one order whichever of the three tables have statistics.
+#[test]
+fn a_join_order_through_a_declared_key_is_the_same_whichever_tables_are_counted() {
+    let sql = "SELECT C.CK, S.SK FROM C, S, N WHERE C.NK = N.NK AND S.NK = N.NK";
+    for declared in ["NOT NULL PRIMARY KEY", "NOT NULL UNIQUE"] {
+        let order = |counted: &[&str]| {
+            let db = nations(declared);
+            for t in counted {
+                db.analyze(&format!("K.{t}")).unwrap();
+            }
+            let plan = db.session("K").physical_plan(sql, &Params::new()).unwrap();
+            plan.lines()
+                .filter(|l| l.contains("Join") || l.contains("Scan K."))
+                .map(|l| l.trim().split("  ").next().unwrap_or("").to_owned())
+                .collect::<Vec<_>>()
+        };
+        let first = order(&[]);
+        for counted in [&["C"][..], &["S"], &["N"], &["C", "S"], &["C", "N"], &["S", "N"], &["C", "S", "N"]] {
+            assert_eq!(order(counted), first, "{declared}, counted {counted:?}");
+        }
+    }
+}
+
+/// Schema K: N of 25 nations, its NK declared as `declared`; C of 1,500
+/// customers and S of 100 suppliers, each of one nation.
+fn nations(declared: &str) -> Database {
+    let db = Database::new();
+    // Statistics only as a test gathers them, never by the background job.
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    db.schema(&format!(
+        "CREATE SCHEMA AUTHORIZATION K
+           CREATE TABLE N (NK INTEGER {declared})
+           CREATE TABLE C (CK INTEGER NOT NULL, NK INTEGER NOT NULL)
+           CREATE TABLE S (SK INTEGER NOT NULL, NK INTEGER NOT NULL)"
+    ))
+    .unwrap();
+    let s = db.session("K");
+    let rows = |n: i32| (0_i32..n).map(|i| format!("({i}, {})", i % 25_i32)).collect::<Vec<_>>().join(", ");
+    s.run(&format!("INSERT INTO N VALUES {}", (0_i32..25_i32).map(|i| format!("({i})")).collect::<Vec<_>>().join(", "))).unwrap();
+    s.run(&format!("INSERT INTO C VALUES {}", rows(1_500_i32))).unwrap();
+    s.run(&format!("INSERT INTO S VALUES {}", rows(100_i32))).unwrap();
+    s.commit().unwrap();
+    db
+}
+
 /// Verifies: [DESIGN] RULES.md D35, `PREDICATE_TRANSITIVITY`: a comparison
 /// of a column equated with another is made of the other too [X3.135-1986
 /// §5.11 GR4], so U's index answers `T.K = 7` through `T.K = U.K`, and a
@@ -162,6 +237,8 @@ fn comparisons_carry_across_equalities() {
 /// keys, two of them in T and U.
 fn large_and_small() -> Database {
     let db = Database::new();
+    // Statistics only as a test gathers them, never by the background job.
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
     db.schema(
         "CREATE SCHEMA AUTHORIZATION J
            CREATE TABLE T (K INTEGER NOT NULL, V INTEGER)

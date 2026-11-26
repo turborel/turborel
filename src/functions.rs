@@ -34,7 +34,7 @@ pub(crate) use columnar::{
 pub(crate) use floats::Wide;
 mod any_value;
 pub use any_value::ANY_VALUE;
-pub(crate) use any_value::GroupValue;
+pub(crate) use any_value::{GroupValue, carried_column};
 mod arrays;
 pub mod builtin;
 pub use arrays::{

@@ -125,3 +125,8 @@ pub(crate) fn distance_i8(_isa: Isa, a: &[u8], b: &[u8], term: DistanceTerm) -> 
 pub(crate) fn crc32c(_isa: Isa, register: u32, data: &[u8]) -> u32 {
     portable::crc::crc32c(register, data)
 }
+
+/// `Kernels::find_bytes`.
+pub(crate) fn find_bytes(_isa: Isa, haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    portable::find::find_bytes(haystack, needle)
+}

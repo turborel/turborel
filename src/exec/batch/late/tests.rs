@@ -11,10 +11,11 @@ fn told_column(deferred: &Deferred) -> Option<usize> {
 /// Verifies: [DESIGN] RULES.md D379: a top-N's input tells its scan the
 /// bound of its first key, of that key's column, its key columns read and
 /// the others late; a projection of columns moves the bound to the column
-/// it is of; beside expressions that raise nothing it stays of its column,
-/// every column read (RULES.md D1183); the key itself an expression, or
-/// an expression that may raise, drops it, and so does a join's left
-/// operand, whose rows a join may drop or repeat.
+/// it is of, and so does one giving a null in a column's place; beside
+/// expressions that raise nothing it stays of its column, every column
+/// read (RULES.md D1183); the key itself an expression, or an expression
+/// that may raise, drops it, and so does a join's left operand, whose rows
+/// a join may drop or repeat.
 #[test]
 fn a_top_bound_is_told_its_scan_where_its_rows_are_the_scans() {
     let threshold = Arc::new(Threshold::new(false));
@@ -24,7 +25,9 @@ fn a_top_bound_is_told_its_scan_where_its_rows_are_the_scans() {
     assert_eq!(topped.late_of(&[0, 1, 2, 3]), vec![0, 1, 3], "the key read, the others late");
     let moved = topped.projected(&[Expr::Column(5), Expr::Column(7), Expr::Column(9), Expr::Column(1)]);
     assert_eq!(told_column(&moved), Some(9), "of the column the projection moves");
-    let computed = topped.projected(&[Expr::Column(5), Expr::Const(crate::value::Value::Null), Expr::Column(9), Expr::Column(1)]);
+    let nulled = topped.projected(&[Expr::Column(5), Expr::Const(crate::value::Value::Null), Expr::Column(9), Expr::Column(1)]);
+    assert_eq!(told_column(&nulled), Some(9), "a null given in a column's place moves no row (RULES.md D1167)");
+    let computed = topped.projected(&[Expr::Column(5), Expr::Neg(Box::new(Expr::Column(7))), Expr::Column(9), Expr::Column(1)]);
     assert_eq!(told_column(&computed), Some(9), "beside an expression that raises nothing, of its column still");
     assert_eq!(computed.late_of(&[5, 9, 1]), Vec::<usize>::new(), "every column read under an expression");
     let key_made = topped.projected(&[Expr::Column(5), Expr::Column(7), Expr::Neg(Box::new(Expr::Column(9))), Expr::Column(1)]);

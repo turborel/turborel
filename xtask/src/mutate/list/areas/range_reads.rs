@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 19] = [
+pub const RANGE_READS: [Mutation; 21] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -201,5 +201,25 @@ pub const RANGE_READS: [Mutation; 19] = [
         replacement: "        } else if name == TRANSFER {",
         integration: &["running_mark::a_database_marked_running_is_copied_without_its_mark"],
         unit: &[],
+    },
+    Mutation {
+        name: "pruned-reads-moved-columns",
+        package: Package::Core,
+        breaks: "a column a projection moves counts as read by none, so a scan under it reads none of them (D1167)",
+        file: "src/physical/blind/pruned/single.rs",
+        original: "            if needed.contains(&n) {",
+        replacement: "            if needed.contains(&n) && n == usize::MAX {",
+        integration: &[],
+        unit: &["physical::blind::pruned::tests::a_scan_reads_only_what_is_read_above_it"],
+    },
+    Mutation {
+        name: "pruned-keeps-a-join-key",
+        package: Package::Core,
+        breaks: "an operand's column none above reads is kept, so a join carries its dead keys (D1167)",
+        file: "src/physical/blind/pruned.rs",
+        original: "        if live.iter().all(|c| reads.contains(c)) {",
+        replacement: "        if live.iter().all(|c| reads.contains(c)) || reads.len() < usize::MAX {",
+        integration: &[],
+        unit: &["physical::blind::pruned::tests::a_joins_keys_are_given_null_after_it"],
     },
 ];

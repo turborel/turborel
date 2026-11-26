@@ -119,12 +119,14 @@ impl Limit {
         self.held.load(Ordering::Acquire)
     }
 
-    /// Whether what it holds, the bytes taken since it held `from` after
-    /// `done` of `count` morsels counted as much again for each morsel
-    /// left, would fit: a part that will pass its grant gives way after
-    /// its first morsels, not after its last.
-    fn on_course(&self, from: usize, (done, count): (usize, usize)) -> bool {
-        let grown = self.held().saturating_sub(from);
+    /// Whether what it held before a part's morsels, `from`, and the
+    /// `grown` bytes of the `done` morsels of `count` its reader has taken,
+    /// counted as much again for each morsel left, would fit: a part that
+    /// will pass its grant gives way after its first morsels, not after its
+    /// last. The bytes of morsels gathered ahead of the reader are not
+    /// counted, as how many there are depends on how fast each thread is
+    /// (RULES.md D1155).
+    fn on_course(&self, (from, grown): (usize, usize), (done, count): (usize, usize)) -> bool {
         from.saturating_add(grown.saturating_mul(count).checked_div(done).unwrap_or(grown)) <= self.most
     }
 
@@ -223,5 +225,34 @@ impl Iterator for Streamed {
                 }
             }
         }
+    }
+}
+
+// Unit tests: whether a part will pass its grant (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests {
+    use super::Limit;
+    use crate::db::Database;
+    use crate::exec::Db;
+
+    /// Verifies: [DESIGN] RULES.md D1155: whether a part will pass its
+    /// grant is told by the morsels its reader has taken. Morsels gathered
+    /// ahead of it, all charged, do not count as the first read one's,
+    /// while the read ones, of which the rest would pass the grant, do.
+    ///
+    /// Decision: the morsels read would fit, or not; others are held, or
+    /// not.
+    #[test]
+    fn a_part_is_on_course_by_the_morsels_read() {
+        let db = Database::new();
+        let limit = Limit::of(&Db::from(db.snapshot().unwrap()));
+        let each = limit.most().div_euclid(100);
+        assert!(limit.on_course((0, each), (1, 50)), "fifty morsels are half the grant");
+        assert!(!limit.on_course((0, each), (1, 200)), "two hundred are twice it");
+        // Sixteen more gathered ahead of the reader, held but not read.
+        assert!(limit.take(each.saturating_mul(17)), "they fit");
+        assert!(limit.on_course((0, each), (1, 50)), "those ahead are not the first's");
+        assert!(!limit.on_course((0, each), (1, 200)), "the ones read still say so");
+        assert!(!limit.on_course((limit.most(), each), (1, 1)), "what it held before counts");
     }
 }

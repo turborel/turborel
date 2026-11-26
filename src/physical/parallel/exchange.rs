@@ -20,6 +20,7 @@ use super::super::Plan;
 use super::super::cardinality::cardenas;
 use crate::db::State;
 use crate::logical::Expr;
+use crate::physical::Seen;
 
 /// \[DESIGN\] What a piece costs its thread, in rows grouped: its group
 /// made in its morsel's table, found again by the hash it came with in its
@@ -46,10 +47,11 @@ fn real(n: usize) -> f64 {
 /// \[DESIGN\] Whether the exchange of `plan`, a grouping or DISTINCT whose
 /// part reads `rows` rows in morsels of `morsel` on `degree` threads, costs
 /// as much as its threads gain: of the groups the optimizer estimates it
-/// makes (RULES.md D372), its columns counted by `db`'s statistics; never
-/// of columns not counted, nor of one group.
-pub(super) fn outweighs(db: &State, plan: &Plan, rows: usize, (morsel, degree): (usize, usize)) -> bool {
-    let Some(groups) = groups_of(db, plan) else { return false };
+/// makes (RULES.md D372), its columns counted by `db`'s statistics as the
+/// statement sees them, `seen` (RULES.md D1089); never of columns not
+/// counted, nor of one group.
+pub(super) fn outweighs(db: &State, seen: &Seen, plan: &Plan, rows: usize, (morsel, degree): (usize, usize)) -> bool {
+    let Some(groups) = groups_of((db, seen), plan) else { return false };
     let (r, m, d) = (real(rows), real(morsel.min(rows).max(1)), real(degree.max(1)));
     let groups = groups.clamp(1.0_f64, r.max(1.0_f64));
     let pieces = cardenas(groups, m) * (r / m).ceil();
@@ -60,7 +62,7 @@ pub(super) fn outweighs(db: &State, plan: &Plan, rows: usize, (morsel, degree): 
 /// The groups `plan` makes, a grouping by columns or DISTINCT of a
 /// projection, as the optimizer estimates them, if the statistics count
 /// each of its columns; none of a grouping by no column, one group.
-fn groups_of(db: &State, plan: &Plan) -> Option<f64> {
+fn groups_of(db: (&State, &Seen), plan: &Plan) -> Option<f64> {
     // A HAVING condition over a grouping is a part with it (RULES.md D1073).
     let plan = if let Plan::Filter { input, .. } = plan { input } else { plan };
     if let Plan::Aggregate { groups, est, input, .. } = plan {
@@ -74,9 +76,9 @@ fn groups_of(db: &State, plan: &Plan) -> Option<f64> {
 /// Whether the statistics of its table count the distinct values of column
 /// `c` of the stream `plan`: a filter's as its input's, a projection's of
 /// a column as that column's.
-fn counted(db: &State, plan: &Plan, c: usize) -> bool {
+fn counted(db: (&State, &Seen), plan: &Plan, c: usize) -> bool {
     if let Plan::SeqScan { table, .. } = plan {
-        return db.statistics(table).and_then(|s| s.distinct(c)).is_some();
+        return db.1.statistics(db.0, table).and_then(|s| s.distinct(c)).is_some();
     }
     if let Plan::Filter { input, .. } = plan {
         return counted(db, input, c);

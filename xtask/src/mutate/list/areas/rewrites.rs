@@ -5,7 +5,13 @@
 //! a window, the FETCH FIRST that may go into UNION ALL, and the keys a
 //! join is removed on; of D1061, an outer join left by a comparison of
 //! both operands, a CASE taken as its first result that may be chosen,
-//! and the operand given nulls mistaken under a product.
+//! and the operand given nulls mistaken under a product; of D1201, a
+//! grouping reduced by a column of another collation, by a dependency not
+//! strict, to no column or with a group made before any row, a late rule
+//! applied with the others, and a carried value replaced; of D1202, a
+//! column fetched late that something above the grouping reads, of a
+//! table whose key is not determined or whatever the fetch reads, and the
+//! rows not sorted again.
 
 use super::super::{Mutation, Package};
 
@@ -15,8 +21,17 @@ const RAISING: &str = "rewrites::hoisting::hoisted_parts_raise_as_the_product_wo
 /// The test of joins the rule must keep.
 const KEPT: &str = "rewrites::elimination::joins_that_could_change_rows_are_kept";
 
+/// The test of groupings whose columns may not depend.
+const GROUPED_AS_WRITTEN: &str = "rewrites::dependent_keys::a_grouping_whose_columns_may_not_depend_is_left";
+
+/// The test of columns fetched after FETCH FIRST.
+const FETCHED_LATE: &str = "rewrites::late_fetch::carried_columns_are_fetched_for_the_rows_kept";
+
+/// The test of columns that stay carried.
+const KEPT_CARRIED: &str = "rewrites::late_fetch::carried_columns_every_group_needs_stay_carried";
+
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 22] = [
+pub const REWRITES: [Mutation; 34] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -222,8 +237,8 @@ pub const REWRITES: [Mutation; 22] = [
         package: Package::Core,
         breaks: "the right operand is grouped first though it has a row a key (RULES.md D1112)",
         file: "src/optimizer/pregrouped.rs",
-        original: "rows - keys > estimated_rows(ctx.db, shape.left)",
-        replacement: "rows - keys > -1.0_f64",
+        original: "rows(shape.right) - rows(&keyed) > rows(shape.left)",
+        replacement: "rows(shape.right) - rows(&keyed) > -1.0_f64",
         integration: &["rewrites::pregrouped::a_grouping_the_rewrite_could_change_is_left"],
         unit: &[],
     },
@@ -235,6 +250,126 @@ pub const REWRITES: [Mutation; 22] = [
         original: "|| groups.iter().any(|&g| g >= width)",
         replacement: "",
         integration: &["rewrites::pregrouped::a_grouping_the_rewrite_could_change_is_left"],
+        unit: &[],
+    },
+    Mutation {
+        name: "grouping-keys-other-collation",
+        package: Package::Core,
+        breaks: "a column grouped by another collation than its own determines, or is left out (RULES.md D1201)",
+        file: "src/optimizer/dependent_keys.rs",
+        original: "== known.collation_of(g))",
+        replacement: "== known.collation_of(g) || i < usize::MAX)",
+        integration: &[GROUPED_AS_WRITTEN],
+        unit: &[],
+    },
+    Mutation {
+        name: "grouping-keys-not-strict",
+        package: Package::Core,
+        breaks: "a grouping is reduced by a dependency that values not distinct but told apart break (RULES.md D1201)",
+        file: "src/binder/dependencies/strict.rs",
+        original: "strict: true }, plan)",
+        replacement: "strict: false }, plan)",
+        integration: &[GROUPED_AS_WRITTEN],
+        unit: &[],
+    },
+    Mutation {
+        name: "grouping-keys-none-kept",
+        package: Package::Core,
+        breaks: "a grouping whose columns are all determined groups by none, one group even of no rows (RULES.md D1201)",
+        file: "src/optimizer/dependent_keys.rs",
+        original: "&& typed(at) && !others.is_empty()",
+        replacement: "&& typed(at)",
+        integration: &["rewrites::dependent_keys::a_grouping_by_a_key_and_its_dependents_groups_by_the_key"],
+        unit: &[],
+    },
+    Mutation {
+        name: "grouping-keys-seeded",
+        package: Package::Core,
+        breaks: "a grouping with a group made before any row is grouped by fewer columns (RULES.md D1201)",
+        file: "src/optimizer/dependent_keys.rs",
+        original: "groups.len() < TWO_COLUMNS || !seeds.is_empty()",
+        replacement: "groups.len() < TWO_COLUMNS",
+        integration: &[],
+        unit: &["optimizer::dependent_keys::tests::a_grouping_of_a_group_made_before_any_row_is_left"],
+    },
+    Mutation {
+        name: "rewrites-late-rule-with-the-others",
+        package: Package::Core,
+        breaks: "a late rule is applied with the others, before their fixpoint (RULES.md D1201)",
+        file: "src/optimizer.rs",
+        original: "switch: None, late: true });",
+        replacement: "switch: None, late: false });",
+        integration: &[],
+        unit: &["optimizer::drivers::a_late_rule_is_applied_after_the_others"],
+    },
+    Mutation {
+        name: "grouping-keys-last-row-kept",
+        package: Package::Core,
+        breaks: "a group's carried value is replaced by a later row's or a merged state's (RULES.md D1201)",
+        file: "src/exec/table/states/carried.rs",
+        original: ".filter(|held| !**held)",
+        replacement: ".filter(|_| true)",
+        integration: &[],
+        unit: &["exec::table::states::tests::a_column_of_values_kept_is_its_accumulator"],
+    },
+    Mutation {
+        name: "late-fetch-read-above",
+        package: Package::Core,
+        breaks: "a column an expression above the grouping reads is fetched after FETCH FIRST (RULES.md D1202)",
+        file: "src/optimizer/late_fetch.rs",
+        original: "if let Some(agg) = read.iter().find_map(late) {",
+        replacement: "if let Some(agg) = read.iter().find_map(late).filter(|_| false) {",
+        integration: &[FETCHED_LATE],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-fetch-key-undetermined",
+        package: Package::Core,
+        breaks: "a column is fetched of a table whose key the grouping columns do not determine (RULES.md D1202)",
+        file: "src/optimizer/late_fetch.rs",
+        original: "if !determined || key.iter()",
+        replacement: "if key.iter()",
+        integration: &[KEPT_CARRIED],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-fetch-whatever-it-reads",
+        package: Package::Core,
+        breaks: "a column is fetched late though the fetch reads as many rows as the grouping groups (RULES.md D1202)",
+        file: "src/optimizer/late_fetch.rs",
+        original: "|| read >= grouped {",
+        replacement: "|| read >= grouped * f64::MAX {",
+        integration: &[KEPT_CARRIED],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-fetch-not-sorted-again",
+        package: Package::Core,
+        breaks: "the rows joined to their table after FETCH FIRST are not sorted again (RULES.md D1202)",
+        file: "src/optimizer/late_fetch.rs",
+        original: "Some(keys) => LogicalPlan::Sort { keys: keys.to_vec(), input: Box::new(listed) },",
+        replacement: "Some(_) => listed,",
+        integration: &[FETCHED_LATE],
+        unit: &[],
+    },
+    Mutation {
+        name: "keyed-grouping-of-strings",
+        package: Package::Core,
+        breaks: "a grouping over a LEFT join equating strings is a projection, though a left row may match two groups of the right that the join holds equal (RULES.md D1117)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "let equated = shape.pairs.iter().all(|&(l, r)| exact(left, l) && exact(right, r));",
+        replacement: "let equated = shape.pairs.iter().all(|&(l, r)| exact(left, l) || !exact(right, r));",
+        integration: &["rewrites::pregrouped::a_grouping_by_no_key_of_the_left_stays"],
+        unit: &[],
+    },
+    Mutation {
+        name: "keyed-grouping-unwarned",
+        package: Package::Core,
+        breaks: "a left row no group matched gives its null with no warning that a null was eliminated (RULES.md D1117)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "let null = Expr::Warned(Box::new(Expr::Column(part)), SqlState::NULL_VALUE_ELIMINATED);",
+        replacement: "let null = Expr::Column(part);",
+        integration: &["rewrites::pregrouped::a_grouping_by_a_key_of_the_left_is_a_projection"],
         unit: &[],
     },
 ];

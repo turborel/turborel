@@ -8,7 +8,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 11] = [
+pub const GROUPED_PARTS: [Mutation; 15] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -118,5 +118,45 @@ pub const GROUPED_PARTS: [Mutation; 11] = [
         replacement: "",
         integration: &["crossed_parts::other_set_functions_stay_above_and_a_raising_projection_gives_way"],
         unit: &[],
+    },
+    Mutation {
+        name: "analyzed-crossing-count-stops",
+        package: Package::Core,
+        breaks: "an analyzed plan's count of a projection between two groupings hides the pair, so the part is taken for a pipeline and EXPLAIN ANALYZE fails (RULES.md D1116)",
+        file: "src/physical/parallel.rs",
+        original: "let Plan::Project { exprs, input, .. } = uncounted(plan) else { return (Vec::new(), plan) };",
+        replacement: "let Plan::Project { exprs, input, .. } = plan else { return (Vec::new(), plan) };",
+        integration: &["crossed_parts::an_analyzed_crossing_counts_its_projections"],
+        unit: &[],
+    },
+    Mutation {
+        name: "analyzed-crossing-projections-uncounted",
+        package: Package::Core,
+        breaks: "the projections between two groupings of an analyzed crossing are shown with no rows (RULES.md D1116)",
+        file: "src/exec/parallel/grouped/regrouped.rs",
+        original: "for count in self.count.iter().chain(&self.projected) {",
+        replacement: "for count in self.count.iter() {",
+        integration: &["crossed_parts::an_analyzed_crossing_counts_its_projections"],
+        unit: &[],
+    },
+    Mutation {
+        name: "having-bound-unflipped",
+        package: Package::Core,
+        breaks: "a HAVING condition of a constant compared with the set function is judged the other way round (RULES.md D1135)",
+        file: "src/exec/parallel/grouped.rs",
+        original: "return one.then_some((op.flip(), v));",
+        replacement: "return one.then_some((*op, v));",
+        integration: &["grouped_parts::a_having_condition_is_judged_by_its_part"],
+        unit: &[],
+    },
+    Mutation {
+        name: "having-bounded-by-rows",
+        package: Package::Core,
+        breaks: "a HAVING condition of one set function and a constant is judged of each group's row, made for it (RULES.md D1135)",
+        file: "src/exec/parallel/grouped.rs",
+        original: "return one.then_some((*op, v));",
+        replacement: "return None;",
+        integration: &[],
+        unit: &["exec::parallel::grouped::tests::a_having_of_one_set_function_and_a_constant_is_judged_of_its_value"],
     },
 ];

@@ -162,12 +162,20 @@ fn carried(g: &Grouping, (pos, t): (usize, &DataType), name: String, collation: 
     let k = if let Some(k) = aggs.iter().position(|a| a.label == name && carries(a, pos)) {
         k
     } else {
-        let row = DataType::row(vec![Field { name: name.clone(), data_type: t.clone(), unnamed: false }]);
-        let arg = Expr::Call(ScalarRef(Arc::new(RowOf(row))), vec![Expr::Column(pos)]);
-        let func = AggregateRef(Arc::new(GroupValue));
-        aggs.push(AggCall { func, arg: Some(arg), distinct: false, filter: None, distribution: None, result: t.clone(), label: name });
+        aggs.push(group_value(pos, t, name));
         g.collated.borrow_mut().push(collation);
         aggs.len().saturating_sub(1)
     };
     Expr::Column(g.columns.len().saturating_add(k))
+}
+
+/// [§6.7 GR1e] The set function that keeps a group's value of its input's
+/// column `pos`, of type `t` and display name `name`, which is
+/// functionally dependent on the grouping columns: the column's in the
+/// group's first row, a null too (`functions/any_value.rs`).
+pub(crate) fn group_value(pos: usize, t: &DataType, name: String) -> AggCall {
+    let row = DataType::row(vec![Field { name: name.clone(), data_type: t.clone(), unnamed: false }]);
+    let arg = Expr::Call(ScalarRef(Arc::new(RowOf(row))), vec![Expr::Column(pos)]);
+    let func = AggregateRef(Arc::new(GroupValue));
+    AggCall { func, arg: Some(arg), distinct: false, filter: None, distribution: None, result: t.clone(), label: name }
 }

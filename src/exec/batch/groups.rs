@@ -216,7 +216,7 @@ impl Groups {
         let lanes = lanes(&how.read.taken, batch, rows);
         // Of keys all codes of dictionaries, a row whose codes went to a
         // group held goes to it, and only the others are hashed (`coded.rs`).
-        let coded = self.memo.ready(batch, &how.read.groups);
+        let coded = self.memo.ready(batch, &how.read.groups, rows);
         if !coded {
             hash_rows(batch, (&how.read.groups, rows), (how.seed, how.runner.kernels()), &mut self.hashes);
         }
@@ -262,7 +262,7 @@ impl Groups {
         if !coded {
             return (None, Some(self.hashes.get(n).copied().unwrap_or(0)));
         }
-        let (place, known) = self.memo.found(batch, &how.read.groups, r);
+        let (place, known) = self.memo.found(n);
         if let Some(g) = known {
             self.held.take(g, (n, r));
             return (place, None);

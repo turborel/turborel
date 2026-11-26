@@ -102,7 +102,19 @@ impl Deferred {
     /// not of columns alone reads every column of a batch a filter kept
     /// rows of (`project::computed`), so reads them all.
     pub(in crate::exec) fn projected(&self, exprs: &[Expr]) -> Deferred {
-        let moved: Option<Vec<usize>> = exprs.iter().map(|e| if let Expr::Column(c) = e { Some(*c) } else { None }).collect();
+        // A column moved, or the null value, which reads none (RULES.md D1167).
+        let moved: Option<Vec<Option<usize>>> = exprs
+            .iter()
+            .map(|e| {
+                if let Expr::Column(c) = e {
+                    Some(Some(*c))
+                } else if let Expr::Const(v) = e {
+                    v.is_null().then_some(None)
+                } else {
+                    None
+                }
+            })
+            .collect();
         let Some(moved) = moved else {
             // Every column is read, but the bound still reaches the scan,
             // by the column it is of, under expressions that raise
@@ -115,9 +127,9 @@ impl Deferred {
             return Deferred { bound, ..Deferred::default() };
         };
         let (mut unread, mut read) = (Vec::new(), Vec::new());
-        for (n, (e, &c)) in exprs.iter().zip(&moved).enumerate() {
+        for (n, (e, c)) in exprs.iter().zip(&moved).enumerate() {
             if self.unread.binary_search(&n).is_ok() {
-                unread.push(c);
+                unread.extend(*c);
             } else {
                 expr_columns(e, &mut read);
             }
@@ -125,7 +137,7 @@ impl Deferred {
         unread.sort_unstable();
         unread.dedup();
         // The bound's column moved to the column it is of.
-        let bound = self.bound.as_ref().and_then(|(at, t)| moved.get(*at).map(|&c| (c, Arc::clone(t))));
+        let bound = self.bound.as_ref().and_then(|(at, t)| moved.get(*at).copied().flatten().map(|c| (c, Arc::clone(t))));
         Deferred { reduced: self.reduced, unread: without(&unread, &read), bound, told: Vec::new() }
     }
 

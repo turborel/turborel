@@ -8,6 +8,7 @@ pub mod bloom;
 pub mod boundaries;
 pub mod crc;
 pub mod distance;
+pub mod find;
 pub mod gather;
 pub mod hash;
 pub mod normal;
