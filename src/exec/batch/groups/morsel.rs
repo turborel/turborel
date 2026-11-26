@@ -57,7 +57,9 @@ pub(in crate::exec) fn morsel_groups(
 }
 
 /// The accumulators of `aggs`, if each writes its state, which the one
-/// group of a morsel without grouping columns is merged by.
+/// group of a morsel without grouping columns is merged by. A plan runs
+/// in parallel only set functions that write theirs (D53), so this holds
+/// of every morsel planned.
 fn writing(aggs: &[AggCall]) -> Option<Vec<Box<dyn Accumulator>>> {
     let states: Vec<Box<dyn Accumulator>> = aggs.iter().map(|a| a.func.0.accumulator(a.result.clone())).collect();
     states.iter().all(|state| state.write_state(&mut Vec::new())).then_some(states)

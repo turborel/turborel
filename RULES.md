@@ -20458,9 +20458,13 @@ morsel order as before, so a function keeping its first value keeps
 the first row's, and a grant refused gives way as before. A morsel of
 no rows makes no group, and the set functions of no rows are one row
 as before. A set function whose accumulator writes no state, as a sum
-of approximate numbers whose total depends on its order, is grouped as
-before. DISTINCT and filtered set functions are not read by batch, so
-they never come here.
+or an average of approximate or DECFLOAT numbers, is not run in
+parallel at all (D53, `physical/parallel.rs`): its total depends on the
+order its values are added in, so partial totals merged would differ
+from the plan run alone. It keeps its serial plan, fed in the input's
+order, and a morsel that met one anyway would be grouped as before.
+DISTINCT and filtered set functions are not read by batch, so they
+never come here.
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
