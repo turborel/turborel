@@ -749,6 +749,7 @@ verification approach DO-178C expects (§8).
 | D1167 | Each operator carries only the columns read above it |
 | D1168 | A chunk's texts are decoded in place, their bytes reserved at once and checked UTF-8 once |
 | D1169 | The texts of rows kept in order are laid out over a batch's rows as decoded |
+| D1170 | A morsel of set functions of no grouping feeds one set of states by vectors, no row hashed |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
@@ -20356,6 +20357,30 @@ Texts so decoded are now laid out over the batch's rows as they are
 is that of the last row kept at or before it, and a row not kept is
 null. No text is copied. Texts of a store's dictionaries are gathered
 by their codes, as before, and so is a column a join gathered.
+
+#### D1170. A morsel of set functions of no grouping feeds one set of states by vectors, no row hashed
+
+Set functions of no grouping run in parallel were grouped as any
+grouping by batch is (D293, D356). Each morsel's table hashed every row
+on a key of no columns, found the one group by it, compared the key and
+took the row for the group, and then fed the group's states. So each
+row cost a hash, a probe, a compare and three pushes, and a sum of a
+column on eight threads took longer than it did on one.
+
+A morsel of no grouping columns now feeds one set of accumulators each
+batch's vectors, as a set function of no grouping run alone is fed
+(`exec/batch.rs`, `exec/batch/groups/morsel.rs`). The vector kernels
+that sum a column, the null lane that counts it and the extremes taken
+a vector at a time all apply. Once the morsel's batches are fed, each
+state is written into the morsel's one group, which is made of its
+first row, numbered as before. The morsels' groups are then merged in
+morsel order as before, so a function keeping its first value keeps
+the first row's, and a grant refused gives way as before. A morsel of
+no rows makes no group, and the set functions of no rows are one row
+as before. A set function whose accumulator writes no state, as a sum
+of approximate numbers whose total depends on its order, is grouped as
+before. DISTINCT and filtered set functions are not read by batch, so
+they never come here.
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
