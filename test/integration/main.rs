@@ -491,6 +491,7 @@ mod typed_families;
 mod typed_tables;
 mod typed_vectors;
 mod undo_memory;
+mod ungrouped_parts;
 mod unique_checks;
 mod unique_nulls;
 mod unnest;

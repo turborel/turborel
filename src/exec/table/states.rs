@@ -18,6 +18,7 @@
 
 mod boxed;
 mod carried;
+mod columns;
 mod typed;
 mod written;
 

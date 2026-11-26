@@ -173,7 +173,7 @@ fn finished_part(
 ) -> Result<Finished> {
     if part.bytes <= half {
         let table = merged(grouping, part)?;
-        return Ok(Some(vec![grouping.kept_of(&table, runner)?]));
+        return Ok(Some(vec![grouping.kept_of(table, runner)?]));
     }
     if level >= depth {
         return Ok(None);
