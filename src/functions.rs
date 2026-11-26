@@ -25,11 +25,13 @@ use crate::value::{CompOp, DataType, Value};
 
 mod accumulator;
 pub use accumulator::Accumulator;
+mod arg;
+pub use arg::Arg;
 mod columnar;
 pub use columnar::Columnar;
 pub(crate) use columnar::{
-    Kind as ColumnarKind, NO_FLOATS, Summed, avg_acc, avg_finished, count_acc, count_finished, extreme_acc, plus_float, sum_acc,
-    sum_finished,
+    Kind as ColumnarKind, NO_FLOATS, Summed, avg_acc, avg_finished, avg_written, count_acc, count_finished, count_written, extreme_acc,
+    plus_float, sum_acc, sum_finished, sum_written,
 };
 pub(crate) use floats::Wide;
 mod any_value;
@@ -78,7 +80,7 @@ pub(crate) mod over_vectors;
 mod partial;
 #[cfg(test)]
 pub(crate) use partial::MERGED;
-pub(crate) use partial::{Merged, PART_TYPE, PARTIAL, Partial, Split, split_of};
+pub(crate) use partial::{Merged, PART_TYPE, PARTIAL, Partial, Split, part_acc, part_value, split_of};
 mod periods;
 pub use octet_like::OctetLike;
 pub use periods::PeriodTest;
@@ -137,17 +139,6 @@ pub use xml::{
 };
 pub use xml::{Evaluation, RegularColumn, TableColumn, XmlExistsOf, XmlFilter, XmlQueryOf, XmlRowsOf, XmlTableOf};
 pub use xml::{IDENTIFIER_TO_XMLNAME, IDENTIFIER_TO_XMLNAME_FULLY, XMLNAME_TO_IDENTIFIER};
-
-/// \[DESIGN\] An argument of a call over vectors (RULES.md D363,
-/// `ScalarFunction::eval_batch`): a vector of a value a row, or a
-/// constant, every row's.
-#[derive(Debug, Clone, Copy)]
-pub enum Arg<'a> {
-    /// A vector of a value a row.
-    Column(&'a Column),
-    /// A constant.
-    Const(&'a Value),
-}
 
 /// \[EXTENSION\] A function callable with the opt-in call syntax.
 ///
@@ -580,6 +571,12 @@ pub trait AggregateFunction: Send + Sync {
     /// MAX and MIN tell one, as only the core makes a `Columnar`. Default:
     /// none.
     fn columnar(&self) -> Option<Columnar> {
+        None
+    }
+    /// \[DESIGN\] (RULES.md D1186) Of a part of a set function (D341), the
+    /// built-in function it is a part of, if a grouping keeps that one in
+    /// columns of states, and its result type. Default: none.
+    fn part_of(&self) -> Option<(Columnar, DataType)> {
         None
     }
     /// \[DESIGN\] (RULES.md D779) Whether its result is the collection of

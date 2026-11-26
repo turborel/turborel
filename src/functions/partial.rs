@@ -75,6 +75,34 @@ impl AggregateFunction for Partial {
     fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
         Box::new(PartAcc(self.func.0.accumulator(self.result.clone())))
     }
+    fn part_of(&self) -> Option<(super::Columnar, DataType)> {
+        self.func.0.columnar().map(|kind| (kind, self.result.clone()))
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1186) The accumulator of a part whose function's
+/// accumulator is `inner`, as a column of a part's states turned into
+/// accumulators holds each group's.
+pub(crate) fn part_acc(inner: Box<dyn Accumulator>) -> Box<dyn Accumulator> {
+    Box::new(PartAcc(inner))
+}
+
+/// A part's value: the function's state, as `state` writes it after the
+/// tag given, or, if it writes none, the result `finished` gives, which
+/// judges it as the function judges its result once [ISO/IEC 9075:1992
+/// §6.5 GR2b]. An accumulator's part and a column of states' are both
+/// made here, so they are the same bytes (RULES.md D1186).
+///
+/// # Errors
+///
+/// As `finished`.
+pub(crate) fn part_value(state: impl FnOnce(&mut Vec<u8>) -> bool, finished: impl FnOnce() -> Result<Value>) -> Result<Value> {
+    let mut out = vec![STATE];
+    if !state(&mut out) {
+        out = vec![FINISHED];
+        put_value(&mut out, &finished()?);
+    }
+    Ok(Value::Binary(Binary::new(out)))
 }
 
 /// The accumulator of a part: the function's own, given what it is.
@@ -105,15 +133,9 @@ impl Accumulator for PartAcc {
     fn merge(&mut self, state: &[u8]) -> Result<()> {
         self.0.merge(state)
     }
-    /// Its state, or, if it writes none, its result, which judges it as
-    /// the function judges its result once [ISO/IEC 9075:1992 §6.5 GR2b].
+    /// Its state, or, if it writes none, its result (`part_value`).
     fn finish(&self) -> Result<Value> {
-        let mut out = vec![STATE];
-        if !self.0.write_state(&mut out) {
-            out = vec![FINISHED];
-            put_value(&mut out, &self.0.finish()?);
-        }
-        Ok(Value::Binary(Binary::new(out)))
+        part_value(|out| self.0.write_state(out), || self.0.finish())
     }
 }
 

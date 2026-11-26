@@ -768,6 +768,7 @@ verification approach DO-178C expects (§8).
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
 | D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
 | D1185 | A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets |
+| D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -20995,6 +20996,53 @@ anything but scalar values, and a sort whose input is no projection are
 left alone. Each refusal is tested
 (`pruned::octets::tests::a_key_read_above_or_not_of_octets_stays_made`,
 `octets_sorts::ties_and_expressions_sort_by_octets_7_17`).
+#### D1186. A part of a built-in set function is kept in that function's column of states, and gives its part of each group
+
+A query with a DISTINCT set function is computed by two groupings
+(D340), and its set functions without DISTINCT are computed in parts
+(D341). The first grouping computes PARTIAL of each, whose value of a
+group is the function's state as bytes, and the second merges them. The
+first grouping has a group for every distinct value of every group of
+the second, by far the more groups of the two. D356 keeps COUNT, SUM,
+AVG, MAX and MIN in columns of states, a slot a group, fed a batch's
+rows in one loop. PARTIAL told the table nothing of what it is a part
+of (`AggregateFunction::columnar` gives none of it), so each group of
+the first grouping held an accumulator of each part on the heap, and a
+batch's rows were sorted by group and fed to each group's accumulator in
+turn.
+
+A part now tells the built-in function it is a part of and that
+function's result type (`AggregateFunction::part_of`, none by default),
+and the table keeps its states in that function's column
+(`States::Part`, `exec/table/states/parts.rs`). A part's accumulator
+forwards everything it is fed, merged and asked to write to its
+function's, so the column is fed, grown, merged with another table's,
+written past a work area and sent to another thread as the function's
+own column is, by the same code. Two things differ.
+
+- What a group gives is its part, the function's state after the tag of
+  a state, or its result after the tag of a result where the function
+  writes no state, as a sum of approximate numbers does. The part's
+  accumulator and the column both make it by `functions::part_value`, so
+  the bytes are the same whichever held the group.
+- A column fed values it does not hold, integers of another scale, turns
+  into the part's accumulators, each holding the function's accumulator
+  the group would have had (`functions::part_acc`). A column that comes
+  back from another thread is a part's again (`States::thawed`). One read
+  back from a spill (D1226) is read as the column of the function the
+  part is of (`Typed::read`).
+
+A group's state was written by making the accumulator the group would
+have had and asking it. A grouping of parts writes every group's state
+as it gives its groups, so that made an accumulator of each on the heap
+after all. A count's, a sum's and a mean's state are now written by the
+accumulator's own code of the slot the column holds, with none made on
+the heap (`typed/stated.rs`, `functions::count_written`,
+`sum_written`, `avg_written`). An extreme's still goes through its
+accumulator.
+
+The second grouping is as it was. It reads each part as a binary string
+and merges it into its own accumulator, of which there are few.
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 
