@@ -160,9 +160,9 @@ fn groups_keep_sketches_of_texts_coded_by_symbols() {
     let has: Vec<bool> = sketched.sketches.iter().map(|e| !e.is_empty()).collect();
     assert_eq!(has, [false, true, false, false]);
     assert_eq!(sketched.sketched, [0, 1, 2, 3]);
-    assert!(sketched.columns[1].iter().flat_map(|z| &z.parts).all(|p| p.sketch.is_some()));
-    assert!(sketched.columns[2].iter().flat_map(|z| &z.parts).all(|p| p.sketch.is_none()));
-    let back = read(&pages, sketched.header[0], &TYPES).unwrap();
+    assert!(sketched.zones(1).unwrap().unwrap().iter().flat_map(|z| &z.parts).all(|p| p.sketch.is_some()));
+    assert!(sketched.zones(2).unwrap().unwrap().iter().flat_map(|z| &z.parts).all(|p| p.sketch.is_none()));
+    let back = read(&pages, sketched.header[0], &TYPES, None).unwrap();
     assert_eq!(back.sketches, sketched.sketches, "edges read back");
     assert_eq!(back.sketched, sketched.sketched);
     let mut held = Held::default();

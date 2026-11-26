@@ -1,12 +1,13 @@
 //! The mutations of the core's reads (RULES.md R-TEST-9): index-only
 //! scans' zones and the index entries collection owes, ordered reads of
 //! the column store, and its columns of runs; and how the planner prices
-//! reads by the pages they miss.
+//! reads by the pages they miss; and of D1173, a group's header read for
+//! some columns.
 
 use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 32] = [
+pub const READS: [Mutation; 36] = [
     Mutation {
         name: "zone-write-visible",
         package: Package::Core,
@@ -326,5 +327,45 @@ pub const READS: [Mutation; 32] = [
         replacement: "            out.extend_from_slice(&key_field(None));",
         integration: &[],
         unit: &["disk::pager::named::tests::pages_keep_the_key_their_checksums_were_made_with"],
+    },
+    Mutation {
+        name: "header-held-short",
+        package: Package::Core,
+        breaks: "a header held is given only if it was read for every column asked for (RULES.md D1173)",
+        file: "src/engine/rows/frozen/held.rs",
+        original: "        if let Some(group) = held.as_ref().filter(|g| g.holds(wanted)) {",
+        replacement: "        if let Some(group) = held.as_ref() {",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::wanted::headers_are_read_for_the_columns_read"],
+    },
+    Mutation {
+        name: "header-reread-drops-held",
+        package: Package::Core,
+        breaks: "a header read again for a column is read for the columns it held too (RULES.md D1173)",
+        file: "src/engine/rows/frozen/held.rs",
+        original: "            (Some(group), Some(wanted)) => Some(group.with_columns(wanted)),",
+        replacement: "            (Some(_), Some(wanted)) => Some(wanted.to_vec()),",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::wanted::headers_are_read_for_the_columns_read"],
+    },
+    Mutation {
+        name: "header-skip-short",
+        package: Package::Core,
+        breaks: "a column passed over is passed over by every field of its chunks (RULES.md D1173)",
+        file: "src/engine/columns/group/header.rs",
+        original: "                (0_u8..3).try_for_each(|_| self.skip_filter())?;",
+        replacement: "                (0_u8..2).try_for_each(|_| self.skip_filter())?;",
+        integration: &[],
+        unit: &["engine::columns::group::tests::wanted::headers_read_for_some_columns_hold_theirs_alone"],
+    },
+    Mutation {
+        name: "header-unread-as-empty",
+        package: Package::Core,
+        breaks: "a column a header was read without is never taken for one with no chunks (RULES.md D1173)",
+        file: "src/engine/columns/group/wanted.rs",
+        original: "            Some(None) => Err(unread()),",
+        replacement: "            Some(None) => Ok(Some(&[])),",
+        integration: &[],
+        unit: &["engine::columns::group::tests::wanted::headers_read_for_some_columns_hold_theirs_alone"],
     },
 ];

@@ -3,16 +3,21 @@
 //! longer than its key, the place that keeps a sort stable, a digit a radix
 //! sort skips, the tree of losers' tie, the number of a run's own layout,
 //! the peers a top-N passes over, and a held sort's look for a cancel in
-//! each fetch.
+//! each fetch; and of a sort by a column's octets read in place (D1185),
+//! the key read above that keeps it made, the field its strings are
+//! written in, and each place its strings are compared whole.
 
 use super::super::{Mutation, Package};
 
 /// Normal keys sort as the comparator does.
 const AS_COMPARATOR: &str = "exec::sort::normal::tests::normal_keys_sort_as_the_comparator";
 
+/// A sort by octets orders as the octets do, each way a sort runs.
+const BY_OCTETS: &str = "octets_sorts::a_sort_by_octets_orders_as_the_octets_do_10_10";
+
 /// Mechanisms whose removal must fail the requirements of sorts by normal
 /// keys.
-pub const SORTS: [Mutation; 20] = [
+pub const SORTS: [Mutation; 25] = [
     Mutation {
         name: "sort-padding-zero",
         package: Package::Core,
@@ -212,5 +217,55 @@ pub const SORTS: [Mutation; 20] = [
         replacement: "        let due = at.is_multiple_of(every.max(1));",
         integration: &[],
         unit: &["exec::sort::tests::a_held_sort_looks_at_the_first_row_of_each_window"],
+    },
+    Mutation {
+        name: "octets-key-read-above",
+        package: Package::Core,
+        breaks: "a sort key read above its sort is read of the column in place, so WITH TIES finds its peers padded (D1185)",
+        file: "src/physical/blind/pruned/octets.rs",
+        original: "keys.get(n).map(|k| k.column).filter(|k| !needed.contains(k))",
+        replacement: "keys.get(n).map(|k| k.column).filter(|_| true)",
+        integration: &["octets_sorts::ties_and_expressions_sort_by_octets_7_17"],
+        unit: &["physical::blind::pruned::octets::tests::a_key_read_above_or_not_of_octets_stays_made"],
+    },
+    Mutation {
+        name: "octets-key-written-padded",
+        package: Package::Core,
+        breaks: "a key by octets writes its strings in a character string's field, padded with spaces (D1185)",
+        file: "src/exec/sort/normal.rs",
+        original: "seen: if key.octets { Seen::Binary { longest } } else { found.seen }",
+        replacement: "seen: found.seen",
+        integration: &[BY_OCTETS],
+        unit: &["exec::sort::normal::tests::a_key_by_octets_sorts_strings_by_their_octets"],
+    },
+    Mutation {
+        name: "octets-cells-padded",
+        package: Package::Core,
+        breaks: "strings alike in the octets a key by octets holds are compared whole padded (D1185)",
+        file: "src/exec/sort/vectors.rs",
+        original: "                if k.octets\n",
+        replacement: "                if k.octets && k.column == usize::MAX\n",
+        integration: &[BY_OCTETS],
+        unit: &["exec::sort::vectors::tests::cells_of_a_key_by_octets_compare_unpadded"],
+    },
+    Mutation {
+        name: "octets-rows-padded",
+        package: Package::Core,
+        breaks: "rows compared by a key by octets compare their strings padded (D1185)",
+        file: "src/logical/sort_key.rs",
+        original: "            if self.octets\n",
+        replacement: "            if self.octets && self.column == usize::MAX\n",
+        integration: &[BY_OCTETS],
+        unit: &["logical::sort_key::tests::a_key_by_octets_orders_strings_unpadded"],
+    },
+    Mutation {
+        name: "octets-scroll-key-padded",
+        package: Package::Core,
+        breaks: "a SCROLL cursor's sort of its rows' keys drops that a key is by octets (D1185)",
+        file: "src/db/scroll.rs",
+        original: "SortKey { column: i, ..*key }",
+        replacement: "SortKey::new(i, key.order())",
+        integration: &["octets_sorts::a_scroll_cursor_orders_by_octets_13_3"],
+        unit: &[],
     },
 ];

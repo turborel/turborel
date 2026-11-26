@@ -13,7 +13,9 @@
 //! [X3.135-1986 §5.11 GR3], then a byte saying whether what is past them
 //! is less than spaces, equal or greater; a binary string, as a collated
 //! key's bits are (RULES.md D60), its first octets padded with zeros, then
-//! its length, or one more than they hold. The bytes of a string are as
+//! its length, or one more than they hold; a character string of a key by
+//! octets is written as a binary string of its octets is, as that is its
+//! order (RULES.md D1185). The bytes of a string are as
 //! many as its longest value's, at most `PREFIX_MOST`, so keys of a long
 //! shared start are told apart by their bytes.
 //!
@@ -128,6 +130,10 @@ pub(super) struct Field {
     pub(super) column: usize,
     /// Its direction and null ordering.
     pub(super) order: SortOrder,
+    /// Whether its character strings are written as binary strings are,
+    /// their octets and their length, so they order unpadded (RULES.md
+    /// D1185).
+    pub(super) octets: bool,
     /// How its values are written.
     pub(super) code: Code,
     /// The kind of an integer field's values.
@@ -178,7 +184,7 @@ impl Layout {
             let (code, ints) = code_of(seen.seen, shape);
             truncates |= cut(seen.seen, code);
             let nullable = seen.nulls || shape == Shape::Open;
-            let field = Field { column: key.column, order: key.order(), code, ints, nullable, at };
+            let field = Field { column: key.column, order: key.order(), octets: key.octets, code, ints, nullable, at };
             at = at.checked_add(field.width())?;
             fields.push(field);
         }
@@ -363,6 +369,24 @@ pub(super) fn seen_value(value: &Value) -> Option<Found> {
     Some(Found { seen, nulls: false })
 }
 
+/// \[DESIGN\] (RULES.md D1185) `found`, what a value or a vector of `key`
+/// was seen to be, as the key reads it: character strings of a key by
+/// octets as binary strings of their octets, which is the order the key
+/// asks, so their field is a binary string's.
+pub(super) fn seen_as(key: &SortKey, found: Option<Found>) -> Option<Found> {
+    let found = found?;
+    match found.seen {
+        Seen::Text { longest } => Some(Found { seen: if key.octets { Seen::Binary { longest } } else { found.seen }, nulls: found.nulls }),
+        Seen::Nothing
+        | Seen::Exact { .. }
+        | Seen::Approx
+        | Seen::Binary { .. }
+        | Seen::Instant { .. }
+        | Seen::Interval { .. }
+        | Seen::Bool => Some(found),
+    }
+}
+
 /// What a batch's `cell` is, as `seen_value` says of its value.
 fn seen_cell(cell: Cell<'_>) -> Option<Found> {
     let seen = match cell {
@@ -424,7 +448,7 @@ fn exact_seen(scale: u32, least: i64, most: i64) -> Seen {
 /// What each of `keys` holds in `rows`.
 pub(super) fn seen_rows(keys: &[SortKey], rows: &[Row]) -> Vec<Option<Found>> {
     keys.iter()
-        .map(|k| rows.iter().try_fold(Found::default(), |found, row| with(Some(found), row.get(k.column).and_then(seen_value))))
+        .map(|k| rows.iter().try_fold(Found::default(), |found, row| with(Some(found), seen_as(k, row.get(k.column).and_then(seen_value)))))
         .collect()
 }
 

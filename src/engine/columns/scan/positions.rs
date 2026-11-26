@@ -107,7 +107,7 @@ fn words_at<S: Seal>(
     (column, t): (usize, &DataType),
     positions: &[u32],
 ) -> Result<Words> {
-    let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    let Some(zones) = group.zones(column)? else { return Ok(None) };
     let (mut units, mut nulls) = (Vec::with_capacity(positions.len()), Mask::default());
     let mut span = (Vec::new(), Mask::default());
     let mut rest = positions;
@@ -189,7 +189,7 @@ pub fn texts_at<S: Seal>(
     if padding(t).is_none() {
         return Ok(None);
     }
-    let Some(zones) = group.columns.get(column) else { return Ok(None) };
+    let Some(zones) = group.zones(column)? else { return Ok(None) };
     if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), positions)? {
         return Ok(Some(coded));
     }
@@ -269,7 +269,7 @@ pub fn values_at<S: Seal>(
     positions: &[u32],
 ) -> Result<Vec<Value>> {
     let mut out = Vec::with_capacity(positions.len());
-    let Some(zones) = group.columns.get(column) else { return Ok(vec![Value::Null; positions.len()]) };
+    let Some(zones) = group.zones(column)? else { return Ok(vec![Value::Null; positions.len()]) };
     let mut rest = positions;
     for zone in zones {
         let end = zone.run.first.saturating_add(zone.run.rows);
