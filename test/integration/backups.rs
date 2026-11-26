@@ -211,3 +211,39 @@ fn a_restore_runs_from_a_database_of_nothing() {
     assert!(!scratch.path("back").exists());
     assert_eq!(contents(&restored(&into, &clock)).len(), 3, "3");
 }
+
+/// Loads rows `from..to` into APP.G and commits, a batch of a group at a time.
+fn load_groups(db: &Database, (from, to): (i64, i64)) {
+    let s = db.session("APP");
+    let p = s.prepare("INSERT INTO G (K, V) VALUES (?, ?)").unwrap();
+    let given: Vec<Vec<turborel::value::Value>> = (from..to).map(|k| vec![number(k), number(k % 7)]).collect();
+    for batch in given.chunks(4096) {
+        s.execute_prepared_rows(&p, batch, turborel::params::Load::Going).unwrap();
+    }
+    s.execute_prepared_rows(&p, &[], turborel::params::Load::Ending).unwrap();
+    s.commit().unwrap();
+}
+
+/// Verifies: [EXTENSION] RULES.md D160, D1146: a backup carries the groups
+/// loads wrote to segments, those a checkpoint named as files and those
+/// since as the log's records, and restores every row of them.
+#[test]
+fn a_backup_restores_the_groups_of_loads() {
+    let scratch = Scratch::new("backup-groups");
+    let clock = Arc::new(FixedClock::at(1_000));
+    let db = open(&scratch.path("db"), &clock);
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION APP CREATE TABLE G (K INTEGER NOT NULL, V INTEGER) USING columnstore \
+         WITH (COLUMNSTORE.GROUP_ROWS = 4096, COLUMNSTORE.LOAD = 'GROUPS')",
+    )
+    .unwrap();
+    load_groups(&db, (0, 9_000));
+    db.checkpoint().unwrap();
+    load_groups(&db, (9_000, 17_192));
+    let sums = "SELECT COUNT(*), SUM(K), SUM(V) FROM G";
+    let held = rows(&db.session("APP"), sums).unwrap();
+    let location = dir_target(&scratch.path("target"));
+    db.backup(&BackupOptions { location: location.clone(), ..BackupOptions::default() }).unwrap();
+    let back = restored(&options(&scratch.path("back"), &location), &clock);
+    assert_eq!(rows(&back.session("APP"), sums).unwrap(), held);
+}

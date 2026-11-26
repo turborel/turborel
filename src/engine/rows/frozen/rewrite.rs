@@ -113,10 +113,10 @@ impl RowTable {
     /// before `cutoff` folded in, its rows sorted and its Bloom filters
     /// kept as `columns` says.
     fn rewrite(&self, entry: &Arc<Entry>, (entries, cutoff): (Vec<(RowId, Vec<u8>)>, Timestamp), columns: &Columns) -> Result<()> {
-        let pages = self.group_pages()?;
         let types = self.format.types();
         let all: Vec<usize> = (0..types.len()).collect();
         let old = self.group_of(entry)?;
+        let pages = self.pages_for(&old)?;
         let old_ids = old.row_ids(&pages)?;
         let frozen = rows(&old, &pages, types, &all, (0, old.rows))?;
         // Each row id's row, or none if deleted: the group's, then the

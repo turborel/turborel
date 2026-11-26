@@ -5,7 +5,8 @@
 //!
 //! ```text
 //! change: position u64 | transaction u64 | table | generation u32 |
-//!         row id u64 | before (0, or 1 and a row) | after (likewise)
+//!         row id u64 | before (0, or 1 and a row) | after (likewise) |
+//!         group (0, or 1, its last row id u64 and its extent as bytes)
 //! ```
 
 use crate::bytes::{Put, Reader};
@@ -28,6 +29,9 @@ pub(in crate::db) struct RowChange {
     pub(super) row: RowId,
     pub(super) before: Option<Row>,
     pub(super) after: Option<Row>,
+    /// \[EXTENSION\] Of a load's group, from row `row`, its last row id and
+    /// its extent (RULES.md D1146).
+    pub(super) group: Option<(RowId, Vec<u8>)>,
 }
 
 /// The row changes recovery read: where an index reopened from a
@@ -37,7 +41,8 @@ pub(in crate::db) type Touched = SpillList<RowChange>;
 impl ListItem for RowChange {
     fn bytes(&self) -> usize {
         let images = self.before.iter().chain(&self.after).map(row_bytes).sum::<usize>();
-        size_of::<RowChange>().saturating_add(images)
+        let extent = self.group.as_ref().map_or(0, |(_, e)| e.len());
+        size_of::<RowChange>().saturating_add(images).saturating_add(extent)
     }
 }
 
@@ -59,6 +64,14 @@ pub(super) fn encode_change(change: &RowChange) -> Vec<u8> {
             None => out.put_u8(0),
         }
     }
+    match &change.group {
+        Some((last, extent)) => {
+            out.put_u8(1);
+            out.put_u64(*last);
+            out.put_bytes(extent);
+        }
+        None => out.put_u8(0),
+    }
     out
 }
 
@@ -71,6 +84,7 @@ pub(super) fn decode_change(record: &[u8], types: &TypeRegistry) -> Result<RowCh
     let (generation, id) = (r.u32()?, r.u64()?);
     let mut image = || -> Result<Option<Row>> { if r.u8()? == 1 { row(&mut r).map(Some) } else { Ok(None) } };
     let (before, after) = (image()?, image()?);
+    let group = if r.u8()? == 1 { Some((r.u64()?, r.bytes()?.to_vec())) } else { None };
     r.finish()?;
-    Ok(RowChange { lsn, tx, table, generation, row: id, before, after })
+    Ok(RowChange { lsn, tx, table, generation, row: id, before, after, group })
 }

@@ -28,7 +28,6 @@ impl RowTable {
     /// Its bytes, and its columns' if `by_column`; none if a group, a chunk
     /// or a node of its tree cannot be read, or its bytes pass a count's.
     pub(super) fn measured(&self, by_column: bool) -> Option<TableSizes> {
-        let pages = self.group_pages().ok()?;
         let directory = self.frozen.directory().ok()?;
         let (_, page) = self.pool.page_count(self.file).ok()?;
         let page = u64::try_from(page).ok()?;
@@ -36,7 +35,10 @@ impl RowTable {
         let mut held: BTreeMap<(usize, Option<&'static str>), ColumnSizes> = BTreeMap::new();
         for entry in &directory.groups {
             let group = self.group_of(entry).ok()?;
-            frozen = within(frozen.checked_add(u64::try_from(group.pages().len()).ok()?.checked_mul(page)?))?;
+            let pages = self.pages_for(&group).ok()?;
+            // [DESIGN] RULES.md D1146: an extent's own bytes, else its pages'.
+            let bytes = entry.summary.extent.map(|p| p.length);
+            frozen = within(frozen.checked_add(bytes.or_else(|| u64::try_from(group.pages().len()).ok()?.checked_mul(page))?))?;
             for (column, zones) in group.columns.iter().enumerate().filter(|_| by_column) {
                 for zone in zones {
                     add(&mut held, (column, zone), (&pages, page)).ok()?;

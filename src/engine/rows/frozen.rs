@@ -31,6 +31,7 @@
 
 mod batches;
 mod counts;
+pub(super) mod extents;
 mod fetched;
 mod freeze;
 mod late;
@@ -39,6 +40,7 @@ mod ordered;
 mod rewrite;
 mod sampled;
 pub(super) use sampled::Chosen;
+mod loaded;
 mod shadow_bits;
 mod stamped;
 mod summarized;
@@ -140,6 +142,9 @@ pub(super) struct Entry {
     slot: Arc<Slot>,
     pool: Arc<BufferPool>,
     file: FileId,
+    /// Of a group written as an extent, its segment, held while the entry
+    /// is, and where the extent starts in it (RULES.md D1146).
+    extent: Option<(Arc<extents::Segment>, u64)>,
     /// Its pages, once it is retired.
     retired: Mutex<Option<Vec<PageId>>>,
     /// Who made it, if not committed before every snapshot (`stamped.rs`).
@@ -148,8 +153,9 @@ pub(super) struct Entry {
 
 impl Drop for Entry {
     fn drop(&mut self) {
-        self.headers.forget((self.file, self.summary.header));
-        if let Some(pages) = lock_builtin(&self.retired).take() {
+        self.headers.forget(self.header_key());
+        // An extent's pages are its segment's, given up with it.
+        if let Some(pages) = lock_builtin(&self.retired).take().filter(|_| self.extent.is_none()) {
             for page in pages {
                 let _ = self.pool.free(self.file, page);
             }
@@ -158,6 +164,16 @@ impl Drop for Entry {
 }
 
 impl Entry {
+    /// Where the pool holds its group's header: its file and first page.
+    fn header_key(&self) -> (FileId, PageId) {
+        (self.file, PageId(self.base().saturating_add(self.summary.header.0)))
+    }
+
+    /// Where its extent starts in its segment, 0 if it is on pages.
+    fn base(&self) -> u64 {
+        self.extent.as_ref().map_or(0, |(_, base)| *base)
+    }
+
     /// Marks it retired, `pages`, its group's, freed when the last reader
     /// is done.
     fn retire(&self, pages: Vec<PageId>) {
@@ -252,6 +268,8 @@ pub(super) struct Frozen {
     /// A load whose rows go straight to groups, and the groups recovery
     /// has yet to settle (`stamped.rs`).
     loads: Loads,
+    /// The segments its loads write their groups to (`extents.rs`).
+    pub(super) extents: Arc<extents::Extents>,
 }
 
 /// What `Frozen::freezing_from` holds while no freeze is under way.
@@ -275,6 +293,7 @@ impl Frozen {
             groups_end: AtomicU64::new(0),
             trust_bits: std::sync::atomic::AtomicBool::new(true),
             loads: Loads::default(),
+            extents: Arc::default(),
         }
     }
 
@@ -338,7 +357,18 @@ impl RowTable {
         let columns = self.frozen.columns();
         let (compress, pax, imprints) =
             (columns.is_none_or(|c| c.compress), columns.is_some_and(|c| c.pax), columns.is_some_and(|c| c.imprints));
-        Ok(Pages { pool: &self.pool, file: self.file, capacity, sealing: &self.sealing, compress, pax, imprints, kernels: &*self.kernels })
+        Ok(Pages {
+            pool: &self.pool,
+            file: self.file,
+            capacity,
+            sealing: &self.sealing,
+            compress,
+            pax,
+            imprints,
+            kernels: &*self.kernels,
+            base: 0,
+            sink: None,
+        })
     }
 
     /// The group of `entry`: its header as held, else read and held.
@@ -350,8 +380,8 @@ impl RowTable {
         if let Some(group) = entry.slot.get() {
             return Ok(group);
         }
-        let group = Arc::new(group::read(&self.group_pages()?, entry.summary.header, self.format.types())?);
-        self.headers.put((self.file, entry.summary.header), &entry.slot, &group);
+        let group = Arc::new(group::read(&self.pages_of(entry)?, entry.summary.header, self.format.types())?);
+        self.headers.put(entry.header_key(), &entry.slot, &group);
         Ok(group)
     }
 
@@ -399,7 +429,7 @@ impl RowTable {
         if summaries.len() != count {
             return Err(corrupt("its groups' directory is not whole"));
         }
-        let groups = self.unstamped(summaries.into_iter().map(|s| self.entry(s)).collect(), &stamps);
+        let groups = self.unstamped(self.placed_entries(summaries)?, &stamps);
         if groups.windows(2).any(|w| w.first().zip(w.get(1)).is_some_and(|(a, b)| a.summary.last >= b.summary.first)) {
             return Err(corrupt("its groups' row ids overlap"));
         }
@@ -410,15 +440,17 @@ impl RowTable {
         self.mark_opened()
     }
 
-    /// The group `summary` sums up, as an entry of the directory.
-    fn entry(&self, summary: Summary) -> Arc<Entry> {
+    /// The group `summary` sums up, as an entry of the directory, in
+    /// `extent`'s segment if given, else on its table's pages.
+    fn entry_in(&self, summary: Summary, extent: Option<(Arc<extents::Segment>, u64)>) -> Arc<Entry> {
         Arc::new(Entry {
             shadow: ShadowBits::new(summary.first, summary.last),
             summary,
             headers: Arc::clone(&self.headers),
             slot: Arc::default(),
             pool: Arc::clone(&self.pool),
-            file: self.file,
+            file: extent.as_ref().map_or(self.file, |(segment, _)| segment.file),
+            extent,
             retired: Mutex::new(None),
             made: AtomicU64::new(0),
         })
@@ -427,14 +459,15 @@ impl RowTable {
     /// `group`, just written, as an entry of the directory, its header held.
     fn entry_of(&self, group: Group) -> Result<Arc<Entry>> {
         let header = *group.header.first().ok_or_else(|| corrupt("a group has no header"))?;
-        let entry = self.entry(Summary::of(&group, header));
-        self.headers.put((self.file, header), &entry.slot, &Arc::new(group));
+        let entry = self.entry_in(Summary::of(&group, header), None);
+        self.headers.put(entry.header_key(), &entry.slot, &Arc::new(group));
         Ok(entry)
     }
 
     /// Stores `directory`, and names it in the meta page; frees the one
     /// stored before.
     fn store_directory(&self, directory: &Directory) -> Result<()> {
+        self.frozen.extents.name(directory.groups.iter().map(|e| &e.summary));
         let mut bytes = stamped::count_of(directory)?;
         for e in &directory.groups {
             group::put_summary(&mut bytes, &e.summary, self.format.types())?;

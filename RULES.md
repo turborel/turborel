@@ -733,6 +733,11 @@ verification approach DO-178C expects (§8).
 | D1141 | A log record as long as the buffer reaches its segment after the bytes the buffer holds |
 | D1142 | Loads into a column store table at once each write their own groups, no lock taken alone |
 | D1143 | A clean close keeps the groups of every load committed, settled or not |
+| D1144 | A chunk of a column is sized once, in the plan found as its values were fitted |
+| D1145 | A load sorts its group's rows by reference, none copied |
+| D1146 | A load writes its groups to segments of its own, never through the buffer pool |
+| D1147 | A load into a table that qualifies for extents goes to groups unless told otherwise |
+| D1149 | A load's group held in memory is charged to the budget until it is logged |
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
 | D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
@@ -19989,6 +19994,112 @@ takes its groups out of the directory, so each group stored is of a load
 that committed. A crash still leaves recovery to judge each group by
 the transactions it redoes, as before. A replica opened to follow keeps
 its groups apart, its loads being the primary's.
+
+#### D1144. A chunk of a column is sized once, in the plan found as its values were fitted
+
+A group's column was cut into chunks one at a time (D31). Each chunk's
+values were added to a sizer until the next passed the page, the sizer
+asked after every value which encoding took fewest bytes. A new sizer
+then took the same values again to choose that encoding for the chunk.
+The width the column's values share was found again over the whole
+column for each chunk, and each value was copied twice before it was
+written. A load of wide rows spent most of its time there.
+
+The plan found as the last value that fits was added is the plan a
+sizer of those values chooses, so it is kept and the chunk is written
+in it (`Fields::chunks`). The width is found once, as the fields are
+made. The sizer weighs each encoding as it finds it, keeping the first
+of the fewest bytes as before, with no list made, and keeps its
+dictionary's entries by XXH3. The fields are made of the values as they
+are, not of copies. Each chunk is the same, byte for byte.
+
+#### D1145. A load sorts its group's rows by reference, none copied
+
+A load written straight to groups (D533) sorts each group's rows by
+COLUMNSTORE.ORDER before it writes them. It sorted copies of them, every
+value of every row copied, since the rows given are still logged and
+indexed after. Writing a group reads each row's values only, so the
+group is now written of the rows where they are, sorted by reference
+(`frozen/stamped.rs`); the freeze, which owns the rows it freezes,
+sorts them as before. The group written is the same.
+
+#### D1146. A load writes its groups to segments of its own, never through the buffer pool
+
+A load straight to groups (D533) wrote each group's pages through the
+buffer pool as dirty frames of the data file, and each checkpoint wrote
+them again by way of its shadow file. Several loads at once held most
+of the pool as dirty frames, the server's memory grew with them, and
+every byte was written three times. A load into a table of the column
+store of no index now writes each group it makes as an extent of a
+segment (`rows/frozen/extents.rs`). A segment is a block file of the
+database's `groups` directory, `g<table>-<n>`, and each loading stream
+takes one no other stream appends to, so its groups follow one another.
+The group is framed in memory as it is written, each page a block
+numbered by its offset within the extent, after a head block that names
+its rows, its length and a digest of the rest (`group/sink.rs`). The
+directory names a group by its segment, its offset and its length.
+The pool reads an extent's blocks as it reads any block file's, clean,
+and a scan reads ahead of it a megabyte at a time.
+
+A segment takes no more extents past 1 GiB. Below, it should hold some
+fifty of the largest groups, some 20 MB each; above, a segment is given
+back only whole, once no group stored names it, so its size bounds the
+space a table's dropped groups can hold.
+
+The group is logged as one record, its extent the record's last field
+(GROUP_LOADED), in place of a record of its rows. So its bytes are
+written twice, to its segment and to the log. The log must carry them,
+since a standby and a recovery to a point in time from the archive have
+only the log to make the group from. The record is written from the
+extent's own buffer, which went to the segment, its head apart, so the
+group is copied for neither (`Txn::log_parts`). Recovery redoes a
+committed load's group by appending its extent to a segment of the
+table again, wherever it lands, as its pages are numbered within it; a
+table of no segments, of a database in memory following one on disk,
+writes the group again on pages. A group too large for one block of
+the log, past half its longest, goes to pages and is logged as rows.
+
+A checkpoint syncs each segment appended to since the last before its
+batch is committed, then removes each segment no stored directory
+names, no stream holds and no reader still reads. Opened, a table cuts
+each segment it names to the end of the last group named in it, so a
+crash's torn extent and the groups no checkpoint named are gone, and
+removes its other segments; recovery appends the committed ones again
+from the log. A dropped table's segments go once a checkpoint after the
+drop is committed. An export and a backup carry the segments as files
+of the database.
+
+A table with an index keeps its groups on pages and logs its rows, so
+recovery takes back its index entries from the rows' images as before.
+The row store and a write of a single row are untouched. The store's
+format is new and its versions stay 1, so data loaded before must be
+loaded again.
+
+#### D1147. A load into a table that qualifies for extents goes to groups unless told otherwise
+
+COLUMNSTORE.LOAD was TREE unless set, so a load into the column store
+went through the table's tree and was written again as it froze, and
+then by the checkpoints, unless the table asked for GROUPS. It is now
+DEFAULT unless set. A load (D532) under DEFAULT goes straight to groups
+(D533), as extents of segments (D1146), if its table qualifies for
+them: no index, no constraint but NOT NULL, and no column of a large
+object; a table a trigger, a foreign key or an assertion reads loads
+none at all, as before. Any other table, and every write that is no
+load, a single row's INSERT or a few rows', goes to the tree. TREE and
+GROUPS set stay what they were, either way. Where a load's rows land
+changes no result of any statement, only how often they are written.
+
+#### D1149. A load's group held in memory is charged to the budget until it is logged
+
+A group a load writes to a segment (D1146) is framed whole in memory,
+some 20 MB of a wide table's 65,536 rows, and held until its record is
+in the log. Its bytes are charged to the budget of the work areas from
+when it is framed until its record is written, and the load fails with
+SQLCODE -918 if the budget cannot hold them, as a work area's grant
+does (D38). So the memory of loads at once is bounded by one group in
+flight a stream, and is seen by the budget. The rows of the batch each
+group is made of are held as the statement's held rows, which spill
+within their own grant as before.
 
 #### D1150. A morsel's rows are made as they are read and charged to the part's grant as they are gathered
 

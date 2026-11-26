@@ -45,8 +45,10 @@ impl RowTable {
                 bytes = older;
             }
         }
-        // Its groups' pages go with the last reader of them.
+        // Its groups' pages go with the last reader of them; its segments
+        // once a checkpoint without it is committed (RULES.md D1146).
         self.retire_all()?;
+        self.frozen.extents.dropped();
         if self.frozen.stored() != 0 {
             let pages = self.group_pages()?;
             let (_, chain) = crate::engine::columns::group::read_chain(&pages, crate::disk::pager::PageId(self.frozen.stored()))?;

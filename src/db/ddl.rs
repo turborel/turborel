@@ -157,6 +157,7 @@ impl State {
             }
             Change::Insert { .. }
             | Change::InsertRows { .. }
+            | Change::GroupLoaded(_)
             | Change::Update { .. }
             | Change::Delete { .. }
             | Change::Commit { .. }
@@ -198,6 +199,7 @@ impl State {
                 Change::Schema { sql, engines, .. } => super::staged_schema::schema_tables(sql, engines),
                 Change::Insert { .. }
                 | Change::InsertRows { .. }
+                | Change::GroupLoaded(_)
                 | Change::Update { .. }
                 | Change::Delete { .. }
                 | Change::Commit { .. }

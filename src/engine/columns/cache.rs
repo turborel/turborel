@@ -268,6 +268,7 @@ mod tests {
             sketched: Vec::new(),
             sketches: Vec::new(),
             header: vec![PageId(first)],
+            place: (FileId(0), 0),
         })
     }
 

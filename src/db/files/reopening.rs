@@ -10,6 +10,7 @@ use super::Place;
 use crate::catalog::{IndexDesc, TableDesc};
 use crate::db::State;
 use crate::disk::io::FileSystem;
+use crate::engine::rows::SegmentPlace;
 use crate::error::Result;
 use crate::files::plugins::PLUGINS;
 use crate::index::{Index, IndexMethod};
@@ -101,4 +102,18 @@ pub(super) fn undo_log(place: &Place<'_>) -> Result<Arc<dyn Log>> {
     let options = FileLogOptions { pipeline: place.layout.formats.pipeline.clone(), ..place.options.undo.clone() };
     let log = FileLog::create(Arc::clone(place.fs), &dir, Arc::clone(&place.layout.formats.hash), options)?;
     Ok(Arc::new(log.telling(Arc::clone(&place.events))))
+}
+
+/// The directory of the segments of loads' groups.
+const GROUPS: &str = "groups";
+
+/// \[DESIGN\] Where the database's loads write their groups (RULES.md
+/// D1146): its `groups` directory, not shadowed.
+///
+/// # Errors
+///
+/// SQLCODE -915 if the directory cannot be made or read.
+pub(super) fn segment_place(place: &Place<'_>) -> Result<Arc<SegmentPlace>> {
+    let dir = place.path(GROUPS);
+    Ok(Arc::new(SegmentPlace::new(Arc::clone(place.fs), dir, Arc::clone(&place.layout.formats.hash))?))
 }

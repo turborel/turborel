@@ -161,6 +161,13 @@ impl BufferPool {
         self.add(Source::Blocks(blocks))
     }
 
+    /// Registers a block file read through the pool while its owner holds
+    /// it: once it is dropped, its file is closed, and a read of it refused
+    /// (RULES.md D1146).
+    pub fn add_held_blocks(&self, blocks: &Arc<BlockFile>) -> FileId {
+        self.add(Source::Held(Arc::downgrade(blocks)))
+    }
+
     /// A file past the most a pool registers (`sources.rs`) is given a
     /// number no file has, so every use of it is refused.
     fn add(&self, source: Source) -> FileId {
@@ -174,11 +181,20 @@ impl BufferPool {
             .ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] no file {} is registered with the buffer pool", file.0)))
     }
 
+    /// The block file registered as `file`, if it is one (RULES.md D1146).
+    pub(super) fn blocks(&self, file: FileId) -> Option<Arc<BlockFile>> {
+        match self.source(file) {
+            Ok(Source::Blocks(blocks)) => Some(Arc::clone(blocks)),
+            Ok(Source::Held(held)) => held.upgrade(),
+            _ => None,
+        }
+    }
+
     /// The pager file registered as `file`.
     pub(super) fn pager(&self, file: FileId) -> Result<&Arc<Pager>> {
         match self.source(file)? {
             Source::Pages(pager) => Ok(pager),
-            Source::Blocks(_) => {
+            Source::Blocks(_) | Source::Held(_) => {
                 Err(SqlError::new(Code::Api, format!("[DESIGN] file {} is a block file: its blocks are only read", file.0)))
             }
         }
@@ -520,6 +536,10 @@ impl BufferPool {
         match self.source(key.file)? {
             Source::Pages(pager) => pager.read(PageId(key.id), content),
             Source::Blocks(blocks) => blocks.read_into(BlockId(key.id), content).map(|_| ()),
+            Source::Held(held) => match held.upgrade() {
+                Some(blocks) => blocks.read_into(BlockId(key.id), content).map(|_| ()),
+                None => Err(SqlError::new(Code::Api, format!("[DESIGN] the block file {} is closed", key.file.0))),
+            },
         }
     }
 

@@ -80,7 +80,7 @@ pub(super) fn hold_back(st: &State, tx: &Txn, together: &mut Together<'_>) -> Re
 /// goes on.
 fn grouped(tx: &Txn, together: &Together<'_>) -> Result<Option<usize>> {
     let Some(loading) = together.storage.loading() else { return Ok(None) };
-    let grouped = loading.begin_load(tx.id)?;
+    let grouped = loading.begin_load(tx.id, together.qualifies)?;
     if grouped.is_none() {
         loading.end_load(tx.id);
     }

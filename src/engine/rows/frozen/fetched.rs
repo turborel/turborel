@@ -17,8 +17,8 @@ impl RowTable {
     /// `directory` holds it.
     pub(in crate::engine::rows) fn frozen_in(&self, directory: &Directory, id: RowId, columns: Option<&[usize]>) -> Result<Option<Row>> {
         let Some(entry) = directory.holding(id) else { return Ok(None) };
-        let pages = self.group_pages()?;
         let group = self.group_of(entry)?;
+        let pages = self.pages_for(&group)?;
         let Some(position) = group.position(&pages, id)? else { return Ok(None) };
         let types = self.format.types();
         let mut row = vec![Value::Null; types.len()];
@@ -42,8 +42,8 @@ impl RowTable {
         let directory = self.frozen.directory()?;
         let seen = |e: &&std::sync::Arc<super::Entry>| e.stamp() == 0 || reader.sees(self.group_maker(e));
         let Some(entry) = directory.holding(id).filter(seen) else { return Ok(false) };
-        let pages = self.group_pages()?;
         let group = self.group_of(entry)?;
+        let pages = self.pages_for(&group)?;
         let Some(position) = group.position(&pages, id)? else { return Ok(false) };
         let types = self.format.types();
         let before = out.len();

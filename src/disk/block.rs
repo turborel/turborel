@@ -39,6 +39,7 @@ mod counts;
 mod cursor;
 mod fill;
 mod format;
+mod parts;
 #[cfg(test)]
 mod publish;
 mod stream;
@@ -57,6 +58,7 @@ pub use counts::BlockCounts;
 use counts::{Counters, add};
 pub use cursor::Cursor;
 pub use format::{FORMAT_VERSION, HEADER_LEN};
+pub use parts::{frame_onto, framed_len};
 pub use stream::{Available, BlockReader, BlockWriter, STREAM_HEADER};
 pub(crate) use tail::damaged;
 
