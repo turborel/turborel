@@ -8,35 +8,34 @@
 //! no page together, of values too long, are each written as the column
 //! layout writes them, a chunk of each column on a page of its own.
 
+use super::column::Column;
 use super::{Pages, Run, Seal, Zone, count32, put_filters, zone_of};
 use crate::disk::pager::PageId;
 use crate::engine::columns::Fields;
 use crate::error::Result;
-use crate::value::{DataType, Value};
+use crate::value::DataType;
 
-/// Writes `rows`, a column of each of `types`, in the hybrid layout, a
-/// Bloom filter of each part of the columns at `bloom`: each column's
-/// zones, in order.
-pub(super) fn write_pax<S: Seal, R: AsRef<[Value]>>(
+/// Writes rows, a column of each of `types`, `fields` their values written
+/// and `values` them read, in the hybrid layout, a Bloom filter of
+/// each part of the columns at `bloom`: each column's zones, in order.
+pub(super) fn write_pax<S: Seal, C: Column>(
     pages: &Pages<'_, S>,
     types: &[DataType],
-    (rows, bloom): (&[R], &[usize]),
+    (fields, values, bloom): (&[Fields<'_>], &[C], &[usize]),
     written: &mut Vec<PageId>,
 ) -> Result<Vec<Vec<Zone>>> {
-    let values: Vec<Vec<Value>> =
-        (0..types.len()).map(|c| rows.iter().map(|r| r.as_ref().get(c).cloned().unwrap_or(Value::Null)).collect()).collect();
-    let fields = values.iter().zip(types).map(|(v, t)| Fields::of(t, v.iter())).collect::<Result<Vec<_>>>()?;
-    let columns: Vec<(&Fields, &DataType)> = fields.iter().zip(types).collect();
+    let columns: Vec<(&Fields<'_>, &DataType)> = fields.iter().zip(types).collect();
+    let count = fields.iter().map(Fields::len).min().unwrap_or(0);
     let mut zones: Vec<Vec<Zone>> = vec![Vec::new(); types.len()];
     let mut from = 0_usize;
-    while from < rows.len() {
-        let count = Fields::fitting_together(&columns, from, (pages.capacity, pages.compress));
-        let runs = match page_of(pages, &columns, (from, count), written)? {
+    while from < count {
+        let fit = Fields::fitting_together(&columns, from, (pages.capacity, pages.compress));
+        let runs = match page_of(pages, &columns, (from, fit), written)? {
             Some(runs) => runs,
             None => apart(pages, &columns, from, written)?,
         };
         let step = runs.first().map_or(1, |r| usize::try_from(r.rows).unwrap_or(1)).max(1);
-        for ((column, held), run) in zones.iter_mut().zip(&values).zip(runs) {
+        for ((column, held), run) in zones.iter_mut().zip(values).zip(runs) {
             column.push(zone_of(held, run));
         }
         from = from.saturating_add(step);
@@ -54,7 +53,7 @@ pub(super) fn write_pax<S: Seal, R: AsRef<[Value]>>(
 /// or their chunks are too long for a page together after all.
 fn page_of<S: Seal>(
     pages: &Pages<'_, S>,
-    columns: &[(&Fields, &DataType)],
+    columns: &[(&Fields<'_>, &DataType)],
     (from, count): (usize, usize),
     written: &mut Vec<PageId>,
 ) -> Result<Option<Vec<Run>>> {
@@ -78,7 +77,7 @@ fn page_of<S: Seal>(
 
 /// Writes the row at `from` as the column layout does, a chunk of each of
 /// `columns` on a page of its own: each chunk's run.
-fn apart<S: Seal>(pages: &Pages<'_, S>, columns: &[(&Fields, &DataType)], from: usize, written: &mut Vec<PageId>) -> Result<Vec<Run>> {
+fn apart<S: Seal>(pages: &Pages<'_, S>, columns: &[(&Fields<'_>, &DataType)], from: usize, written: &mut Vec<PageId>) -> Result<Vec<Run>> {
     let first = count32(from)?;
     columns.iter().map(|&(f, t)| Ok(Run::whole(first, 1, pages.put(&f.chunk(t, from, (1, pages.compress))?, written)?))).collect()
 }

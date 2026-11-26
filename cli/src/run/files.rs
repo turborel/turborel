@@ -8,7 +8,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use turborel_client::import::{Cause, DEFAULT_BATCH, Delimited, Dialect, Import, Rejected, rows};
+use turborel_client::import::{Cause, DEFAULT_BATCH, Delimited, Dialect, Import, ImportError, Imported, Rejected, rows};
 
 use super::{MAX_INCLUDES, Next, Outcome, Shell, Statements, cancelled};
 use crate::export::{self, Export};
@@ -43,7 +43,10 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     /// options say.
     pub(super) fn import(&mut self, path: &Path) -> Next {
         let Some(importing) = &self.options.import else { return self.tell("[DESIGN] --import needs --table", Next::Stop) };
-        let (into, dialect) = (importing.into.clone(), importing.dialect.clone());
+        let (into, dialect, jobs) = (importing.into.clone(), importing.dialect.clone(), importing.jobs);
+        if jobs > 1 {
+            return self.import_jobs(path, &into, &dialect, jobs);
+        }
         self.import_rows(path, &into, dialect)
     }
 
@@ -53,8 +56,9 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
     ///
     /// The rows go by the protocol's bulk copy, a batch to a copy that
     /// commits it, where the server grants `copy` and no bad row is to be
-    /// skipped; else through one prepared INSERT, a batch to a transaction
-    /// (`turborel_client::import`, RULES.md D195).
+    /// skipped, by column where it grants `columns` too; else through one
+    /// prepared INSERT, a batch to a transaction (`turborel_client::import`,
+    /// RULES.md D195, D1148).
     fn import_rows(&mut self, path: &Path, into: &Import, dialect: Dialect) -> Next {
         let file = match File::open(path) {
             Ok(file) => file,
@@ -66,6 +70,14 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
         // Nothing is left to tell a failure to write a failure to.
         let mut told = |row: Rejected| drop(writeln!(err, "turborel: {shown}: {row}"));
         let done = self.connection.import(&mut source, into, &mut told);
+        self.imported(&shown.to_string(), done)
+    }
+
+    /// Says what an import of the file `shown` did, `done`: the rows
+    /// imported and skipped, a row skipped a failure; or why it stopped,
+    /// the run then going on unless it was cancelled, the connection was
+    /// lost or STOP_ON_ERROR ends it.
+    pub(super) fn imported(&mut self, shown: &str, done: Result<Imported, ImportError>) -> Next {
         match done {
             Ok(imported) => {
                 // A row skipped is a failure, told as it was skipped.

@@ -10,6 +10,7 @@
 //!        least, of bits | each run's end, of the bits the count needs
 //! ```
 
+use super::fields::Cells;
 use super::packed::{bits_for, get, pack, packed_len};
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
@@ -31,10 +32,10 @@ pub(super) struct Runs<'a> {
 
 /// The value each of `fields` holds, a null the one before it's, the
 /// leading ones the first's.
-fn held(fields: &[Option<Vec<u8>>]) -> impl Iterator<Item = i64> + '_ {
-    let first = fields.iter().flatten().find_map(|f| integer(f)).unwrap_or(0);
+fn held(fields: Cells<'_>) -> impl Iterator<Item = i64> + '_ {
+    let first = fields.iter().flatten().find_map(integer).unwrap_or(0);
     fields.iter().scan(first, |last, f| {
-        if let Some(n) = f.as_deref().and_then(integer) {
+        if let Some(n) = f.and_then(integer) {
             *last = n;
         }
         Some(*last)
@@ -54,7 +55,7 @@ pub(super) fn runs_len((count, runs, bits): (usize, usize, u32)) -> Option<usize
 
 /// Appends `fields`, of 8 bytes each, as runs of values less `least`, each
 /// in `bits`.
-pub(super) fn encode(fields: &[Option<Vec<u8>>], (least, bits): (i64, u32), out: &mut Vec<u8>) -> Result<()> {
+pub(super) fn encode(fields: Cells<'_>, (least, bits): (i64, u32), out: &mut Vec<u8>) -> Result<()> {
     let (mut values, mut ends) = (Vec::new(), Vec::new());
     let mut previous: Option<i64> = None;
     for (n, v) in held(fields).enumerate() {

@@ -2,10 +2,12 @@
 //! added since, each behind its capability (`added.rs`).
 
 mod added;
+mod columns;
 
 use turborel::bytes::{Put, Reader};
 use turborel::error::Result;
 use turborel::storage::Row;
+use turborel::storage::lanes::Lanes;
 use turborel::value::Value;
 use turborel::value::types::TypeRegistry;
 
@@ -174,6 +176,10 @@ pub enum Request {
     },
     /// \[DESIGN\] Rows of the copy in progress.
     CopyData(Vec<Row>),
+    /// \[DESIGN\] With `columns`, rows of the copy in progress by column,
+    /// each cell the text of a field, or null (`request/columns.rs`,
+    /// RULES.md D1148).
+    CopyColumns(Lanes),
     /// \[DESIGN\] The copy's end: a Complete of the rows it inserted, or an
     /// Error; every row undone if `abandon`.
     CopyEnd {
@@ -189,14 +195,7 @@ impl Request {
     /// Appends this request, framed, to `out`.
     pub fn encode(&self, out: &mut Vec<u8>) {
         match self {
-            Request::Hello { version, user, mechanism, initial, capabilities, attributes } => frame(out, HELLO, |b| {
-                b.put_u32(*version);
-                b.put_str(user);
-                b.put_str(mechanism);
-                b.put_bytes(initial);
-                put_strs(b, capabilities);
-                put_attributes(b, ATTRIBUTES, attributes);
-            }),
+            Request::Hello { .. } => frame(out, HELLO, |b| self.put_hello(b)),
             Request::Answer(bytes) => frame(out, ANSWER, |b| b.put_bytes(bytes)),
             Request::Query { sql, ends, attributes, multi } => frame(out, QUERY, |b| {
                 b.put_str(sql);
@@ -235,6 +234,7 @@ impl Request {
             | Request::ChangeUser { .. }
             | Request::CopyIn { .. }
             | Request::CopyData(_)
+            | Request::CopyColumns(_)
             | Request::CopyEnd { .. }
             | Request::Debug(_) => self.encode_added(out),
         }
@@ -287,6 +287,20 @@ impl Request {
         };
         r.finish()?;
         Ok(request)
+    }
+}
+
+impl Request {
+    /// Appends a Hello's body to `b`, its attributes in its tail; nothing
+    /// of another request.
+    fn put_hello(&self, b: &mut Vec<u8>) {
+        let Request::Hello { version, user, mechanism, initial, capabilities, attributes } = self else { return };
+        b.put_u32(*version);
+        b.put_str(user);
+        b.put_str(mechanism);
+        b.put_bytes(initial);
+        put_strs(b, capabilities);
+        put_attributes(b, ATTRIBUTES, attributes);
     }
 }
 

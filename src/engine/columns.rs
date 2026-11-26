@@ -26,6 +26,7 @@ mod alp;
 mod bloom;
 pub mod cache;
 mod encoded;
+mod fields;
 mod fsst;
 pub mod group;
 pub mod imprints;
@@ -37,13 +38,14 @@ pub mod scan;
 pub mod sketch;
 
 pub(crate) use encoded::kind_name;
+pub use fields::Fields;
 pub(crate) use packed::unpack_words;
 
 use crate::error::{Code, Result, SqlError};
 use crate::storage::Mask;
 use crate::value::{CharUnits, DataType, Value};
 
-use encoded::{Body, Entries, Sizer};
+use encoded::{Body, Entries};
 use fsst::Symbols;
 
 /// Bytes of a count, a width or an offset.
@@ -78,160 +80,6 @@ fn read_word(bytes: &[u8], at: usize) -> Result<usize> {
     let end = at.checked_add(WORD).ok_or_else(|| corrupt("it is too short"))?;
     let b = bytes.get(at..end).and_then(|b| <[u8; WORD]>::try_from(b).ok()).ok_or_else(|| corrupt("it is too short"))?;
     usize::try_from(u32::from_le_bytes(b)).map_err(|_| corrupt("a count is too large"))
-}
-
-/// The width every value of `t` in `fields` is written in, if they all are.
-fn width_of(fields: &[Option<Vec<u8>>], t: &DataType) -> Option<usize> {
-    let width = t.kind().record_width(t)?;
-    fields.iter().flatten().all(|f| f.len() == width).then_some(width)
-}
-
-/// The values of a column, each as its type writes it in a record, none
-/// for a null.
-pub struct Fields(Vec<Option<Vec<u8>>>, std::sync::OnceLock<Option<fsst::Table>>, Option<usize>);
-
-impl Fields {
-    /// `values`, of type `t`, written.
-    ///
-    /// # Errors
-    ///
-    /// As `SqlType::encode_record` says.
-    pub fn of<V: std::borrow::Borrow<Value>>(t: &DataType, values: impl Iterator<Item = V>) -> Result<Fields> {
-        let fields: Vec<Option<Vec<u8>>> =
-            values.map(|v| if v.borrow().is_null() { Ok(None) } else { t.encode_record(v.borrow()).map(Some) }).collect::<Result<_>>()?;
-        // [DESIGN] RULES.md D1144: the width the fields share, found once, not again of each chunk.
-        let width = width_of(&fields, t);
-        Ok(Fields(fields, std::sync::OnceLock::new(), width))
-    }
-
-    /// How many there are.
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    /// Whether there are none.
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    /// How many of those from `from` on fit a chunk of `capacity` bytes, of
-    /// type `t`, compressed if `compress`; at least one, so a value longer
-    /// than a chunk has one of its own.
-    pub fn fitting(&self, t: &DataType, from: usize, (capacity, compress): (usize, bool)) -> usize {
-        self.fitting_planned(t, from, (capacity, compress)).0
-    }
-
-    /// As `fitting`, with the encoding the chunk of those that fit takes,
-    /// as `chunk` would choose it of them (RULES.md D1144): the plan found
-    /// as the last that fits was added, of the same values in the same
-    /// order. A value alone longer than a chunk is given no plan.
-    fn fitting_planned(&self, t: &DataType, from: usize, (capacity, compress): (usize, bool)) -> (usize, Option<encoded::Plan>) {
-        let rest = self.0.get(from..).unwrap_or_default();
-        let mut sizer = self.sizer(t, compress);
-        let mut fits = None;
-        for (n, field) in rest.iter().enumerate() {
-            sizer.add(field.as_deref());
-            let (plan, bytes) = sizer.best();
-            if bytes > capacity {
-                return if n == 0 { (1, None) } else { (n, fits) };
-            }
-            fits = Some(plan);
-        }
-        (rest.len(), fits)
-    }
-
-    /// A sizer of its values, of type `t`, compressed if `compress`.
-    fn sizer(&self, t: &DataType, compress: bool) -> Sizer<'_> {
-        Sizer::new(self.2, (compress, matches!(t, DataType::Approximate { .. })), self.table(t, compress))
-    }
-
-    /// \[DESIGN\] (RULES.md D31) How many rows from `from` on fit one page
-    /// of `capacity` bytes together, a chunk of each of `columns`, each
-    /// fields and their type, compressed if `compress`: none if even the
-    /// first row's chunks do not (the hybrid layout, `group/pax.rs`).
-    pub fn fitting_together(columns: &[(&Fields, &DataType)], from: usize, (capacity, compress): (usize, bool)) -> usize {
-        let mut sizers: Vec<Sizer<'_>> = columns.iter().map(|&(f, t)| f.sizer(t, compress)).collect();
-        let end = columns.iter().map(|(f, _)| f.len()).min().unwrap_or(0);
-        for n in from..end {
-            let mut size = 0_usize;
-            for (&(f, _), sizer) in columns.iter().zip(&mut sizers) {
-                sizer.add(f.0.get(n).and_then(Option::as_deref));
-                size = size.saturating_add(sizer.best().1);
-            }
-            if size > capacity {
-                return n.saturating_sub(from);
-            }
-        }
-        end.saturating_sub(from)
-    }
-
-    /// The chunk of those from `from`, `count` of them, of type `t`, in the
-    /// encoding that takes fewest bytes, compressed if `compress`.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -900 if it is longer than a count describes; -916 if those
-    /// asked for are not all there.
-    pub fn chunk(&self, t: &DataType, from: usize, (count, compress): (usize, bool)) -> Result<Vec<u8>> {
-        self.chunk_planned(t, (from, count), (compress, None))
-    }
-
-    /// The chunks of those from `from` on, each as many as fit one of
-    /// `capacity` bytes, of type `t`, compressed if `compress`, with where
-    /// each begins and how many it holds: each sized once (RULES.md D1144).
-    ///
-    /// # Errors
-    ///
-    /// As `chunk`.
-    pub fn chunks(&self, t: &DataType, (capacity, compress): (usize, bool)) -> Result<Vec<(usize, usize, Vec<u8>)>> {
-        let mut made = Vec::new();
-        let mut from = 0_usize;
-        while from < self.len() {
-            let (count, plan) = self.fitting_planned(t, from, (capacity, compress));
-            made.push((from, count, self.chunk_planned(t, (from, count), (compress, plan))?));
-            from = from.saturating_add(count);
-        }
-        Ok(made)
-    }
-
-    /// As `chunk`, in `plan` if given, as a sizer of the same values chose it.
-    fn chunk_planned(
-        &self,
-        t: &DataType,
-        (from, count): (usize, usize),
-        (compress, plan): (bool, Option<encoded::Plan>),
-    ) -> Result<Vec<u8>> {
-        let end = from.checked_add(count).ok_or_else(too_large)?;
-        let fields = self.0.get(from..end).ok_or_else(|| corrupt("its values are out of range"))?;
-        let mut sizer = self.sizer(t, compress);
-        let plan = plan.unwrap_or_else(|| {
-            for f in fields {
-                sizer.add(f.as_deref());
-            }
-            sizer.best().0
-        });
-        let mut out = vec![encoded::kind_of(plan)];
-        out.extend_from_slice(&word(count)?);
-        let mut nulls = vec![0_u8; nulls_len(count)];
-        for (n, field) in fields.iter().enumerate() {
-            let (byte, bit) = bit_of(n);
-            if let Some(b) = nulls.get_mut(byte).filter(|_| field.is_none()) {
-                *b |= 1 << bit;
-            }
-        }
-        out.extend_from_slice(&nulls);
-        // A dictionary of texts in order, so a range is a range of codes.
-        encoded::encode(plan, fields, (sizer.table(), padding(t).is_some()), &mut out)?;
-        Ok(out)
-    }
-
-    /// Of texts of a VARCHAR type `t`, compressed if `compress`, the table
-    /// of symbols chosen of them all once (`fsst.rs`), each chunk then
-    /// sized and written by it.
-    fn table(&self, t: &DataType, compress: bool) -> Option<&fsst::Table> {
-        let (DataType::Varying { .. }, true) = (t, compress) else { return None };
-        self.1.get_or_init(|| Some(fsst::Table::chosen(&self.0.iter().flatten().map(Vec::as_slice).collect::<Vec<_>>()))).as_ref()
-    }
 }
 
 /// A chunk, read in place.

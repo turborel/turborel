@@ -737,6 +737,7 @@ verification approach DO-178C expects (§8).
 | D1145 | A load sorts its group's rows by reference, none copied |
 | D1146 | A load writes its groups to segments of its own, never through the buffer pool |
 | D1147 | A load into a table that qualifies for extents goes to groups unless told otherwise |
+| D1148 | A load given by column is parsed into each column's type and written as a group with no row of values |
 | D1149 | A load's group held in memory is charged to the budget until it is logged |
 | D1150 | A morsel's rows are made as they are read and charged to the part's grant as they are gathered |
 | D1151 | A probe of a table built for a pipeline's morsels makes its pairs a batch at a time |
@@ -20080,12 +20081,81 @@ went through the table's tree and was written again as it froze, and
 then by the checkpoints, unless the table asked for GROUPS. It is now
 DEFAULT unless set. A load (D532) under DEFAULT goes straight to groups
 (D533), as extents of segments (D1146), if its table qualifies for
-them: no index, no constraint but NOT NULL, and no column of a large
-object; a table a trigger, a foreign key or an assertion reads loads
+them: no index, no constraint but NOT NULL (and, since D1148, CHECKs
+that read no other table), and no column of a large object; a table a trigger, a foreign key or an assertion reads loads
 none at all, as before. Any other table, and every write that is no
 load, a single row's INSERT or a few rows', goes to the tree. TREE and
 GROUPS set stay what they were, either way. Where a load's rows land
 changes no result of any statement, only how often they are written.
+
+#### D1148. A load given by column is parsed into each column's type and written as a group with no row of values
+
+A bulk copy sent each row as values of text, which the server cast one
+cell at a time, gathered as rows, and then took apart again by column
+to write the group. Most of a load's time went to making, casting,
+copying and freeing values that the group never keeps. A copy may now
+send its rows by column as text (the `columns` capability). The server
+parses each column straight into its type, writing each value as its
+type writes it in a record, end to end, and the group is written from
+those columns, its chunks from their records as they are, its zones,
+filters and sketches read from them, and its rows sorted by position.
+No row of values is made.
+
+The rows go so only where nothing they need is given a row alone. That
+is an INSERT into a base table, through no view WITH CHECK OPTION, of no
+identity, generated or self-referencing column; rows checked as they go
+in, so no trigger, deferred constraint or assertion reads the table; a
+table that qualifies for extents (D1147) whose load writes groups; and
+columns of numbers, character strings, datetimes and truth values. A
+column the copy does not name takes its default, the same for each
+row. A NOT NULL constraint is checked by its column's nulls, and a
+CHECK by the columns it reads alone. A CHECK that reads no other table
+no longer keeps a table from qualifying for extents, since it is
+checked as the rows go in either way.
+
+A cell is parsed straight to its record only where the result is sure
+to be the record of the value the cast of its text gives; any other
+cell (one with spaces, an exponent, more digits than the scale or a
+form not plainly its type's) is cast as a value given is. A cast that
+warns, a cell that is no value of its type, or a row that breaks a
+constraint fails the execution, and the copy then inserts those rows
+as rows, one at a time, which names the row and the rule as before.
+Where a load's rows go by column changes no result of any statement.
+
+With `columns`, granted with `copy`, CopyColumns sends a batch of a
+copy's rows by column as text. It holds the count of rows, then of each
+column a bit for each row set where its cell is null, where each cell's
+text ends, and the cells' UTF-8 end to end. A cell is a field's text as
+the file holds it, its quotes taken off, so it is what CopyData would
+carry as a character string, and a null what it would carry as null. A
+frame is checked whole before anything takes it, with a byte of null
+bits for each eight rows and no bit past the last, an end for each row,
+ends that never fall, a null's end where the cell before it ends, the
+last end the text's length, and a column for a frame of rows, so a
+false count cannot make the server hold more than it was sent.
+
+The client library's import goes by column where `columns` is granted,
+no bad row is to be skipped, no column is a large object's or a binary
+string's, and its source splits its records itself. Each field is
+appended to its column's buffers as the record is split, and the
+buffers are kept from batch to batch. A record wrong in any way is
+split again by the row path's splitter, so its failure reads the same.
+Binary string columns stay on the row path, which reads their hexits
+into octets before it sends them (D976).
+
+`--jobs N` imports one file over N connections at once. The file is
+split into N contiguous ranges of bytes of about equal size, each
+beginning just after a line break, the first after the header, and each
+job imports its range on a connection of its own. Contiguous ranges
+keep each job's records a run of the file's, so its groups hold
+neighbouring rows, as rows striped across jobs would not. One pass
+over the file, to the last range's beginning, counts the lines, records
+and, of CSV, quotes before each range, so a range that would begin
+within a quoted field is found before any row is imported, and the
+import is refused saying to use one job. Standard input and any file
+that is not a regular one cannot be read in ranges, and are refused.
+The rows said are every job's, and a job that fails stops the others at
+their next record.
 
 #### D1149. A load's group held in memory is charged to the budget until it is logged
 

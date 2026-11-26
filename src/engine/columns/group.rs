@@ -42,21 +42,23 @@
 //! Integers are little-endian. Every page passes through the table's
 //! encodings, its page number their context.
 
+mod column;
 mod header;
 mod ids;
 mod pax;
 pub mod sink;
 mod summary;
+mod written;
 mod zones;
 
 use std::borrow::Cow;
 
+pub use column::{Column, Decoded, Ordinal, Rowed};
 pub use header::{put_summary, read, read_summaries};
-use ids::{write_by_id, write_ids};
 pub use summary::{Overall, Placed, Summary};
-use zones::{bounds_of, put_filters, write_column, zone_of};
+use zones::{bounds_of, put_filters, zone_of};
 
-use super::{Chunk, imprints, sketch};
+use super::{Chunk, sketch};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
@@ -327,71 +329,6 @@ impl Group {
     /// Whether it has imprints of any column (`imprints.rs`).
     pub fn imprinted(&self) -> bool {
         self.edges.iter().any(|e| !e.is_empty())
-    }
-
-    /// Writes `rows`, whose ids are `ids`, a column of each of `types`, as
-    /// a group, in their order.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if the rows are not of the types; -900 if there are too
-    /// many; an error of the pages; nothing written is kept. Its rows are
-    /// in the order of the columns at `order`, those at `bloom` have
-    /// Bloom filters, and those at `named` sketches, if they take them.
-    pub fn write<S: Seal, R: AsRef<[Value]>>(
-        pages: &Pages<'_, S>,
-        types: &[DataType],
-        (ids, rows): (&[RowId], &[R]),
-        (order, bloom, named): (&[usize], &[usize], &[usize]),
-    ) -> Result<Group> {
-        let mut written = Vec::new();
-        let made = Self::write_all(pages, types, (ids, rows), (order, bloom, named), &mut written);
-        if made.is_err() {
-            pages.free(&written);
-        }
-        made
-    }
-
-    fn write_all<S: Seal, R: AsRef<[Value]>>(
-        pages: &Pages<'_, S>,
-        types: &[DataType],
-        (ids, rows): (&[RowId], &[R]),
-        (order, bloom, named): (&[usize], &[usize], &[usize]),
-        written: &mut Vec<PageId>,
-    ) -> Result<Group> {
-        let (Some(&first), Some(&last)) = (ids.iter().min(), ids.iter().max()) else {
-            return Err(SqlError::new(Code::Api, "[DESIGN] a frozen row group of no rows"));
-        };
-        let id_runs = write_ids(pages, ids, written)?;
-        let by_id = write_by_id(pages, ids, written)?;
-        let mut columns = if pages.pax {
-            pax::write_pax(pages, types, (rows, bloom), written)?
-        } else {
-            types
-                .iter()
-                .enumerate()
-                .map(|(c, t)| write_column(pages, t, (rows, c, bloom.contains(&c)), written))
-                .collect::<Result<Vec<_>>>()?
-        };
-        let edges = imprints::put_all(pages, (types, rows), &mut columns, written)?;
-        let sketches = sketch::put_all(pages, (types, rows, named), &mut columns, written)?;
-        let mut group = Group {
-            first,
-            last,
-            rows: count32(rows.len())?,
-            ids: id_runs,
-            by_id,
-            columns,
-            order: order.to_vec(),
-            pax: pages.pax,
-            edges,
-            sketched: named.to_vec(),
-            sketches,
-            header: Vec::new(),
-            place: (pages.file, pages.base),
-        };
-        group.header = put_chain(pages, &header::encode(&group, types)?, written)?;
-        Ok(group)
     }
 
     /// Every page it is on, each once: chunks of the hybrid layout, and

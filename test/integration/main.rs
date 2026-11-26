@@ -93,6 +93,7 @@ mod buffer_claims;
 mod bulk_durable;
 mod bulk_groups;
 mod bulk_insert;
+mod bulk_lanes;
 mod bulk_load;
 mod call_modes;
 mod call_outputs;

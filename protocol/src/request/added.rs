@@ -10,12 +10,14 @@
 //! 'I' copy in:    table, columns (strings), ends u8
 //! 'J' copy data:  each row's values
 //! 'N' copy end:   abandon u8
+//! 'O' copy columns: as `columns.rs` says
 //! 'V' debug:      as `debug.rs` says
 //! ```
 
 use turborel::bytes::{Put, Reader};
 use turborel::error::Result;
 
+use super::columns::{self, COPY_COLUMNS};
 use super::{Described, Request};
 use crate::DebugRequest;
 use crate::fields::{counted, flag, put_count, put_flag, put_row, put_strs, row, strs};
@@ -66,6 +68,7 @@ impl Request {
                     put_row(b, each);
                 }
             }),
+            Request::CopyColumns(lanes) => frame(out, COPY_COLUMNS, |b| columns::put(b, lanes)),
             Request::CopyEnd { abandon } => frame(out, COPY_END, |b| put_flag(b, *abandon)),
             Request::Debug(debug) => frame(out, DEBUG, |b| debug.put(b)),
             Request::Hello { .. }
@@ -108,6 +111,7 @@ pub(super) fn decode(kind: u8, r: &mut Reader<'_>) -> Result<Option<Request>> {
         CHANGE_USER => Request::ChangeUser { user: r.str()?, mechanism: r.str()?, initial: r.bytes()?.to_vec() },
         COPY_IN => Request::CopyIn { table: r.str()?, columns: strs(r)?, ends: flag(r)? },
         COPY_DATA => Request::CopyData(counted(r, row)?),
+        COPY_COLUMNS => Request::CopyColumns(columns::read(r)?),
         COPY_END => Request::CopyEnd { abandon: flag(r)? },
         DEBUG => Request::Debug(DebugRequest::read(r)?),
         _ => return Ok(None),

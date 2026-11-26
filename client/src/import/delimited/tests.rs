@@ -1,6 +1,7 @@
 use std::io::{self, BufReader, Read};
 
 use super::*;
+use crate::import::Cells;
 
 /// A field as read: its text, or none for null.
 type Got = Option<String>;
@@ -186,5 +187,92 @@ fn delimiters() {
     for wrong in ['"', '\n', '\r', 'é'] {
         let refused = Dialect::csv().with_delimiter(wrong).unwrap_err();
         assert!(refused.starts_with("[DESIGN] a delimiter is one ASCII character"), "{refused}");
+    }
+}
+
+/// The records of `text`, written as `dialect` says, split into cells as
+/// an import by column splits them: each record's fields, and where it
+/// began.
+fn by_cells(text: &[u8], dialect: Dialect) -> Result<Vec<(Vec<Got>, Position)>, SourceError> {
+    let mut source = Delimited::new(text, dialect);
+    let mut all = Vec::new();
+    let mut cells = Cells::new(WIDE);
+    loop {
+        cells.begin();
+        let Some(position) = source.record_into(&mut cells)? else { return Ok(all) };
+        let fields = cells.fields();
+        cells.row();
+        let lanes = cells.lanes();
+        let got = (0..fields).map(|n| lanes.columns[n].cell(0).unwrap().map(str::to_owned)).collect();
+        all.push((got, position));
+        cells.clear();
+    }
+}
+
+/// More columns than any record here has fields.
+const WIDE: usize = 8;
+
+/// Verifies: [DESIGN] RULES.md D1148, D59: a record split straight into
+/// cells has the fields a record of values has, each a text or null, and
+/// begins where it does; one that cannot be read fails in the same words,
+/// at the same place: CSV and tab-separated, quoted fields with commas,
+/// doubled quotes and line breaks, a null text of its own, a byte order
+/// mark, CR LF, an empty line, a quote out of place, a quote never
+/// closed, bytes that are not UTF-8.
+#[test]
+fn cells_hold_the_fields_a_record_does() {
+    assert!(Delimited::new(&b""[..], Dialect::csv()).splits());
+    let csv = [
+        &b"a,b\n\"x,y\",\"\"\n,,\n"[..],
+        b"\xEF\xBB\xBF\"q\"\"uote\",\"line\nbreak\"\r\n\nlast,",
+        b"NULL,\"NULL\",x\n",
+        b"1,\"a\"b\n",
+        b"1,a\"b\n",
+        b"1,\"open\n2\n",
+        b"\"\xC3\xA9\",\xFF\n",
+        b"\xFF,\"a\"x\n",
+    ];
+    for text in csv {
+        for dialect in [Dialect::csv(), Dialect::csv().with_null("NULL"), Dialect::csv().with_delimiter(';').unwrap()] {
+            assert_eq!(by_cells(text, dialect.clone()), read(text, dialect), "{:?}", String::from_utf8_lossy(text));
+        }
+    }
+    for text in [&b"a\tb\n\t\\N\n\"q\"\t\n"[..], b"x\t\xFF\n"] {
+        let dialect = Dialect::tsv().with_null("\\N");
+        assert_eq!(by_cells(text, dialect.clone()), read(text, dialect));
+    }
+    let headed = Dialect::csv().with_header();
+    assert_eq!(by_cells(b"K,S\n1,a\n", headed.clone()), read(b"K,S\n1,a\n", headed));
+}
+
+/// Verifies: [DESIGN] RULES.md D1148: a batch of records in cells keeps,
+/// of each column, a null bit and an end for each row, past a byte of
+/// null bits, and reads back each cell; emptied, the cells hold no row
+/// and are filled again as before.
+#[test]
+fn cells_keep_a_bit_and_an_end_a_row() {
+    let text: String = (0..20_usize).map(|n| if n % 3 == 0 { format!("{n},\n") } else { format!("{n},v{n}\n") }).collect();
+    let mut source = Delimited::new(text.as_bytes(), Dialect::csv());
+    let mut cells = Cells::new(2);
+    for batch in 0..2_usize {
+        for _ in 0..10_usize {
+            cells.begin();
+            source.record_into(&mut cells).unwrap().unwrap();
+            cells.row();
+        }
+        let lanes = cells.lanes();
+        assert_eq!(lanes.rows, 10);
+        for lane in &lanes.columns {
+            lane.check(10).unwrap();
+        }
+        for n in 0..10_usize {
+            let k = batch * 10 + n;
+            let wanted = format!("v{k}");
+            assert_eq!(lanes.columns[0].cell(n).unwrap(), Some(k.to_string().as_str()));
+            assert_eq!(lanes.columns[1].cell(n).unwrap(), (k % 3 != 0).then_some(wanted.as_str()), "row {k}");
+        }
+        assert!(cells.bytes() > 0);
+        cells.clear();
+        assert_eq!((cells.lanes().rows, cells.bytes()), (0, 0));
     }
 }

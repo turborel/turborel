@@ -34,6 +34,7 @@ mod direct;
 mod given;
 mod inserted;
 mod into;
+mod lanes;
 mod pointed;
 mod portion;
 pub(crate) mod system_time;
@@ -254,6 +255,12 @@ impl Session {
     ) -> Result<usize> {
         let StatementContext { st, tx } = cx;
         let rows = if let Some(given) = params.given() {
+            // [DESIGN] given by column, straight to a group where they may go so (RULES.md D1148).
+            if given::of_parameters(stmt)
+                && let Some(n) = self.insert_lanes(cx, target, given, params.load())?
+            {
+                return Ok(n);
+            }
             // [EXTENSION] the rows given it, each its parameters' values (RULES.md D530).
             given::given_rows(st, (stmt, target), given, &Runner::new(st, tx.id))?
         } else if let Some(logical) = query {

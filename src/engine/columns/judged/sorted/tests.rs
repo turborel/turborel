@@ -56,7 +56,7 @@ fn dictionaries_in_order_judge_by_codes() {
         let read: Vec<Value> = (0..values.len()).map(|n| chunk.value(n, &t).unwrap()).collect();
         let back = Fields::of(&t, values.iter().cloned()).unwrap();
         let again = Fields::of(&t, read.iter().cloned()).unwrap();
-        assert_eq!(back.0, again.0, "values read back");
+        assert_eq!(back.records(), again.records(), "values read back");
         let all: Vec<u32> = (0..300).collect();
         let third: Vec<u32> = all.iter().copied().step_by(3).collect();
         for conjunct in conjuncts(&["red", "grün", "blue  ", "gr", "", "zz"]) {

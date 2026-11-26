@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use turborel::error::Result;
-use turborel_protocol::capability::{CHANGE_USER, COPY, CURSORS, DEBUGGER, DESCRIBE, MULTI_STATEMENT, PING, QUERY_ATTRIBUTES, RESET};
+use turborel_protocol::capability::{
+    CHANGE_USER, COLUMNS, COPY, CURSORS, DEBUGGER, DESCRIBE, MULTI_STATEMENT, PING, QUERY_ATTRIBUTES, RESET,
+};
 use turborel_protocol::{Attributes, Capabilities, Reply, Request, broken};
 
 use super::debugging::{Heard, heard};
@@ -52,6 +54,7 @@ fn needs(request: &Request) -> [Option<&'static str>; 2] {
         Request::Reset => one(RESET),
         Request::ChangeUser { .. } => one(CHANGE_USER),
         Request::CopyIn { .. } | Request::CopyData(_) | Request::CopyEnd { .. } => one(COPY),
+        Request::CopyColumns(_) => [Some(COPY), Some(COLUMNS)],
         Request::Debug(_) => one(DEBUGGER),
         Request::Hello { .. }
         | Request::Answer(_)
@@ -87,6 +90,7 @@ pub(super) fn next_of(request: Request, granted: Capabilities) -> Result<Option<
         Request::Describe(what) => Work::Describe(what),
         Request::CopyIn { table, columns, ends } => Work::CopyIn { table, columns, ends },
         Request::CopyData(rows) => Work::CopyData(rows),
+        Request::CopyColumns(lanes) => Work::CopyColumns(lanes),
         Request::CopyEnd { abandon } => Work::CopyEnd(abandon),
         Request::Debug(request) => Work::Debug(request),
         Request::Ping => return Ok(None),
@@ -257,5 +261,17 @@ mod tests {
         assert!(next_of(Request::Ping, Capabilities::NONE).is_err());
         assert!(work_of(Request::Reset, Capabilities::all()).is_none());
         assert!(work_of(Request::Terminate, Capabilities::all()).is_none());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1148, D185: CopyColumns needs `columns`
+    /// granted as well as `copy`: with either alone it fails the
+    /// connection; with both it is a copy's work.
+    #[test]
+    fn copy_columns_needs_columns_and_copy() {
+        let lanes = || Request::CopyColumns(turborel::storage::lanes::Lanes::default());
+        assert!(next_of(lanes(), Capabilities::of(&[COPY])).is_err(), "columns not granted");
+        assert!(next_of(lanes(), Capabilities::of(&[COLUMNS])).is_err(), "copy not granted");
+        let work = work_of(lanes(), Capabilities::of(&[COPY, COLUMNS]));
+        assert!(matches!(work, Some(Work::CopyColumns(_))));
     }
 }

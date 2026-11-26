@@ -20,6 +20,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
+use super::fields::Cells;
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 
@@ -201,11 +202,11 @@ fn joined((a, a_len): Packed, (b, b_len): Packed) -> Option<Packed> {
 /// # Errors
 ///
 /// SQLCODE -900 if they are longer than a count describes.
-pub(super) fn encode(fields: &[Option<Vec<u8>>], table: &Table, out: &mut Vec<u8>) -> Result<()> {
+pub(super) fn encode(fields: Cells<'_>, table: &Table, out: &mut Vec<u8>) -> Result<()> {
     table.write(out);
     let mut codes = Vec::new();
     out.extend_from_slice(&word(0)?);
-    for field in fields {
+    for field in fields.iter() {
         if let Some(f) = field {
             table.encode(f, &mut codes);
         }
