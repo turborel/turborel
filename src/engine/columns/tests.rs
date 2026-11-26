@@ -208,7 +208,7 @@ fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Optio
     let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
     let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Mask::default());
-    chunk.texts((from, to), (&mut text, &mut ends, &mut nulls), t)?;
+    chunk.texts((from, to), (&mut text, &mut ends, &mut nulls), (t, &crate::kernels::Portable))?;
     let texts = crate::storage::Texts::new(text, ends, nulls.any().then_some(nulls));
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
     let read = (from..to).map(|n| chunk.value(n, t).unwrap().to_string()).collect();

@@ -159,7 +159,11 @@ impl Batched {
             return Ok(true);
         }
         let shadowed = self.entries_in(&entry)?;
-        let group = self.table.group_of(&entry)?;
+        // Its header read for the columns read and those the condition
+        // reads (RULES.md D1173).
+        let mut wanted = self.condition.as_ref().map(Conjunction::columns).unwrap_or_default();
+        wanted.extend_from_slice(&self.columns);
+        let group = self.table.group_of(&entry, Some(&wanted))?;
         let pages = self.table.pages_for(&group)?;
         // Its row ids read only to tell the rows the tree shadows.
         let ids = if shadowed.is_empty() { Vec::new() } else { group.row_ids(&pages)? };

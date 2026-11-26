@@ -247,7 +247,7 @@ pub(super) fn parts_of(zone: &Zone) -> impl Iterator<Item = (u32, u32)> + '_ {
 pub fn kept<S: Seal>(group: &Group, pages: &Pages<'_, S>, conjunct: &Conjunct, within: &[(u32, u32)]) -> Result<Option<Vec<(u32, u32)>>> {
     let columns = conjunct.columns();
     let [column] = columns.as_slice() else { return Ok(None) };
-    let (Some(edges), Some(zones)) = (group.edges.get(*column), group.columns.get(*column)) else { return Ok(None) };
+    let (Some(edges), Some(zones)) = (group.edges.get(*column), group.zones(*column)?) else { return Ok(None) };
     let Some(mask) = mask(edges, whole(zones).as_ref(), (*column, conjunct)) else { return Ok(None) };
     let touched: Vec<((u32, u32), Option<Filter>)> =
         zones.iter().flat_map(|z| parts_of(z).zip(z.parts.iter().map(|p| p.imprint))).filter(|&(run, _)| among(within, run)).collect();

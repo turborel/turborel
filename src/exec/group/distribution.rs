@@ -85,7 +85,7 @@ impl Sorting {
     /// ascending in one column and descending in the other, so the values
     /// of each call are in its key's order.
     pub(super) fn new(work: Work) -> Sorting {
-        let key = |column, descending| SortKey { column, descending, nulls_first: false };
+        let key = |column, descending| SortKey { column, descending, nulls_first: false, octets: false };
         let keys = vec![key(GROUP, false), key(CALL, false), key(ASCENDING, false), key(DESCENDING, true)];
         Sorting { sorter: Sorter::new(keys), work }
     }

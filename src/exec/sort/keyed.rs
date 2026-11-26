@@ -15,7 +15,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::compare_rows;
-use super::normal::{Found, Layout, Shape, encode_batch, encode_row, order, seen_column, seen_rows, with};
+use super::normal::{Found, Layout, Shape, encode_batch, encode_row, order, seen_as, seen_column, seen_rows, with};
 use super::prefix::{self, joined, prefix_of_cell};
 use super::vectors::compare_cells;
 use crate::logical::SortKey;
@@ -97,7 +97,9 @@ pub(super) fn made_of(
 ) -> Option<Made> {
     let found: Vec<Option<Found>> = keys
         .iter()
-        .map(|k| batches.iter().try_fold(Found::default(), |f, (batch, rows)| with(Some(f), seen_column(batch, k.column, rows))))
+        .map(|k| {
+            batches.iter().try_fold(Found::default(), |f, (batch, rows)| with(Some(f), seen_as(k, seen_column(batch, k.column, rows))))
+        })
         .collect();
     let (layout, number) = match layouts {
         Some(layouts) => layouts.of(keys, &found)?,
@@ -130,7 +132,9 @@ fn by_prefix(keys: &[SortKey], batches: &[(Batch, Vec<usize>)], places: &[(u32, 
     let (mut kind, mut whole) = (Some(prefix::Kind::Null), true);
     let mut prefixed: Vec<(u64, u32)> = Vec::with_capacity(places.len());
     for (&(batch, row), place) in places.iter().zip(0_u32..) {
-        let p = keys.first().and_then(|k| {
+        // A key by octets has no prefix here, so its rows are compared whole
+        // (RULES.md D1185).
+        let p = keys.first().filter(|k| !k.octets).and_then(|k| {
             let (b, _) = batches.get(usize::try_from(batch).ok()?)?;
             prefix_of_cell(b.cell(k.column, usize::try_from(row).ok()?), k.order())
         });

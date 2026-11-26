@@ -59,7 +59,8 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
         }
     }
     put_u32(&mut out, count32(group.columns.len())?);
-    for (zones, t) in group.columns.iter().zip(types) {
+    for (c, t) in types.iter().enumerate().take(group.columns.len()) {
+        let zones = group.zones(c)?.unwrap_or_default();
         put_u32(&mut out, count32(zones.len())?);
         for zone in zones {
             put_run(&mut out, &zone.run);
@@ -118,6 +119,14 @@ fn put_filter(out: &mut Vec<u8>, filter: Option<Filter>) {
 /// while the format stays 1 (no migration), so a group written by a build
 /// of an older layout reads so, as a damaged one does.
 const SHORT: &str = "its header ends before its fields do, as one written by a build of an older layout of this format would (reload the table), or a damaged one";
+
+/// Bytes of a chunk's run and count of nulls, as `put_run` and `put_u32`
+/// write them.
+const ZONE_FIXED: usize = 28;
+/// Bytes of a part's count of nulls.
+const NULLS_BYTES: usize = 4;
+/// Bytes of where a filter is, as `put_filter` writes it after its flag.
+const FILTER_BYTES: usize = 16;
 
 /// A header's bytes, read in order.
 struct Reader<'a>(&'a [u8]);
@@ -214,16 +223,57 @@ impl<'a> Reader<'a> {
         let parts = (0..self.count()?).map(|_| self.part(t)).collect::<Result<Vec<_>>>()?;
         Ok(Zone { run, nulls, bounds, parts })
     }
+
+    /// Passes over a bound, its value not decoded.
+    fn skip_bound(&mut self) -> Result<()> {
+        let len = self.count()?;
+        self.take(len).map(|_| ())
+    }
+
+    /// Passes over bounds, as `bounds` reads them.
+    fn skip_bounds(&mut self) -> Result<()> {
+        match self.byte()? {
+            0 => Ok(()),
+            1 => self.skip_bound().and_then(|()| self.skip_bound()),
+            _ => Err(corrupt("a chunk's bounds are of another format")),
+        }
+    }
+
+    /// Passes over a part's filter, as `filter` reads it.
+    fn skip_filter(&mut self) -> Result<()> {
+        match self.byte()? {
+            0 => Ok(()),
+            1 => self.take(FILTER_BYTES).map(|_| ()),
+            _ => Err(corrupt("a part's filter is of another format")),
+        }
+    }
+
+    /// Passes over a column's chunks, as `zone` reads each, none of its
+    /// values decoded (RULES.md D1173).
+    fn skip_zones(&mut self) -> Result<()> {
+        for _ in 0..self.count()? {
+            self.take(ZONE_FIXED)?;
+            self.skip_bounds()?;
+            for _ in 0..self.count()? {
+                self.take(NULLS_BYTES)?;
+                self.skip_bounds()?;
+                (0_u8..3).try_for_each(|_| self.skip_filter())?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The group whose header's chain begins at page `first`, its columns of
-/// `types`.
+/// `types`, the chunks read of the columns `wanted`, or of every column if
+/// none is given (RULES.md D1173): each other column's are passed over,
+/// none of their bounds decoded.
 ///
 /// # Errors
 ///
 /// As `Pages::get`; SQLCODE -916 if its header is malformed, of another
 /// format, or of other columns.
-pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) -> Result<Group> {
+pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType], wanted: Option<&[usize]>) -> Result<Group> {
     let (bytes, header) = read_chain(pages, first)?;
     let mut r = Reader(&bytes);
     let format = r.byte()?;
@@ -239,9 +289,13 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType]) ->
         return Err(corrupt("its columns are not its table's"));
     }
     let mut columns = Vec::with_capacity(types.len());
-    for t in types {
-        let zones = (0..r.count()?).map(|_| r.zone(t)).collect::<Result<Vec<_>>>()?;
-        columns.push(zones);
+    for (c, t) in types.iter().enumerate() {
+        if wanted.is_none_or(|w| w.contains(&c)) {
+            columns.push(Some((0..r.count()?).map(|_| r.zone(t)).collect::<Result<Vec<_>>>()?));
+        } else {
+            r.skip_zones()?;
+            columns.push(None);
+        }
     }
     let edges = types.iter().map(|t| (0..r.count()?).map(|_| r.bound(t)).collect::<Result<Vec<_>>>()).collect::<Result<Vec<_>>>()?;
     let named = r.places()?;

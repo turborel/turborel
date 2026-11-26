@@ -221,7 +221,7 @@ impl RowTable {
 
     /// `group`, just written, as an entry of the directory, with its pages.
     pub(super) fn made(&self, group: Group) -> Result<(Arc<Entry>, Vec<PageId>)> {
-        let pages = group.pages();
+        let pages = group.pages()?;
         Ok((self.entry_of(group)?, pages))
     }
 
@@ -239,7 +239,7 @@ impl RowTable {
     /// reads the tree over the group's range whole, and misses no entry
     /// the mark has yet to find (`shadow_bits.rs`, RULES.md D1100).
     pub(super) fn put(&self, (old, made): (Option<&Arc<Entry>>, Made)) -> Result<Put> {
-        let old_pages = old.map(|o| self.group_of(o).map(|g| g.pages())).transpose()?;
+        let old_pages = old.map(|o| self.group_of(o, None).and_then(|g| g.pages())).transpose()?;
         let (made, made_pages) = made.unzip();
         let before = {
             let mut held = write(&self.frozen.directory)?;

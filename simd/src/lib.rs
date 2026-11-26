@@ -191,6 +191,9 @@ impl Kernels for Simd {
     fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
         arch::find_bytes(self.isa, haystack, needle)
     }
+    fn utf8<'a>(&self, bytes: &'a [u8]) -> Option<&'a str> {
+        arch::utf8(self.isa, bytes)
+    }
 }
 
 /// XXH3 of long inputs on these kernels: `hash::xxhash::xxh3_64_on(&simd, ...)`.

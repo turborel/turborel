@@ -5,7 +5,7 @@
 //!
 //! * MATCH in a WHERE clause over the tables of the FROM clause, with
 //!   SHORTEST_PATH, LAST_NODE, FOR PATH tables and WITHIN GROUP (GRAPH
-//!   PATH) aggregates (`compat/server.rs`, `compat/measures.rs`)
+//!   PATH) aggregates (`compat/predicate.rs`, `compat/measures.rs`)
 //!   [GS §10.1], which the binder turns into a GRAPH_TABLE once it knows
 //!   the tables' graph (`binder/query/graph_match.rs`);
 //! * a GRAPH_TABLE's hints (`compat/hints.rs`) [GS §10.2, R16.8];
@@ -22,8 +22,8 @@ mod cypher;
 mod hints;
 mod measures;
 mod pgql;
+mod predicate;
 mod rewrite;
-mod server;
 
 #[cfg(test)]
 mod tests;
@@ -38,7 +38,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::parser::Exposure;
 use crate::value::Decimal;
 pub(in crate::parser) use hints::merge_hints;
-pub use server::LAST_NODE_PREFIX;
+pub use predicate::LAST_NODE_PREFIX;
 
 /// The row counts of LIMIT and OFFSET, each if written.
 type Rows = (Option<RowCount>, Option<RowCount>);

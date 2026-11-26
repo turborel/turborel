@@ -25,9 +25,14 @@
 //! renumbered, and the plan's own columns are as they were. EXPLAIN shows
 //! each such projection, the columns kept by name and the others as NULL
 //! (`pruned/named.rs`).
+//!
+//! A sort whose key is a column's own octets, made by the projection under
+//! it and read above by none, is keyed by the column in place
+//! (`pruned/octets.rs`, RULES.md D1185).
 
 mod joins;
 mod named;
+mod octets;
 mod single;
 
 use super::super::{PhysicalPlanner, Plan};
@@ -77,11 +82,8 @@ impl PhysicalPlanner<'_> {
             Plan::SeqScan { .. } => scan_pruned(plan, needed),
             Plan::Filter { .. } => self.filter_pruned(plan, sizes.kid(0), needed),
             Plan::Project { .. } => self.project_pruned(plan, sizes.kid(0), needed),
-            Plan::Sort { keys, input, .. } => {
-                let reads: Vec<usize> = needed.iter().copied().chain(keys.iter().map(|k| k.column)).collect();
-                self.operand_pruned(input, sizes.kid(0), &reads)
-            }
-            Plan::Limit { input, .. } => self.pruned_in(input, sizes.kid(0), needed),
+            Plan::Sort { .. } => self.sort_pruned(plan, sizes.kid(0), needed),
+            Plan::Limit { .. } => self.limit_pruned(plan, sizes.kid(0), needed),
             Plan::Aggregate { .. } => self.aggregate_pruned(plan, sizes.kid(0)),
             Plan::HashJoin { .. } | Plan::Product { .. } => self.join_pruned(plan, sizes, needed),
             Plan::OuterJoin { .. } => self.outer_pruned(plan, sizes, needed),

@@ -1,12 +1,13 @@
 //! The mutations of the core's reads (RULES.md R-TEST-9): index-only
 //! scans' zones and the index entries collection owes, ordered reads of
 //! the column store, and its columns of runs; and how the planner prices
-//! reads by the pages they miss.
+//! reads by the pages they miss; of D1173, a group's header read for
+//! some columns; and of D1175, text judged UTF-8 on AVX2 as it is read.
 
 use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 32] = [
+pub const READS: [Mutation; 39] = [
     Mutation {
         name: "zone-write-visible",
         package: Package::Core,
@@ -326,5 +327,75 @@ pub const READS: [Mutation; 32] = [
         replacement: "            out.extend_from_slice(&key_field(None));",
         integration: &[],
         unit: &["disk::pager::named::tests::pages_keep_the_key_their_checksums_were_made_with"],
+    },
+    Mutation {
+        name: "header-held-short",
+        package: Package::Core,
+        breaks: "a header held is given only if it was read for every column asked for (RULES.md D1173)",
+        file: "src/engine/rows/frozen/held.rs",
+        original: "        if let Some(group) = held.as_ref().filter(|g| g.holds(wanted)) {",
+        replacement: "        if let Some(group) = held.as_ref() {",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::wanted::headers_are_read_for_the_columns_read"],
+    },
+    Mutation {
+        name: "header-reread-drops-held",
+        package: Package::Core,
+        breaks: "a header read again for a column is read for the columns it held too (RULES.md D1173)",
+        file: "src/engine/rows/frozen/held.rs",
+        original: "            (Some(group), Some(wanted)) => Some(group.with_columns(wanted)),",
+        replacement: "            (Some(_), Some(wanted)) => Some(wanted.to_vec()),",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::wanted::headers_are_read_for_the_columns_read"],
+    },
+    Mutation {
+        name: "header-skip-short",
+        package: Package::Core,
+        breaks: "a column passed over is passed over by every field of its chunks (RULES.md D1173)",
+        file: "src/engine/columns/group/header.rs",
+        original: "                (0_u8..3).try_for_each(|_| self.skip_filter())?;",
+        replacement: "                (0_u8..2).try_for_each(|_| self.skip_filter())?;",
+        integration: &[],
+        unit: &["engine::columns::group::tests::wanted::headers_read_for_some_columns_hold_theirs_alone"],
+    },
+    Mutation {
+        name: "header-unread-as-empty",
+        package: Package::Core,
+        breaks: "a column a header was read without is never taken for one with no chunks (RULES.md D1173)",
+        file: "src/engine/columns/group/wanted.rs",
+        original: "            Some(None) => Err(unread()),",
+        replacement: "            Some(None) => Ok(Some(&[])),",
+        integration: &[],
+        unit: &["engine::columns::group::tests::wanted::headers_read_for_some_columns_hold_theirs_alone"],
+    },
+    Mutation {
+        name: "utf8-surrogate-unmarked",
+        package: Package::Simd,
+        breaks: "UTF-8 judged on AVX2 refuses 0xED before a continuation of 0xA0 or more, a surrogate (RULES.md D1175)",
+        file: "simd/src/x86/utf8.rs",
+        original: "    CARRY | TOO_LARGE | TOO_LARGE_1000 | SURROGATE,",
+        replacement: "    CARRY | TOO_LARGE | TOO_LARGE_1000,",
+        integration: &[],
+        unit: &["tests::every_available_set_keeps_the_contract"],
+    },
+    Mutation {
+        name: "utf8-open-forgotten",
+        package: Package::Simd,
+        breaks: "a character a step of UTF-8 on AVX2 begins must be ended by the next, though that one is ASCII (RULES.md D1175)",
+        file: "simd/src/x86/utf8.rs",
+        original: "            self.errors = _mm256_or_si256(self.errors, self.open);",
+        replacement: "            self.errors = _mm256_or_si256(self.errors, _mm256_setzero_si256());",
+        integration: &[],
+        unit: &["tests::every_available_set_keeps_the_contract"],
+    },
+    Mutation {
+        name: "utf8-third-unchecked",
+        package: Package::Simd,
+        breaks: "the third byte of a character of three bytes, judged on AVX2, must be a continuation (RULES.md D1175)",
+        file: "simd/src/x86/utf8.rs",
+        original: "_mm256_or_si256(third, fourth)",
+        replacement: "_mm256_or_si256(fourth, fourth)",
+        integration: &[],
+        unit: &["tests::every_available_set_keeps_the_contract"],
     },
 ];
