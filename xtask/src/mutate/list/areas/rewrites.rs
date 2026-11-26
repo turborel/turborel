@@ -31,7 +31,7 @@ const FETCHED_LATE: &str = "rewrites::late_fetch::carried_columns_are_fetched_fo
 const KEPT_CARRIED: &str = "rewrites::late_fetch::carried_columns_every_group_needs_stay_carried";
 
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 32] = [
+pub const REWRITES: [Mutation; 34] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -350,6 +350,26 @@ pub const REWRITES: [Mutation; 32] = [
         original: "Some(keys) => LogicalPlan::Sort { keys: keys.to_vec(), input: Box::new(listed) },",
         replacement: "Some(_) => listed,",
         integration: &[FETCHED_LATE],
+        unit: &[],
+    },
+    Mutation {
+        name: "keyed-grouping-of-strings",
+        package: Package::Core,
+        breaks: "a grouping over a LEFT join equating strings is a projection, though a left row may match two groups of the right that the join holds equal (RULES.md D1117)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "let equated = shape.pairs.iter().all(|&(l, r)| exact(left, l) && exact(right, r));",
+        replacement: "let equated = shape.pairs.iter().all(|&(l, r)| exact(left, l) || !exact(right, r));",
+        integration: &["rewrites::pregrouped::a_grouping_by_no_key_of_the_left_stays"],
+        unit: &[],
+    },
+    Mutation {
+        name: "keyed-grouping-unwarned",
+        package: Package::Core,
+        breaks: "a left row no group matched gives its null with no warning that a null was eliminated (RULES.md D1117)",
+        file: "src/optimizer/pregrouped.rs",
+        original: "let null = Expr::Warned(Box::new(Expr::Column(part)), SqlState::NULL_VALUE_ELIMINATED);",
+        replacement: "let null = Expr::Column(part);",
+        integration: &["rewrites::pregrouped::a_grouping_by_a_key_of_the_left_is_a_projection"],
         unit: &[],
     },
 ];

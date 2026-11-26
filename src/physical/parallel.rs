@@ -37,9 +37,9 @@
 mod exchange;
 mod inputs;
 
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use super::{Plan, Seen, SemiMethod};
+use super::{NodeCount, Plan, Seen, SemiMethod};
 use crate::db::State;
 use crate::index::Probe;
 use crate::logical::{AggCall, Cond, Expr, OuterJoin, SetOp};
@@ -314,16 +314,36 @@ pub(crate) fn crosses(plan: &Plan) -> bool {
     !groups.is_empty() && counts && !within
 }
 
-/// The projections of `plan`'s rows down from it, the nearest first, and
-/// the operator under them, `depth` down; past `MAX_DEPTH` none more.
+/// The projections of `plan`'s rows down from it, the nearest first, an
+/// analyzed plan's count of each passed (RULES.md D1116), and the
+/// operator under them, `depth` down; past `MAX_DEPTH` none more.
 pub(crate) fn between(plan: &Plan, depth: usize) -> (Vec<&[Expr]>, &Plan) {
-    let Plan::Project { exprs, input, .. } = plan else { return (Vec::new(), plan) };
+    let Plan::Project { exprs, input, .. } = uncounted(plan) else { return (Vec::new(), plan) };
     if depth >= MAX_DEPTH {
         return (Vec::new(), plan);
     }
     let (mut steps, below) = between(input, depth.saturating_add(1));
     steps.insert(0, exprs);
     (steps, below)
+}
+
+/// \[EXTENSION\] (RULES.md D378, D1116) The counts of an analyzed plan's
+/// projections that `between` passes down from `plan`, the nearest last.
+pub(crate) fn counted_between(plan: &Plan, depth: usize) -> Vec<Arc<NodeCount>> {
+    let Plan::Project { input, .. } = uncounted(plan) else { return Vec::new() };
+    if depth >= MAX_DEPTH {
+        return Vec::new();
+    }
+    let mut counts = counted_between(input, depth.saturating_add(1));
+    if let Plan::Counted(c) = plan {
+        counts.push(Arc::clone(&c.count));
+    }
+    counts
+}
+
+/// The operator `plan` is, an analyzed plan's count of it passed.
+fn uncounted(plan: &Plan) -> &Plan {
+    if let Plan::Counted(c) = plan { &c.input } else { plan }
 }
 
 /// The rows a part rooted at `plan` reads, if it is one, its filters'

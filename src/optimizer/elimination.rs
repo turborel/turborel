@@ -134,7 +134,7 @@ fn outer_eliminated(
 
 /// The table `plan` reads and its filter, if it is a scan of one, which
 /// gives no row ids, or a filter of such a scan.
-fn table_of(plan: &LogicalPlan) -> Option<(&crate::catalog::QualifiedName, Option<&Cond>)> {
+pub(super) fn table_of(plan: &LogicalPlan) -> Option<(&crate::catalog::QualifiedName, Option<&Cond>)> {
     match plan {
         LogicalPlan::Scan { table, located: false, .. } => Some((table, None)),
         LogicalPlan::Filter { cond, input } => {
@@ -192,7 +192,7 @@ fn equated_columns(cond: &Cond, start: usize, width: usize) -> Vec<usize> {
 /// Whether `columns` hold every column of a unique key of `desc` whose
 /// constraint is not deferrable and of no period, each NOT NULL by a
 /// constraint not deferrable and of no collation of its own.
-fn unique_key_covered(desc: &TableDesc, columns: &[usize]) -> bool {
+pub(super) fn unique_key_covered(desc: &TableDesc, columns: &[usize]) -> bool {
     desc.constraints.iter().any(|c| {
         let ConstraintKind::Unique { columns: key, period: None, .. } = &c.kind else { return false };
         !c.attributes.deferrable && key.iter().all(|k| columns.contains(k) && never_null(desc, *k) && uncollated(desc, *k))

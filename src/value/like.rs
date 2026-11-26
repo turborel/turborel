@@ -16,6 +16,7 @@
 //! pattern 'ABC', but matches 'ABC%' and 'ABC  '.
 
 mod collated;
+mod finder;
 mod octets;
 mod pieces;
 mod streamed;
