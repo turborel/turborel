@@ -106,7 +106,10 @@ fn best_of<'v>(values: impl Iterator<Item = &'v Value>, wanted: std::cmp::Orderi
 }
 
 /// \[EXTENSION\] MAX or MIN by a collation (RULES.md D60): the value whose
-/// sort key is greatest or least [ISO/IEC 9075-2:2023 §9.15].
+/// sort key is greatest or least [ISO/IEC 9075-2:2023 §9.15]. Under a
+/// collation whose key is the text itself (`CollationRef::is_octets`) no
+/// key is made: the strings' octets are compared, a prefix the less
+/// [§4.3.2] (RULES.md D1183).
 pub struct CollatedExtreme {
     /// Whether it keeps the greatest.
     pub max: bool,
@@ -122,7 +125,7 @@ impl AggregateFunction for CollatedExtreme {
         arg.ok_or_else(|| SqlError::new(Code::SyntaxRule, format!("[X3.135-1986 §5.8 F] {} takes an argument", self.name())))
     }
     fn accumulator(&self, _: DataType) -> Box<dyn Accumulator> {
-        Box::new(CollatedAcc { best: None, max: self.max, collation: self.collation.clone() })
+        Box::new(CollatedAcc { best: None, max: self.max, octets: self.collation.is_octets(), collation: self.collation.clone() })
     }
 }
 
@@ -130,6 +133,8 @@ impl AggregateFunction for CollatedExtreme {
 struct CollatedAcc {
     best: Option<(Value, Value)>,
     max: bool,
+    /// Whether the collation's key is the text itself, so none is made.
+    octets: bool,
     collation: CollationRef,
 }
 
@@ -138,8 +143,15 @@ impl Accumulator for CollatedAcc {
         if v.is_null() {
             return Ok(());
         }
-        let key = self.collation.sort_key(v)?;
         let wanted = if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less };
+        if let (true, Value::Char(text)) = (self.octets, v) {
+            let better = |best: &Value| if let Value::Char(b) = best { text.as_bytes().cmp(b.as_bytes()) == wanted } else { true };
+            if self.best.as_ref().is_none_or(|(_, best)| better(best)) {
+                self.best = Some((Value::Null, v.clone()));
+            }
+            return Ok(());
+        }
+        let key = self.collation.sort_key(v)?;
         if self.best.as_ref().is_none_or(|(best, _)| compare(&key, best) == Some(wanted)) {
             self.best = Some((key, v.clone()));
         }

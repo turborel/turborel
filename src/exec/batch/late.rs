@@ -103,7 +103,17 @@ impl Deferred {
     /// rows of (`project::computed`), so reads them all.
     pub(in crate::exec) fn projected(&self, exprs: &[Expr]) -> Deferred {
         let moved: Option<Vec<usize>> = exprs.iter().map(|e| if let Expr::Column(c) = e { Some(*c) } else { None }).collect();
-        let Some(moved) = moved else { return Deferred::default() };
+        let Some(moved) = moved else {
+            // Every column is read, but the bound still reaches the scan,
+            // by the column it is of, under expressions that raise
+            // nothing: a group the bound passes over holds no row of the
+            // first, so none whose expression the sort would see (RULES.md
+            // D1183, a sort key made beside its rows' columns).
+            let quiet = !exprs.iter().any(Expr::can_raise);
+            let of_column = |at: usize| if let Some(Expr::Column(c)) = exprs.get(at) { Some(*c) } else { None };
+            let bound = self.bound.as_ref().filter(|_| quiet).and_then(|(at, t)| of_column(*at).map(|c| (c, Arc::clone(t))));
+            return Deferred { bound, ..Deferred::default() };
+        };
         let (mut unread, mut read) = (Vec::new(), Vec::new());
         for (n, (e, &c)) in exprs.iter().zip(&moved).enumerate() {
             if self.unread.binary_search(&n).is_ok() {

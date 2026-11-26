@@ -491,6 +491,7 @@ mod undo_memory;
 mod unique_checks;
 mod unique_nulls;
 mod unnest;
+mod unpadded_collations;
 mod user_casts;
 mod users;
 mod uuids;

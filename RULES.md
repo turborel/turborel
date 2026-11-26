@@ -736,6 +736,7 @@ verification approach DO-178C expects (§8).
 | D1164 | A start that changes nothing records no catalog image |
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
+| D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
 
 ### The project
 
@@ -20004,6 +20005,66 @@ pages.
 A count is now exact to 2^53 and the nearest `f64` past it, its high and
 low words each converted. The ceiling of an estimate is the most a
 count holds only of one reaching it.
+
+#### D1183. A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made
+
+A comparison under any collation but the default made a sort key of each
+operand (D60), a binary string, and every operator that reads vectors
+gave way to rows for it. Under UCS_BASIC or SQL_TEXT with NO PAD the key
+is the text's own octets, so a key was built of each row to say what the
+row already said. A table whose character columns were all of such a
+collation ran its text queries many times slower than under the default.
+
+The two pad characteristics differ in two cases alone [ISO/IEC
+9075-2:2023 §4.3.2, §8.2 GR3b]. Strings that differ only in trailing
+spaces are equal padded and apart unpadded, the shorter the less. And
+where one string is a prefix of the other, the rest beginning, after any
+spaces, with a character below a space, the longer is the less padded
+and the greater unpadded. Everything else orders alike.
+
+The plan keeps its marks (`Expr::SortKey`, `Aggregate.collations`), so
+every rule of the optimizer reads it as before, and an index on such a
+column still holds sort keys, which are the strings' octets, so no index
+and no format changes. What changed is how the marks are carried out
+where `CollationRef::is_octets` holds.
+
+- A comparison of a marked column with a constant is judged over the
+  column's vector in place (`Judged::Unpadded`) and told to the scan
+  (`Conjunct::Unpadded`, `logical::compared_unpadded`), which judges it of
+  texts, of a dictionary's entries and of texts coded by symbols
+  (`Symbols::compare_unpadded`). IN is an OR of them, NOT IN and BETWEEN
+  ANDs of them.
+- A zone's least and greatest are in the padded order. Equal octets are
+  equal padded too, so an equality passes over a zone the constant is
+  outside. No other comparison passes over a zone, as `'a'` alone in a
+  zone is below `'a'` and a tab unpadded and above it padded. A sorted
+  dictionary's order, a sketch and a Bloom filter take no such constant.
+- GROUP BY, and DISTINCT bound as a grouping, read by batches and in
+  parallel. The grouping's seed says which key columns are unpadded
+  (`Seed::unpadded`), and a table made by it hashes those strings whole
+  (`Kernels::hash_texts_unpadded`) and compares their octets
+  (`Lane::equal`).
+- MAX and MIN compare the strings' octets (`CollatedAcc`).
+- ORDER BY, a join's keys and COUNT(DISTINCT) still take a key, made of a
+  vector of texts in one pass as the text's octets (`calls::octets`), which
+  sort, join and compare as binary strings do.
+- LIKE never pads [§8.5 SR3d], so under UCS_BASIC or SQL_TEXT of either
+  pad characteristic its operands are no longer folded
+  (`binder::collation::like_under`), and a constant pattern stays one.
+
+Which collation a comparison takes is §9.15's, unchanged. Two columns of
+different collations are refused [SR4e], and an explicit COLLATE on one
+side wins, so a join's keys are of one pad characteristic.
+
+These still compare sort keys, made a row at a time, and so are correct
+and no faster than before. Each is tested by
+`unpadded_collations::the_rest_compare_sort_keys_unpadded`. They are a
+window's partition and order, UNION, INTERSECT and EXCEPT, IN and a
+quantified comparison of a subquery, a comparison of rows, NULLIF and a
+simple CASE, GREATEST and LEAST, a grouping streamed in an index's order,
+a second grouping over a first run in parallel (`first_level`), and a
+range read of an index. A join's condition under a collation is not
+moved by the join order's search (`enumerate/extract.rs`), as before.
 
 ## 2. Project layout
 

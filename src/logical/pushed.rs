@@ -7,7 +7,9 @@ use crate::index::Probe;
 use crate::storage::{Condition, Conjunct, Conjunction};
 use crate::value::{CompOp, Value, constant_prefix};
 
-/// The conjuncts of `cond` comparing a column with a constant, testing it
+/// The conjuncts of `cond` comparing a column with a constant, as strings
+/// compare padded or, under a collation of NO PAD that orders them as their
+/// octets do, unpadded (`compared_unpadded`), testing it
 /// IS NULL or IS NOT NULL, IN or NOT IN a list of constants, LIKE a
 /// constant pattern (as the bounds of its prefix), or an OR of these of one
 /// column, if any, unless `cond` can raise an error: every row `cond` keeps
@@ -62,8 +64,12 @@ fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
 }
 
 /// `cond` as one conjunct of one column, if it is: a comparison with a
-/// constant, IS NULL or IS NOT NULL, or IN a list of constants.
+/// constant, padded or unpadded, IS NULL or IS NOT NULL, or IN a list of
+/// constants.
 fn single(cond: &Cond) -> Option<Conjunct> {
+    if let Some((column, op, octets)) = compared_unpadded(cond) {
+        return Some(Conjunct::Unpadded { column, op, octets: octets.to_vec() });
+    }
     if let Some((column, op, value)) = compared_with_constant(cond) {
         return Some(Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value: value.clone() } }));
     }
@@ -152,6 +158,29 @@ pub fn compared_with_constant(cond: &Cond) -> Option<(usize, CompOp, &Value)> {
     }
 }
 
+/// [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) The column, operator and
+/// constant's octets of `cond` if it compares a column of character
+/// strings with a constant under a collation of NO PAD that orders strings
+/// as their octets do (`CollationRef::is_octets`): the binder marks the
+/// column with the collation and makes the constant its sort key, the
+/// text's octets, so the comparison is of the column's text in place,
+/// unpadded, either way round.
+pub fn compared_unpadded(cond: &Cond) -> Option<(usize, CompOp, &[u8])> {
+    let Cond::Compare(a, op, b) = cond else { return None };
+    if let Some(found) = marked(a, b) {
+        return Some((found.0, *op, found.1));
+    }
+    marked(b, a).map(|(column, octets)| (column, op.flip(), octets))
+}
+
+/// The column `key` marks with such a collation and the octets of
+/// `constant`, its sort key, if they are so.
+fn marked<'c>(key: &Expr, constant: &'c Expr) -> Option<(usize, &'c [u8])> {
+    let (Expr::SortKey(of, collation), Expr::Const(Value::Binary(octets))) = (key, constant) else { return None };
+    let Expr::Column(column) = &**of else { return None };
+    collation.is_octets().then(|| (*column, octets.bytes()))
+}
+
 /// The column and constants of `cond` if it is an OR of equalities of one
 /// column with constants, as an `<in predicate>` of constants is
 /// (`binder/predicates.rs`), or their set (`logical/sets.rs`).
@@ -236,5 +265,41 @@ mod tests {
         let either = or(or(below.clone(), above), Cond::IsNull(Expr::Column(0), false));
         assert!(passes(&either, int(5)) && passes(&either, int(95)) && passes(&either, Value::Null) && !passes(&either, int(50)));
         assert!(pushed_conjuncts(&or(below, eq(1, 3))).is_none(), "two columns");
+    }
+
+    /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
+    /// comparison of a column marked with a collation of NO PAD by octets
+    /// with a constant's key is told a scan as the column's octets compared
+    /// unpadded, either way round, and an OR of them as any; a prefix is
+    /// below, a trailing space tells apart; one marked with another
+    /// collation, or of an expression, is told nothing.
+    #[test]
+    fn a_comparison_unpadded_is_told_as_octets() {
+        let octets = crate::value::collation::unpadded_scalar();
+        let key = |e: Expr| Expr::SortKey(Box::new(e), octets.clone());
+        let constant = |s: &str| Expr::Const(Value::Binary(crate::value::Binary::of(s.as_bytes())));
+        let below = Cond::Compare(key(Expr::Column(0)), CompOp::Lt, constant("a "));
+        assert_eq!(compared_unpadded(&below), Some((0, CompOp::Lt, b"a ".as_slice())));
+        let told = pushed_conjuncts(&below).unwrap();
+        assert!(matches!(told.conjuncts(), [Conjunct::Unpadded { column: 0, op: CompOp::Lt, .. }]), "{told:?}");
+        let char_of = |s: &str| Value::Char(s.into());
+        assert!(passes(&below, char_of("a")) && passes(&below, char_of("a\t")) && passes(&below, char_of("")));
+        assert!(!passes(&below, char_of("a ")) && !passes(&below, char_of("ab")) && !passes(&below, Value::Null));
+        let flipped = Cond::Compare(constant("a"), CompOp::Lt, key(Expr::Column(0)));
+        assert_eq!(compared_unpadded(&flipped), Some((0, CompOp::Gt, b"a".as_slice())));
+        assert!(passes(&flipped, char_of("a ")) && !passes(&flipped, char_of("a")));
+        let equal = |s: &str| Cond::Compare(key(Expr::Column(0)), CompOp::Eq, constant(s));
+        let either = Cond::Or(Box::new(equal("a")), Box::new(equal("b ")));
+        let any = pushed_conjuncts(&either).unwrap();
+        let [Conjunct::Any(each)] = any.conjuncts() else { panic!("not an OR of conjuncts: {any:?}") };
+        assert_eq!(each.len(), 2);
+        assert!(passes(&either, char_of("b ")) && !passes(&either, char_of("b")) && !passes(&either, char_of("a ")));
+        let padded = crate::value::collation::CollationRef { pad: crate::value::collation::Pad::Space, ..octets.clone() };
+        let other = Cond::Compare(Expr::SortKey(Box::new(Expr::Column(0)), padded), CompOp::Eq, constant("a"));
+        assert!(compared_unpadded(&other).is_none() && pushed_conjuncts(&other).is_none());
+        let of_expression = Cond::Compare(key(Expr::Neg(Box::new(Expr::Column(0)))), CompOp::Eq, constant("a"));
+        assert!(compared_unpadded(&of_expression).is_none() && pushed_conjuncts(&of_expression).is_none());
+        let of_text = Cond::Compare(key(Expr::Column(0)), CompOp::Eq, Expr::Const(char_of("a")));
+        assert!(compared_unpadded(&of_text).is_none());
     }
 }

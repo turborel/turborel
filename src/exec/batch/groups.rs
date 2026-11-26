@@ -85,7 +85,8 @@ impl Numbers<'_> {
 pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Db, TxId), batches: Batches) -> Result<RowIter> {
     let (mut work, runner) = (Work::of(db, tx), Runner::new(db, tx));
     let partial = aggs.iter().all(|a| a.func.0.accumulator(a.result.clone()).write_state(&mut Vec::new()));
-    let how = Grouping { read, aggs, runner: &runner, seed: db.functions.seed(), partial };
+    let seed = db.functions.seed().unpadded(&read.unpadded);
+    let how = Grouping { read, aggs, runner: &runner, seed: &seed, partial };
     // Rows past the work area are written by batch, the cheapest to read
     // back once; groups are made partly only of a partition that outgrows
     // it again, whose rows would be written again (`spilled::regrouped`).
