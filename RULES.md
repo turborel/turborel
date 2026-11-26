@@ -740,6 +740,8 @@ verification approach DO-178C expects (§8).
 | D1164 | A start that changes nothing records no catalog image |
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
+| D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
+| D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 
 ### The project
 
@@ -10215,8 +10217,9 @@ and the ids past the last are read in place with no column (D350).
 Under SERIALIZABLE the read is noted as the whole table's, as a scan's
 with no condition is. Nothing is read or noted until the first count is
 asked for, so EXPLAIN can ask the storage whether it counts. A table
-that freezes rows is scanned, because a freeze takes out entries without
-a change of their zones, so their rows are no longer the tree's. Zone
+that freezes rows is not counted by its zones, because a freeze takes
+out entries without a change of their zones, so their rows are no longer
+the tree's. D1180 counts it from its groups' directory instead. Zone
 flags stay in memory, so a table opened reads its rows until the
 maintenance thread settles its zones.
 
@@ -20079,6 +20082,71 @@ pages.
 A count is now exact to 2^53 and the nearest `f64` past it, its high and
 low words each converted. The ceiling of an estimate is the most a
 count holds only of one reaching it.
+
+#### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
+
+A table that froze rows or held groups was counted by its scan. A count
+of all its rows then read every group's header and every chunk's run
+of row positions, on every core, as a scan of no column does. D351's
+zone counts do not apply to it. A freeze takes out the tree's entries
+of rows it froze without a change of their zones, so a zone's rows are
+not the table's.
+
+Such a table now answers `TableStorage::count` from its directory
+(`rows/frozen/counts.rs`). The directory is taken first, of the groups
+the reader sees (D533's stamps), as a scan by batch takes it before it
+reads the tree. Each group adds the rows its summary holds. The tree is
+read over the group's shadow bits alone (D1100), the same ids the scan
+reads there. Each entry the reader sees adds a row, and each of the
+group's own rows such an entry stands for takes one away, found by the
+group's row ids, which are read only then. Then the tree's entries
+outside every group's range are read, each the reader sees adding one.
+So a count is the scan's at every isolation level, of frozen rows
+updated and deleted, of rows frozen while it counts and of rows not yet
+frozen, and a group no entry shadows costs an addition. Under
+SERIALIZABLE the read is noted as the whole table's, as D351's is.
+
+The plan, EXPLAIN's line and the planner's choice not to split the
+count are D351's, now of the column store too. Rejected: summing the
+summaries' rows alone, which counts rows deleted or changed since the
+freeze; a count kept per group of its rows still live, which every
+delete of a frozen row would have to write and which is no snapshot's.
+
+#### D1181. MIN and MAX of a table that holds groups take each group no entry shadows from its summary
+
+`SELECT MIN(EventDate), MAX(EventDate) FROM hits` read every value of
+the column, on every core. Yet a group's summary, held in memory, keeps
+each column's nulls and its least and greatest values that are not null
+(D31), exact as the group was written.
+
+`TableStorage::summarized` gives the rows a scan of some columns with no
+condition gives, in pieces (`rows/frozen/summarized.rs`). The directory
+is taken first, as D1180's is. A group whose shadow bits are all clear
+has no entry of the tree over its rows, so the reader sees each of them
+as frozen, and it is given whole: its rows, and of each column asked
+for its nulls and bounds, none of its values read. The other groups and
+the tree's rows past them are given by batch, by the scan itself
+(`Batched` over those groups alone, its tree's rows those outside every
+group), so each row the scan gives is given once. Under SERIALIZABLE the
+read is noted as the scan's of those columns is. The row store gives
+none, its zones' bounds being kept as rows change, not exact.
+
+The executor feeds an aggregation of one group, over a bare scan, whose
+set functions are each COUNT(*), MIN or MAX, at least one of a column,
+the pieces in place of the scan's batches (`exec/batch/count.rs`). A
+piece given whole adds its rows to each COUNT(*), its least to each MIN
+and its greatest to each MAX, and its nulls raise the warning of a null
+taken out [X3.135-1986 §5.8 GR1]. A batch is fed as the scan's is. MIN
+and MAX are fed so only of a column of exact numbers or a datetime: a
+summary's bounds are compared as values are, and a text's MIN and MAX
+are taken by its collation (§9.15), while an approximate number's
+bounds would also need NaN and signed zero ordered as the set functions
+order them. A bare COUNT(*) stays D1180's. EXPLAIN adds the line
+`-- summarized by storage: <table>`, and the planner keeps the
+aggregation whole, as D351 keeps a count. Rejected: COUNT of a column
+from a group's rows less its nulls, whose accumulator takes values, not
+counts; keeping bounds of a group exact as its rows are deleted, which
+every delete of a frozen row would have to write.
 
 ## 2. Project layout
 

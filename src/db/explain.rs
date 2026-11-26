@@ -154,11 +154,15 @@ fn shown(c: &Compiled) -> String {
 }
 
 /// \[DESIGN\] `text`, a plan, with a line naming the table whose rows the
-/// bare COUNT(*) of `physical` counts by its storage, if it does
-/// (RULES.md D351, `exec/batch/count.rs`).
+/// bare COUNT(*) of `physical` counts by its storage, or whose summaries
+/// answer its MIN and MAX, if one does (RULES.md D351, D1181,
+/// `exec/batch/count.rs`).
 fn with_count(st: &State, physical: &Plan, text: String) -> String {
-    match crate::exec::storage_counted(physical, st) {
-        Some(table) => format!("{text}-- counted by storage: {table}\n"),
+    if let Some(table) = crate::exec::storage_counted(physical, st) {
+        return format!("{text}-- counted by storage: {table}\n");
+    }
+    match crate::exec::storage_summarized(physical, st) {
+        Some(table) => format!("{text}-- summarized by storage: {table}\n"),
         None => text,
     }
 }
