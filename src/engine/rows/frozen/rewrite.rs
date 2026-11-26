@@ -115,7 +115,7 @@ impl RowTable {
     fn rewrite(&self, entry: &Arc<Entry>, (entries, cutoff): (Vec<(RowId, Vec<u8>)>, Timestamp), columns: &Columns) -> Result<()> {
         let types = self.format.types();
         let all: Vec<usize> = (0..types.len()).collect();
-        let old = self.group_of(entry)?;
+        let old = self.group_of(entry, None)?;
         let pages = self.pages_for(&old)?;
         let old_ids = old.row_ids(&pages)?;
         let frozen = rows(&old, &pages, types, &all, (0, old.rows))?;

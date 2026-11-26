@@ -42,7 +42,7 @@ fn columns_of(rows: &[Row]) -> Vec<Records> {
 /// of each of its pages, in order.
 fn image(group: &Group, pages: &Pages<'_, Plain>) -> (Vec<u8>, Vec<(u64, Vec<u8>)>) {
     let header = read_chain(pages, group.header[0]).unwrap().0;
-    (header, group.pages().into_iter().map(|p| (p.0, pages.get(p).unwrap())).collect())
+    (header, group.pages().unwrap().into_iter().map(|p| (p.0, pages.get(p).unwrap())).collect())
 }
 
 /// A group's header bytes, each page's number and content, and its zones

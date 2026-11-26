@@ -2,8 +2,9 @@
 
 [Contents](README.md)
 
-Queries of property graphs may be written as SQL Server, Oracle, PGQL and
-openCypher write them. Each is read as a query of GRAPH_TABLE
+Queries of property graphs may also be written with MATCH in a WHERE
+clause, with identity functions and hints in GRAPH_TABLE, and as PGQL
+and openCypher queries. Each is read as a query of GRAPH_TABLE
 ([Property Graphs](20-property-graphs.md)), one for each MATCH clause of
 Cypher and one otherwise, so it matches as GRAPH_TABLE does and gives
 the same rows. The examples here read schema ANN's node
@@ -63,7 +64,7 @@ OK
 <graph path function> ::= STRING_AGG | LAST_VALUE | COUNT | SUM | AVG | MIN | MAX
 ```
 
-MATCH in a WHERE clause, as SQL Server writes it, matches a pattern
+MATCH in a WHERE clause matches a pattern
 over the tables of the FROM clause. Each alias names a table of the FROM
 clause, and the rows of the query are those of the tables that a match
 joins. The tables may be node and edge tables, whose graph is their
@@ -128,13 +129,13 @@ SELECT a.name, b.name, LAST_VALUE(x.name) WITHIN GROUP (GRAPH PATH) AS meet
 (1 row)
 ```
 
-Unlike SQL Server, MATCH may stand under OR and NOT, an edge alias may
+MATCH may stand under OR and NOT, an edge alias may
 be written twice, and a group may be quantified outside SHORTEST_PATH.
 A MATCH under OR or NOT has no FOR PATH table or GRAPH PATH aggregate.
 A MATCH anywhere but a WHERE clause is refused with SQLCODE -103 (SQLSTATE 42000),
 and so is one whose tables are of no one graph.
 
-## GRAPH_TABLE as Oracle writes it
+## Identity functions and hints in GRAPH_TABLE
 
 VERTEX_ID and EDGE_ID give an element's identity as a JSON value, and
 VERTEX_EQUAL and EDGE_EQUAL compare two vertices or two edges, as SAME

@@ -24,6 +24,7 @@ pub(crate) mod raises;
 mod render;
 mod sets;
 mod single;
+mod sort_key;
 mod subqueries;
 mod subquery;
 mod unnest;
@@ -54,6 +55,7 @@ pub use pushed::{compared_unpadded, compared_with_constant, disjuncts, in_list, 
 pub use raises::{MAX_JUDGED_DEPTH, Types, can_raise_typed, cond_can_raise_typed, plan_column_type};
 pub use render::{column_name, render_cond, render_expr, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
+pub use sort_key::SortKey;
 pub use subquery::{Decorrelated, Subquery, bound_expr, cond_has_outer, map_plan_exprs, plan_has_outer};
 pub use unnest::Unnest;
 pub use window::{Bound, Exclusion, Frame, Marker, Nested, Offset, Pick, Units, Valued, Window, WindowCall, WindowKind};
@@ -119,35 +121,6 @@ impl AggCall {
     pub fn map_exprs(self, f: &mut dyn FnMut(Expr) -> Expr) -> AggCall {
         let distribution = self.distribution.map(|d| Box::new(Distribution { fraction: f(d.fraction.clone()), ..*d }));
         AggCall { arg: self.arg.map(&mut *f), filter: self.filter.map(|c| c.map_exprs(f)), distribution, ..self }
-    }
-}
-
-/// [X3.135-1986 §8.3 GR3b] a sort column of the node's output, and its direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SortKey {
-    /// The column's position in the node's output.
-    pub column: usize,
-    /// DESC rather than ASC.
-    pub descending: bool,
-    /// [ISO/IEC 9075-2:2023 §10.10 GR1e ii] NULLS FIRST rather than NULLS
-    /// LAST, as written or implied (`SortOrder::of`).
-    pub nulls_first: bool,
-}
-
-impl SortKey {
-    /// Column `column` in the order `order`.
-    pub fn new(column: usize, order: SortOrder) -> SortKey {
-        SortKey { column, descending: order.descending, nulls_first: order.nulls_first }
-    }
-
-    /// Column `column`, ascending, nulls placed as implied.
-    pub fn ascending(column: usize) -> SortKey {
-        SortKey::new(column, SortOrder::of(false, None))
-    }
-
-    /// How it orders its column's values.
-    pub fn order(&self) -> SortOrder {
-        SortOrder { descending: self.descending, nulls_first: self.nulls_first }
     }
 }
 
