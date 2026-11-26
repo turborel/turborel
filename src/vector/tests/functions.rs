@@ -39,9 +39,9 @@ fn chars(v: Value) -> String {
 #[test]
 fn distances_take_both_orders() {
     let (a, b) = (dense(Element::Float32, &[1.0_f64, 0.0_f64]), dense(Element::Float32, &[0.0_f64, 2.0_f64]));
-    let oracle = call("VECTOR_DISTANCE", &[a.clone(), b.clone(), text("euclidean")]).unwrap();
-    let server = call("VECTOR_DISTANCE", &[text("EUCLIDEAN"), a.clone(), b.clone()]).unwrap();
-    assert!((approx(&oracle) - 5_f64.sqrt()).abs() < 1e-12_f64 && (approx(&server) - 5_f64.sqrt()).abs() < 1e-12_f64);
+    let last = call("VECTOR_DISTANCE", &[a.clone(), b.clone(), text("euclidean")]).unwrap();
+    let first = call("VECTOR_DISTANCE", &[text("EUCLIDEAN"), a.clone(), b.clone()]).unwrap();
+    assert!((approx(&last) - 5_f64.sqrt()).abs() < 1e-12_f64 && (approx(&first) - 5_f64.sqrt()).abs() < 1e-12_f64);
     assert_eq!(approx(&call("VECTOR_DISTANCE", &[a.clone(), b.clone()]).unwrap()), 1.0_f64);
     assert!(call("VECTOR_DISTANCE", &[a.clone(), Value::Null]).unwrap().is_null());
     assert_eq!(call("VECTOR_DISTANCE", &[a.clone(), b.clone(), text("WARP")]).unwrap_err().sqlcode(), -301_i32);
@@ -60,7 +60,7 @@ fn distances_take_both_orders() {
 }
 
 /// Verifies: [EXTENSION] the functions' argument checks as bound: counts,
-/// a metric first selecting the SQL Server order, character strings
+/// a metric first selecting the metric-first order, character strings
 /// accepted where a vector is (R5.1), and the declared result types.
 #[test]
 fn return_types_check_arguments() {

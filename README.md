@@ -219,7 +219,7 @@ behind it, and each can be replaced or added to.
 - Native graph tables, CREATE TABLE ... AS NODE and AS EDGE, with hidden
   identities, CONNECTION constraints and each schema's SYS_GRAPH.
 - [Graph compatibility syntax](doc/sql/22-graph-compatibility.md):
-  SQL Server's MATCH, Oracle's identity functions and hints, PGQL and
+  MATCH in a WHERE clause, identity functions and hints, PGQL and
   Cypher queries, as GRAPH_TABLE.
 - [GQL](doc/sql/statements/execute-gql.md) by EXECUTE GQL, GQL_TABLE or
   a GQL session, over property graphs and typed or open graphs.

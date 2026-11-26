@@ -3725,8 +3725,7 @@ or `hash` (RULES.md D92).
 VECTOR is a built-in type beyond the standards (RULES.md D93), with its
 distances, operators, arithmetic, aggregates and quantization, and
 distance functions of SQL. No ISO standard defines it. It follows the
-vector design document, which reads Microsoft SQL Server 2025's and
-Oracle AI Database 26ai's vector features as one design and is cited
+vector design document, cited
 here as "vector §x" ([below](#the-vector-design-document-clause-by-clause)).
 The SQL Reference Manual's [Vectors](doc/sql/14-vectors.md) and
 [Hybrid Search](doc/sql/15-hybrid-search.md) and the

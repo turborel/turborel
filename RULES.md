@@ -21268,7 +21268,7 @@ and are held in the spill the same way. A pair's second grouping that
 crosses the first's partitions still merges its groups on the
 statement's thread, all in memory (D1133). DISTINCT set functions and
 that second grouping are the next to be held in the spill, as
-ClickBench's COUNT(DISTINCT) groupings meet them at a small grant.
+COUNT(DISTINCT) groupings of many groups meet them at a small grant.
 
 The groups a part finishes go to a run of the same area, each numbered
 by its first row, and the statement's thread reads the runs back as it
