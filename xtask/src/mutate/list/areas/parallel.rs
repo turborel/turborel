@@ -32,7 +32,7 @@ const JOINED: &str = "storage::batch::joined::tests::datetimes_and_truth_values_
 const COVERED: &str = "spill::grant::tests::covered_grants_reserve_nothing";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 25] = [
+pub const PARALLEL: [Mutation; 26] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -281,6 +281,16 @@ pub const PARALLEL: [Mutation; 25] = [
         original: "Ok(Taken::Past) => again(m),",
         replacement: "Ok(Taken::Past) => Box::new(std::iter::empty()),",
         integration: &["held_left::a_left_held_by_its_parts_past_the_work_area_is_read_once"],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-sort-ties-dropped",
+        package: Package::Core,
+        breaks: "a sort run in parallel that asks for its last row's peers gives its first rows alone (RULES.md D1229)",
+        file: "src/exec/parallel/sorted.rs",
+        original: "Box::new(WithTies { rows, left: n, keys, last: None })",
+        replacement: "Box::new(rows.take(n))",
+        integration: &[SAME_ROWS],
         unit: &[],
     },
 ];

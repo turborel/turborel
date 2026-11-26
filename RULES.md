@@ -771,6 +771,7 @@ verification approach DO-178C expects (§8).
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
+| D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
 ### The project
@@ -21193,6 +21194,23 @@ holds no more than the grant at the end, where holding its finished rows
 until the statement read them outgrew the memory the server was given.
 Of a grouping that keeps the first rows a sort asks of its tables
 (D1124), a part's run holds those rows alone.
+
+#### D1229. A sort that asks for its last row's peers is run in parallel, each morsel sorted whole
+
+FETCH FIRST n ROWS WITH TIES asks for the first n rows of a sort and
+every row after them that is a peer of the n-th under the sort's keys
+[ISO/IEC 9075-2:2023 §7.17 GR5, GR6]. The planner kept such a sort out
+of a part run in parallel, and the part gave way had it met one, so the
+sort read and sorted every row on the statement's thread alone.
+
+It is now run in parallel as a whole sort is (D294): each morsel sorted
+whole by a thread, since which of a morsel's rows are peers of the n-th
+is known only once every run is merged, and the runs merged in memory
+or, past the grant, from the spill (`exec/parallel/sorted.rs`). The
+first n rows of the merge are given, then each row after them while it
+is a peer of the n-th, which ends at the first that is not. Each sort is
+stable and the runs are merged in the order of their morsels, so the
+peers given are those the plan run alone gives, in its order.
 
 #### D1230. A structure's tally counts a miss only when the pool evicted a page for it
 

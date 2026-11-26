@@ -40,7 +40,7 @@ use crate::exec::batch::{Batches, rows_of};
 use crate::exec::sort::{Sorter, first_of_morsel, rows_of_batches, sorted_morsel, sorted_morsel_batches, sorted_rows};
 use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner, broken, compare_rows};
-use crate::logical::SortKey;
+use crate::logical::{Most, SortKey};
 use crate::physical::Plan;
 use crate::spill::row_bytes;
 use crate::storage::{Batch, Row};
@@ -70,11 +70,11 @@ type Spilling = (Sorter, Work);
 ///
 /// As reading the stream fails.
 pub(super) fn sorted(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
-    let Plan::Sort { keys, input, most, .. } = plan else { return Err(broken("not a sort run in parallel")) };
-    if most.is_some_and(|m| m.ties) {
-        return Ok(Held::GaveWay);
-    }
-    let most = most.map(|m| m.rows);
+    let Plan::Sort { keys, input, most: asked, .. } = plan else { return Err(broken("not a sort run in parallel")) };
+    // Of a sort that asks the last row's peers too, each morsel is sorted
+    // whole, as which of its rows are peers of the last given is known
+    // only of every run merged (RULES.md D1229).
+    let most = asked.filter(|m| !m.ties).map(|m| m.rows);
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
     let (pipeline, keys, db_for, within) = (Arc::new(pipeline), Arc::new(keys.clone()), db.clone(), limit.clone());
@@ -90,18 +90,59 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resul
         spilled = Some(spilled_of(&keys, runs.drain(..), (db, tx))?);
     }
     if let Some((sorter, mut work)) = spilled {
-        let rows = sorter.sorted(&mut work)?;
-        return Ok(Held::Kept(match most {
-            Some(n) => Box::new(rows.take(n)),
-            None => rows,
-        }));
+        return Ok(Held::Kept(first_asked(sorter.sorted(&mut work)?, *asked, keys)));
     }
-    let ranges = merged(made(runs, (db, tx, degree))?, keys, (db, tx, degree));
+    let ranges = merged(made(runs, (db, tx, degree))?, Arc::clone(&keys), (db, tx, degree));
     let rows: RowIter = Box::new(Streamed::of(db, tx, ranges));
-    Ok(Held::Kept(limit.keeping(match most {
-        Some(n) => Box::new(rows.take(n)),
+    Ok(Held::Kept(limit.keeping(first_asked(rows, *asked, keys))))
+}
+
+/// [ISO/IEC 9075-2:2023 §7.17 GR5, GR6] Of `rows`, sorted by `keys`, the
+/// first `asked` rows, if a number of them is asked, and of WITH TIES each
+/// row after them that is a peer of the last under the keys; else every
+/// row.
+fn first_asked(rows: RowIter, asked: Option<Most>, keys: Arc<Vec<SortKey>>) -> RowIter {
+    match asked {
         None => rows,
-    })))
+        Some(Most { rows: n, ties: false }) => Box::new(rows.take(n)),
+        Some(Most { rows: n, ties: true }) => Box::new(WithTies { rows, left: n, keys, last: None }),
+    }
+}
+
+/// The first rows of a sort and the peers of the last of them: the rows
+/// still to give before the last, and the last given once none are left.
+struct WithTies {
+    rows: RowIter,
+    left: usize,
+    keys: Arc<Vec<SortKey>>,
+    last: Option<Row>,
+}
+
+impl Iterator for WithTies {
+    type Item = Result<Row>;
+
+    fn next(&mut self) -> Option<Result<Row>> {
+        if self.left == 0 && self.last.is_none() {
+            return None;
+        }
+        let row = match self.rows.next()? {
+            Ok(row) => row,
+            Err(e) => return Some(Err(e)),
+        };
+        if self.left > 0 {
+            self.left = self.left.saturating_sub(1);
+            if self.left == 0 {
+                self.last = Some(row.clone());
+            }
+            return Some(Ok(row));
+        }
+        let peer = self.last.as_ref().is_some_and(|last| compare_rows(&self.keys, last, &row) == Ordering::Equal);
+        if !peer {
+            self.last = None;
+            return None;
+        }
+        Some(Ok(row))
+    }
 }
 
 /// The runs of `morsels`, `count` of `pipeline`'s sorted by `keys`, held
