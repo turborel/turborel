@@ -263,7 +263,7 @@ fn coded_of(t: &DataType, values: &[Value], positions: &[usize]) -> Option<(Vec<
     let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
     let (mut text, mut ends, mut codes, mut nulls) = (String::new(), Vec::new(), Vec::new(), Mask::default());
-    chunk.coded(positions, (&mut text, &mut ends, &mut codes, &mut nulls), t)?;
+    chunk.coded(positions, (&mut text, &mut ends, &mut codes, &mut nulls), (t, &crate::kernels::Portable))?;
     let dictionary = crate::storage::Coded { codes, entries: std::sync::Arc::new(crate::storage::Texts::new(text, ends, None)) };
     let texts = crate::storage::Texts::coded(dictionary, nulls.any().then_some(nulls));
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
