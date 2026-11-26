@@ -235,7 +235,7 @@ pub(super) fn grouped_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Defe
         let whole = stream::whole_told(*input, (db, tx), Vec::new())?;
         runtime::applied_warning(whole, below, (&input_columns, args), (db, tx))
     };
-    Ok(gathered(super::groups::grouped_all(&read, &aggs, (db, tx), batches)?, &columns))
+    Ok(gathered(super::groups::grouped_all(&read, &aggs, (db, tx), (batches, None))?, &columns))
 }
 
 /// \[DESIGN\] (RULES.md D1066) `plan`, a DISTINCT by hash made the
