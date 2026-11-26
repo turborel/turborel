@@ -188,7 +188,7 @@ fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Optio
     let chunk = Chunk::parse(&bytes).unwrap();
     let (mut text, mut ends, mut nulls) = (Vec::new(), Vec::new(), Mask::default());
     chunk.texts((from, to), (&mut text, &mut ends, &mut nulls), t)?;
-    let texts = super::scan::checked_texts(text, ends, nulls.any().then_some(nulls))?;
+    let texts = scan::checked_texts(text, ends, nulls.any().then_some(nulls))?;
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
     let read = (from..to).map(|n| chunk.value(n, t).unwrap().to_string()).collect();
     Some((made, read))

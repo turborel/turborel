@@ -502,7 +502,7 @@ mod tests {
         coded.texts((3, 40), (&mut text, &mut ends), |n| fields.get(n).is_some_and(Option::is_none)).unwrap();
         let mut at = b"before".len();
         for (n, &end) in (3..40).zip(&ends) {
-            let field = fields.get(n).unwrap().clone().unwrap_or_default();
+            let field = fields[n].clone().unwrap_or_default();
             assert_eq!(text.get(at..end), Some(field.as_slice()), "value {n}");
             assert_eq!(coded.text(n).unwrap(), field, "value {n} alone");
             at = end;

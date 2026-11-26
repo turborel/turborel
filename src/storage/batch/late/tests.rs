@@ -91,12 +91,12 @@ impl LateSource for Spelled {
         let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Vec::new());
         for &p in positions {
             if p != 3 {
-                text.push_str(&"é".repeat(usize::try_from(p).unwrap()));
+                text.extend(std::iter::repeat_n('é', usize::try_from(p).unwrap_or(0)));
             }
             ends.push(text.len());
             nulls.push(p == 3);
         }
-        Ok(Column::Texts(Texts::new(text, ends, Some(crate::storage::Mask::from_bools(&nulls)))))
+        Ok(Column::Texts(Texts::new(text, ends, Some(Mask::from_bools(&nulls)))))
     }
 }
 

@@ -106,10 +106,10 @@ pub const SHARED_WORK: [Mutation; 17] = [
     Mutation {
         name: "texts-span-unshifted",
         package: Package::Core,
-        breaks: "a field of a chunk's texts judged UTF-8 at once is cut from the octets it begins at, past the range's start (D1131)",
+        breaks: "a field of a chunk's texts is cut from the octets it begins at, not from the range's start (D1131, D1168)",
         file: "src/engine/columns/encoded.rs",
-        original: "            padded(text, span.get(a.checked_sub(start)?..b.checked_sub(start)?)?, pad);",
-        replacement: "            padded(text, span.get(a..b)?, pad);",
+        original: "            pushed(text, values.get(a..b)?, pad)?;",
+        replacement: "            pushed(text, values.get(start..b)?, pad)?;",
         integration: &[],
         unit: &["engine::columns::tests::chunks_give_their_texts"],
     },
