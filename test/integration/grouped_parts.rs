@@ -140,3 +140,52 @@ fn a_join_over_a_grouping_reads_it_by_batch() {
         }
     }
 }
+
+/// Verifies: [X3.135-1986 §8.3 GR3b] [ISO/IEC 9075-2:2023 §7.17 GR6]
+/// (RULES.md D1124) the first rows of a sort over a grouping run in
+/// parallel, taken from its partitions' tables, are the rows the plan run
+/// alone gives, in its order: of counts that many groups tie on, where
+/// the earlier group comes first, by a set function and then a key, past
+/// an offset, by a key with a null, of a column given twice, of more rows
+/// than there are groups, and of the row store, whose groups are made of
+/// rows.
+#[test]
+fn the_first_rows_of_a_sort_over_a_grouping_are_the_plans() {
+    let (_db, a) = tables();
+    for table in ["C", "R"] {
+        for shape in [
+            "SELECT G, COUNT(*) FROM {t} GROUP BY G ORDER BY 2 DESC FETCH FIRST 9 ROWS ONLY",
+            "SELECT G, COUNT(N), SUM(K) FROM {t} GROUP BY G ORDER BY 2, 1 DESC FETCH FIRST 7 ROWS ONLY",
+            "SELECT COUNT(*), G FROM {t} GROUP BY G ORDER BY 1 OFFSET 5 ROWS FETCH FIRST 6 ROWS ONLY",
+            "SELECT G, MAX(K) FROM {t} GROUP BY G ORDER BY G DESC FETCH FIRST 3 ROWS ONLY",
+            "SELECT G, G, COUNT(*) FROM {t} GROUP BY G ORDER BY 3 DESC FETCH FIRST 4 ROWS ONLY",
+            "SELECT N, COUNT(*) FROM {t} GROUP BY N ORDER BY 2 DESC FETCH FIRST 1000 ROWS ONLY",
+        ] {
+            let sql = shape.replace("{t}", table);
+            let (alone, together, shown) = both(&a, &sql);
+            assert!(shown.contains("Parallel"), "{sql}\n{shown}");
+            assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+            assert_eq!(alone, together, "{sql}");
+        }
+    }
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §7.17 GR6] (RULES.md D1124) a sort
+/// whose first rows are not taken from the tables gives the plan's rows
+/// too: one that asks the peers of its last row, which a group's first
+/// row's number would part; one over a HAVING condition, which the
+/// tables' groups are not yet judged by; and one over a projection that
+/// computes a value.
+#[test]
+fn a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups() {
+    let (_db, a) = tables();
+    for sql in [
+        "SELECT G, COUNT(*) FROM C GROUP BY G ORDER BY 2 DESC FETCH FIRST 3 ROWS WITH TIES",
+        "SELECT G, COUNT(*) FROM C GROUP BY G HAVING COUNT(*) < 14 ORDER BY 2 DESC FETCH FIRST 5 ROWS ONLY",
+        "SELECT G, COUNT(*) + 1 FROM C GROUP BY G ORDER BY 2 DESC FETCH FIRST 5 ROWS ONLY",
+    ] {
+        let (alone, together, _) = both(&a, sql);
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+}

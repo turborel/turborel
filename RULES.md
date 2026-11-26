@@ -719,6 +719,7 @@ verification approach DO-178C expects (§8).
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
 | D1122 | The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change |
 | D1123 | The second grouping of a pair is made in the executor's table, of the first's groups given as a batch |
+| D1124 | The first rows of a sort over a grouping run in parallel are taken from its partitions' tables |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -749,6 +750,7 @@ verification approach DO-178C expects (§8).
 | D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
 | D1157 | A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone |
 | D1158 | A plan asking for a table's first statistics while the maintenance thread gathers them waits for that pass |
+| D1159 | A plan costs its spills at the grant of a statement running alone |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -766,6 +768,7 @@ verification approach DO-178C expects (§8).
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
+| D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
 ### The project
 
@@ -19688,6 +19691,42 @@ pipeline read a row at a time, is grouped again of rows as before
 (`regrouped.rs`). The batch is made only as the last wave finishes a
 partition, so what the part holds and when it gives way are unchanged.
 
+#### D1124. The first rows of a sort over a grouping run in parallel are taken from its partitions' tables
+
+A sort of which only the first rows are asked for (D379), over a
+grouping run in parallel, read every group back. Each partition's thread
+made a row of values of each of its groups, the statement's thread
+merged the partitions' rows in the order of their first rows, and the
+sort kept its few. Of a grouping of many groups nearly all of that work,
+and all of the memory the rows took, which no grant was charged, was for
+rows the sort dropped.
+
+Each partition's thread now takes the first rows from its own table
+(`exec/parallel/grouped/top.rs`). The table gives its groups as a batch
+(D1123), the columns the projection over the grouping names in its
+order, and each group's first row's number as a column after them. The
+thread keeps that batch's first rows under the sort's keys and then the
+number, as a sort run in parallel keeps a morsel's
+(`sort::first_of_morsel`), so only those are made rows. The statement's
+thread sorts the partitions' rows the same way, gives the first asked
+for, and leaves the number out.
+
+The plan run alone sorts the groups stably, in the order of their first
+rows, so of two groups of equal keys the one whose first row came
+earlier comes first. The number as the last key orders any two groups
+so, in whatever partitions they are. The rows given and their order are
+therefore the plan's.
+
+It does so of a grouping by hash, alone at the top of its part, whose
+groups are made by batch, under a projection of its columns alone or
+none. A sort that asks the peers of its last row (WITH TIES) is not
+taken so, as the number would part groups that are peers. Neither is one
+over a HAVING condition, a projection that computes a value, DISTINCT or
+a pair of groupings (D1113); the sort reads those groups as before. A
+grouping whose groups are made of rows gives its groups in order, which
+are projected and sorted. A part that gives way is grouped alone and its
+rows projected and sorted, the part not tried again.
+
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
 A function with no body over vectors is called for each row of a batch
@@ -20366,6 +20405,32 @@ pass and is given what it gathered. Plans that find statistics never
 take the lock, so later passes do not hold them up
 (`engine/rows/stats.rs`).
 
+#### D1159. A plan costs its spills at the grant of a statement running alone
+
+The planner costs what an operator spills past its grant (D651), and took
+the grant as the executor would give it at that moment (D683). That is
+half of what the grants' share has free, after the grants other
+statements hold and after the standing reservations. Two things moved it
+that have nothing to do with the statement. Every grant held beside it
+halved it, so a grouping of sixty thousand rows was hashed over a scan
+when planned alone and streamed over its key's index in order when
+planned beside two others. The kept undo is a standing reservation that
+grows and shrinks with the writes (D746), so the same statement on an
+idle database was costed at a grant that depended on what had run
+before. One query was planned two ways, and a benchmark run and its
+rerun could time different plans.
+
+The planner now costs at the grant a statement running alone would be
+given. No grant is taken as held, and each standing reservation is taken
+at the bound it may grow to, a buffer pool at its bytes and the kept
+undo at its share of the budget (`Reservation::stand_up_to`,
+`MemoryBudget::planned`). The plan then depends on the settings alone,
+and EXPLAIN shows the plan the statement runs. The executor still takes
+what is free when an operator starts (`spill/grant.rs`), and spills or
+gives way as it must. So beside other statements an operator may spill
+more than it was costed for. That was chosen over a plan that changes
+with its neighbours.
+
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
 A value given for a `?` is cast to the parameter's type [ISO/IEC
@@ -20965,6 +21030,34 @@ wait for its own thread.
 A stop that returns an error, or a close refused after it, is therefore
 a defect and never the node's ordinary end, and a caller has no reason
 to pass over either.
+
+#### D1230. A structure's tally counts a miss only when the pool evicted a page for it
+
+The planner prices a fetch, and an index's probe, by the share of its
+lookups that missed the pool, counted by each table and index once it has
+had LEAST_LOOKUPS lookups (D35). Before that, the share is reckoned from
+how much of the table the pool's frames could hold. Every miss was
+counted, the first read of a page into a pool still filling as well. The
+sampled statistics pass that follows a start begins each run of rows it
+reads with a lookup, into a pool that holds nothing yet, so nearly every
+one missed. A table of a few megabytes that a pool of 64 MiB holds three
+times over was priced as two thirds missed, and a range read through its
+index before the pass was planned as a scan of the whole table after it.
+It went back to the index only a few thousand lookups later, and paid for
+those first misses until the tally's window halved them. One query was
+planned two ways by what had touched the table first since the start.
+
+A miss is now counted only when the pool had no empty frame and evicted
+a page for it (`Claim::evicted`, `BufferPool::hold`). A page read into an
+empty frame says nothing about whether the pool holds the structure, and
+is not counted. A table the pool holds is then priced as held, cold and
+warm alike, as the reckoning before LEAST_LOOKUPS prices it. Once the
+pool is full, every miss evicts and is counted. That covers a table
+larger than the pool, and a table first read into a pool full of other
+tables' pages, which does not fit beside what the pool holds. The
+lookups are counted as before, so LEAST_LOOKUPS and the window are
+unchanged. A hit costs nothing more, and a miss only notes which way the
+pool found its frame (`disk/buffer/tally.rs`).
 
 ## 2. Project layout
 
