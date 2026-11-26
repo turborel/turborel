@@ -68,10 +68,14 @@ struct Hashing {
 impl Work {
     /// The work area of an operator of `db`.
     pub(super) fn new(db: &State) -> Work {
-        let (ceiling, batch) = (work_bytes(db.settings.get(MEMORY_WORK_BYTES)), batch_bytes(db.settings.get(SPILL_BATCH_BYTES)));
+        Work::granted(db, db.work.grant(work_bytes(db.settings.get(MEMORY_WORK_BYTES))))
+    }
+
+    /// The work area of an operator of `db` of the grant `grant`.
+    fn granted(db: &State, grant: Arc<Grant>) -> Work {
+        let batch = batch_bytes(db.settings.get(SPILL_BATCH_BYTES));
         let partitions = (db.settings.count(SPILL_PARTITIONS), db.settings.count(SPILL_PARTITION_DEPTH));
         let (areas, types) = (Arc::clone(&db.work), db.types.clone());
-        let grant = areas.grant(ceiling);
         let limit = grant.bytes();
         let (seed, dense) = (db.functions.seed().clone(), super::batch::dense_wanted(db));
         let hashing = Box::new(Hashing { word: seed.xxh3(b"partitions"), seed, count: Cell::new(0), dense });
@@ -103,6 +107,12 @@ impl Work {
     /// runs read back only while the statement is not cancelled.
     pub(super) fn of(db: &State, tx: TxId) -> Work {
         Work { stop: db.tx.stop_of(tx), ..Work::new(db) }
+    }
+
+    /// As `of`, of `grant`, which the operator already holds: for a spill
+    /// area beside what it charges of that grant itself (RULES.md D1226).
+    pub(super) fn of_grant(db: &State, tx: TxId, grant: Arc<Grant>) -> Work {
+        Work { stop: db.tx.stop_of(tx), ..Work::granted(db, grant) }
     }
 
     /// A work area of the same settings, of a grant of its own of up to
