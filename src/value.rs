@@ -1,8 +1,6 @@
 //! Data types and values: [X3.135-1986 §4.2, §5.5, §5.9] (arithmetic), [X3.135-1986 §5.11] (comparison).
 
-use std::cmp::Ordering;
-use std::fmt;
-use std::sync::Arc;
+use std::{cmp::Ordering, fmt, sync::Arc};
 
 use crate::error::{Code, Result, SqlState, fail_with};
 
@@ -39,9 +37,9 @@ pub use decfloat::DecFloat;
 pub use decimal::{Decimal, MIN_QUOTIENT_SCALE, bound_of, pow10, quotient_bound};
 pub use distinct::{distinct, key_bucket, key_equal};
 pub(crate) use held::held;
-pub use like::{BytesLike, CODE_ESCAPE, CodeMatcher};
 pub use like::{
-    LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern, constant_prefix, constant_rest_is_any, like,
+    BytesLike, CODE_ESCAPE, CodeMatcher, LikePattern, LikePatterns, OctetPattern, collated as like_collated, constant_pattern,
+    constant_prefix, constant_rest_is_any, like,
 };
 pub use operators::{ArithOp, CompOp, arith};
 pub use order::SortOrder;
