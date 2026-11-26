@@ -9,6 +9,7 @@ mod dependent_keys;
 mod elimination;
 mod extremes;
 mod hoisting;
+mod late_fetch;
 mod pregrouped;
 mod pushdown;
 

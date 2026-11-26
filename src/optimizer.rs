@@ -28,6 +28,7 @@ mod extremes;
 mod folding;
 mod hoisting;
 mod inlining;
+mod late_fetch;
 mod limits;
 mod outer;
 pub(crate) mod plugged;
@@ -50,6 +51,7 @@ use crate::logical::{
 };
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
+pub use late_fetch::{FETCH_DEPENDENTS_LATE, FetchDependentsLate};
 pub use unnesting::{MARK_JOINS, MarkJoins, SEMI_JOINS, SemiJoins, UNNEST_SUBQUERIES, UnnestSubqueries};
 
 /// The names of the built-in rules, as EXPLAIN shows them and their
@@ -207,6 +209,8 @@ impl Optimizer {
         // After the filters of a join's operand alone are moved into it.
         o.add(Box::new(GroupBeforeOuterJoin));
         o.add_late(Box::new(ReduceGroupingKeys));
+        // After the columns a grouping's keys determine are carried.
+        o.add_late(Box::new(FetchDependentsLate));
         o
     }
 

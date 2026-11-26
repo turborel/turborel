@@ -83,6 +83,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.ELIMINATE_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.EXTREMES_BY_ORDER | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.FACTOR_DISJUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.FETCH_DEPENDENTS_LATE | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.GROUP_BEFORE_OUTER_JOIN | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.HOIST_RAISING_EXPRESSIONS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.INLINE_FUNCTIONS | ON | ONE OF ON, OFF | at once | *session* |
@@ -212,6 +213,7 @@ Each in a sentence:
 - **OPTIMIZER.ELIMINATE_JOINS**: Whether the optimizer's rule eliminate_joins rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.EXTREMES_BY_ORDER**: Whether the optimizer's rule extremes_by_order rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.FACTOR_DISJUNCTIONS**: Whether the optimizer's rule factor_disjunctions rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.FETCH_DEPENDENTS_LATE**: Whether the optimizer's rule fetch_dependents_late rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.GROUP_BEFORE_OUTER_JOIN**: Whether the optimizer's rule group_before_outer_join rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.HOIST_RAISING_EXPRESSIONS**: Whether the optimizer's rule hoist_raising_expressions rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.INLINE_FUNCTIONS**: Whether the optimizer's rule inline_functions rewrites plans: ON; or OFF, as to compare plans made without it.

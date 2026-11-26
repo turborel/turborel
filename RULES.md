@@ -738,6 +738,7 @@ verification approach DO-178C expects (§8).
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
+| D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 
 ### The project
 
@@ -20104,6 +20105,61 @@ a row made of the value of every row, and had each batch's rows sorted
 by group to be fed them. A group written, merged or finished is as its
 accumulator writes, merges and finishes it, and a column given what is
 no column read in place turns into accumulators.
+
+#### D1202. Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST
+
+A report of the twenty customers of the greatest revenue, showing each
+one's name, address and comment, carried those wide columns through
+every row of its joins and every group, and kept twenty of them. The
+rule `fetch_dependents_late` (`optimizer/late_fetch.rs`) now reads them
+after the FETCH FIRST. Where a table below the grouping has a key the
+grouping columns determine, by the strict dependencies of D1201, every
+row of a group is of one row of that table, so the group's value of any
+column of the table is that row's. The grouping then carries the key's
+columns in place of the others, unless it groups by them already, and
+above the FETCH FIRST the rows kept are joined to the table again on
+the key, which gives the columns left out.
+
+The table stays joined below, reading its key and what the joins
+compare, for the rows it leaves out. The grouping, its groups and what
+each set function is given are as they were, so nothing is evaluated of
+a row or a group it was not before (D15). A group has one value of the
+key, and it is not null: the key's columns are NOT NULL, of a PRIMARY
+KEY or UNIQUE constraint not deferrable, and the table's row reached
+the group through filters and inner joins alone. So the join above finds
+exactly one row for each row kept, the one its group's rows were of. It
+neither adds nor loses a row, and the value it gives is the one the
+grouping would have carried. A join may give its rows in another order,
+so the rows are sorted again above it by the same keys.
+
+The rule takes a FETCH FIRST of a constant count of ROWS ONLY, with or
+without OFFSET, over a sort or none, over select lists and HAVING
+conditions, over a grouping by its columns' own values that makes no
+group before any row. A column is fetched late only if nothing between
+the grouping and the FETCH FIRST reads it but to hand it on. A sort key,
+a HAVING condition or an expression of the select list that reads it
+needs it of every group, and it stays carried while the others are
+fetched. WITH TIES and PERCENT keep a number of rows no constant gives,
+and are left. A table an outer join extends with nulls has no row for
+some groups, and is left. A table whose key the grouping columns do not
+determine may give a group rows of several of its own, and is left.
+
+Fetching n rows of a table of r rows by its key reads n log2(r) keys of
+a tree of them, or the r rows once more, whichever is fewer, and
+carrying a column reads it once for each row the grouping groups. A
+column is fetched where the fetch so counted reads fewer rows than the
+grouping is estimated to group.
+
+The grouping itself is not moved below the joins that only add such
+columns, though grouping first would spare those joins most of their
+rows. A join that may leave a row out, having no NOT NULL foreign key
+onto the key or having a filter on its table, would then have the
+grouping compute its set functions of groups the query never formed,
+and one that may raise, as a SUM whose total is not bounded within the
+digits an exact number has (D1060), would raise where the query does
+not (D15). Grouping first is sound only where every such join keeps
+every row, or no set function and no argument can raise. Fetching late
+needs neither.
 
 ## 2. Project layout
 

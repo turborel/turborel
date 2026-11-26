@@ -760,6 +760,13 @@ kind. Two character strings that differ in trailing spaces are equal and
 yet differ in length, so a column computed of a string stays a grouping
 column.
 
+Where such a query keeps its first rows with FETCH FIRST n ROWS ONLY,
+the columns a table's key decides are read after the rows are chosen,
+of the table by its key, unless a sort key, a HAVING condition or an
+expression of the select list reads them.
+[EXPLAIN](statements/explain.md) names the rules reduce_grouping_keys
+and fetch_dependents_late where they rewrote a plan.
+
 ### Grouping sets
 
 GROUP BY may group the rows several ways in one query, each way a

@@ -588,6 +588,60 @@ OK
 (23 rows)
 ```
 
+The department of the greatest pay, of the same tables. The rule
+fetch_dependents_late leaves the name out of the grouping and the sort,
+and reads it of DEPT by its key for the one row FETCH FIRST keeps. The
+rows are sorted again above that join:
+
+```sql
+EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) AS PAID FROM DEPT D JOIN EMP E ON E.DEPT = D.ID
+    GROUP BY D.ID, D.NAME ORDER BY PAID DESC FETCH FIRST 1 ROW ONLY;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Limit fetch 1
+   Sort SUM(E.PAY) DESC
+     Project D.ID, D.NAME, SUM(E.PAY)
+       Aggregate group by [D.ID, D.NAME] computing [SUM(E.PAY)]
+         Filter E.DEPT = D.ID
+           Product
+             Scan ANN.DEPT
+             Scan ANN.EMP
+ -- rules: reduce_grouping_keys, fetch_dependents_late
+ -- optimized:
+ Sort SUM(E.PAY) DESC
+   Project D.ID, D.NAME, SUM(E.PAY)
+     Filter D.ID = D.ID
+       Product
+         Limit fetch 1
+           Sort SUM(E.PAY) DESC
+             Project D.ID, SUM(E.PAY), D.ID
+               Project D.ID, SUM(E.PAY), D.ID
+                 Aggregate group by [D.ID] computing [SUM(E.PAY)]
+                   Filter E.DEPT = D.ID
+                     Product
+                       Scan ANN.DEPT
+                       Scan ANN.EMP
+         Scan ANN.DEPT
+ -- physical:
+ Sort SUM(E.PAY) DESC
+   Project D.ID, D.NAME, SUM(E.PAY)
+     HashJoin D.ID = D.ID
+       SeqScan ANN.DEPT  (rows=2, cost=2.0)
+       Limit fetch 1
+         Sort SUM(E.PAY) DESC
+           Project D.ID, SUM(E.PAY), D.ID
+             Aggregate group by [D.ID] computing [SUM(E.PAY)]
+               Project D.ID, D.NAME, E.ID, E.DEPT, E.PAY
+                 HashJoin E.DEPT = D.ID
+                   SeqScan ANN.EMP  (rows=3, cost=2.8)
+                   SeqScan ANN.DEPT  (rows=2, cost=1.8)
+(38 rows)
+```
+
 A join of SALES and PARTS, run on one thread. Each row of SALES probes
 the index of PARTS's key:
 

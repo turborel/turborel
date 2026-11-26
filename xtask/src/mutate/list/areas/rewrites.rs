@@ -8,7 +8,10 @@
 //! and the operand given nulls mistaken under a product; of D1201, a
 //! grouping reduced by a column of another collation, by a dependency not
 //! strict, to no column or with a group made before any row, a late rule
-//! applied with the others, and a carried value replaced.
+//! applied with the others, and a carried value replaced; of D1202, a
+//! column fetched late that something above the grouping reads, of a
+//! table whose key is not determined or whatever the fetch reads, and the
+//! rows not sorted again.
 
 use super::super::{Mutation, Package};
 
@@ -21,8 +24,14 @@ const KEPT: &str = "rewrites::elimination::joins_that_could_change_rows_are_kept
 /// The test of groupings whose columns may not depend.
 const GROUPED_AS_WRITTEN: &str = "rewrites::dependent_keys::a_grouping_whose_columns_may_not_depend_is_left";
 
+/// The test of columns fetched after FETCH FIRST.
+const FETCHED_LATE: &str = "rewrites::late_fetch::carried_columns_are_fetched_for_the_rows_kept";
+
+/// The test of columns that stay carried.
+const KEPT_CARRIED: &str = "rewrites::late_fetch::carried_columns_every_group_needs_stay_carried";
+
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 28] = [
+pub const REWRITES: [Mutation; 32] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -302,5 +311,45 @@ pub const REWRITES: [Mutation; 28] = [
         replacement: ".filter(|_| true)",
         integration: &[],
         unit: &["exec::table::states::tests::a_column_of_values_kept_is_its_accumulator"],
+    },
+    Mutation {
+        name: "late-fetch-read-above",
+        package: Package::Core,
+        breaks: "a column an expression above the grouping reads is fetched after FETCH FIRST (RULES.md D1202)",
+        file: "src/optimizer/late_fetch.rs",
+        original: "if let Some(agg) = read.iter().find_map(late) {",
+        replacement: "if let Some(agg) = read.iter().find_map(late).filter(|_| false) {",
+        integration: &[FETCHED_LATE],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-fetch-key-undetermined",
+        package: Package::Core,
+        breaks: "a column is fetched of a table whose key the grouping columns do not determine (RULES.md D1202)",
+        file: "src/optimizer/late_fetch.rs",
+        original: "if !determined || key.iter()",
+        replacement: "if key.iter()",
+        integration: &[KEPT_CARRIED],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-fetch-whatever-it-reads",
+        package: Package::Core,
+        breaks: "a column is fetched late though the fetch reads as many rows as the grouping groups (RULES.md D1202)",
+        file: "src/optimizer/late_fetch.rs",
+        original: "|| read >= grouped {",
+        replacement: "|| read >= grouped * f64::MAX {",
+        integration: &[KEPT_CARRIED],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-fetch-not-sorted-again",
+        package: Package::Core,
+        breaks: "the rows joined to their table after FETCH FIRST are not sorted again (RULES.md D1202)",
+        file: "src/optimizer/late_fetch.rs",
+        original: "Some(keys) => LogicalPlan::Sort { keys: keys.to_vec(), input: Box::new(listed) },",
+        replacement: "Some(_) => listed,",
+        integration: &[FETCHED_LATE],
+        unit: &[],
     },
 ];
