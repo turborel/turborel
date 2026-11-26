@@ -752,6 +752,7 @@ verification approach DO-178C expects (§8).
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
 | D1167 | Each operator carries only the columns read above it |
+| D1171 | A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
@@ -20435,6 +20436,26 @@ The plan is pruned in place, so the walk of a deep plan holds little
 on the stack. The texts gathered of a vector are found once and copied
 into a buffer made at their length (`storage/batch/gathered.rs`), not
 one grown as they are copied.
+
+#### D1171. A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time
+
+A column whose chunks keep their values as runs (D31), as a table's
+sorted key does, was read for a batch twice over. Its values were
+written out run by run, each run's value and end read alone, and then
+each run's end was found again for the batch's runs (D1084). A value or
+an end read alone takes its bytes into a window of its own, so each run
+cost four such reads and the copies they make, and the vector of ends
+grew an entry at a time.
+
+A chunk of runs now gives both of one reading (`engine/columns/runs.rs`,
+`engine/columns/scan.rs`). The runs from the one of the range's first
+position to the one of its last are found by two searches. Their values
+and ends are unpacked a block at a time, as a frame of reference is
+(D352). Each run's value then fills its rows among the range, and its
+end is pushed beside them, the vectors made room for once. A chunk of
+one value gives one run, as before. A chunk of another encoding gives
+its values as before, and the batch then holds no runs. The values,
+their nulls and the runs' ends are those read apart before.
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 

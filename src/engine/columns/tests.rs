@@ -387,39 +387,59 @@ fn texts_are_compressed_by_their_parts() {
     assert_eq!(broken.value(299, &TEXT).err().map(|e| e.code), Some(Code::Corrupt), "an escape at the end");
 }
 
-/// Verifies: [DESIGN] RULES.md D31, runs of a chunk: of any range of a
-/// chunk of runs, where each run ends, past a base, each greater than the
-/// last, the last at the range's end, the values in each alike, nulls
-/// continuing a run; of a constant, one run; of another encoding, none.
+/// Verifies: [DESIGN] RULES.md D31, D1171, runs of a chunk: of any range
+/// of a chunk of runs, its values, each read alone, and where each run
+/// ends, past a base, the last at the range's end, a run ending where the
+/// value held changes, a null continuing the run before it, a leading one
+/// the first; its nulls marked; of many widths; of a constant, one run;
+/// of another encoding nothing read; past the end, none.
 #[test]
-fn chunks_of_runs_say_where_each_ends() {
-    let sorted: Vec<Value> = (0..2000_i128).map(|n| if n % 97 == 5 { Value::Null } else { int(n.checked_div(250).unwrap()) }).collect();
+fn chunks_of_runs_give_their_values_and_where_each_run_ends() {
     let chunk_of = |values: &[Value]| {
         let fields = Fields::of(&INTEGER, values.iter().cloned()).unwrap();
         fields.chunk(&INTEGER, 0, (fields.len(), true)).unwrap()
     };
-    let bytes = chunk_of(&sorted);
-    let chunk = Chunk::parse(&bytes).unwrap();
-    for (from, to) in [(0, 2000), (0, 1), (249, 252), (1700, 2000), (7, 7)] {
-        let (mut ends, mut units, mut nulls) = (Vec::new(), Vec::new(), Mask::default());
-        chunk.run_ends((from, to), 10, &mut ends).unwrap();
-        chunk.ints((from, to), (&mut units, &mut nulls)).unwrap();
-        assert!(ends.windows(2).all(|w| w[0] < w[1]), "{ends:?}");
-        assert_eq!(ends.last().copied().unwrap_or(10), 10 + to - from, "{from}..{to}");
-        let mut start = 10;
-        for &end in &ends {
-            let run = &units[start - 10..end - 10];
-            assert!(run.iter().all(|u| *u == run[0]), "{from}..{to}: one value a run");
-            start = end;
+    let wide = |n: i128| int(n.checked_div(3).unwrap() * 1_000_003 - 7_000_000_000);
+    let shapes: [Vec<Value>; 3] = [
+        (0..2000_i128).map(|n| if n % 97 == 5 || n < 2 { Value::Null } else { int(n.checked_div(250).unwrap()) }).collect(),
+        (0..3000_i128).map(wide).collect(),
+        vec![int(7); 300],
+    ];
+    for values in &shapes {
+        let bytes = chunk_of(values);
+        let chunk = Chunk::parse(&bytes).unwrap();
+        let count = values.len();
+        let first = values.iter().find(|v| !v.is_null()).cloned().unwrap();
+        let held: Vec<String> = values
+            .iter()
+            .scan(first, |last, v| {
+                if !v.is_null() {
+                    *last = v.clone();
+                }
+                Some(last.to_string())
+            })
+            .collect();
+        for (from, to) in [(0, count), (0, 1), (1, 2), (63, 200), (249, 252), (count - 1, count), (7, 7), (130, count - 3)] {
+            let (mut units, mut nulls, mut ends) = (vec![5], Mask::default(), vec![1]);
+            assert_eq!(chunk.ints_ending((from, to), (&mut units, &mut nulls), (&mut ends, 10)), Some(true), "{from}..{to}");
+            for n in from..to {
+                let alone = chunk.value(n, &INTEGER).unwrap();
+                assert_eq!(nulls.get(n - from), alone.is_null(), "{from}..{to}: null {n}");
+                assert_eq!(int(i128::from(units[n + 1 - from])).to_string(), held[n], "{from}..{to}: value {n}");
+            }
+            let mut expected: Vec<usize> = (from + 1..to).filter(|&n| held[n] != held[n - 1]).map(|n| 10 + n - from).collect();
+            if to > from {
+                expected.push(10 + to - from);
+            }
+            assert_eq!(ends[1..], expected[..], "{from}..{to}");
+            assert_eq!((units[0], ends[0], units.len()), (5, 1, 1 + to - from), "{from}..{to}: pushed after what was there");
         }
+        assert_eq!(chunk.ints_ending((0, count + 1), (&mut Vec::new(), &mut Mask::default()), (&mut Vec::new(), 0)), None, "past the end");
     }
-    let constant = chunk_of(&vec![int(7); 300]);
-    let mut ends = Vec::new();
-    assert_eq!(Chunk::parse(&constant).unwrap().run_ends((5, 300), 0, &mut ends), Some(()));
-    assert_eq!(ends, [295], "a constant, one run");
     let framed = chunk_of(&(0..300_i128).map(int).collect::<Vec<_>>());
-    assert_eq!(Chunk::parse(&framed).unwrap().run_ends((0, 300), 0, &mut Vec::new()), None, "a frame of reference");
-    assert_eq!(chunk.run_ends((0, 2001), 0, &mut Vec::new()), None, "past the end");
+    let (mut units, mut ends) = (Vec::new(), Vec::new());
+    let read = Chunk::parse(&framed).unwrap().ints_ending((0, 300), (&mut units, &mut Mask::default()), (&mut ends, 0));
+    assert_eq!((read, units.len(), ends.len()), (Some(false), 0, 0), "a frame of reference, nothing read");
 }
 
 /// Verifies: [DESIGN] RULES.md D354 a chunk of truth values, of every
