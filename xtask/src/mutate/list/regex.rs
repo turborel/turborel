@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of regular expressions, in the order they run.
-pub const REGEX: [Mutation; 28] = [
+pub const REGEX: [Mutation; 33] = [
     Mutation {
         name: "regex-dot-all-splits-crlf",
         package: Package::Core,
@@ -297,5 +297,58 @@ pub const REGEX: [Mutation; 28] = [
         return Ok(vec![Piece::Text(replacement.to_owned())]);",
         integration: &["regex_functions::translate_6_33"],
         unit: &["regex::replace::tests::the_examples_of_fn_replace"],
+    },
+    Mutation {
+        name: "regex-marks-of-positions-alone",
+        package: Package::Core,
+        breaks: "a mark is of a position whatever the instruction, so a way is given up where another instruction was met (D1188)",
+        file: "src/regex/bounded.rs",
+        original: "let bit = pc.saturating_mul(self.positions)",
+        replacement: "let bit = pc.min(0).saturating_mul(self.positions)",
+        integration: &[],
+        unit: &["regex::bounded::tests::it_finds_what_the_matcher_of_threads_finds"],
+    },
+    Mutation {
+        name: "regex-marks-past-the-end",
+        package: Package::Core,
+        breaks: "the matcher that marks reads past where its match is known to end, and finds another (D1188)",
+        file: "src/regex/bounded.rs",
+        original: "                    if !within || !one(inst, self.text, at)? {",
+        replacement: "                    if !one(inst, self.text, at)? {",
+        integration: &[],
+        unit: &["regex::bounded::tests::it_finds_what_the_matcher_of_threads_finds"],
+    },
+    Mutation {
+        name: "regex-back-reference-marked",
+        package: Package::Core,
+        breaks: "a program with a back-reference runs on the matcher that marks, whose marks take no account of what was captured (D1188)",
+        file: "src/regex.rs",
+        original: "        if self.back_references {\n            return Matcher::Backtrack;\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &[
+            "regex::bounded::tests::it_is_given_programs_of_no_back_reference_and_texts_within_its_marks",
+            "regex::tests::back_references",
+        ],
+    },
+    Mutation {
+        name: "regex-automaton-uncut",
+        package: Package::Core,
+        breaks: "a state keeps the threads after the one that matches, so the automaton ends a match where a less preferred way does (D1188)",
+        file: "src/regex/dfa.rs",
+        original: "                        self.stack.clear();\n                        return (threads, true);",
+        replacement: "                        return (threads, true);",
+        integration: &[],
+        unit: &["regex::dfa::tests::the_ways_left_behind_a_match_are_dropped"],
+    },
+    Mutation {
+        name: "regex-automaton-restarts",
+        package: Package::Core,
+        breaks: "the automaton tries a new start after a match is found, so it ends at a later match's end (D1188)",
+        file: "src/regex/dfa.rs",
+        original: "        let restart = (!matched).then_some(0_u32);",
+        replacement: "        let restart = Some(0_u32);",
+        integration: &[],
+        unit: &["regex::dfa::tests::it_ends_where_the_matcher_of_threads_does"],
     },
 ];

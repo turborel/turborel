@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use super::{CHARACTERS, OCTETS};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::functions::strings::text;
-use crate::regex::{LobText, Text};
+use crate::regex::{Ascii, LobText, Text};
 use crate::value::Value;
 use crate::value::lob::{CHUNK_OCTETS, Lob};
 
@@ -23,6 +23,9 @@ const SHORT_OCTETS: usize = CHUNK_OCTETS;
 pub(super) enum Body<'v> {
     /// A character string's, in memory.
     Chars(Vec<char>),
+    /// A character string's of ASCII alone, read where it lies (RULES.md
+    /// D1188): its octets are its characters.
+    Ascii(Ascii<'v>),
     /// A character large object's, read a chunk at a time.
     Lob(LobText<'v>),
 }
@@ -35,6 +38,10 @@ macro_rules! on_text {
         match &$s.body {
             $crate::functions::regex::subject::Body::Chars(chars) => {
                 let $t = chars.as_slice();
+                $e
+            }
+            $crate::functions::regex::subject::Body::Ascii(ascii) => {
+                let $t = ascii;
                 $e
             }
             $crate::functions::regex::subject::Body::Lob(lob) => {
@@ -69,8 +76,8 @@ impl<'v> Subject<'v> {
         let body = match value {
             Value::Null => return Ok(None),
             Value::Lob(lob) => Body::Lob(LobText::new(lob)?),
-            Value::Char(_)
-            | Value::Exact(_)
+            Value::Char(s) => Ascii::of(s).map_or_else(|| Body::Chars(s.chars().collect()), Body::Ascii),
+            Value::Exact(_)
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
@@ -107,6 +114,7 @@ impl<'v> Subject<'v> {
         }
         match &self.body {
             Body::Chars(chars) => Ok(counted(chars.iter().take(at).map(|c| c.len_utf8()).sum())),
+            Body::Ascii(_) => Ok(counted(at)),
             Body::Lob(lob) => lob.octet_of_char(at),
         }
     }
@@ -144,6 +152,7 @@ impl<'v> Subject<'v> {
                 });
                 Ok(Some(found.unwrap_or(chars.len())))
             }
+            Body::Ascii(_) => Ok(usize::try_from(offset).ok()),
             Body::Lob(lob) => lob.char_of_octet(offset).map(Some),
         }
     }
@@ -157,6 +166,7 @@ impl<'v> Subject<'v> {
     pub(super) fn substring(&self, start: usize, end: usize) -> Result<Value> {
         match &self.body {
             Body::Chars(chars) => Ok(Value::Char(chars.get(start..end).unwrap_or_default().iter().collect())),
+            Body::Ascii(ascii) => Ok(Value::Char(ascii.span(start, end).into())),
             Body::Lob(lob) => slice(lob.lob(), start, end).map(Value::Lob),
         }
     }

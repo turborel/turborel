@@ -765,6 +765,7 @@ verification approach DO-178C expects (§8).
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
 | D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
+| D1188 | A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -20879,6 +20880,77 @@ partitions were split by.
 
 Nothing a query answers changes. `'a'` and `'a '` under such a collation
 were two groups before and are two groups now, counted by more threads.
+
+#### D1188. A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured
+
+D61's matcher of a program with no back-reference keeps a list of
+threads at each position, each with a copy of what it has captured, and
+follows every thread at every character (`regex/pike.rs`). A copy of the
+captures was made on the heap for each thread at each position, a string
+was turned into a vector of characters before it was searched, and a
+function called for each row began all of it again. TRANSLATE_REGEX of a
+column spent nearly all its time there.
+
+Three things replace that path. None changes what matches. Each is held
+to the matcher of threads by tests over patterns of every instruction
+and texts from every starting position, with captures and without.
+
+- `regex/bounded.rs` follows one way at a time, going back to the last
+  fork on failing, with one set of captures put back as it goes back. It
+  marks each instruction at each position it meets and gives up a way
+  that meets a mark. That is right because whether a match is found from
+  an instruction at a position depends on those two alone, on nothing
+  captured and not on where the search began. The way that met them
+  first is preferred to every later one and found no match from there,
+  or the search would have ended. So the marks are kept from one
+  starting position to the next, and a search of every start takes time
+  within the product of the text's length and the program's. A
+  back-reference breaks this, as what it matches depends on what was
+  captured, so a program with one never runs here
+  (`Regex::matcher`, tested by
+  `it_is_given_programs_of_no_back_reference_and_texts_within_its_marks`).
+  The marks are a bit each, `MARKS_MOST` of them at most, from a sweep of
+  `bench/regex.rs` at five budgets. At every length of text a budget
+  admitted, this matcher ran several times as fast as the matcher of
+  threads, to the largest budget swept, so the budget bounds what a
+  search holds. Past it the matcher of threads runs.
+- `regex/dfa.rs` is an automaton made as texts are read (Thompson, 1968).
+  A state is the ordered list of threads at a position, cut after the
+  first that matches, and whether a match was found before it. The state
+  a character leads to is kept once found. It gives where the preferred
+  match ends, not where it begins nor what it captured. `^` and `$` of
+  the whole string are judged at the first state and after the last. The
+  wildcard of the flag `s`, any character but a CR before an LF [ISO/IEC
+  9075-2:2023 §9.28 GR9a i], reads a CR before an LF as a character of
+  its own. A program with `^` or `$` of each line, or a back-reference,
+  has no automaton. Past `STATES_MOST` states it gives up and the search
+  goes on without it.
+- `regex/searcher.rs` puts them together for text after text. A search
+  that asks only whether there is a match asks the automaton. A search
+  for captures runs the matcher that marks, which reads no further than
+  the end the automaton gave if it was asked. The automaton before such a
+  search is a pass more over a text that matches and the whole search of
+  one that does not. On the bench those balance where about half the
+  texts have no match, so the searcher counts what a window of its
+  searches found and asks the automaton first only while at least half
+  found none.
+
+The automaton's states are worth keeping only across texts, and a scalar
+function's call is given one row and nothing to keep them in. So they
+live in a call over a vector (D363). TRANSLATE_REGEX has one, taken when
+its subject is a vector of texts and its other operands are constants.
+It compiles the pattern, reads the replacement and makes the searcher
+once for the vector. No state is kept in the function, in the thread or
+in the session. A search of one text alone makes no automaton, which
+would be made only to be dropped.
+
+A subject whose characters are all ASCII's is matched where it lies, its
+octets its characters (`regex::Ascii`), so no vector of characters is
+made of it.
+
+LIKE_REGEX and the other regular expression functions take the matcher
+that marks and the text in place through the same `Regex` methods, and
+have no call over vectors yet, so no automaton.
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 

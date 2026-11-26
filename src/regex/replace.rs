@@ -141,24 +141,12 @@ impl Regex {
     ///
     /// SQLSTATE 2201U of a match of no characters; SQLCODE -900 if a
     /// search passes `MAX_STEPS`; as reading `text` fails, or `f` does.
-    pub fn replace_in<T, F>(&self, text: &T, (from, to): (usize, usize), with: &Replacement, mut f: F) -> Result<()>
+    pub fn replace_in<T, F>(&self, text: &T, span: (usize, usize), with: &Replacement, f: F) -> Result<()>
     where
         T: Text + ?Sized,
         F: FnMut(Emit<'_>) -> Result<()>,
     {
-        let window = Window::new(text, from, to);
-        let mut at = 0;
-        while let Some(found) = self.find_in(&window, at)? {
-            let Some((start, end)) = found.get(0).filter(|(start, end)| end > start) else {
-                return Err(zero_length("the pattern matches a zero-length string within the match"));
-            };
-            span(&mut f, from, (at, start))?;
-            for piece in &with.pieces {
-                substituted(&mut f, from, piece, &found)?;
-            }
-            at = end;
-        }
-        span(&mut f, from, (at, window.len()))
+        self.once().replace_in(text, span, with, f)
     }
 
     /// [§9.29 GR9a; F&O 3.1 §5.6.4] fn:replace of `input`: each match, the
@@ -199,6 +187,33 @@ fn substituted<F: FnMut(Emit<'_>) -> Result<()>>(f: &mut F, from: usize, piece: 
 /// Gives `f` characters `a` to `b` of a window from `from`, if any.
 fn span<F: FnMut(Emit<'_>) -> Result<()>>(f: &mut F, from: usize, (a, b): (usize, usize)) -> Result<()> {
     if b > a { f(Emit::Span(from.saturating_add(a), from.saturating_add(b))) } else { Ok(()) }
+}
+
+impl super::Searcher<'_> {
+    /// As `Regex::replace_in`.
+    ///
+    /// # Errors
+    ///
+    /// As `Regex::replace_in`.
+    pub fn replace_in<T, F>(&mut self, text: &T, (from, to): (usize, usize), with: &Replacement, mut f: F) -> Result<()>
+    where
+        T: Text + ?Sized,
+        F: FnMut(Emit<'_>) -> Result<()>,
+    {
+        let window = Window::new(text, from, to);
+        let mut at = 0;
+        while let Some(found) = self.find_in(&window, at)? {
+            let Some((start, end)) = found.get(0).filter(|(start, end)| end > start) else {
+                return Err(zero_length("the pattern matches a zero-length string within the match"));
+            };
+            span(&mut f, from, (at, start))?;
+            for piece in &with.pieces {
+                substituted(&mut f, from, piece, &found)?;
+            }
+            at = end;
+        }
+        span(&mut f, from, (at, window.len()))
+    }
 }
 
 #[cfg(test)]

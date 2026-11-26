@@ -5,8 +5,9 @@
 //!
 //! A pattern is read under its flags (`regex/flags.rs`, `regex/parse.rs`,
 //! `regex/class_expr.rs`) and compiled to a program (`regex/compile.rs`).
-//! A program with no back-reference runs on `regex/pike.rs`, in time
-//! linear in the string; one with a back-reference on `regex/backtrack.rs`,
+//! A program with no back-reference runs in time linear in the string, on
+//! `regex/bounded.rs` if the string is short enough and else on
+//! `regex/pike.rs`; one with a back-reference on `regex/backtrack.rs`,
 //! which counts its steps. Both read a text by position (`regex/text.rs`),
 //! a string's characters or a character large object's read a chunk at a
 //! time (`regex/lob_text.rs`), so what a search holds is bounded whatever
@@ -25,9 +26,11 @@
 //! `(?:` and no flag `q`.
 
 mod backtrack;
+mod bounded;
 pub(crate) mod class;
 mod class_expr;
 mod compile;
+mod dfa;
 mod flags;
 mod lob_text;
 mod parse;
@@ -46,7 +49,7 @@ pub(crate) use unicode::general_category;
 pub use lob_text::LobText;
 pub(crate) use replace::zero_length;
 pub use replace::{Emit, Replacement};
-pub use text::{Text, Window};
+pub use text::{Ascii, Text, Window};
 
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 
@@ -71,6 +74,17 @@ pub struct Regex {
     caseless: bool,
     literal: bool,
     table: Table,
+}
+
+/// The matcher a search runs on (`Regex::matcher`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Matcher {
+    /// `regex/backtrack.rs`, of a program with a back-reference.
+    Backtrack,
+    /// `regex/bounded.rs`, of this many positions.
+    Bounded(usize),
+    /// `regex/pike.rs`.
+    Pike,
 }
 
 /// A match: where it, and each group of it, begins and ends, characters
@@ -173,6 +187,9 @@ impl Regex {
     ///
     /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`.
     pub fn is_match(&self, text: &str) -> Result<bool> {
+        if let Some(ascii) = Ascii::of(text) {
+            return self.is_match_in(&ascii);
+        }
         let chars: Vec<char> = text.chars().collect();
         self.is_match_in(chars.as_slice())
     }
@@ -184,7 +201,7 @@ impl Regex {
     /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`;
     /// as reading `text` fails.
     pub fn is_match_in<T: Text + ?Sized>(&self, text: &T) -> Result<bool> {
-        Ok(self.search(text, 0, false)?.is_some())
+        self.once().is_match_in(text)
     }
 
     /// The first match in `text` beginning at character `from` or after,
@@ -205,9 +222,7 @@ impl Regex {
     /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`;
     /// as reading `text` fails.
     pub fn find_in<T: Text + ?Sized>(&self, text: &T, from: usize) -> Result<Option<Captures>> {
-        let Some(slots) = self.search(text, from, true)? else { return Ok(None) };
-        let spans = slots.chunks(2).map(|pair| if let [Some(a), Some(b)] = pair { Some((*a, *b)) } else { None }).collect();
-        Ok(Some(Captures { spans }))
+        self.once().find_in(text, from)
     }
 
     /// [§9.28 GR11] The match vectors of `text` from character `from`, at
@@ -234,22 +249,12 @@ impl Regex {
     ///
     /// SQLCODE -900 if a search with back-references passes `MAX_STEPS`;
     /// as reading `text` fails, or `f` does.
-    pub fn each<T, F>(&self, text: &T, from: usize, most: usize, mut f: F) -> Result<()>
+    pub fn each<T, F>(&self, text: &T, from: usize, most: usize, f: F) -> Result<()>
     where
         T: Text + ?Sized,
         F: FnMut(Captures) -> Result<bool>,
     {
-        let (mut at, mut given) = (from, 0_usize);
-        while given < most && at <= text.len() {
-            let Some(next) = self.find_in(text, at)? else { break };
-            let (start, end) = next.get(0).unwrap_or((at, at));
-            at = end.max(start.saturating_add(1));
-            given = given.saturating_add(1);
-            if !f(next)? {
-                break;
-            }
-        }
-        Ok(())
+        self.once().each(text, from, most, f)
     }
 
     /// [§9.28 GR11] The match vector `n` of `text` from character `from`,
@@ -259,13 +264,7 @@ impl Regex {
     ///
     /// As `each`.
     pub fn nth_in<T: Text + ?Sized>(&self, text: &T, from: usize, n: usize) -> Result<Option<Captures>> {
-        let (mut seen, mut last) = (0_usize, None);
-        self.each(text, from, n, |mv| {
-            seen = seen.saturating_add(1);
-            last = (seen == n).then_some(mv);
-            Ok(true)
-        })?;
-        Ok(last)
+        self.once().nth_in(text, from, n)
     }
 
     /// [§9.28 GR11] How many match vectors `text` has from character
@@ -283,13 +282,35 @@ impl Regex {
         Ok(seen)
     }
 
-    fn search<T: Text + ?Sized>(&self, text: &T, from: usize, capture: bool) -> Result<Option<pike::Slots>> {
+    /// \[DESIGN\] (RULES.md D61, D1188) Which matcher searches a text from
+    /// `from` that reads no character at `end` or after: of a
+    /// back-reference, the one that counts its steps, as no other matches
+    /// one; else the one that marks each instruction at each position, if
+    /// its marks are few enough; else the one of threads.
+    fn matcher(&self, end: usize, from: usize) -> Matcher {
         if self.back_references {
-            return backtrack::search(&self.program, text, from, self.caseless.then_some(&self.table));
+            return Matcher::Backtrack;
         }
-        pike::search(&self.program, text, from, capture)
+        bounded::positions(&self.program, end, from).map_or(Matcher::Pike, Matcher::Bounded)
+    }
+
+    /// \[DESIGN\] (RULES.md D1188) Searches of it over text after text,
+    /// which keep its automaton between them (`regex/dfa.rs`), if it has
+    /// one: what a call over a vector of texts searches each with.
+    pub fn searcher(&self) -> Searcher<'_> {
+        let automaton = !self.back_references && dfa::fits(&self.program);
+        Searcher { regex: self, dfa: automaton.then(dfa::Dfa::default), found: searcher::Found::default() }
+    }
+
+    /// Searches of it over one text, which would make an automaton only
+    /// to drop it, so make none.
+    pub fn once(&self) -> Searcher<'_> {
+        Searcher { regex: self, dfa: None, found: searcher::Found::default() }
     }
 }
+
+mod searcher;
+pub use searcher::Searcher;
 
 #[cfg(test)]
 mod tests;

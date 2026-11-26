@@ -10,14 +10,18 @@
 //! a time, and the result made as one, the spans between matches slices of
 //! the subject [§6.33 SR12f i].
 
+use std::borrow::Cow;
+use std::sync::Arc;
+
 use super::subject::{Body, Subject, short, slice};
 use super::{Cache, as_long_as, operands, parameter};
 use crate::error::{Code, Result, SqlState, fail, fail_with};
-use crate::functions::ScalarFunction;
 use crate::functions::strings::{character, text, whole};
+use crate::functions::{Arg, ScalarFunction};
 use crate::lexer::kw;
 use crate::params::ParameterType;
-use crate::regex::{Captures, Emit, LobText, Regex, Replacement, Text, zero_length};
+use crate::regex::{Ascii, Captures, Emit, LobText, Regex, Replacement, Searcher, Text, zero_length};
+use crate::storage::{Column, Texts};
 use crate::value::lob::{CHUNK_OCTETS, LobBuilder, LobKind, MAX_LOB_LENGTH, TempLobs};
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
 
@@ -91,29 +95,106 @@ impl ScalarFunction for Translate {
         let [units, every, pattern, flag, subject, replacement, from, occurrence] = args else {
             return fail(Code::Api, "[DESIGN] TRANSLATE_REGEX takes eight operands");
         };
-        // [GR9b i]
+        let Some((regex, asked)) = self.asked([units, every, pattern, flag, replacement, from, occurrence])? else {
+            return Ok(Value::Null);
+        };
+        asked.of(subject, (&mut regex.once(), &mut None), temp)
+    }
+    /// \[DESIGN\] (RULES.md D1188, D363) Over a vector of subjects in
+    /// memory, every other operand a constant: the pattern compiled, its
+    /// replacement read and its searcher made once for the vector, so its
+    /// automaton is kept from one subject to the next. None of any other
+    /// operands, each row then called.
+    fn eval_batch(&self, args: &[Arg<'_>], rows: usize) -> Option<Result<Column>> {
+        let [
+            Arg::Const(units),
+            Arg::Const(every),
+            Arg::Const(pattern),
+            Arg::Const(flag),
+            Arg::Column(Column::Texts(subjects)),
+            Arg::Const(replacement),
+            Arg::Const(from),
+            Arg::Const(occurrence),
+        ] = args
+        else {
+            return None;
+        };
+        Some(self.of_texts([units, every, pattern, flag, replacement, from, occurrence], subjects, rows))
+    }
+}
+
+/// What a TRANSLATE_REGEX is asked beside its subject, none of it null.
+struct Asked<'a> {
+    units: &'a Value,
+    every: &'a Value,
+    replacement: Cow<'a, str>,
+    start: i128,
+    occurrence: &'a Value,
+}
+
+impl Translate {
+    /// The pattern of `operands` compiled, and what else they ask: the
+    /// units, ALL or OCCURRENCE, the pattern, the flag, the replacement,
+    /// the start position and the occurrence; none if the pattern, the
+    /// flag, the replacement or the start position is null \[GR9b i\].
+    fn asked<'a>(&self, operands: [&'a Value; 7]) -> Result<Option<(Arc<Regex>, Asked<'a>)>> {
+        let [units, every, pattern, flag, replacement, from, occurrence] = operands;
         let (Some(pattern), Some(flag), Some(replacement), Some(start)) =
             (short(pattern)?, short(flag)?, short(replacement)?, whole(Some(from))?)
         else {
-            return Ok(Value::Null);
+            return Ok(None);
         };
-        let Some(counted) = Subject::new(subject, units)? else { return Ok(Value::Null) };
+        let regex = self.cache.compiled(&pattern, &flag)?;
+        Ok(Some((regex, Asked { units, every, replacement, start, occurrence })))
+    }
+
+    /// `eval_batch`'s work: each of the first `rows` of `subjects`
+    /// translated as `operands` ask, a null of a null.
+    fn of_texts(&self, operands: [&Value; 7], subjects: &Texts, rows: usize) -> Result<Column> {
+        let Some((regex, asked)) = self.asked(operands)? else { return Ok(Column::Values(vec![Value::Null; rows])) };
+        let (mut searcher, mut with) = (regex.searcher(), None);
+        let mut made = Vec::with_capacity(rows);
+        for n in 0..rows {
+            let subject = subjects.get(n).map_or(Value::Null, |t| Value::Char(t.into()));
+            made.push(asked.of(&subject, (&mut searcher, &mut with), None)?);
+        }
+        Ok(Column::Values(made))
+    }
+}
+
+impl Asked<'_> {
+    /// \[GR9\] `subject` translated: null if it is, or if the start
+    /// position is not of it; else it with the match, or each match from
+    /// the last, replaced, found by `searcher`, the replacement read into
+    /// `with` at the first match met; the result of a character large
+    /// object made in `temp` if longer than a chunk.
+    fn of(
+        &self,
+        subject: &Value,
+        (searcher, with): (&mut Searcher<'_>, &mut Option<Replacement>),
+        temp: Option<&dyn TempLobs>,
+    ) -> Result<Value> {
+        let Some(counted) = Subject::new(subject, self.units)? else { return Ok(Value::Null) };
         // [GR9b ii]
-        let Some(at) = counted.start(start)? else { return Ok(Value::Null) };
-        let which = if text(every)? == Some(kw::ALL) {
+        let Some(at) = counted.start(self.start)? else { return Ok(Value::Null) };
+        let which = if text(self.every)? == Some(kw::ALL) {
             Which::All
         } else {
             // [GR9b iv 2 A]
-            let Some(occurrence) = whole(Some(occurrence))? else { return Ok(Value::Null) };
+            let Some(occurrence) = whole(Some(self.occurrence))? else { return Ok(Value::Null) };
             let Some(occurrence) = usize::try_from(occurrence).ok().filter(|o| *o >= 1) else { return Ok(counted.value().clone()) };
             Which::Nth(occurrence)
         };
-        let regex = self.cache.compiled(&pattern, &flag)?;
-        let job = Job { regex: &regex, at, which, replacement: &replacement };
+        let mut job = Job { searcher, at, which, replacement: &self.replacement, with };
         match &counted.body {
             Body::Chars(chars) => {
                 let mut out = Chars { chars, out: String::new() };
                 job.run(chars.as_slice(), &mut out)?;
+                within_most(out.out)
+            }
+            Body::Ascii(ascii) => {
+                let mut out = Octets { ascii: *ascii, out: String::new() };
+                job.run(ascii, &mut out)?;
                 within_most(out.out)
             }
             Body::Lob(lob) => {
@@ -135,11 +216,13 @@ enum Which {
 }
 
 /// What a TRANSLATE_REGEX replaces, and with what.
-struct Job<'a> {
-    regex: &'a Regex,
+struct Job<'a, 'r> {
+    searcher: &'a mut Searcher<'r>,
     at: usize,
     which: Which,
     replacement: &'a str,
+    /// The replacement read, once a match is met.
+    with: &'a mut Option<Replacement>,
 }
 
 /// Where a TRANSLATE_REGEX puts what it makes, in order.
@@ -150,20 +233,26 @@ trait Out {
     fn span(&mut self, from: usize, to: usize) -> Result<()>;
 }
 
-impl Job<'_> {
+impl Job<'_, '_> {
     /// [GR9b iii, iv 2 B] Puts on `out` `text` with the matches chosen
     /// replaced, front to back, which gives what replacing them from the
     /// last does, as they do not overlap.
-    fn run<T: Text + ?Sized, O: Out>(&self, text: &T, out: &mut O) -> Result<()> {
-        let (mut with, mut done) = (None, 0_usize);
+    fn run<T: Text + ?Sized, O: Out>(&mut self, text: &T, out: &mut O) -> Result<()> {
+        let mut done = 0_usize;
         match self.which {
-            Which::All => self.regex.each(text, self.at, usize::MAX, |mv| {
-                self.replaced(text, &mv, (&mut with, &mut done), out)?;
-                Ok(true)
-            })?,
+            Which::All => {
+                // Each match is found before it is replaced, as replacing one searches within it.
+                let mut at = self.at;
+                while at <= text.len() {
+                    let Some(mv) = self.searcher.find_in(text, at)? else { break };
+                    let (start, end) = mv.get(0).unwrap_or((at, at));
+                    at = end.max(start.saturating_add(1));
+                    self.replaced(text, &mv, &mut done, out)?;
+                }
+            }
             Which::Nth(n) => {
-                if let Some(mv) = self.regex.nth_in(text, self.at, n)? {
-                    self.replaced(text, &mv, (&mut with, &mut done), out)?;
+                if let Some(mv) = self.searcher.nth_in(text, self.at, n)? {
+                    self.replaced(text, &mv, &mut done, out)?;
                 }
             }
         }
@@ -177,22 +266,16 @@ impl Job<'_> {
     /// # Errors
     ///
     /// SQLSTATE 2201U if it matched no characters \[GR3\].
-    fn replaced<T: Text + ?Sized, O: Out>(
-        &self,
-        text: &T,
-        mv: &Captures,
-        (with, done): (&mut Option<Replacement>, &mut usize),
-        out: &mut O,
-    ) -> Result<()> {
+    fn replaced<T: Text + ?Sized, O: Out>(&mut self, text: &T, mv: &Captures, done: &mut usize, out: &mut O) -> Result<()> {
         let Some((start, end)) = mv.get(0).filter(|(start, end)| end > start) else {
             return Err(zero_length("a match of the pattern is of no characters"));
         };
-        let with = match with {
-            Some(w) => w,
-            None => with.insert(self.regex.replacement(self.replacement)?),
-        };
+        if self.with.is_none() {
+            *self.with = Some(self.searcher.regex().replacement(self.replacement)?);
+        }
+        let Some(with) = self.with.as_ref() else { return Ok(()) };
         out.span(*done, start)?;
-        self.regex.replace_in(text, (start, end), with, |piece| match piece {
+        self.searcher.replace_in(text, (start, end), with, |piece| match piece {
             Emit::Text(t) => out.text(t),
             Emit::Span(a, b) => out.span(a, b),
         })?;
@@ -214,6 +297,23 @@ impl Out for Chars<'_> {
     }
     fn span(&mut self, from: usize, to: usize) -> Result<()> {
         self.out.extend(self.chars.get(from..to).unwrap_or_default());
+        Ok(())
+    }
+}
+
+/// A result made as a string, of a subject of ASCII read where it lies.
+struct Octets<'a> {
+    ascii: Ascii<'a>,
+    out: String,
+}
+
+impl Out for Octets<'_> {
+    fn text(&mut self, t: &str) -> Result<()> {
+        self.out.push_str(t);
+        Ok(())
+    }
+    fn span(&mut self, from: usize, to: usize) -> Result<()> {
+        self.out.push_str(self.ascii.span(from, to));
         Ok(())
     }
 }
