@@ -20974,8 +20974,12 @@ statement's thread, all in memory (D1133). DISTINCT set functions and
 that second grouping are the next to be held in the spill, as
 ClickBench's COUNT(DISTINCT) groupings meet them at a small grant.
 
-The groups the partitions finish are still held as rows until the
-statement reads them.
+The groups a part finishes go to a run of the same area, each numbered
+by its first row, and the statement's thread reads the runs back as it
+merges them in that order. No more groups are held at once than the
+threads finish together, so a grouping of nearly as many groups as rows
+holds no more than the grant at the end, where holding its finished rows
+until the statement read them outgrew the memory the server was given.
 
 ## 2. Project layout
 

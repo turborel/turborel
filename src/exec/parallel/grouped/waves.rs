@@ -31,7 +31,7 @@ use super::super::pipeline::Pipeline;
 use super::super::probe::PARTS;
 use super::super::run::Morsels;
 use super::super::{Held, Limit};
-use super::{Grouping, Runs, first_of};
+use super::{Grouping, Waved, first_of};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::morsel_groups;
@@ -84,7 +84,7 @@ struct Waves<'a> {
 /// # Errors
 ///
 /// As reading the pipeline, or a set function, fails.
-pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Runs> {
+pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Waved> {
     let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
     let count = pipeline.count();
     // The groups the morsel last grouped made, the room the next is given.
@@ -246,24 +246,24 @@ impl Waves<'_> {
     /// # Errors
     ///
     /// As finishing a group, or merging a partition, fails.
-    fn finished(mut self) -> Result<Runs> {
+    fn finished(mut self) -> Result<Waved> {
         if !self.waved && self.wave.is_empty() {
-            let Some(table) = self.direct.take() else { return Ok(Held::Kept(Vec::new())) };
+            let Some(table) = self.direct.take() else { return Ok(Held::Kept((Vec::new(), Vec::new()))) };
             let groups = self.grouping.kept_of(table, &Runner::new(self.run.0, self.run.1))?;
-            return Ok(Held::Kept(vec![groups]));
+            return Ok(Held::Kept((vec![groups], Vec::new())));
         }
         if !self.flushed()? {
             return Ok(Held::GaveWay);
         }
         let Some(spilled) = self.spilled.clone() else {
-            return finished_wave((self.grouping, &self.frozen), self.wave, self.run).map(Held::Kept);
+            return finished_wave((self.grouping, &self.frozen), self.wave, self.run).map(|runs| Held::Kept((runs, Vec::new())));
         };
         // The last wave to the spill too, then each partition read back.
         if !self.wave.is_empty() && !self.merged()? {
             return Ok(Held::GaveWay);
         }
         let finished = spilled::finished(self.grouping, spilled, self.run, self.limit.most())?;
-        Ok(finished.map_or(Held::GaveWay, Held::Kept))
+        Ok(finished.map_or(Held::GaveWay, |given| Held::Kept((Vec::new(), given))))
     }
 }
 

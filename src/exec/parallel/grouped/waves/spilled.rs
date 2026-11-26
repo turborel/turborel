@@ -22,20 +22,27 @@
 //! own, and each part finished alone, up to SPILL.PARTITION_DEPTH levels.
 //! A partition past them, or a value no run can hold (`keys/written.rs`),
 //! gives way.
+//!
+//! Each part's groups finished go to a run of their own, each numbered by
+//! its first row, and the statement's thread reads the runs back as it
+//! merges them in that order, so no more of the groups is held at once
+//! than the threads finish together.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::super::super::Limit;
 use super::super::super::probe::PARTS;
 use super::super::super::run::Morsels;
-use super::super::Grouping;
+use super::super::{Given, Grouping};
 use crate::error::Result;
 use crate::exec::table::{GroupTable, Made, PIECE};
 use crate::exec::work::Work;
+use crate::exec::partition::{numbered, unnumbered};
 use crate::exec::{Db, Runner, broken};
-use crate::spill::SpillRun;
+use crate::spill::{Records, SpilledLobs, SpillRun};
 use crate::storage::Row;
 use crate::txn::TxId;
+use crate::value::types::TypeRegistry;
 
 /// A partition held in the spill: its runs, in the order written, and the
 /// bytes their groups held as they were written.
@@ -52,9 +59,28 @@ pub(super) struct Spilled {
     parts: Vec<Mutex<Part>>,
 }
 
-/// The finished groups of a partition, a run of them a part; none if it
-/// gave way.
-type Finished = Option<Vec<Vec<(u64, Row)>>>;
+/// The finished groups of a partition, a run of them each part that kept
+/// any; none if it gave way.
+type Finished = Option<Vec<Box<dyn SpillRun>>>;
+
+/// The groups of a run of finished groups read back, each with its number,
+/// what their records name held by `lobs`, and the spill whose area holds
+/// the run, kept while it is read.
+struct Read {
+    records: Records,
+    types: TypeRegistry,
+    lobs: SpilledLobs,
+    _spilled: Arc<Spilled>,
+}
+
+impl Iterator for Read {
+    type Item = Result<(u64, Row)>;
+
+    fn next(&mut self) -> Option<Result<(u64, Row)>> {
+        let record = self.records.next()?;
+        Some(record.and_then(|record| unnumbered(&record, &self.types, &self.lobs)))
+    }
+}
 
 impl Spilled {
     /// The spill of a grouping of `db` run by `tx`, its area of the grant
@@ -67,6 +93,37 @@ impl Spilled {
     /// A new run of its area.
     fn run(&self) -> Result<Box<dyn SpillRun>> {
         self.work.lock().unwrap_or_else(PoisonError::into_inner).run()
+    }
+
+    /// Writes `rows`, groups finished in the order of their first rows,
+    /// each numbered by its first, to a run of its own; none of no group.
+    ///
+    /// # Errors
+    ///
+    /// As `write`.
+    fn rows(&self, rows: Vec<(u64, Row)>) -> Result<Option<Box<dyn SpillRun>>> {
+        if rows.is_empty() {
+            return Ok(None);
+        }
+        let lobs = self.work.lock().unwrap_or_else(PoisonError::into_inner).lobs().clone();
+        let mut run = self.run()?;
+        for (n, row) in rows {
+            run.push(&numbered(n, &row, &lobs))?;
+        }
+        Ok(Some(run))
+    }
+
+    /// The groups `rows` wrote to `run`, read back in their order.
+    ///
+    /// # Errors
+    ///
+    /// The area's errors.
+    fn given(self: &Arc<Self>, run: Box<dyn SpillRun>) -> Result<Given> {
+        let (types, lobs) = {
+            let work = self.work.lock().unwrap_or_else(PoisonError::into_inner);
+            (work.types().clone(), work.lobs().clone())
+        };
+        Ok(Box::new(Read { records: run.into_records()?, types, lobs, _spilled: Arc::clone(self) }))
     }
 
     /// Writes `made`, the groups of partition `p` frozen whole, to a run
@@ -132,9 +189,9 @@ impl Spilled {
 }
 
 /// Each partition of `spilled` finished, its groups in the order of their
-/// first rows, a run of them each part it was split into; on as many of
-/// `degree` threads at once as the grant of `most` bytes holds the
-/// largest of; none if a partition gave way.
+/// first rows, a run of them each part it was split into, read back as
+/// they are given; on as many of `degree` threads at once as the grant of
+/// `most` bytes holds the largest of; none if a partition gave way.
 ///
 /// # Errors
 ///
@@ -144,12 +201,12 @@ pub(super) fn finished(
     spilled: Arc<Spilled>,
     (db, tx, degree): (&Db, TxId, usize),
     most: usize,
-) -> Result<Finished> {
+) -> Result<Option<Vec<Given>>> {
     let half = most.div_ceil(2).max(1);
     let largest = (0..PARTS).map(|p| spilled.bytes_of(p).min(half)).max().unwrap_or(0).max(1);
     let threads = half.checked_div(largest).unwrap_or(1).clamp(1, degree.max(1));
     let depth = spilled.work.lock().unwrap_or_else(PoisonError::into_inner).depth();
-    let (grouping, db_for) = (Arc::clone(grouping), db.clone());
+    let (grouping, db_for, kept) = (Arc::clone(grouping), db.clone(), Arc::clone(&spilled));
     let finish = Box::new(move |p: usize| {
         let part = spilled.take(p);
         finished_part(&grouping, part, (&spilled, 0, depth), (&Runner::new(&db_for, tx), half))
@@ -159,7 +216,7 @@ pub(super) fn finished(
         let Some(part) = part? else { return Ok(None) };
         runs.extend(part);
     }
-    Ok(Some(runs))
+    runs.into_iter().map(|run| kept.given(run)).collect::<Result<Vec<_>>>().map(Some)
 }
 
 /// `part`, at `level` levels of `depth` below the first, finished whole
@@ -173,7 +230,7 @@ fn finished_part(
 ) -> Result<Finished> {
     if part.bytes <= half {
         let table = merged(grouping, part)?;
-        return Ok(Some(vec![grouping.kept_of(table, runner)?]));
+        return Ok(Some(spilled.rows(grouping.kept_of(table, runner)?)?.into_iter().collect()));
     }
     if level >= depth {
         return Ok(None);

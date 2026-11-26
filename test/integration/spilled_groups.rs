@@ -18,47 +18,55 @@ use crate::common::{exec, rows};
 /// The smallest MEMORY.WORK_BYTES, 64 KiB.
 const SMALL: i128 = 64 << 10;
 
-/// The built-in provider, keeping the thread each run was made on and the
-/// bytes written to the runs.
+/// What the runs of a provider's areas showed: the thread each run was
+/// made on, the bytes written to them, and how many areas were made.
+#[derive(Default)]
+struct Seen {
+    made_on: Vec<ThreadId>,
+    written: usize,
+    areas: usize,
+}
+
+/// The built-in provider, keeping what `Seen` keeps.
 #[derive(Clone, Default)]
-struct Threads(Arc<Mutex<(Vec<ThreadId>, usize)>>);
+struct Threads(Arc<Mutex<Seen>>);
 
 impl Spill for Threads {
     fn name(&self) -> &'static str {
         "threads"
     }
     fn area(&self, memory: &Arc<MemoryBudget>, temp: &Arc<TempFiles>, area: Area) -> turborel::error::Result<Box<dyn SpillArea>> {
+        self.0.lock().unwrap().areas += 1;
         Ok(Box::new(Kept(Spill::area(&PagedSpill, memory, temp, area)?, Arc::clone(&self.0))))
     }
 }
 
 impl Threads {
-    /// The threads runs were made on, and the bytes written, since the
-    /// last call.
-    fn taken(&self) -> (Vec<ThreadId>, usize) {
+    /// What the runs showed since the last call.
+    fn taken(&self) -> Seen {
         std::mem::take(&mut *self.0.lock().unwrap())
     }
 }
 
 /// An area of the built-in provider, keeping what `Threads` keeps.
-struct Kept(Box<dyn SpillArea>, Arc<Mutex<(Vec<ThreadId>, usize)>>);
+struct Kept(Box<dyn SpillArea>, Arc<Mutex<Seen>>);
 
 impl SpillArea for Kept {
     fn table(&self) -> turborel::error::Result<Box<dyn SpillTable>> {
         self.0.table()
     }
     fn run(&self) -> turborel::error::Result<Box<dyn SpillRun>> {
-        self.1.lock().unwrap().0.push(std::thread::current().id());
+        self.1.lock().unwrap().made_on.push(std::thread::current().id());
         Ok(Box::new(Written(self.0.run()?, Arc::clone(&self.1))))
     }
 }
 
 /// A run of the built-in provider, counting the bytes written to it.
-struct Written(Box<dyn SpillRun>, Arc<Mutex<(Vec<ThreadId>, usize)>>);
+struct Written(Box<dyn SpillRun>, Arc<Mutex<Seen>>);
 
 impl SpillRun for Written {
     fn push(&mut self, record: &[u8]) -> turborel::error::Result<()> {
-        self.1.lock().unwrap().1 += record.len();
+        self.1.lock().unwrap().written += record.len();
         self.0.push(record)
     }
     fn records(&mut self) -> turborel::error::Result<Records> {
@@ -126,7 +134,8 @@ const QUERIES: [&str; 3] = [
 /// smallest MEMORY.WORK_BYTES, whose partitions outgrow it many times,
 /// write their partitions to the spill on the threads that merged them,
 /// not on the statement's thread alone as a grouping given way to does,
-/// and give the rows they give run alone a row at a time, in their order, with their
+/// in the one area of their grant, a grouping given way to making one
+/// more, and give the rows they give run alone a row at a time, in their order, with their
 /// spilled partitions split again where one outgrows the grant.
 #[test]
 fn partitions_past_the_grant_are_spilled_by_their_threads() {
@@ -136,7 +145,7 @@ fn partitions_past_the_grant_are_spilled_by_their_threads() {
     let statement = std::thread::current().id();
     for (q, expected) in QUERIES.iter().zip(&in_memory) {
         assert_eq!(&parallel(&a, q), expected, "{q}");
-        let (made_on, written) = threads.taken();
+        let Seen { made_on, written, areas } = threads.taken();
         let shown = a.physical_plan(q, &turborel::params::Params::new()).unwrap();
         assert!(
             made_on.iter().any(|&t| t != statement),
@@ -144,6 +153,7 @@ fn partitions_past_the_grant_are_spilled_by_their_threads() {
             made_on.len()
         );
         assert!(written > usize::try_from(SMALL).unwrap() * 4, "{q}: its partitions many times the grant, spilled");
+        assert_eq!(areas, 1, "{q}: the grouping's own area alone, none of a grouping given way to");
     }
 }
 
@@ -164,14 +174,15 @@ fn a_pair_and_select_distinct_past_the_grant_give_their_rows() {
 
 /// Verifies: [DESIGN] (RULES.md D1226) a grouping whose spilled
 /// partitions outgrow the grant past SPILL.PARTITION_DEPTH, here 0, gives
-/// way, and the grouping then gives the rows it gives run alone, in their
-/// order.
+/// way, the grouping given way to spilling in an area of its own, and
+/// then gives the rows it gives run alone, in their order.
 #[test]
 fn partitions_past_the_depth_give_way() {
-    let (db, a, _threads) = table();
+    let (db, a, threads) = table();
     let q = QUERIES.first().unwrap();
     let in_memory = alone(&a, q);
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
     db.set_setting("SPILL.PARTITION_DEPTH", &Value::Exact(Decimal::new(0, 0))).unwrap();
     assert_eq!(parallel(&a, q), in_memory);
+    assert!(threads.taken().areas > 1, "an area of the grouping given way to");
 }

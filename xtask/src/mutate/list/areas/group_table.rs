@@ -32,8 +32,11 @@ const SPILLED: &str = "spilled_groups::partitions_past_the_grant_are_spilled_by_
 /// written.
 const SPILLED_MERGE: &str = "exec::table::made::written::tests::groups_read_back_finish_as_those_written";
 
+/// Columns of states of every kind read back from the spill bit for bit.
+const SPILLED_STATES: &str = "exec::table::states::typed::written::tests::every_column_of_states_is_read_back_as_written";
+
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 25] = [
+pub const GROUP_TABLE: [Mutation; 26] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -239,18 +242,18 @@ pub const GROUP_TABLE: [Mutation; 25] = [
         package: Package::Core,
         breaks: "partitions past the grant give way to a grouping a row at a time, the threads' work dropped (RULES.md D1226)",
         file: "src/exec/parallel/grouped/waves.rs",
-        original: "        self.limit.give(held);\n        self.spilled_all()",
-        replacement: "        self.limit.give(held);\n        Ok(false)",
+        original: "    fn spilled_all(&mut self) -> Result<bool> {\n",
+        replacement: "    fn spilled_all(&mut self) -> Result<bool> {\n        if self.spilled.is_none() {\n            return Ok(false);\n        }\n",
         integration: &[SPILLED],
         unit: &[],
     },
     Mutation {
-        name: "spilled-runs-read-backwards",
+        name: "spilled-split-by-the-same-bits",
         package: Package::Core,
-        breaks: "a spilled partition's runs are merged last wave first, so its groups are not in the order of their first rows (RULES.md D1226)",
+        breaks: "a spilled partition past the grant is split by the bits that chose it, so all of it falls in one part again and the grouping gives way at the depth (RULES.md D1226)",
         file: "src/exec/parallel/grouped/waves/spilled.rs",
-        original: "    for run in part.runs {\n        for record in run.into_records()? {",
-        replacement: "    for run in part.runs.into_iter().rev() {\n        for record in run.into_records()? {",
+        original: "u32::try_from(level.saturating_add(1))",
+        replacement: "u32::try_from(level)",
         integration: &[SPILLED],
         unit: &[],
     },
@@ -282,6 +285,16 @@ pub const GROUP_TABLE: [Mutation; 25] = [
         original: "                    out.put_u64(small.to_bits());",
         replacement: "                    out.put_u64(0.0_f64.to_bits());",
         integration: &[],
-        unit: &[SPILLED_MERGE],
+        unit: &[SPILLED_STATES],
+    },
+    Mutation {
+        name: "spilled-finished-unnumbered",
+        package: Package::Core,
+        breaks: "a spilled part's finished groups are written without their first rows' numbers, so the merge gives them by partition, not in the order of their first rows (RULES.md D1226)",
+        file: "src/exec/parallel/grouped/waves/spilled.rs",
+        original: "            run.push(&numbered(n, &row, &lobs))?;",
+        replacement: "            run.push(&numbered(0, &row, &lobs))?;",
+        integration: &[SPILLED],
+        unit: &[],
     },
 ];
