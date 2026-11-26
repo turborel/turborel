@@ -8,7 +8,10 @@
 //! A program with no back-reference runs in time linear in the string, on
 //! `regex/bounded.rs` if the string is short enough and else on
 //! `regex/pike.rs`; one with a back-reference on `regex/backtrack.rs`,
-//! which counts its steps. Both read a text by position (`regex/text.rs`),
+//! which counts its steps. Searches of one expression over text after
+//! text go through a searcher (`regex/searcher.rs`), which keeps what a
+//! search uses again and an automaton of where matches end
+//! (`regex/dfa.rs`, RULES.md D1188). All read a text by position (`regex/text.rs`),
 //! a string's characters or a character large object's read a chunk at a
 //! time (`regex/lob_text.rs`), so what a search holds is bounded whatever
 //! the text's length. Character classes come from Unicode 13.0's General
