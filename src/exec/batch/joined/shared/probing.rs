@@ -72,6 +72,7 @@ impl SharedTable {
         let by_hash = failed.is_none() && !table.table.is_direct();
         let located = if by_hash { located(&table.table, &hashes, screened.as_ref().map(|(held, _)| &held[..])) } else { Vec::new() };
         table.table.prefetch(&located, &*table.kernels);
+        table.prefetch_keys(&located);
         let pairs = (Vec::with_capacity(BATCH_ROWS), Vec::with_capacity(BATCH_ROWS));
         let (at, seen, any, ended) = (0, 0, false, false);
         Probing { table, batch, given, hashes, screened, located, left, left_shown, outer, at, seen, any, pairs, failed, ended }

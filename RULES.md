@@ -19210,8 +19210,10 @@ of every row with a key, of those its Bloom filter keeps if it screens
 processor has many under way at once. It then asks the kernels to bring
 the first hash and row number of each slot into the caches
 (`Kernels::prefetch_u64`, `prefetch_u32`), a `prefetcht0` on x86 and a
-`PRFM` on AArch64, the portable body asking nothing. The second pass
-pairs the rows as before, each from where its slot lies
+`PRFM` on AArch64, the portable body asking nothing, and of a key of
+integers asks the same of the key of each slot's first row, the one
+compared first (`SharedTable::prefetch_keys`). The second pass pairs the
+rows as before, each from where its slot lies
 (`JoinTable::candidates_at`). A lookup of one hash goes through the same
 two steps, so the rows a row may match, their order, and the pairs and
 batches the probe gives are those it gave. A direct table (D601) is

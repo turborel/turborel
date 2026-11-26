@@ -130,6 +130,11 @@ pub trait Kernels: Send + Sync {
         let _ = (values, at);
     }
 
+    /// As `prefetch_u64`, of the integers of `values`.
+    fn prefetch_i64(&self, values: &[i64], at: &[u32]) {
+        let _ = (values, at);
+    }
+
     /// Appends to `out` the values from the `from`th to the `to`th of
     /// `bits` bits packed in `bytes`, as a chunk's frame of reference
     /// keeps them (RULES.md D352), each plus `least`, wrapping: none if

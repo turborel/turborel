@@ -224,6 +224,25 @@ impl SharedTable {
         Ok(shared)
     }
 
+    /// \[DESIGN\] (RULES.md D1095) Asks the kernels to bring the key of
+    /// integers of the first row of each of `located`'s slots into the
+    /// caches, the row a probe compares first (`keys_equal`).
+    pub(super) fn prefetch_keys(&self, located: &[crate::exec::table::Located]) {
+        let ints: Vec<&[i64]> = self
+            .places
+            .iter()
+            .filter_map(|&b| if let Some(Column::Ints(ints)) = self.right.columns.get(b) { Some(&ints.units[..]) } else { None })
+            .collect();
+        if ints.is_empty() || located.is_empty() {
+            return;
+        }
+        let mut firsts = Vec::with_capacity(located.len());
+        self.table.firsts(located, &mut firsts);
+        for units in ints {
+            self.kernels.prefetch_i64(units, &firsts);
+        }
+    }
+
     /// \[DESIGN\] (RULES.md D1087) Of the probes whose keys' hashes are
     /// `hashes`, the places of those the Bloom filter of its one key may
     /// hold, if its table is past `SCREENED_BYTES` and the filter, made with

@@ -279,6 +279,19 @@ impl JoinTable {
     }
 }
 
+impl JoinTable {
+    /// \[DESIGN\] (RULES.md D1095) The number of the first row of each of
+    /// `located`'s slots, into `out`, `u32::MAX` of one of no row: the
+    /// built row whose key a probe compares first.
+    pub(in crate::exec) fn firsts(&self, located: &[Located], out: &mut Vec<u32>) {
+        out.clear();
+        out.extend(located.iter().map(|l| {
+            let first = (l.from < l.to).then(|| self.parts.get(l.part)?.rows.get(l.from).copied()).flatten();
+            first.unwrap_or(u32::MAX)
+        }));
+    }
+}
+
 /// \[DESIGN\] (RULES.md D1095) Where a hash's rows lie in a table: its
 /// part, and the places in it from which to which its slot's rows are;
 /// none if they are no places.

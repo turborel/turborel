@@ -138,6 +138,9 @@ impl Kernels for Simd {
     fn prefetch_u32(&self, values: &[u32], at: &[u32]) {
         arch::prefetch(values, at);
     }
+    fn prefetch_i64(&self, values: &[i64], at: &[u32]) {
+        arch::prefetch(values, at);
+    }
     fn hash_i64(&self, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
         arch::hash_i64(self.isa, values, seed, sel, out);
     }

@@ -80,6 +80,7 @@ fn a_prefetch_names_only_its_slice() {
         simd.prefetch_u64(&words, &[0, 50, 99, 100, u32::MAX]);
         simd.prefetch_u32(&values, &[2, 3, u32::MAX]);
         simd.prefetch_u64(&[], &[0]);
+        simd.prefetch_i64(&[1, 2], &[1, 2]);
         assert!(words.iter().all(|&w| w == 7) && values.iter().all(|&v| v == 9), "{level:?}");
     }
 }
