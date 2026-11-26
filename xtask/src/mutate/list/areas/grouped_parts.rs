@@ -10,7 +10,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 21] = [
+pub const GROUPED_PARTS: [Mutation; 22] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -219,6 +219,16 @@ pub const GROUPED_PARTS: [Mutation; 21] = [
         original: "grouping.read.is_some() && plain &&",
         replacement: "grouping.read.is_some() &&",
         integration: &["regrouped_parts::the_first_rows_of_a_sort_over_a_pair_are_the_second_groupings"],
+        unit: &[],
+    },
+    Mutation {
+        name: "ungrouped-states-unwritten",
+        package: Package::Core,
+        breaks: "a morsel's set functions of no grouping are fed and never written into its one group (RULES.md D1170)",
+        file: "src/exec/batch/groups/morsel.rs",
+        original: "    if table.len() > 0 {",
+        replacement: "    if table.len() > 1 {",
+        integration: &["ungrouped_parts::set_functions_of_no_grouping_are_fed_by_vectors_in_parallel"],
         unit: &[],
     },
 ];

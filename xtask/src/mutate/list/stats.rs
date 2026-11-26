@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of sampled statistics, in the order they run.
-pub const STATS: [Mutation; 16] = [
+pub const STATS: [Mutation; 17] = [
     Mutation {
         name: "stats-large-read-whole",
         package: Package::Core,
@@ -49,6 +49,16 @@ pub const STATS: [Mutation; 16] = [
         replacement: "",
         integration: &[],
         unit: &["engine::rows::stats::tests::a_table_opened_gathers_its_first_statistics_as_a_plan_asks"],
+    },
+    Mutation {
+        name: "stats-first-pass-unlocked",
+        package: Package::Core,
+        breaks: "first statistics: a plan asking while the maintenance thread makes a table opened's first pass goes on without them",
+        file: "src/engine/rows/stats.rs",
+        original: "        let _first = gathered.when_asked.load(Ordering::Relaxed).then(|| lock_builtin(&gathered.first));",
+        replacement: "        let _first: Option<()> = None;",
+        integration: &[],
+        unit: &["engine::rows::stats::tests::a_plan_asking_during_the_maintenance_threads_first_pass_waits_for_it"],
     },
     Mutation {
         name: "stats-sampled-group-read",
