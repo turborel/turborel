@@ -23,7 +23,6 @@ mod join;
 mod keys;
 mod made;
 mod runtime;
-mod scattered;
 mod slots;
 mod states;
 
@@ -124,10 +123,6 @@ pub(in crate::exec) struct GroupTable<S: Columns = Vec<States>> {
     /// The groups a merge found or made and the places of those it made,
     /// kept between merges for their room (`made.rs`).
     merging: (Vec<u32>, Vec<u32>),
-    /// \[DESIGN\] (RULES.md D1119) Whether rows were made groups of their
-    /// own, no group found for them, so a key may be held more than once
-    /// (`scattered.rs`).
-    repeats: bool,
 }
 
 impl GroupTable {
@@ -148,7 +143,6 @@ impl GroupTable {
             limit,
             taken: 0,
             merging: (Vec::new(), Vec::new()),
-            repeats: false,
         }
     }
 
@@ -188,7 +182,6 @@ impl GroupTable<()> {
             limit: usize::MAX,
             taken: 0,
             merging: (Vec::new(), Vec::new()),
-            repeats: false,
         }
     }
 }

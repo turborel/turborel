@@ -153,37 +153,3 @@ fn groups_kept_are_finished_alone() {
     assert_eq!(kept.iter().map(|g| format!("{g:?}")).collect::<Vec<_>>(), expected);
     assert!(table.finished_if(|_| crate::error::fail(crate::error::Code::Corrupt, "[DESIGN] refused")).is_err());
 }
-
-/// Verifies: [DESIGN] (RULES.md D1119) a morsel whose rows were each made
-/// a group of their own, keys repeated in it, split among partitions and
-/// merged, holds every key once with its first row the earliest and its
-/// count, sum, least and greatest merged, as the morsel's rows grouped
-/// give; and a morsel of no repeat is no Made that repeats.
-#[test]
-fn a_morsel_of_repeated_keys_merges_each_key_once() {
-    let keys: Vec<Vec<Value>> = (0..3000_i128).map(|n| vec![exact(n % 700)]).collect();
-    let mut scattered = GroupTable::with_room(1, &calls(), &Seed::fixed(0x5EED), 0);
-    for (n, key) in (0_u64..).zip(&keys) {
-        let g = scattered.scattered(hash_values(scattered.seed(), key), Key::Values(key), n);
-        let units = if let Some(Value::Exact(d)) = key.first() { d.units } else { 0 };
-        let (mut total, mut value) = (Vec::new(), Vec::new());
-        put_value(&mut total, &exact(units));
-        put_value(&mut value, &exact(units));
-        scattered.merge_written(g, (n, &[1_i128.to_le_bytes().to_vec(), total, value.clone(), value])).unwrap();
-    }
-    let made = scattered.made(8, &[]).unwrap();
-    assert!(made.repeats && !morsel(&keys, (0, 1, 0)).made(8, &[]).unwrap().repeats);
-    let mut parted = Vec::new();
-    for p in 0..8 {
-        let mut table = GroupTable::new(1, &calls(), &Seed::fixed(0x5EED), usize::MAX);
-        table.absorb(&made, p).unwrap();
-        parted.extend(sorted(&table));
-    }
-    parted.sort();
-    let mut whole = GroupTable::new(1, &calls(), &Seed::fixed(0x5EED), usize::MAX);
-    whole.absorb_whole(&morsel(&keys, (0, 1, 0)).frozen().unwrap()).unwrap();
-    assert_eq!(parted, sorted(&whole), "as the rows grouped give");
-    assert_eq!(parted.len(), 700);
-    let ten = parted.iter().find(|row| row.starts_with("10 ")).unwrap();
-    assert!(ten.contains("Decimal { units: 5, scale: 0 }") && ten.contains("units: 50,"), "10 at rows 10, 710 to 2810: {ten}");
-}

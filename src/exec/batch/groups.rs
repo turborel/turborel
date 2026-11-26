@@ -21,7 +21,6 @@
 
 mod coded;
 mod morsel;
-mod scattered;
 mod spilled;
 mod streamed;
 

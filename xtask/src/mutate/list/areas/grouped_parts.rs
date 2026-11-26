@@ -8,7 +8,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 14] = [
+pub const GROUPED_PARTS: [Mutation; 13] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -138,15 +138,5 @@ pub const GROUPED_PARTS: [Mutation; 14] = [
         replacement: "for count in self.count.iter() {",
         integration: &["crossed_parts::an_analyzed_crossing_counts_its_projections"],
         unit: &[],
-    },
-    Mutation {
-        name: "scattered-morsel-not-repeating",
-        package: Package::Core,
-        breaks: "a morsel whose rows were made groups of their own is merged as one holding each key once, so a key held twice makes two groups (RULES.md D1119)",
-        file: "src/exec/table/made.rs",
-        original: "            repeats: self.repeats,\n",
-        replacement: "            repeats: false,\n",
-        integration: &["scattered_groups::keys_apart_in_a_morsel_group_as_they_do_alone"],
-        unit: &["exec::table::made::tests::a_morsel_of_repeated_keys_merges_each_key_once"],
     },
 ];

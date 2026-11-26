@@ -2,15 +2,12 @@
 //! its batches' rows grouped as a grouping by batch groups them
 //! (`groups.rs`), in the executor's table (`exec/table.rs`), each batch's
 //! keys hashed a vector at a time and each set function's states fed in
-//! one loop, no row made, a run of a column kept as runs taken whole; of
-//! a morsel whose first batch finds its keys apart, its other rows each a
-//! group of its own (`scattered.rs`, RULES.md D1119); held whole, as a grouping run in parallel charges
+//! one loop, no row made, a run of a column kept as runs taken whole; held whole, as a grouping run in parallel charges
 //! what each morsel's groups hold to its grant once they are made
 //! (`parallel/grouped.rs`).
 
 use super::super::{Batches, Read, lanes};
 use super::coded::{Memo, grouped};
-use super::scattered::{apart, scattered};
 use crate::error::Result;
 use crate::exec::Runner;
 use crate::exec::table::{GroupTable, Key, Seed, hash_rows};
@@ -37,24 +34,14 @@ pub(in crate::exec) fn morsel_groups(
     let mut table = GroupTable::with_room(read.groups.len(), aggs, seed, room);
     let (mut hashes, mut scratch, mut memo) = (Vec::new(), Vec::new(), Memo::default());
     let mut number = first;
-    // Whether its keys are apart, as its first batch of rows found them
-    // (`scattered.rs`, RULES.md D1119).
-    let mut keys_apart: Option<bool> = None;
     for kept in batches {
         let (batch, rows) = kept?;
         let rows = rows.as_ref().map(Sel::as_slice);
         let count = rows.map_or(batch.rows, <[u32]>::len);
         // Of keys all codes of dictionaries, by their codes (`coded.rs`).
         let at = (&batch, read.groups.as_slice(), rows);
-        if grouped((&mut table, &mut memo), at, (number, seed, runner.kernels()), &mut hashes) {
-            keys_apart.get_or_insert(false);
-        } else if keys_apart == Some(true) {
-            scattered(&mut table, at, (number, seed, runner), &mut hashes);
-        } else {
+        if !grouped((&mut table, &mut memo), at, (number, seed, runner.kernels()), &mut hashes) {
             hashed(&mut table, at, (number, seed, runner), &mut hashes);
-            if count > 0 {
-                keys_apart.get_or_insert_with(|| apart(table.len(), count));
-            }
         }
         let lanes = lanes(&read.taken, &batch, rows);
         table.feed(&batch, (&read.taken, &lanes), (&mut scratch, runner))?;
