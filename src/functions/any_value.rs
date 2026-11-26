@@ -6,6 +6,7 @@
 use super::{Accumulator, AggregateFunction};
 use crate::bytes::Reader;
 use crate::error::{Code, Result, SqlError};
+use crate::logical::{AggCall, Expr};
 use crate::value::codec::{put_value, value};
 use crate::value::types::composite;
 use crate::value::{DataType, Value};
@@ -141,6 +142,18 @@ impl Accumulator for Kept {
         let Some(Value::Row(fields)) = &self.0.first else { return Ok(Value::Null) };
         Ok(fields.first().cloned().unwrap_or(Value::Null))
     }
+    fn keeps_first(&self) -> bool {
+        true
+    }
+}
+
+/// The column of its input that `a` keeps its groups' first rows' value
+/// of, if its set function keeps that alone (`Accumulator::keeps_first`)
+/// and its argument is a row of the column.
+pub(crate) fn carried_column(a: &AggCall) -> Option<usize> {
+    let Some(Expr::Call(_, args)) = &a.arg else { return None };
+    let [Expr::Column(c)] = args.as_slice() else { return None };
+    a.func.0.accumulator(a.result.clone()).keeps_first().then_some(*c)
 }
 
 // Unit tests: the value kept, given values one at a time, by vectors and

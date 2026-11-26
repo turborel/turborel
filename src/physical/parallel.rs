@@ -39,7 +39,7 @@ mod inputs;
 
 use std::sync::{Arc, OnceLock};
 
-use super::{NodeCount, Plan, SemiMethod};
+use super::{NodeCount, Plan, Seen, SemiMethod};
 use crate::db::State;
 use crate::index::Probe;
 use crate::logical::{AggCall, Cond, Expr, OuterJoin, SetOp};
@@ -66,6 +66,9 @@ pub struct Parallel {
 struct Asked<'a> {
     /// The database.
     db: &'a State,
+    /// The statistics of its tables as the statement sees them (RULES.md
+    /// D1089).
+    seen: &'a Seen,
     /// The most threads a part runs on.
     most: usize,
     /// The rows of a morsel.
@@ -96,14 +99,16 @@ pub(crate) fn system_threads() -> usize {
 static SYSTEM_THREADS: OnceLock<usize> = OnceLock::new();
 
 impl<'a> Asked<'a> {
-    /// What `db`'s settings ask.
-    fn of(db: &'a State) -> Asked<'a> {
+    /// What `db`'s settings ask, of a statement that sees its tables'
+    /// statistics as `seen`.
+    fn of(db: &'a State, seen: &'a Seen) -> Asked<'a> {
         let workers = workers_of(db);
         let most = match db.settings.count(EXECUTOR_DEGREE) {
             0 => workers,
             n => n.min(workers.max(1)),
         };
-        Asked { db, most, morsel: db.settings.count(EXECUTOR_MORSEL_ROWS).max(1), least: db.settings.count(EXECUTOR_PARALLEL_MIN_ROWS) }
+        let (morsel, least) = (db.settings.count(EXECUTOR_MORSEL_ROWS).max(1), db.settings.count(EXECUTOR_PARALLEL_MIN_ROWS));
+        Asked { db, seen, most, morsel, least }
     }
 
     /// The degree of the part `plan` reading `rows` rows: 1 to run it
@@ -130,22 +135,22 @@ impl<'a> Asked<'a> {
         // exchanged are the first's (RULES.md D1113).
         let grouping = if let Plan::Filter { input, .. } = plan { input } else { plan };
         let exchanged = first_level(grouping).unwrap_or(plan);
-        rows >= self.least && exchange::outweighs(self.db, exchanged, rows, (self.morsel, degree))
+        rows >= self.least && exchange::outweighs(self.db, self.seen, exchanged, rows, (self.morsel, degree))
     }
 }
 
 /// \[DESIGN\] Whether `plan`, a grouping or DISTINCT, would be a part
 /// run in parallel as it is: so a streamed one is not chosen in its place
 /// (RULES.md D550).
-pub(super) fn runs_parallel(db: &State, plan: &Plan) -> bool {
-    let asked = Asked::of(db);
+pub(super) fn runs_parallel(db: &State, seen: &Seen, plan: &Plan) -> bool {
+    let asked = Asked::of(db, seen);
     let Some(rows) = rooted(plan, Some(db)).filter(|_| asked.most > 1) else { return false };
     !asked.kept_whole(plan, rows) && asked.degree(plan, rows) > 1
 }
 
 /// `plan` with each part worth running in parallel marked so.
-pub(crate) fn parallel(db: &State, mut plan: Plan) -> Plan {
-    let asked = Asked::of(db);
+pub(crate) fn parallel(db: &State, seen: &Seen, mut plan: Plan) -> Plan {
+    let asked = Asked::of(db, seen);
     if asked.most > 1 {
         walk(asked, &mut plan, 0);
     }
@@ -157,9 +162,10 @@ pub(crate) fn parallel(db: &State, mut plan: Plan) -> Plan {
 /// and its chains given predicate transfer (`physical/transfer.rs`), if
 /// the run reads every row of it: `all` of them are asked for, or it
 /// reads its input whole before it gives its first row, so no row is
-/// read that a run stopping at its first rows would not read.
-pub(crate) fn parallel_run(db: &State, plan: Plan, all: bool) -> Plan {
-    if all || whole_first(&plan, 0) { super::transferred(db, parallel(db, plan)) } else { plan }
+/// read that a run stopping at its first rows would not read. Its
+/// statistics are seen as its planning saw them, `seen` (RULES.md D1089).
+pub(crate) fn parallel_run((db, seen): (&State, &Seen), plan: Plan, all: bool) -> Plan {
+    if all || whole_first(&plan, 0) { super::transferred(db, seen, parallel(db, seen, plan)) } else { plan }
 }
 
 /// Whether `plan` reads its input whole before it gives its first row: a

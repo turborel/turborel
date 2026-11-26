@@ -30,6 +30,10 @@ use crate::logical::{Expr, LogicalPlan};
 pub(in crate::physical) struct TableKeys {
     /// Each unique key's columns.
     unique: Vec<Vec<usize>>,
+    /// \[DESIGN\] (RULES.md D1157) Each column NOT NULL that a unique key
+    /// is of alone: no two rows hold one value of it and none holds a
+    /// null, so its values are as many as the table's rows.
+    domains: Vec<usize>,
     /// Each referential constraint that gives each row one referenced
     /// row: its referencing columns, the referenced table and columns.
     references: Vec<(Vec<usize>, QualifiedName, Vec<usize>)>,
@@ -58,7 +62,15 @@ impl TableKeys {
             .filter(|(name, fk)| immediate(name) && fk.period.is_none() && not_null(&fk.columns))
             .map(|(_, fk)| (fk.columns.clone(), fk.table.clone(), fk.referenced.clone()))
             .collect();
-        TableKeys { unique, references }
+        let domains =
+            unique.iter().filter_map(|key| if let [c] = key.as_slice() { Some(*c) } else { None }).filter(|&c| not_null(&[c])).collect();
+        TableKeys { unique, domains, references }
+    }
+
+    /// Whether `column` is NOT NULL and a unique key alone, of as many
+    /// values as the table's rows.
+    pub(in crate::physical) fn domain(&self, column: usize) -> bool {
+        self.domains.contains(&column)
     }
 
     /// Whether `columns` hold every column of one of its unique keys.

@@ -102,4 +102,12 @@ pub trait Accumulator {
     ///
     /// The result cannot be computed or is out of range.
     fn finish(&self) -> Result<Value>;
+    /// \[DESIGN\] (RULES.md D1201) Whether all it keeps is the first
+    /// value given, a row of one column, a null in it too, as the value
+    /// of a group-invariant column is kept (`functions/any_value.rs`), so
+    /// a grouping may keep a value a group read of the column in place.
+    /// Default: no.
+    fn keeps_first(&self) -> bool {
+        false
+    }
 }

@@ -50,7 +50,7 @@ pub const KEY_PLANS: [Mutation; 9] = [
         package: Package::Core,
         breaks: "a plan kept notes every table as having had statistics, so one learned of the defaults is kept once they are gathered",
         file: "src/db/prepared/plans/grown.rs",
-        original: "    reads.iter().map(|t| st.statistics(t).is_some()).collect()\n",
+        original: "    reads.iter().map(|t| looked.statistics(t).is_some()).collect()\n",
         replacement: "    reads.iter().map(|_| true).collect()\n",
         integration: &[
             "key_plans::a_scan_learned_before_statistics_is_learned_again_once_they_are",

@@ -19,7 +19,8 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::engine::rows::{DEFAULT_REFRESH_FRACTION, DEFAULT_REFRESH_ROWS};
 use crate::index::Probe;
-use crate::physical::{JoinProbe, Plan, Preserved};
+use crate::physical::{JoinProbe, Plan, Preserved, Seen};
+use crate::stats::Statistics;
 use crate::storage::cost_of;
 
 /// \[DESIGN\] How many times its figure as its plan was learned a probe's
@@ -61,21 +62,25 @@ pub(crate) enum Fit {
 }
 
 impl Learnt {
-    /// What `plan`, learned in `st`, reading `reads`, is measured from.
-    pub(crate) fn of(st: &State, reads: &Arc<[QualifiedName]>, plan: &Plan) -> Learnt {
-        let mut found = Vec::new();
+    /// What `plan`, learned in `st`, reading `reads`, is measured from:
+    /// its tables as the execution that planned it saw them, `seen`
+    /// (RULES.md D1089), so a table whose statistics were gathered after
+    /// its planning asked is known by none, and its plan learned again.
+    pub(crate) fn of((st, seen): (&State, &Seen), reads: &Arc<[QualifiedName]>, plan: &Plan) -> Learnt {
+        let (mut found, looked) = (Vec::new(), Looked { st, seen: Some(seen) });
         let probe = |(table, columns): (QualifiedName, Vec<usize>)| {
-            let figure = figure(st, &table, &columns);
+            let figure = figure(looked, &table, &columns);
             Probed { table, columns, figure }
         };
         let probes = probed(plan, st, &mut found).then(|| found.into_iter().map(probe).collect());
-        Learnt { reads: Arc::clone(reads), rows: rows_of(st, reads), known: known_of(st, reads), probes }
+        Learnt { reads: Arc::clone(reads), rows: rows_of(looked, reads), known: known_of(looked, reads), probes }
     }
 
-    /// The rows of `reads` in `st`, of a query that stopped learning: it
-    /// learns again once one drifts.
-    pub(crate) fn rows(st: &State, reads: &Arc<[QualifiedName]>) -> Learnt {
-        Learnt { reads: Arc::clone(reads), rows: rows_of(st, reads), known: known_of(st, reads), probes: None }
+    /// The rows of `reads` in `st`, as the execution saw them, `seen`, of
+    /// a query that stopped learning: it learns again once one drifts.
+    pub(crate) fn rows((st, seen): (&State, &Seen), reads: &Arc<[QualifiedName]>) -> Learnt {
+        let looked = Looked { st, seen: Some(seen) };
+        Learnt { reads: Arc::clone(reads), rows: rows_of(looked, reads), known: known_of(looked, reads), probes: None }
     }
 
     /// How the plan fits its tables in `st` now: moved, if a table's
@@ -83,7 +88,7 @@ impl Learnt {
     /// still, if no table drifted (`drifted`); grown, if its probes did
     /// not outgrow it; else moved.
     pub(crate) fn now(&self, st: &State) -> Fit {
-        let reads = &self.reads;
+        let (reads, looked) = (&self.reads, Looked { st, seen: None });
         if reads.iter().zip(self.known.iter()).any(|(t, &known)| !known && st.statistics(t).is_some()) {
             return Fit::Moved;
         }
@@ -91,11 +96,11 @@ impl Learnt {
             return Fit::Still;
         }
         let Some(kept) = &self.probes else { return Fit::Moved };
-        if kept.iter().any(|p| outgrown(p.figure, figure(st, &p.table, &p.columns))) {
+        if kept.iter().any(|p| outgrown(p.figure, figure(looked, &p.table, &p.columns))) {
             return Fit::Moved;
         }
         let known = Arc::clone(&self.known);
-        Fit::Grown(Learnt { reads: Arc::clone(reads), rows: rows_of(st, reads), known, probes: Some(Arc::clone(kept)) })
+        Fit::Grown(Learnt { reads: Arc::clone(reads), rows: rows_of(looked, reads), known, probes: Some(Arc::clone(kept)) })
     }
 }
 
@@ -105,9 +110,29 @@ fn outgrown(learned: f64, now: f64) -> bool {
     now > learned.max(1.0_f64) * OUTGROWN
 }
 
-/// The rows of each table of `reads` in `st`.
-fn rows_of(st: &State, reads: &[QualifiedName]) -> Arc<[usize]> {
-    reads.iter().map(|t| st.row_count(t).unwrap_or(0)).collect()
+/// A state's tables as a statement saw them, if `seen` is given, else as
+/// they are now.
+#[derive(Clone, Copy)]
+struct Looked<'a> {
+    st: &'a State,
+    seen: Option<&'a Seen>,
+}
+
+impl Looked<'_> {
+    /// `table`'s rows.
+    fn rows(self, table: &QualifiedName) -> usize {
+        self.seen.map_or_else(|| self.st.row_count(table), |seen| seen.row_count(self.st, table)).unwrap_or(0)
+    }
+
+    /// `table`'s statistics, if any.
+    fn statistics(self, table: &QualifiedName) -> Option<Arc<dyn Statistics>> {
+        self.seen.map_or_else(|| self.st.statistics(table), |seen| seen.statistics(self.st, table))
+    }
+}
+
+/// The rows of each table of `reads`.
+fn rows_of(looked: Looked<'_>, reads: &[QualifiedName]) -> Arc<[usize]> {
+    reads.iter().map(|t| looked.rows(t)).collect()
 }
 
 /// \[DESIGN\] Whether a table of `was` rows that now has `now` gained or
@@ -119,17 +144,17 @@ fn drifted(was: usize, now: usize) -> bool {
     cost_of(now.abs_diff(was)) > cost_of(was) * DEFAULT_REFRESH_FRACTION + least
 }
 
-/// Whether each table of `reads` has statistics in `st`.
-fn known_of(st: &State, reads: &[QualifiedName]) -> Arc<[bool]> {
-    reads.iter().map(|t| st.statistics(t).is_some()).collect()
+/// Whether each table of `reads` has statistics.
+fn known_of(looked: Looked<'_>, reads: &[QualifiedName]) -> Arc<[bool]> {
+    reads.iter().map(|t| looked.statistics(t).is_some()).collect()
 }
 
 /// The estimated rows per probe of `table` fixing `columns`: its rows over
 /// the distinct values its statistics count of them together, or of each
 /// apart, multiplied; its rows if it fixes none, or nothing is known.
-fn figure(st: &State, table: &QualifiedName, columns: &[usize]) -> f64 {
-    let rows = cost_of(st.row_count(table).unwrap_or(0));
-    let Some(stats) = st.statistics(table) else { return rows };
+fn figure(looked: Looked<'_>, table: &QualifiedName, columns: &[usize]) -> f64 {
+    let rows = cost_of(looked.rows(table));
+    let Some(stats) = looked.statistics(table) else { return rows };
     if columns.is_empty() {
         return rows;
     }
@@ -235,5 +260,26 @@ mod tests {
         assert!(!outgrown(4.0_f64, 40.0_f64) && outgrown(4.0_f64, 40.5_f64));
         assert!(!outgrown(0.25_f64, 10.0_f64) && outgrown(0.25_f64, 10.5_f64), "below one row, as of one");
         assert!(!outgrown(4.0_f64, 1.0_f64), "fewer rows");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1089, D839: a plan learned is measured
+    /// from its tables as the execution that planned it saw them. Of one
+    /// whose planning asked before a table's statistics were gathered, the
+    /// table is known by none, though gathered before the plan is kept, so
+    /// the plan is learned again; of one whose planning asked after, it
+    /// is known, and the plan still fits. A query that stopped learning is
+    /// measured so too.
+    #[test]
+    fn a_plan_learned_is_measured_from_what_its_planning_saw() {
+        use crate::physical::seen::{named, scanned, ungathered};
+        let (db, st) = ungathered(&[("T", 100, 10)]);
+        let (seen, reads): (Seen, Arc<[QualifiedName]>) = (Seen::default(), Arc::from(vec![named("T")]));
+        assert!(seen.statistics(&st, &named("T")).is_none());
+        db.analyze("X.T").unwrap();
+        let plan = scanned("T");
+        assert!(matches!(Learnt::of((&st, &seen), &reads, &plan).now(&st), Fit::Moved), "gathered since its planning asked");
+        assert!(matches!(Learnt::rows((&st, &seen), &reads).now(&st), Fit::Moved), "stopped learning, so too");
+        let fresh = Seen::default();
+        assert!(matches!(Learnt::of((&st, &fresh), &reads, &plan).now(&st), Fit::Still), "a planning asking afresh");
     }
 }

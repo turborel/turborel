@@ -68,8 +68,10 @@ impl Column {
                 d.utc.len().saturating_mul(size_of::<i64>()).saturating_add(zones).saturating_add(nulls(d.nulls.as_ref()))
             }
             Column::Bools(b) => nulls(Some(&b.bits)).saturating_add(nulls(b.nulls.as_ref())),
-            // None held, but as values once they are asked for.
-            Column::Nulls(held) => held.rows.saturating_mul(size_of::<Value>()),
+            // None held, but as values once they are asked for, so a
+            // projection's columns given null (RULES.md D1167) charge nothing
+            // of a join's work area.
+            Column::Nulls(held) => held.made.get().map_or(0, |made| made.len().saturating_mul(size_of::<Value>())),
             Column::Late(late) => late.bytes(),
             Column::Texts(texts) => {
                 let coded = texts.coded.as_ref().map_or(0, |c| {

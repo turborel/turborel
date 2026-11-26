@@ -696,6 +696,7 @@ verification approach DO-178C expects (§8).
 | D1084 | Integers known as runs are judged by walking their runs and the rows asked of together |
 | D1086 | An equality of an expression of each operand's columns is a hash join on the keys computed once a row |
 | D1087 | A probe of a join table past a thread's share of the cache is screened by its key's Bloom filter, and a semi join of many held keys filters its right |
+| D1089 | A statement's planning reads each table's statistics, rows and index keys once, and every step of it reads them so |
 | D1090 | A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget |
 | D1091 | A frozen row read by its id reads the one chunk of each column asked for, and is priced as measured |
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
@@ -738,6 +739,7 @@ verification approach DO-178C expects (§8).
 | D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
 | D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
 | D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
+| D1157 | A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -745,8 +747,13 @@ verification approach DO-178C expects (§8).
 | D1164 | A start that changes nothing records no catalog image |
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
+| D1167 | Each operator carries only the columns read above it |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
+| D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
+| D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
+| D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
+| D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 
 ### The project
 
@@ -19006,6 +19013,38 @@ spares. Past the cache that probe is a read from memory, so it now
 tells the scan its filter of a range and a Bloom filter whatever the
 number of its keys.
 
+### Planning statistics
+
+#### D1089. A statement's planning reads each table's statistics, rows and index keys once, and every step of it reads them so
+
+The maintenance thread gathers a table's statistics whenever they are
+due (D35), so they may appear between two readings of one statement.
+One planning's estimator asked each table's once (D370), but other
+steps of the same statement asked the state afresh. The optimizer's
+rule that groups an outer join's right operand first (D1112) made an
+estimator for each of the three estimates it weighs. The marking of
+parallel parts asked whether a grouping's columns are counted (D355),
+predicate transfer asked the distinct values of each step's column
+(D667), and a prepared statement's plan learned recorded which of its
+tables had statistics only after it was planned (D839). A table
+gathered in between was weighed with statistics by one step and without
+by another, and a plan made with the defaults was kept as if made with
+the statistics, so it was not learned again once they were known.
+
+Each statement now plans through one snapshot
+(`physical/cardinality/seen.rs`). It asks a table's statistics and rows,
+and an index's distinct keys, the first time a step wants them and keeps
+them for every step after. The optimizer's rules read them through their
+context, and the physical planner's estimator, the marking of parallel
+parts, predicate transfer and the measure of a plan learned read them
+too. An execution of a prepared statement that plans with its values and
+with its slots plans both through one snapshot, so the two plans it
+compares are made of one state, and the plan it keeps is measured from
+what they saw. Statistics gathered after the snapshot asked are seen by
+the statement's next planning, and a plan kept without them is learned
+again then (D839). A subquery planned as the statement runs plans
+through a snapshot of its own.
+
 ### Column store reads
 
 #### D1090. A group's header is held by its entry of the directory and read with no lock of the cache, whose bound is a share of the memory budget
@@ -20114,6 +20153,35 @@ how fast each thread was, and the plan ran again alone. Each caller now
 gives the bytes of the morsels taken (`Limit::on_course`), and what the
 part held before its morsels is read before a thread starts on one.
 
+#### D1157. A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone
+
+A column whose table has no statistics is taken as a key, of its rows'
+distinct values (D302). A class of equalities keeps one row in as many
+as each of its columns but the least distinct has values, so a column
+of 1.5 million rows equated with a key of 25 was counted as 1.5 million
+values. Customers and suppliers of one nation, joined through the
+nations, were estimated at the suppliers' rows where each customer
+meets 4,000 of them, and a plan made before the first statistics joined
+them first, 6 billion rows. D1152 bounded such a column by the least
+counted or keyed column of its class. A count of statistics then moved
+the bound, a sketch a little under a key's rows lowered the other
+column to it, and a join order followed which tables the background job
+had reached. It was taken back.
+
+Each column of a class whose distinct values neither statistics count
+nor a key of its relation proves is now counted of no more values than
+the least key the class equates that is declared alone on a column NOT
+NULL, by a PRIMARY KEY, a UNIQUE constraint or a unique index
+(`physical/cardinality/composite.rs`), for the estimates and the
+enumeration alike. Such a key's values are its table's rows, whatever
+filters read it, known of the catalog and the engine's count before any
+statistics. So the bound is the same whichever tables statistics have
+counted. The bound rests on containment, the assumption the module
+already makes of a guess joined with a key. The columns a class equates
+are taken to hold values of one domain, the key's. A referential constraint makes
+it exact. A UNIQUE of a column that may be null bounds nothing, nor does
+a statistics count, and a class of no such key is left as it was.
+
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
 A value given for a `?` is cast to the parameter's type [ISO/IEC
@@ -20280,6 +20348,49 @@ A count is now exact to 2^53 and the nearest `f64` past it, its high and
 low words each converted. The ceiling of an estimate is the most a
 count holds only of one reaching it.
 
+#### D1167. Each operator carries only the columns read above it
+
+A scan reads the columns its statement uses, and each operator carried
+every column its input gave. A column a filter alone reads, or a join's
+key, was copied into each row of every join above it, though nothing
+read it again. TPC-H's query 9 matches the names of its parts with LIKE
+and copied each name once for every line item joined to the part, at
+every join, and each join's keys at every join above.
+
+A plan is now walked from the top, once it is planned, with the columns
+of each operator's rows read above it (`physical/blind/pruned.rs`). The
+plan's own columns are all read. A scan reads those and the ones it is
+ordered by. A filter reads its condition's columns, a sort its keys', a
+grouping its groups' and its set functions', and a join its keys' and
+its conditions'. A projection's column moved is read only if one above
+reads it. Any other expression reads its columns whether or not it is
+read, so no error it raises is lost. An operator with a subquery reads
+every column of its input, as the subquery may read the row, and so
+does one of any other kind; the inputs below it are walked as plans of
+their own. A located scan, whose row's id follows its columns, reads
+them all.
+
+An operand of a join, built or probing, or the input of a sort, that
+gives a column neither it nor one above reads is put under a projection
+of its columns giving that column null, or, if it is a projection of
+columns, gives the null itself. An operand whose columns holding a
+value are not known here, as an index's scan, is left as it is, and the
+join over it is the one put under the projection. The join or the sort
+carries a vector of nulls in its place, which costs nothing to copy.
+Such a vector is charged to a work area only once its values are made
+(`storage/batch/held.rs`). It was charged a value a row, so an operand
+mostly of nulls outgrew its work area and was joined row by row. A filter's
+column or a join's key drops out after its operator. Every column keeps its
+place, so nothing above is renumbered and the plan's columns and their
+order are as they were. EXPLAIN shows each such projection, the columns
+kept by name and the others as NULL. A projection of columns and the
+null value moves its vectors and makes a vector of nulls
+(`exec/batch/picks.rs`), so it costs a pipeline no more than a move.
+The plan is pruned in place, so the walk of a deep plan holds little
+on the stack. The texts gathered of a vector are found once and copied
+into a buffer made at their length (`storage/batch/gathered.rs`), not
+one grown as they are copied.
+
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
 A table that froze rows or held groups was counted by its scan. A count
@@ -20344,6 +20455,216 @@ aggregation whole, as D351 keeps a count. Rejected: COUNT of a column
 from a group's rows less its nulls, whose accumulator takes values, not
 counts; keeping bounds of a group exact as its rows are deleted, which
 every delete of a frozen row would have to write.
+
+#### D1200. The groups of far more values than rows are the rows, the formula computed without its power
+
+The groups n rows fall into by columns of D distinct combinations are
+D(1 - (1 - 1/D)^n) (D370). The power was computed by its logarithm and
+taken from 1. Once D passes 2^53 times n the power is nearer 1 than a
+number tells, the difference is nothing, and the groups were clamped to
+one. A grouping by seven columns of a customer, their distinct counts
+multiplied to about 10^30, was estimated at one group where it made
+381,105, and every choice above it was made for one row.
+
+The difference is now computed whole, as -expm1(n ln(1 - 1/D)), which
+keeps the digits of a value near nothing (`cardinality/groups.rs`). Its
+limits are the formula's. One value gives one group, since the logarithm
+is then negative infinity and the difference 1. As many values as rows
+give 1 - 1/e of them. Far more values than rows give the rows, each
+meeting a value of its own. A product of distinct counts past every
+number is taken as the greatest one, so the formula never multiplies
+nothing by infinity. The result stays within one group and n.
+
+#### D1201. A grouping column functionally dependent on the others is carried, not grouped by
+
+A grouping by a table's key and other columns of that table, as a
+report by customer that shows the customer's name and address, hashed
+and compared every column written, the wide ones too, though the key
+alone tells the groups apart. The rule `reduce_grouping_keys`
+(`optimizer/dependent_keys.rs`) now leaves out of the grouping columns
+each one the others determine, and carries its value as the set function
+that keeps a group's first row's value of a column
+(`functions/any_value.rs`), which is what a query that references such a
+column without grouping by it gets [ISO/IEC 9075-2:2023 §6.7 GR1e]. A
+projection above puts the columns where they were.
+
+It is sound by the standard's own definition. A dependency A ↦ B holds
+if two rows not distinct in A are not distinct in B [§4.26.1], and two
+rows are of one group if they are not distinct in every grouping column
+[§9.12]. So rows grouped by A alone fall into the groups A and B
+together made, each group has the rows it had, in the same number, and
+every set function, DISTINCT, filtered or ordered, is given what it was
+given. Nothing is evaluated of a row or a group it was not before (D15).
+HAVING, ORDER BY and the select list read the carried column at the
+place the grouping column had.
+
+The dependencies are the known functional dependencies of the grouping's
+input, found by the rules the binder already follows for column
+references (`binder/dependencies.rs`), with these conditions.
+
+- A key is a PRIMARY KEY, or a UNIQUE constraint of columns known not
+  null or NULLS NOT DISTINCT, not deferrable [§4.26.3]. A UNIQUE column
+  that may be null determines nothing, as two rows null in it are not
+  distinct and may differ elsewhere.
+- An equality AND-component of a WHERE or an inner join's ON makes each
+  of two columns determine the other [§4.26.12], so a key reaches the
+  columns of a table joined on its key, and theirs in turn.
+- Of an outer join, a dependency of the operand extended with nulls
+  holds only where a column of its determinant is known not null, and
+  the condition adds what §4.26.7 gives of the preserved operand's
+  columns. A FULL join's condition adds nothing.
+- Only the strict dependencies are used (`dependencies/strict.rs`).
+  Character strings equal but for trailing spaces or by a collation,
+  two approximate zeros and datetimes of one instant in two zones are
+  not distinct, yet an expression tells them apart. A dependency on the
+  columns an expression or a generation expression reads is kept only
+  of exact numbers, truth values and datetimes of no zone. An equality
+  counts only where it compares both columns by their own values under
+  one relation, so not an approximate number with an exact one. An
+  outer join's condition counts only if each AND-component that reads
+  the preserved operand is such an equality or reads such types alone.
+  An ordinality column determines nothing, and nothing is known of a
+  grouping made by a collation.
+- A column takes part only if the grouping groups by it as its own
+  values are told apart, by its base column's collation or by none of
+  none. A column grouped by another collation stays a grouping column
+  and determines nothing. A column left out is compared by nothing, so
+  its collation drops out of the grouping.
+- A grouping that makes groups before any row, of an empty grouping set
+  [§7.13 GR2a], is left. Grouping sets otherwise read rows whose masked
+  columns are new columns, of which nothing is known. One grouping
+  column at least is kept, as a grouping by none is one group even of
+  no rows.
+- A column whose declared type is not known is kept.
+
+Of two columns that determine each other the first written is kept.
+
+The rule is a late one. The optimizer applies the late rules once the
+others have reached their fixpoint, and does not apply the others again
+(`Optimizer::add_late`). The rules that move a HAVING condition of
+grouping columns into WHERE (D15), turn a join under a grouping into a
+semi join (D542) or group below an outer join (D1112) read the grouping
+as it was written first, and a column carried is none of theirs.
+
+A grouping read by batches keeps the values it carries in a column of
+them, a value a group, its first row's, read of the batch's column in
+place (`exec/table/states/carried.rs`). An accumulator a group was given
+a row made of the value of every row, and had each batch's rows sorted
+by group to be fed them. A group written, merged or finished is as its
+accumulator writes, merges and finishes it, and a column given what is
+no column read in place turns into accumulators.
+
+#### D1202. Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST
+
+A report of the twenty customers of the greatest revenue, showing each
+one's name, address and comment, carried those wide columns through
+every row of its joins and every group, and kept twenty of them. The
+rule `fetch_dependents_late` (`optimizer/late_fetch.rs`) now reads them
+after the FETCH FIRST. Where a table below the grouping has a key the
+grouping columns determine, by the strict dependencies of D1201, every
+row of a group is of one row of that table, so the group's value of any
+column of the table is that row's. The grouping then carries the key's
+columns in place of the others, unless it groups by them already, and
+above the FETCH FIRST the rows kept are joined to the table again on
+the key, which gives the columns left out.
+
+The table stays joined below, reading its key and what the joins
+compare, for the rows it leaves out. The grouping, its groups and what
+each set function is given are as they were, so nothing is evaluated of
+a row or a group it was not before (D15). A group has one value of the
+key, and it is not null, as the key's columns are NOT NULL, of a PRIMARY
+KEY or UNIQUE constraint not deferrable, and the table's row reached
+the group through filters and inner joins alone. So the join above finds
+exactly one row for each row kept, the one its group's rows were of. It
+neither adds nor loses a row, and the value it gives is the one the
+grouping would have carried. A join may give its rows in another order,
+so the rows are sorted again above it by the same keys.
+
+The rule takes a FETCH FIRST of a constant count of ROWS ONLY, with or
+without OFFSET, over a sort or none, over select lists and HAVING
+conditions, over a grouping by its columns' own values that makes no
+group before any row. A column is fetched late only if nothing between
+the grouping and the FETCH FIRST reads it but to hand it on. A sort key,
+a HAVING condition or an expression of the select list that reads it
+needs it of every group, and it stays carried while the others are
+fetched. WITH TIES and PERCENT keep a number of rows no constant gives,
+and are left. A table an outer join extends with nulls has no row for
+some groups, and is left. A table whose key the grouping columns do not
+determine may give a group rows of several of its own, and is left.
+
+Fetching n rows of a table of r rows by its key reads n log2(r) keys of
+a tree of them, or the r rows once more, whichever is fewer, and
+carrying a column reads it once for each row the grouping groups. A
+column is fetched where the fetch so counted reads fewer rows than the
+grouping is estimated to group.
+
+The grouping itself is not moved below the joins that only add such
+columns, though grouping first would spare those joins most of their
+rows. A join that may leave a row out, having no NOT NULL foreign key
+onto the key or having a filter on its table, would then have the
+grouping compute its set functions of groups the query never formed,
+and one that may raise, as a SUM whose total is not bounded within the
+digits an exact number has (D1060), would raise where the query does
+not (D15). Grouping first is sound only where every such join keeps
+every row, or no set function and no argument can raise. Fetching late
+needs neither.
+
+#### D1203. A set function compared with a constant keeps the groups its column's statistics give
+
+A HAVING condition that compares a set function with a constant kept a
+third of the groups, the default of an order comparison of which nothing
+is known (D31), whatever was compared. The orders whose quantities sum
+past 300, 624 of 15 million, were taken for 5 million, and the table
+joined to them was read into the hash table those few rows then probed.
+
+The share is now estimated from the statistics of the column the
+function is of (`cardinality/having.rs`). A grouping of n rows into G
+groups has m = n / G rows a group. A group has one row at least, and
+the rows past it are taken as a Poisson number of mean m - 1, each row's
+value of the column drawn alike and apart from the others, the
+independence the estimator assumes of rows everywhere. With F the
+column's distribution, as its statistics give the share of its values a
+comparison keeps, and mu and s2 its mean and variance:
+
+- MAX is at most c in F(c)^m of the groups and MIN above c in
+  (1 - F(c))^m, each being of m values, and the other comparisons are
+  their complements.
+- COUNT(*) has mean m and variance m - 1.
+- SUM is a sum of a number of values that has mean m and variance
+  m - 1, so it has mean m mu and variance m s2 + (m - 1) mu^2.
+- AVG has mean mu and variance s2 / m.
+
+The share of COUNT, SUM and AVG past c is the normal tail of those two
+moments, Q((c - mean) / deviation), which the central limit theorem gives
+a sum of values drawn alike. Q is half the complementary error function,
+computed by the rational approximation of Abramowitz and Stegun's
+formula 7.1.26. Of a column with nulls, m counts the values not null,
+and COUNT of the column has variance m. The mean and variance are those
+of the column's most common values, each at its share, and of its
+histogram, whose buckets hold equal shares, each spread evenly between
+its bounds; of no histogram, of values spread evenly between the least
+and the greatest. No constant is tuned.
+
+It is given only of a set function of a column alone, neither DISTINCT
+nor filtered, whose table's statistics were gathered, with bounds of the
+column among them. A set function of an expression, a comparison of two
+set functions or with a parameter not yet a value, and an equality keep
+the defaults. One group at least is kept.
+
+The estimate may be low, as of a column whose values are far from a
+normal sum's. It decides which operand of a hash join is built, the one
+estimated to give fewer rows (`physical/join.rs`), and whether an index
+join is weighed, and nothing reads it as a bound. The upper bound of the
+rows stays the grouping's, so an index join is weighed at the estimate
+times PLANNER.ESTIMATE_MARGIN, at most that bound, and taken only if it
+is the lesser regret there too (D386). A hash join's table is sized by
+the rows it is given, never by the estimate, and one that outgrows its
+work area is partitioned (D38). So an estimate a hundred times low builds
+the larger operand and costs a slower join, with no memory granted on
+its word and no wrong result. An index join weighed at the margin's
+times the estimate is exposed past it. Of rows a hundred times the
+estimate it makes a hundred times the probes, where the margin weighed
+eight.
 
 ## 2. Project layout
 

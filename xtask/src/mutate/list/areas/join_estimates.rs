@@ -1,12 +1,14 @@
 //! The mutations of the join estimates from keys and bounds and of the
 //! join method chosen by regret (RULES.md R-TEST-9, D384-D386): the pairs'
 //! correction dropped, the bound's clamp dropped, a table changed since
-//! its pass bounded as it was, and the margin ignored.
+//! its pass bounded as it was, the margin ignored, and a guessed column
+//! of a class left unbounded by its declared key, or bounded by a counted
+//! one or by a key that may be null (D1157).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail their tests.
-pub const JOIN_ESTIMATES: [Mutation; 4] = [
+pub const JOIN_ESTIMATES: [Mutation; 7] = [
     Mutation {
         name: "join-estimates-correction-dropped",
         package: Package::Core,
@@ -49,5 +51,35 @@ pub const JOIN_ESTIMATES: [Mutation; 4] = [
         replacement: "rows.min(upper).max(rows)",
         integration: &["robust_joins::the_margin_hands_a_risky_index_join_to_the_hash_join"],
         unit: &["physical::robust::tests::a_margin_of_one_trusts_the_estimate"],
+    },
+    Mutation {
+        name: "class-bound-by-counted",
+        package: Package::Core,
+        breaks: "a guessed column of a class is bounded by a column statistics counted too, so the plan follows which tables are counted (D1157)",
+        file: "src/physical/cardinality/composite.rs",
+        original: "        self.table_keys(found.table).domain(found.column).then(|| self.table_rows(found.table)).flatten()",
+        replacement: "        self.statistics(found.table).and_then(|st| st.distinct(found.column)).or_else(|| self.table_keys(found.table).domain(found.column).then(|| self.table_rows(found.table)).flatten())",
+        integration: &["joins::a_join_order_is_the_same_whichever_tables_are_counted"],
+        unit: &[],
+    },
+    Mutation {
+        name: "class-bound-by-nullable-key",
+        package: Package::Core,
+        breaks: "a UNIQUE of a column that may be null bounds a guessed column of its class (D1157)",
+        file: "src/physical/cardinality/keys.rs",
+        original: ".filter(|&c| not_null(&[c]))",
+        replacement: ".filter(|_| true)",
+        integration: &[],
+        unit: &["physical::cardinality::keyed_tests::a_guessed_column_is_bounded_by_a_declared_key_of_its_class"],
+    },
+    Mutation {
+        name: "class-bound-dropped",
+        package: Package::Core,
+        breaks: "a guessed column of a class is counted of its rows' values whatever key the class equates (D1157)",
+        file: "src/physical/cardinality/composite.rs",
+        original: "let members: Vec<Vec<Member>> = members.iter().map(|class| self.bounded(leaves, class)).collect();",
+        replacement: "let members: Vec<Vec<Member>> = members.to_vec();",
+        integration: &[],
+        unit: &["physical::cardinality::keyed_tests::a_guessed_column_is_bounded_by_a_declared_key_of_its_class"],
     },
 ];

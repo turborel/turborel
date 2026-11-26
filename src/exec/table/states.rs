@@ -6,7 +6,9 @@
 //! other function, or one given values of a type its column does not hold,
 //! an accumulator a group (`Boxed`), fed each group's rows of a batch a
 //! vector at a time. Approximate numbers are added to each group in the
-//! order its rows come, so a sum is the one an accumulator makes.
+//! order its rows come, so a sum is the one an accumulator makes. The
+//! function that keeps a group's value of a column its grouping columns
+//! determine has a column of values (`Carried`, RULES.md D1201).
 //!
 //! A column of states finishes, writes and is turned into accumulators by
 //! the accumulators' own code (`functions/columnar.rs`), so a group's
@@ -15,6 +17,7 @@
 //! other pair merges the written state, as a spill's pieces are merged.
 
 mod boxed;
+mod carried;
 mod typed;
 
 use crate::error::{Code, Result, fail};
@@ -27,6 +30,7 @@ use crate::value::DataType;
 
 use super::Pending;
 pub(super) use boxed::Boxed;
+pub(in crate::exec) use carried::Carried;
 pub(in crate::exec) use typed::Typed;
 
 /// \[DESIGN\] The bytes an accumulator a group holds, near enough: as
@@ -36,6 +40,7 @@ const STATE_BYTES: usize = crate::exec::group::STATE_BYTES;
 /// The states of one set function of a table's groups.
 pub(in crate::exec) enum States {
     Typed(Typed),
+    Carried(Carried),
     Boxed(Boxed),
 }
 
@@ -44,6 +49,7 @@ pub(in crate::exec) enum States {
 /// one after another, as an accumulator cannot go.
 pub(in crate::exec) enum Sent {
     Typed(Typed),
+    Carried(Carried),
     Written { bytes: Vec<u8>, ends: Vec<usize> },
 }
 
@@ -52,6 +58,7 @@ impl Sent {
     pub(super) fn bytes(&self) -> usize {
         match self {
             Sent::Typed(typed) => typed.bytes(),
+            Sent::Carried(carried) => carried.bytes(),
             Sent::Written { bytes, ends } => bytes.capacity().saturating_add(ends.capacity().saturating_mul(size_of::<usize>())),
         }
     }
@@ -61,6 +68,9 @@ impl Sent {
     pub(super) fn gathered(&self, order: &[u32]) -> Sent {
         if let Sent::Typed(typed) = self {
             return Sent::Typed(typed.gathered(order));
+        }
+        if let Sent::Carried(carried) = self {
+            return Sent::Carried(carried.gathered(order));
         }
         let (mut bytes, mut ends) = (Vec::new(), Vec::with_capacity(order.len()));
         for &i in order {
@@ -74,6 +84,10 @@ impl Sent {
     fn write(&self, i: usize, out: &mut Vec<u8>) -> bool {
         match self {
             Sent::Typed(typed) => typed.write(i, out),
+            Sent::Carried(carried) => {
+                carried.write(i, out);
+                true
+            }
             Sent::Written { bytes, ends } => {
                 let from = i.checked_sub(1).map_or(Some(0), |before| ends.get(before).copied());
                 let state = from.zip(ends.get(i)).and_then(|(from, &to)| bytes.get(from..to));
@@ -95,6 +109,9 @@ impl States {
     /// accumulator a group.
     pub(super) fn of(agg: &AggCall) -> States {
         let kind = agg.func.0.columnar().map(|c| c.0);
+        if let Some(carried) = Carried::of(agg) {
+            return States::Carried(carried);
+        }
         Typed::of(kind, &agg.result).map_or_else(|| States::Boxed(Boxed::of(agg)), States::Typed)
     }
 
@@ -102,6 +119,7 @@ impl States {
     pub(super) fn grow(&mut self) {
         match self {
             States::Typed(typed) => typed.grow(),
+            States::Carried(carried) => carried.grow_by(1),
             States::Boxed(boxed) => boxed.grow(),
         }
     }
@@ -121,20 +139,33 @@ impl States {
             if typed.feed(pending, (batch, take, lane.as_ref()), runner)? {
                 return Ok(());
             }
-            self.boxed(agg);
+            self.boxed(agg)?;
+        }
+        if let States::Carried(carried) = self {
+            if carried.feed(pending, batch, take) {
+                return Ok(());
+            }
+            self.boxed(agg)?;
         }
         match self {
             States::Boxed(boxed) => boxed.feed(pending, (batch, take, lane), (scratch, runner)),
-            States::Typed(_) => Ok(()),
+            States::Typed(_) | States::Carried(_) => Ok(()),
         }
     }
 
     /// Turns a column of states of `agg` into an accumulator a group, each
     /// as it was.
-    fn boxed(&mut self, agg: &AggCall) {
-        if let States::Typed(typed) = self {
-            *self = States::Boxed(typed.to_boxed(agg));
+    ///
+    /// # Errors
+    ///
+    /// As `Accumulator::merge`, of a column of values.
+    fn boxed(&mut self, agg: &AggCall) -> Result<()> {
+        match self {
+            States::Typed(typed) => *self = States::Boxed(typed.to_boxed(agg)),
+            States::Carried(carried) => *self = States::Boxed(carried.to_boxed(agg)?),
+            States::Boxed(_) => {}
         }
+        Ok(())
     }
 
     /// Merges group `i`'s of `other` into group `g`'s: added, if both are
@@ -147,6 +178,10 @@ impl States {
         if let (States::Typed(typed), Sent::Typed(theirs)) = (&mut *self, other)
             && typed.merge_from(g, theirs, i)?
         {
+            return Ok(());
+        }
+        if let (States::Carried(carried), Sent::Carried(theirs)) = (&mut *self, other) {
+            carried.merge_from(g, theirs, i);
             return Ok(());
         }
         let mut state = Vec::new();
@@ -179,14 +214,17 @@ impl States {
     pub(super) fn grow_by(&mut self, more: usize) {
         match self {
             States::Typed(typed) => typed.grow_by(more),
+            States::Carried(carried) => carried.grow_by(more),
             States::Boxed(boxed) => (0..more).for_each(|_| boxed.grow()),
         }
     }
 
     /// Room for `more` groups more, of a column.
     pub(super) fn reserve(&mut self, more: usize) {
-        if let States::Typed(typed) = self {
-            typed.reserve(more);
+        match self {
+            States::Typed(typed) => typed.reserve(more),
+            States::Carried(carried) => carried.reserve(more),
+            States::Boxed(_) => {}
         }
     }
 
@@ -201,10 +239,11 @@ impl States {
             if typed.merge_written(g, state)? {
                 return Ok(());
             }
-            self.boxed(agg);
+            self.boxed(agg)?;
         }
         match self {
             States::Boxed(boxed) => boxed.merge(g, state),
+            States::Carried(carried) => carried.merge_written(g, state),
             States::Typed(_) => Ok(()),
         }
     }
@@ -214,6 +253,10 @@ impl States {
     pub(super) fn write(&self, g: usize, out: &mut Vec<u8>) -> bool {
         match self {
             States::Typed(typed) => typed.write(g, out),
+            States::Carried(carried) => {
+                carried.write(g, out);
+                true
+            }
             States::Boxed(boxed) => boxed.write(g, out),
         }
     }
@@ -226,6 +269,7 @@ impl States {
     pub(super) fn finish(&self, g: usize) -> Result<crate::value::Value> {
         match self {
             States::Typed(typed) => typed.finish(g),
+            States::Carried(carried) => Ok(carried.finish(g)),
             States::Boxed(boxed) => boxed.finish(g),
         }
     }
@@ -234,6 +278,7 @@ impl States {
     pub(super) fn truncate(&mut self, len: usize) {
         match self {
             States::Typed(typed) => typed.truncate(len),
+            States::Carried(carried) => carried.truncate(len),
             States::Boxed(boxed) => boxed.truncate(len),
         }
     }
@@ -242,6 +287,7 @@ impl States {
     pub(super) fn bytes(&self) -> usize {
         match self {
             States::Typed(typed) => typed.bytes(),
+            States::Carried(carried) => carried.bytes(),
             States::Boxed(boxed) => boxed.bytes(),
         }
     }
@@ -255,6 +301,9 @@ impl States {
     pub(super) fn thawed(sent: Sent, agg: &AggCall, len: usize) -> Result<States> {
         if let Sent::Typed(typed) = sent {
             return Ok(States::Typed(typed));
+        }
+        if let Sent::Carried(carried) = sent {
+            return Ok(States::Carried(carried));
         }
         let (mut states, mut state) = (States::Boxed(Boxed::of(agg)), Vec::new());
         for g in 0..len {
@@ -277,6 +326,7 @@ impl States {
     pub(super) fn sent(self) -> Result<Sent> {
         match self {
             States::Typed(typed) => Ok(Sent::Typed(typed)),
+            States::Carried(carried) => Ok(Sent::Carried(carried)),
             States::Boxed(boxed) => boxed.written(),
         }
     }

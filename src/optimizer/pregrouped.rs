@@ -238,6 +238,34 @@ fn pays(shape: &Shape<'_>, ctx: &RuleContext<'_>) -> bool {
         seeds: Vec::new(),
         input: Box::new(shape.right.clone()),
     };
-    let (rows, keys) = (estimated_rows(ctx.db, shape.right), estimated_rows(ctx.db, &keyed));
-    rows - keys > estimated_rows(ctx.db, shape.left)
+    let rows = |plan: &LogicalPlan| estimated_rows(ctx.db, ctx.seen, plan);
+    rows(shape.right) - rows(&keyed) > rows(shape.left)
+}
+
+// Unit tests: whether grouping first pays, by one statement's statistics
+// (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physical::Seen;
+    use crate::physical::seen::ungathered;
+
+    /// Verifies: [DESIGN] RULES.md D1089, D1112: whether grouping the
+    /// right operand first pays is judged by its tables' statistics as the
+    /// statement first saw them, the three estimates it weighs alike. Of
+    /// R's 1,000 rows of one key and L's 700, a statement that asked before
+    /// R's statistics were gathered judges as it did then, though they are
+    /// gathered before it asks again; one asking after judges otherwise.
+    #[test]
+    fn grouping_first_pays_by_the_statistics_its_statement_saw() {
+        let (db, st) = ungathered(&[("L", 700, 700), ("R", 1_000, 1)]);
+        let s = db.session("X");
+        let (left, right) = (s.optimized("SELECT * FROM L").unwrap().1, s.optimized("SELECT * FROM R").unwrap().1);
+        let shape = Shape { left: &left, right: &right, pairs: vec![(0, 0)], keys: vec![0] };
+        let seen = Seen::default();
+        let before = pays(&shape, &RuleContext { db: &st, seen: &seen });
+        db.analyze("X.R").unwrap();
+        assert_eq!(pays(&shape, &RuleContext { db: &st, seen: &seen }), before, "gathered since its statement asked");
+        assert_ne!(pays(&shape, &RuleContext { db: &st, seen: &Seen::default() }), before, "a statement asking afresh");
+    }
 }
