@@ -702,6 +702,7 @@ verification approach DO-178C expects (§8).
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
 | D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
 | D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
+| D1095 | A probe of a table built for a pipeline locates its batch's rows before it pairs any, their first entries prefetched |
 | D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
@@ -19184,6 +19185,34 @@ opened bytes kept for its runs, as opening it once is what D352 saves.
 Which a page is is known as it is read, page by page, so a table whose
 encodings changed reads each page as it was written. No format
 changes.
+
+#### D1095. A probe of a table built for a pipeline locates its batch's rows before it pairs any, their first entries prefetched
+
+A probe of a hash join's shared table (D1151) looked up each row of a
+left batch and compared it before it looked up the next. A lookup reads
+a word of the slot's directory, then the slot's hashes and row numbers,
+then the built row's key, each read waiting on the one before, and a
+table past the last level of cache makes each a trip to memory. The rows
+of one batch waited on those trips one after another, and a profile of
+TPC-H's ninth query put about two fifths of its cycles on them.
+
+The probe now makes two passes over a batch
+(`batch/joined/shared/probing.rs`). The first reads the directory words
+of every row with a key, of those its Bloom filter keeps if it screens
+(D1087), one after another, and keeps where each row's slot lies
+(`JoinTable::locate`). No read of one row waits on another's, so the
+processor has many under way at once. It then asks the kernels to bring
+the first hash and row number of each slot into the caches
+(`Kernels::prefetch_u64`, `prefetch_u32`), a `prefetcht0` on x86 and a
+`PRFM` on AArch64, the portable body asking nothing. The second pass
+pairs the rows as before, each from where its slot lies
+(`JoinTable::candidates_at`). A lookup of one hash goes through the same
+two steps, so the rows a row may match, their order, and the pairs and
+batches the probe gives are those it gave. A direct table (D601) is
+found by its key and makes no first pass.
+
+A prefetch names only a value of its slice, a place past the end passed
+by, so a kernel cannot be asked of an address that is not the program's.
 
 #### D1097. A fetch of a frozen row is priced by the number of columns it reads
 

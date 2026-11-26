@@ -132,6 +132,12 @@ impl Kernels for Simd {
     fn bloom_probe(&self, words: &[u64], hashes: &[u64], out: &mut Vec<u32>) {
         arch::bloom_probe(self.isa, words, hashes, out);
     }
+    fn prefetch_u64(&self, words: &[u64], at: &[u32]) {
+        arch::prefetch(words, at);
+    }
+    fn prefetch_u32(&self, values: &[u32], at: &[u32]) {
+        arch::prefetch(values, at);
+    }
     fn hash_i64(&self, values: &[i64], seed: u64, sel: Option<&[u32]>, out: &mut Vec<u64>) {
         arch::hash_i64(self.isa, values, seed, sel, out);
     }

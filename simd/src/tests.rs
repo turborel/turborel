@@ -68,3 +68,18 @@ fn each_set_hashes_a_large_input_as_the_portable_loops() {
         assert_eq!(xxhash::xxh3_128_on(&simd, &input, 0), xxh3_128(&input), "{level:?}");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D1095: a prefetch of every instruction set
+/// this processor has asks only of the values of its slice, a place past
+/// the end passed by, of every length, and changes no value.
+#[test]
+fn a_prefetch_names_only_its_slice() {
+    let (words, values) = (vec![7_u64; 100], vec![9_u32; 3]);
+    for level in Simd::levels() {
+        let simd = Simd::with_level(level).unwrap();
+        simd.prefetch_u64(&words, &[0, 50, 99, 100, u32::MAX]);
+        simd.prefetch_u32(&values, &[2, 3, u32::MAX]);
+        simd.prefetch_u64(&[], &[0]);
+        assert!(words.iter().all(|&w| w == 7) && values.iter().all(|&v| v == 9), "{level:?}");
+    }
+}

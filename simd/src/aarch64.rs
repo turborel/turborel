@@ -108,6 +108,22 @@ pub(crate) fn bloom_probe(_isa: Isa, words: &[u64], hashes: &[u64], out: &mut Ve
     portable::bloom::bloom_probe(words, hashes, out);
 }
 
+/// `Kernels::prefetch_u64` and `prefetch_u32`: a `PRFM PLDL1KEEP` of each
+/// value of `values` at `at`, a place past the end passed by, so only a
+/// value of the slice is named.
+pub(crate) fn prefetch<T>(values: &[T], at: &[u32]) {
+    for &n in at {
+        if let Some(value) = usize::try_from(n).ok().and_then(|n| values.get(n)) {
+            // SAFETY: PRFM is a hint that reads no memory the program sees
+            // and never faults; it is given the address of a value of the
+            // slice, and changes no register, flag or stack.
+            unsafe {
+                std::arch::asm!("prfm pldl1keep, [{p}]", p = in(reg) std::ptr::from_ref(value), options(nostack, preserves_flags, readonly))
+            };
+        }
+    }
+}
+
 /// `Kernels::gather_i64`: the portable body, NEON having no gather.
 pub(crate) fn gather_i64(_isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
     portable::gather::gather_i64(values, sel, out);
