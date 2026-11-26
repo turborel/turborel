@@ -8,12 +8,24 @@ use std::sync::{Arc, Mutex};
 use super::Params;
 use crate::error::{Code, Result, SqlError};
 use crate::storage::Row;
+use crate::storage::lanes::Lanes;
 use crate::sync::lock;
 use crate::value::DataType;
 
 /// Rows given, held until the execution that inserts them takes them, so
 /// none is copied for it (RULES.md D531).
-pub(crate) type Given = Arc<Mutex<Option<Vec<Row>>>>;
+pub(crate) type Given = Arc<Mutex<Option<Gift>>>;
+
+/// \[DESIGN\] What an execution is given: rows of its parameters' values,
+/// or rows by column as text, with its parameters' types (RULES.md D1148).
+#[derive(Debug)]
+pub(crate) enum Gift {
+    /// Each row the values of its parameters, each of its type.
+    Rows(Vec<Row>),
+    /// The rows by column, each cell the text of its parameter's value,
+    /// and the parameters' types.
+    Lanes(Arc<Lanes>, Vec<DataType>),
+}
 
 /// \[EXTENSION\] Of an execution given many rows, what part of a load it
 /// is (RULES.md D532): a load of its own, or one of a load's executions,
@@ -31,7 +43,15 @@ pub enum Load {
 impl Params {
     /// These parameters, giving `rows`, as part `load` of a load.
     pub(crate) fn giving(mut self, rows: Vec<Row>, load: Load) -> Params {
-        self.given = Some((Arc::new(Mutex::new(Some(rows))), load));
+        self.given = Some((Arc::new(Mutex::new(Some(Gift::Rows(rows)))), load));
+        self
+    }
+
+    /// These parameters, giving the rows `lanes` holds by column, the
+    /// parameters of types `types`, as part `load` of a load (RULES.md
+    /// D1148).
+    pub(crate) fn giving_lanes(mut self, lanes: Arc<Lanes>, types: Vec<DataType>, load: Load) -> Params {
+        self.given = Some((Arc::new(Mutex::new(Some(Gift::Lanes(lanes, types)))), load));
         self
     }
 
@@ -53,7 +73,12 @@ impl Params {
 ///
 /// SQLCODE -910 if they were taken before, or its lock is poisoned.
 pub(crate) fn taken(given: &Given) -> Result<Vec<Row>> {
-    lock(given)?.take().ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the rows given an execution are inserted by it once"))
+    match lock(given)?.take() {
+        Some(Gift::Rows(rows)) => Ok(rows),
+        // Of rows by column a load takes as rows, each cell's text is cast as a value given is.
+        Some(Gift::Lanes(lanes, types)) => lanes.to_rows()?.into_iter().map(|row| conformed_row(row, &types)).collect(),
+        None => Err(SqlError::new(Code::Api, "[DESIGN] the rows given an execution are inserted by it once")),
+    }
 }
 
 /// `row`, the values of parameters of types `types`, each cast to its type

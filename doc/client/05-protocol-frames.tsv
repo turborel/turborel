@@ -42,6 +42,7 @@ client	change-user	change-user	551D00000003000000424F420800000070617373776F72640
 client	copy-in	copy	491A00000003000000532E5402000000020000004944040000004E414D4501	CopyIn table S.T, columns ID and NAME, ends 1
 client	copy-in-every-column	copy	490A00000001000000540000000000	CopyIn table T, no columns for every column, ends 0
 client	copy-data	copy	4A1F00000002000000020000000101000000310002000000010100000032010100000062	CopyData of two rows, 1 and null, 2 and b
+client	copy-columns	copy,columns	4F3400000002000000020000000100000002020000000100000001000000010000003101000000000200000001000000010000000100000062	CopyColumns of two rows by column, 1 and null, b and the empty string
 client	copy-end	copy	4E0100000000	CopyEnd, abandon 0
 client	copy-end-abandon	copy	4E0100000001	CopyEnd, abandon 1
 client	query-compressed	compression	7A3700000051E5070000789CEDC1310D00200C00C13261A35B8590324148A062908B147434F9BB57458E0F6FA1760100407AA67DAFA9513EE4B0AE8C	Compressed z, holding Query SELECT 'x...x' FROM T of 2000 x, ends 1, kind Q, length 2021, then its body's zlib stream

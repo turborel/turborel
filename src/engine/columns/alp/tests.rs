@@ -14,7 +14,8 @@ fn read_back(fields: &[Option<Vec<u8>>], (from, to): (usize, usize)) -> (Vec<Opt
     fields.iter().flatten().for_each(|f| trials.add(f));
     let ((chosen, least, bits), bytes) = trials.best(fields.len()).unwrap();
     let mut out = Vec::new();
-    encode(fields, (chosen, least, bits), &mut out).unwrap();
+    let records = crate::engine::columns::tests::records_of(fields);
+    encode(Cells::whole(&records), (chosen, least, bits), &mut out).unwrap();
     assert_eq!(out.len(), bytes, "sized as written");
     let alp = Alp::parse(&out, fields.len()).unwrap();
     let one = (0..fields.len()).map(|n| fields[n].as_ref().map(|_| u64::from_le_bytes(alp.field(n).unwrap()))).collect();
@@ -174,5 +175,6 @@ fn chunks_before_the_factors_read_by_division() {
     assert_eq!(refused(&[FACTORED | 0x02]), Some(crate::error::Code::Corrupt), "no f");
     assert_eq!(refused(&[]), Some(crate::error::Code::Corrupt), "empty");
     let mut wrong = Vec::new();
-    assert!(encode(&[Some(field(1.0))], (factors(2, 3), 0, 0), &mut wrong).is_err(), "f above e is not written");
+    let one = crate::engine::columns::tests::records_of(&[Some(field(1.0))]);
+    assert!(encode(Cells::whole(&one), (factors(2, 3), 0, 0), &mut wrong).is_err(), "f above e is not written");
 }

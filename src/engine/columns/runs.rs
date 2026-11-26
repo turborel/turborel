@@ -10,7 +10,8 @@
 //!        least, of bits | each run's end, of the bits the count needs
 //! ```
 
-use super::packed::{bits_for, get, pack, packed_len};
+use super::fields::Cells;
+use super::packed::{bits_for, get, pack, packed_len, unpack_words};
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 
@@ -31,10 +32,10 @@ pub(super) struct Runs<'a> {
 
 /// The value each of `fields` holds, a null the one before it's, the
 /// leading ones the first's.
-fn held(fields: &[Option<Vec<u8>>]) -> impl Iterator<Item = i64> + '_ {
-    let first = fields.iter().flatten().find_map(|f| integer(f)).unwrap_or(0);
+fn held(fields: Cells<'_>) -> impl Iterator<Item = i64> + '_ {
+    let first = fields.iter().flatten().find_map(integer).unwrap_or(0);
     fields.iter().scan(first, |last, f| {
-        if let Some(n) = f.as_deref().and_then(integer) {
+        if let Some(n) = f.and_then(integer) {
             *last = n;
         }
         Some(*last)
@@ -54,7 +55,7 @@ pub(super) fn runs_len((count, runs, bits): (usize, usize, u32)) -> Option<usize
 
 /// Appends `fields`, of 8 bytes each, as runs of values less `least`, each
 /// in `bits`.
-pub(super) fn encode(fields: &[Option<Vec<u8>>], (least, bits): (i64, u32), out: &mut Vec<u8>) -> Result<()> {
+pub(super) fn encode(fields: Cells<'_>, (least, bits): (i64, u32), out: &mut Vec<u8>) -> Result<()> {
     let (mut values, mut ends) = (Vec::new(), Vec::new());
     let mut previous: Option<i64> = None;
     for (n, v) in held(fields).enumerate() {
@@ -128,40 +129,44 @@ impl<'a> Runs<'a> {
         Some(self.value(self.run_of(n)?)?.to_le_bytes())
     }
 
-    /// Where each run among positions `from` to `to` ends, past `base`,
-    /// pushed to `ends`, the last at `to`.
-    pub(super) fn ends_in(&self, (from, to): (usize, usize), base: usize, ends: &mut Vec<usize>) -> Option<()> {
-        if to > self.count || from >= to {
-            return (from == to && to <= self.count).then_some(());
-        }
-        let mut r = self.run_of(from)?;
-        loop {
-            let end = self.end(r)?.min(to);
-            ends.push(base.checked_add(end.checked_sub(from)?)?);
-            if end >= to {
-                return Some(());
-            }
-            r = r.saturating_add(1);
-        }
+    /// The values at positions `from` to `to`, pushed to `out`, each run's
+    /// value repeated for its rows among them (`ints_ends`).
+    pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
+        self.ints_ends((from, to), out, None)
     }
 
-    /// The values at positions `from` to `to`, pushed to `out`, each run's
-    /// value repeated for its rows among them: the runs from the one of
-    /// `from` read one at a time until one ends at or past `to`, so a range
-    /// reads the few runs it covers, not every run of the chunk.
-    pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
+    /// \[DESIGN\] (RULES.md D1171) The values at positions `from` to `to`,
+    /// pushed to `out`, each run's value repeated for its rows among them,
+    /// and, if `ends` is given, where each of those runs ends among them,
+    /// past its base, pushed to it, the last at `to`. The runs from the one
+    /// of `from` to the one of the last position, found by two searches,
+    /// have their values and ends unpacked a block at a time
+    /// (`packed/blocks.rs`), so no run's value nor end is read alone.
+    pub(super) fn ints_ends(&self, (from, to): (usize, usize), out: &mut Vec<i64>, ends: Option<(&mut Vec<usize>, usize)>) -> Option<()> {
         if to > self.count || from > to {
             return None;
         }
         if from == to {
             return Some(());
         }
-        let (mut at, mut r) = (from, self.run_of(from)?);
-        while at < to {
-            let end = self.end(r)?.min(to);
-            out.extend(std::iter::repeat_n(self.value(r)?, end.checked_sub(at)?));
-            (at, r) = (end, r.saturating_add(1));
+        let (first, last) = (self.run_of(from)?, self.run_of(to.checked_sub(1)?)?.checked_add(1)?);
+        let (mut values, mut run_ends) = (Vec::with_capacity(last.saturating_sub(first)), Vec::with_capacity(last.saturating_sub(first)));
+        unpack_words(self.values, (self.bits, self.least), (first, last), &mut values)?;
+        unpack_words(self.ends, (bits_for(u64::try_from(self.count).ok()?), 0), (first, last), &mut run_ends)?;
+        out.reserve(to.checked_sub(from)?);
+        let mut ends = ends.map(|(ends, base)| {
+            ends.reserve(run_ends.len());
+            (ends, base)
+        });
+        let mut at = from;
+        for (&value, &end) in values.iter().zip(&run_ends) {
+            let end = usize::try_from(end).ok()?.min(to);
+            out.resize(out.len().checked_add(end.checked_sub(at)?)?, value);
+            if let Some((ends, base)) = &mut ends {
+                ends.push(base.checked_add(end.checked_sub(from)?)?);
+            }
+            at = end;
         }
-        Some(())
+        (at == to).then_some(())
     }
 }

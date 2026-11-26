@@ -1,86 +1,79 @@
 //! \[DESIGN\] A frozen row group's chunks of a column, as `group.rs`
 //! writes them: each chunk's zone, its least and greatest values and its
-//! nulls, and those of each part of it, and the parts' Bloom filters.
-
-use std::cmp::Ordering;
+//! nulls, and those of each part of it, and the parts' Bloom filters, of
+//! the column's values read where they are (`column.rs`).
 
 use super::super::{Fields, bloom};
+use super::column::Column;
 use super::{PART_ROWS, Pages, Part, Run, Seal, Zone, count32};
 use crate::disk::pager::PageId;
 use crate::error::Result;
-use crate::value::{DataType, Value, compare};
+use crate::value::{DataType, Value};
 
 /// The least and greatest of `values` that are not null, and the nulls.
 pub(super) fn bounds_of(values: &[Value]) -> (Option<(Value, Value)>, u32) {
-    let mut bounds: Option<(Value, Value)> = None;
-    let mut nulls = 0_u32;
-    for v in values {
-        if v.is_null() {
-            nulls = nulls.saturating_add(1);
-            continue;
-        }
-        bounds = Some(match bounds {
-            None => (v.clone(), v.clone()),
-            Some((least, greatest)) => {
-                let least = if compare(v, &least) == Some(Ordering::Less) { v.clone() } else { least };
-                let greatest = if compare(v, &greatest) == Some(Ordering::Greater) { v.clone() } else { greatest };
-                (least, greatest)
-            }
-        });
-    }
-    (bounds, nulls)
+    values.bounds((0, values.len()))
 }
 
-/// Writes the column `column` of `rows`, of type `t`, in chunks, and a
-/// Bloom filter of each part if `bloom`.
-pub(super) fn write_column<S: Seal, R: AsRef<[Value]>>(
+/// Writes the column `column`, of type `t`, `fields` its values written,
+/// in chunks, and a Bloom filter of each part if `bloom`.
+pub(super) fn write_column<S: Seal, C: Column>(
     pages: &Pages<'_, S>,
     t: &DataType,
-    (rows, column, bloom): (&[R], usize, bool),
+    (fields, column, bloom): (&Fields<'_>, &C, bool),
     written: &mut Vec<PageId>,
 ) -> Result<Vec<Zone>> {
-    let values: Vec<Value> = rows.iter().map(|r| r.as_ref().get(column).cloned().unwrap_or(Value::Null)).collect();
-    let fields = Fields::of(t, values.iter())?;
     let mut zones = Vec::new();
     for (from, count, chunk) in fields.chunks(t, (pages.capacity, pages.compress))? {
         let page = pages.put(&chunk, written)?;
-        zones.push(zone_of(&values, Run::whole(count32(from)?, count32(count)?, page)));
+        zones.push(zone_of(column, Run::whole(count32(from)?, count32(count)?, page)));
     }
     if bloom {
-        put_filters(pages, (&values, &mut zones), written)?;
+        put_filters(pages, (column, &mut zones), written)?;
     }
     Ok(zones)
 }
 
-/// The zone of the chunk of `run`, of the values of its column `values`:
-/// its nulls and bounds, and those of each part of it.
-pub(super) fn zone_of(values: &[Value], run: Run) -> Zone {
+/// The rows of `run` that `column` holds: its first and one past its
+/// last, none if it holds not all of them.
+fn rows_of<C: Column + ?Sized>(column: &C, run: &Run) -> (usize, usize) {
     let first = usize::try_from(run.first).unwrap_or(usize::MAX);
-    let held = values.get(first..first.saturating_add(usize::try_from(run.rows).unwrap_or(0))).unwrap_or_default();
-    let (bounds, nulls) = bounds_of(held);
-    let parts = held
-        .chunks(usize::try_from(PART_ROWS).unwrap_or(usize::MAX))
+    let end = first.saturating_add(usize::try_from(run.rows).unwrap_or(0));
+    if end > column.len() { (0, 0) } else { (first, end) }
+}
+
+/// The runs of each part of the rows `from` to `to`, in order.
+fn parts_in((from, to): (usize, usize)) -> impl Iterator<Item = (usize, usize)> {
+    let part = usize::try_from(PART_ROWS).unwrap_or(usize::MAX).max(1);
+    (from..to).step_by(part).map(move |at| (at, at.saturating_add(part).min(to)))
+}
+
+/// The zone of the chunk of `run`, of its column `column`: its nulls and
+/// bounds, and those of each part of it.
+pub(super) fn zone_of<C: Column + ?Sized>(column: &C, run: Run) -> Zone {
+    let held = rows_of(column, &run);
+    let (bounds, nulls) = column.bounds(held);
+    let parts = parts_in(held)
         .map(|part| {
-            let (part_bounds, part_nulls) = bounds_of(part);
+            let (part_bounds, part_nulls) = column.bounds(part);
             Part { nulls: part_nulls, bounds: part_bounds, filter: None, imprint: None, sketch: None }
         })
         .collect();
     Zone { run, nulls, bounds, parts }
 }
 
-/// Writes a Bloom filter of each part of `zones`, of `values`, and puts
-/// where each is in its part.
-pub(super) fn put_filters<S: Seal>(
+/// Writes a Bloom filter of each part of `zones`, of its column `column`,
+/// and puts where each is in its part.
+pub(super) fn put_filters<S: Seal, C: Column + ?Sized>(
     pages: &Pages<'_, S>,
-    (values, zones): (&[Value], &mut [Zone]),
+    (column, zones): (&C, &mut [Zone]),
     written: &mut Vec<PageId>,
 ) -> Result<()> {
-    let (part, bytes) = (usize::try_from(PART_ROWS).unwrap_or(usize::MAX), bloom::filter_bytes(pages.capacity));
+    let bytes = bloom::filter_bytes(pages.capacity);
     let mut filters = Vec::new();
     for zone in zones.iter() {
-        let first = usize::try_from(zone.run.first).unwrap_or(usize::MAX);
-        let held = values.get(first..first.saturating_add(usize::try_from(zone.run.rows).unwrap_or(0))).unwrap_or_default();
-        filters.extend(held.chunks(part).map(|these| bloom::filter_of(these, bytes)));
+        let held = rows_of(column, &zone.run);
+        filters.extend(parts_in(held).map(|(from, to)| bloom::filter_of((from..to).map(|n| column.value(n)), bytes)));
     }
     let places = bloom::write_filters(pages, &filters, written)?;
     for (p, place) in zones.iter_mut().flat_map(|z| z.parts.iter_mut()).zip(places) {

@@ -138,7 +138,7 @@ pub const SKIPPING: [Mutation; 21] = [
         name: "dictionary-in-order",
         package: Package::Core,
         breaks: "a dictionary of texts keeps its entries as first seen",
-        file: "src/engine/columns.rs",
+        file: "src/engine/columns/fields.rs",
         original: "(sizer.table(), padding(t).is_some())",
         replacement: "(sizer.table(), false)",
         integration: &[],

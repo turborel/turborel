@@ -90,6 +90,9 @@ pub struct Importing {
     pub into: Import,
     /// How the files are written.
     pub dialect: Dialect,
+    /// \[DESIGN\] How many connections import each file at once, each a
+    /// contiguous range of it (RULES.md D1148); 1 by default.
+    pub jobs: usize,
 }
 
 /// The formats `--format` names.
@@ -189,6 +192,7 @@ struct NamedImport {
     delimiter: Option<String>,
     batch: Option<u64>,
     skip: bool,
+    jobs: Option<usize>,
 }
 
 /// What the command line `args`, without the program's name, asks for;
@@ -260,6 +264,7 @@ fn named(args: &[String], words: bool) -> Result<(Named, Vec<String>), String> {
             "--delimiter" => named.import.delimiter = Some(value()?),
             "--batch" => named.import.batch = Some(rows(&value()?)?),
             "--skip-bad-rows" => named.import.skip = true,
+            "--jobs" => named.import.jobs = Some(jobs(&value()?)?),
             other => {
                 if words && !other.starts_with('-') {
                     let all = std::iter::once(arg).chain(rest).cloned().collect();
@@ -288,16 +293,21 @@ fn rows(text: &str) -> Result<u64, String> {
     text.parse().map_err(|_| format!("{text} is no number of rows"))
 }
 
+/// The number of jobs `text` names: 1 or more.
+fn jobs(text: &str) -> Result<usize, String> {
+    text.parse().ok().filter(|&n| n > 0).ok_or_else(|| format!("{text} is no number of jobs: 1 or more"))
+}
+
 /// How the files `inputs` names are imported, if it names any, as
 /// `named` says, null written `null`: an import's options only with one,
 /// and its table always.
 fn importing(inputs: &[Input], named: &NamedImport, null: &str) -> Result<Option<Importing>, String> {
     if !inputs.iter().any(|i| matches!(i, Input::Import(_))) {
         let any = named.table.is_some() || named.format.is_some() || named.delimiter.is_some() || named.batch.is_some();
-        if any || named.header || named.skip {
-            return Err(
-                "--table, --format, --header, --delimiter, --batch and --skip-bad-rows are of an import: name --import FILE too".into()
-            );
+        if any || named.header || named.skip || named.jobs.is_some() {
+            return Err("--table, --format, --header, --delimiter, --batch, --skip-bad-rows and --jobs are of an import: \
+                        name --import FILE too"
+                .into());
         }
         return Ok(None);
     }
@@ -319,7 +329,7 @@ fn importing(inputs: &[Input], named: &NamedImport, null: &str) -> Result<Option
         dialect = dialect.with_header();
     }
     let into = Import { batch: named.batch.unwrap_or(DEFAULT_BATCH), skip: named.skip, ..Import::into(table) };
-    Ok(Some(Importing { into, dialect: dialect.with_null(null) }))
+    Ok(Some(Importing { into, dialect: dialect.with_null(null), jobs: named.jobs.unwrap_or(1) }))
 }
 
 /// The options `named` makes, checked.

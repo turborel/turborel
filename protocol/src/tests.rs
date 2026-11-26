@@ -4,6 +4,7 @@
 
 mod added;
 mod called;
+mod columns;
 mod debug;
 mod declared;
 mod frames;

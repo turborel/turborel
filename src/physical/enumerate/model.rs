@@ -109,11 +109,6 @@ pub(super) struct Model {
     /// The classes of columns the inner joins' keys make equal, each with
     /// the relations its columns are of (`implied_classes`, RULES.md D387).
     pub(super) implied: Vec<(Vec<usize>, Set)>,
-    /// Of each relation whose column of such a class is a key of it, the
-    /// class's other relations, the relation of fewest rows first: the
-    /// edges the graph may take of the class (`graph/implied.rs`,
-    /// RULES.md D1204).
-    pub(super) stars: Vec<(usize, Set)>,
     /// Which conjuncts and predicates a range join searches by
     /// (`enumerate/ranged.rs`, RULES.md D580).
     pub(super) ranged: super::ranged::Ranges,
@@ -186,24 +181,6 @@ impl Model {
                 (class, of)
             })
             .collect()
-    }
-
-    /// \[DESIGN\] (RULES.md D1204) Of each column of an implied class that
-    /// `keyed` says is a key of its relation, the relation and the others
-    /// of the class, in ascending order of the relations' rows, so the
-    /// star whose join reduces most is offered the graph first.
-    pub(super) fn stars_of(&self, keyed: &dyn Fn(usize) -> bool) -> Vec<(usize, Set)> {
-        let mut stars: Vec<(usize, Set)> = Vec::new();
-        for (class, rels) in &self.implied {
-            for hub in class.iter().filter(|&&c| keyed(c)).filter_map(|&c| self.rel_of(c)) {
-                let others = rels & !bit(hub);
-                if others != 0 && !stars.contains(&(hub, others)) {
-                    stars.push((hub, others));
-                }
-            }
-        }
-        stars.sort_by(|a, b| self.rows(a.0).total_cmp(&self.rows(b.0)));
-        stars
     }
 
     /// The relation whose column the chain's column `column` is.

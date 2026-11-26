@@ -3,12 +3,15 @@
 //! dynamic parameters take the table's columns' types [ISO/IEC 9075:1992
 //! §17.6 GR5], a batch of rows to each transaction: sent by bulk copy,
 //! with no round trip per row, where the server grants it, no bad row is
-//! to be skipped and no column is a large object's (RULES.md D195). A
-//! source is any type
-//! that yields records of values, one at a time, so memory is bounded by
-//! a record, whatever the source's size; `Delimited` reads CSV [RFC 4180]
-//! and tab-separated text.
+//! to be skipped and no column is a large object's (RULES.md D195), and
+//! by column, no value made of a field, where the server grants `columns`
+//! too and the source splits its records itself (D1148). A source is any
+//! type that yields records of values, one at a time, so memory is
+//! bounded by a record, whatever the source's size; `Delimited` reads CSV
+//! [RFC 4180] and tab-separated text.
 
+mod cells;
+mod columns;
 mod copied;
 mod delimited;
 mod insert;
@@ -17,6 +20,7 @@ use std::fmt;
 
 use turborel::value::{DataType, Value};
 
+pub use cells::Cells;
 pub use delimited::{DEFAULT_MAX_RECORD, Delimited, Dialect};
 pub use insert::{Cause, DEFAULT_BATCH, Import, ImportError, Imported, Rejected, import, rows};
 
@@ -106,4 +110,51 @@ pub trait Source {
     ///
     /// Why it cannot be read, and where: a source cannot go on after.
     fn record(&mut self) -> Result<Option<Record>, SourceError>;
+
+    /// \[DESIGN\] RULES.md D1148: whether it splits its records into
+    /// `Cells` itself, by `record_into`, with no value made of a field; a
+    /// bulk copy then sends them by column. False unless it says so.
+    fn splits(&self) -> bool {
+        false
+    }
+
+    /// The next record's fields appended to `cells`, each its text or
+    /// null, as `record` would give them as character strings and nulls;
+    /// where it began, or none at the end. By default, `record`'s values,
+    /// each a null or a character string; asked only of a source that
+    /// `splits`.
+    ///
+    /// # Errors
+    ///
+    /// As `record`'s; and by default, a value of a record neither null nor
+    /// a character string.
+    fn record_into(&mut self, cells: &mut Cells) -> Result<Option<Position>, SourceError> {
+        let Some(record) = self.record()? else { return Ok(None) };
+        for value in &record.values {
+            match value {
+                Value::Null => cells.null(),
+                Value::Char(text) => cells.text(text),
+                other @ (Value::Exact(_)
+                | Value::Approx(_)
+                | Value::DecFloat(_)
+                | Value::Binary(_)
+                | Value::Bool(_)
+                | Value::Datetime(_)
+                | Value::Interval(_)
+                | Value::Array(_)
+                | Value::Multiset(_)
+                | Value::Structured(_)
+                | Value::Reference(_)
+                | Value::Json(_)
+                | Value::Row(_)
+                | Value::Lob(_)
+                | Value::Extension(_)
+                | Value::Xml(_)) => {
+                    let message = format!("[DESIGN] the value {other:?} is not a field's text");
+                    return Err(SourceError { position: record.position, message });
+                }
+            }
+        }
+        Ok(Some(record.position))
+    }
 }

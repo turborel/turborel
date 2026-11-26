@@ -9,12 +9,13 @@
 //! column sized once (D1144), and a load's groups written to segments,
 //! synced by a checkpoint, logged whole, redone and backed up (D1146),
 //! and a load into a table that qualifies going to groups by default
-//! (D1147).
+//! (D1147), and a load's group given by column written as of its rows
+//! (D1148).
 
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 17] = [
+pub const LOAD_LIMITS: [Mutation; 24] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -110,7 +111,7 @@ pub const LOAD_LIMITS: [Mutation; 17] = [
         package: Package::Core,
         breaks: "a group's row ids are counted on from one id, so they run into ids given to other rows",
         file: "src/engine/rows/frozen/stamped.rs",
-        original: "        let first = self.next_ids(rows.len())?;",
+        original: "        let first = self.next_ids(batch.len())?;",
         replacement: "        let first = self.next_id()?;",
         integration: &["bulk_groups::loads_at_once_each_write_their_own_groups"],
         unit: &[],
@@ -129,7 +130,7 @@ pub const LOAD_LIMITS: [Mutation; 17] = [
         name: "chunks-sized-once",
         package: Package::Core,
         breaks: "a chunk sized once takes one value more than fit, in the plan of those that fit",
-        file: "src/engine/columns.rs",
+        file: "src/engine/columns/fields.rs",
         original: "                return if n == 0 { (1, None) } else { (n, fits) };",
         replacement: "                return if n == 0 { (1, None) } else { (n.saturating_add(1), fits) };",
         integration: &[],
@@ -184,5 +185,78 @@ pub const LOAD_LIMITS: [Mutation; 17] = [
         replacement: "            LoadTo::Default => false,",
         integration: &["bulk_groups::a_load_into_a_table_that_qualifies_goes_to_groups_by_default"],
         unit: &[],
+    },
+    Mutation {
+        name: "records-group-of-rows",
+        package: Package::Core,
+        breaks: "a group written of records takes the last least of values alike, the group of its rows the first",
+        file: "src/engine/columns/group/column.rs",
+        original: "            if least.is_none_or(|(l, _)| k < l) {",
+        replacement: "            if least.is_none_or(|(l, _)| k <= l) {",
+        integration: &[],
+        unit: &["engine::columns::group::tests::records::a_group_of_records_is_the_group_of_its_rows"],
+    },
+    Mutation {
+        name: "records-order-ties",
+        package: Package::Core,
+        breaks: "a load's rows given by column, sorted, keep their ties in the reverse of their ids' order",
+        file: "src/engine/rows/frozen/records.rs",
+        original: "        by.unwrap_or_else(|| ids.get(a).cmp(&ids.get(b)))",
+        replacement: "        by.unwrap_or_else(|| ids.get(b).cmp(&ids.get(a)))",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::loaded::a_group_of_records_reads_back_and_is_logged_as_its_rows"],
+    },
+    Mutation {
+        name: "records-fields-width",
+        package: Package::Core,
+        breaks: "a column's fields find no width they share, so no chunk of them is written fixed",
+        file: "src/engine/columns/fields.rs",
+        original: "        let width = width_of(Cells::whole(&records), t);",
+        replacement: "        let width = None;",
+        integration: &[],
+        unit: &[
+            "engine::columns::tests::pinned::chunks_are_pinned_byte_for_byte",
+            "engine::columns::tests::pinned::fields_of_records_are_fields_of_their_values",
+        ],
+    },
+    Mutation {
+        name: "lanes-not-null-by-column",
+        package: Package::Core,
+        breaks: "a load by column takes a null into a NOT NULL column, its nulls not read",
+        file: "src/db/integrity/inserted.rs",
+        original: "                ConstraintKind::NotNull(at) => columns.get(*at).is_some_and(|r| r.nulls.iter().all(|b| *b == 0)),",
+        replacement: "                ConstraintKind::NotNull(at) => columns.get(*at).is_some(),",
+        integration: &["bulk_lanes::a_load_by_column_that_breaks_a_rule_is_refused"],
+        unit: &[],
+    },
+    Mutation {
+        name: "lanes-check-by-column",
+        package: Package::Core,
+        breaks: "a load by column takes a row a CHECK is false of",
+        file: "src/db/integrity/inserted.rs",
+        original: "        if eval_cond(cond, &row, heard)? == Truth::False {",
+        replacement: "        if eval_cond(cond, &row, heard)? == Truth::False && row.is_empty() {",
+        integration: &["bulk_lanes::a_load_by_column_that_breaks_a_rule_is_refused"],
+        unit: &[],
+    },
+    Mutation {
+        name: "lanes-default-repeated",
+        package: Package::Core,
+        breaks: "a column a load by column does not name is left null, not given its default",
+        file: "src/db/write/lanes.rs",
+        original: "            None => repeated(&column.data_type, target.defaults.get(at).unwrap_or(&Value::Null), lanes.rows)?,",
+        replacement: "            None => repeated(&column.data_type, &Value::Null, lanes.rows)?,",
+        integration: &["bulk_lanes::a_load_by_column_is_a_load_of_its_rows"],
+        unit: &[],
+    },
+    Mutation {
+        name: "lanes-group-rows-most",
+        package: Package::Core,
+        breaks: "rows given by column past a group's rows are written as one group, larger than the load's groups",
+        file: "src/db/write/bulk.rs",
+        original: "        let fits = together.grouped.filter(|&most| count <= most);",
+        replacement: "        let fits = together.grouped.filter(|&most| count <= most.saturating_mul(2));",
+        integration: &[],
+        unit: &["db::write::lanes::tests::a_load_goes_by_column_only_where_nothing_needs_a_row"],
     },
 ];

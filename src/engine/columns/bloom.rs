@@ -96,9 +96,9 @@ fn bit_of((h1, h2): (u64, u64), i: u64, bytes: usize) -> Option<(usize, u8)> {
 }
 
 /// The filter of `values`, of `bytes`.
-pub fn filter_of(values: &[Value], bytes: usize) -> Vec<u8> {
+pub fn filter_of<V: std::borrow::Borrow<Value>>(values: impl IntoIterator<Item = V>, bytes: usize) -> Vec<u8> {
     let mut filter = vec![0_u8; bytes];
-    for hash in values.iter().filter_map(hashed) {
+    for hash in values.into_iter().filter_map(|v| hashed(v.borrow())) {
         for i in 0..PROBES {
             let Some((byte, bit)) = bit_of(hash, i, bytes) else { continue };
             if let Some(b) = filter.get_mut(byte) {

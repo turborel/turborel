@@ -28,17 +28,18 @@ fn worked(db: &Database) -> bool {
     rows(&db.session("A"), sql).unwrap() == ["FALSE"]
 }
 
-/// Has A count R's rows, which asks its zones, and ends the transaction.
-fn counted(db: &Database) {
+/// Has A scan R by a condition of a column its zones keep, which asks
+/// them, and ends the transaction.
+fn asked(db: &Database) {
     let a = db.session("A");
-    assert_eq!(rows(&a, "SELECT COUNT(*) FROM R").unwrap(), [ROWS.to_string()]);
+    assert_eq!(rows(&a, "SELECT K FROM R WHERE V = 7").unwrap(), ["7"]);
     a.commit().unwrap();
 }
 
 /// Verifies: [DESIGN] RULES.md D1212, D868, D1163: a table whose zones
 /// were not known when the database was closed is not summed up as it is
 /// opened, nor while another table alone is read, maintenance doing no
-/// work on it; a count of its rows asks its zones, and maintenance then
+/// work on it; a scan told a condition asks its zones, and maintenance then
 /// sums them up; closed and opened again, it has none left to sum up,
 /// though asked again. A regression test (R-TEST-7): it fails if a table
 /// opened is summed up before a zone of it is asked for.
@@ -56,7 +57,7 @@ fn a_table_opened_is_summed_up_only_once_its_zones_are_asked_for() {
         a.commit().unwrap();
         // Written cold, then asked: its zones are not known, and none is
         // summed up before the close.
-        counted(&db);
+        asked(&db);
         db.close().unwrap();
     }
     {
@@ -66,14 +67,14 @@ fn a_table_opened_is_summed_up_only_once_its_zones_are_asked_for() {
         a.commit().unwrap();
         db.run_due().unwrap();
         assert!(!worked(&db), "never asked: no work on it");
-        counted(&db);
+        asked(&db);
         db.run_due().unwrap();
         assert!(worked(&db), "asked: summed up");
         db.maintain().unwrap();
         db.close().unwrap();
     }
     let db = open(&dir);
-    counted(&db);
+    asked(&db);
     db.run_due().unwrap();
     assert!(!worked(&db), "summed up before the close: none left");
 }

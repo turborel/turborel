@@ -31,13 +31,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::{Merging, feed, finished, fresh};
 use crate::error::Result;
 use crate::exec::batch::{Read, read_for};
-use crate::exec::group::Spec;
+use crate::exec::group::{Spec, group_key, unpadded_keys};
 use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{Runner, broken, eval};
 use crate::logical::Expr;
 use crate::physical::parallel::{between, counted_between, crosses};
 use crate::physical::{NodeCount, Plan, first_level};
-use crate::spill::norm_row;
 use crate::storage::Row;
 
 /// The second grouping of a pair: what it groups the first's groups by
@@ -77,7 +76,7 @@ impl Outer {
     /// such a pair (`physical::first_level`).
     pub(super) fn of(plan: &Plan) -> Option<(Outer, &Plan)> {
         let first = first_level(plan)?;
-        let Plan::Aggregate { groups, aggs, input, .. } = plan else { return None };
+        let Plan::Aggregate { groups, collations, aggs, input, .. } = plan else { return None };
         let Plan::Aggregate { groups: keys, aggs: parts, .. } = first else { return None };
         let layout: Vec<usize> = (0..keys.len().saturating_add(parts.len())).collect();
         let (steps, below) = between(input, 0);
@@ -90,8 +89,12 @@ impl Outer {
         for c in count.iter().chain(&projected) {
             c.opened();
         }
-        let read = if crossing.is_none() { read_for(groups, aggs, &layout) } else { None };
-        let spec = Spec { groups: groups.clone(), collations: Vec::new(), aggs: aggs.clone(), seeds: Vec::new() };
+        // [ISO/IEC 9075-2:2023 §4.3.2] Its columns under a collation whose
+        // key is the text itself are grouped unpadded, as the first's are
+        // (RULES.md D1184).
+        let unpadded = unpadded_keys(collations)?;
+        let read = if crossing.is_none() { read_for(groups, aggs, &layout).map(|read| Read { unpadded, ..read }) } else { None };
+        let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: Vec::new() };
         Some((Outer { spec, count, projected, crossing, read }, first))
     }
 
@@ -124,7 +127,7 @@ impl Outer {
             let Some(row) = self.projected(row, runner) else { return Ok(Vec::new()) };
             let values = self.spec.groups.iter().map(|&g| row.get(g).cloned().ok_or_else(|| broken("a grouping column past its row")));
             let values = values.collect::<Result<Row>>()?;
-            let at = match found.entry(norm_row(&values)) {
+            let at = match found.entry(group_key(&self.spec, &values)?) {
                 Entry::Occupied(occupied) => *occupied.get(),
                 Entry::Vacant(vacant) => {
                     vacant.insert(made.len());
@@ -172,7 +175,9 @@ impl Outer {
     pub(super) fn regrouped_table(&self, first: GroupTable, (runner, seed): (&Runner, &Seed)) -> Result<Vec<(u64, Row)>> {
         let Some(read) = &self.read else { return Ok(Vec::new()) };
         self.counted(first.len());
-        super::second::regrouped(first, (read, &self.spec.aggs), (runner, seed))
+        // Its keys are hashed and compared as its own columns are grouped,
+        // each by its place in its key (RULES.md D1184).
+        super::second::regrouped(first, (read, &self.spec.aggs), (runner, &seed.unpadded(&read.unpadded)))
     }
 
     /// `row`, a group of the first, through the projections between the
@@ -208,7 +213,7 @@ impl Outer {
         let mut found: HashMap<Vec<u8>, usize> = HashMap::new();
         let mut made: Vec<Merging> = Vec::new();
         for (number, values, states) in groups {
-            let at = *found.entry(norm_row(&values)).or_insert_with(|| {
+            let at = *found.entry(group_key(&self.spec, &values)?).or_insert_with(|| {
                 made.push((number, values, fresh(&self.spec.aggs)));
                 made.len().saturating_sub(1)
             });

@@ -254,6 +254,9 @@ pub fn import<S: Read + Write, R: Source>(
         let types = insert.inputs().to_vec();
         // Its parameters' types known, the INSERT is of no more use.
         connection.deallocate(insert).map_err(|f| before(Cause::sql(f)))?;
+        if super::columns::by_column(connection, source, &types) {
+            return super::columns::import(connection, source, (how, &table, columns));
+        }
         return super::copied::import(connection, source, (how, &table, columns), types);
     }
     let mut run = Run { connection, insert, how, committed: 0, in_batch: 0, rejected: 0 };
