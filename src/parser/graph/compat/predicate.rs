@@ -1,5 +1,5 @@
-//! \[EXTENSION\] [GS §10.1] MATCH in a WHERE clause, in SQL Server's
-//! syntax, read as GPML path patterns:
+//! \[EXTENSION\] [GS §10.1] MATCH in a WHERE clause, read as GPML
+//! path patterns:
 //!
 //! ```text
 //! <graph match predicate> ::= MATCH ( <graph search item> [ { AND <graph search item> }... ] )

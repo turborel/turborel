@@ -128,7 +128,14 @@ impl Building<'_> {
             (Body::Sort(keys), Op::Sort) => {
                 let keys = keys
                     .iter()
-                    .map(|k| Ok(SortKey { column: has(k.column, types.len())?, descending: k.descending, nulls_first: k.nulls_first }))
+                    .map(|k| {
+                        Ok(SortKey {
+                            column: has(k.column, types.len())?,
+                            descending: k.descending,
+                            nulls_first: k.nulls_first,
+                            octets: false,
+                        })
+                    })
                     .collect::<Result<_>>()?;
                 LogicalPlan::Sort { keys, input }
             }

@@ -39,6 +39,7 @@ use super::runs::{Runs, runs_len};
 use super::{HEADER, WORD, corrupt, nulls_len, padded, read_word, too_large, word};
 use crate::error::Result;
 use crate::hash::xxhash::Xxh3Map;
+use crate::kernels::Kernels;
 use crate::value::{DataType, Value};
 
 pub(super) const FIXED: u8 = 1;
@@ -416,23 +417,23 @@ impl Body<'_> {
     /// ends to `ends`, of those `null` says are not nulls (`Texts`), each
     /// padded with spaces to `pad` characters if given, as a CHARACTER
     /// string is read: none if the encoding is of fixed fields, a frame,
-    /// runs or decimals, or a value is not UTF-8.
+    /// runs or decimals, or a value is not UTF-8, as `kernels` judges it.
     pub(super) fn texts(
         &self,
         (from, to): (usize, usize),
         (text, ends): (&mut String, &mut Vec<usize>),
-        (null, pad): (impl Fn(usize) -> bool, Option<usize>),
+        (null, pad, kernels): (impl Fn(usize) -> bool, Option<usize>, &dyn Kernels),
     ) -> Option<()> {
         if let Body::Fsst(coded) = self {
             // Of VARCHAR texts alone (`columns.rs`), never padded.
-            return pad.is_none().then(|| coded.texts((from, to), (text, ends), null)).flatten();
+            return pad.is_none().then(|| coded.texts((from, to), (text, ends), (null, kernels))).flatten();
         }
         if let Body::Varying { offsets, values } = self {
-            return varying_texts((offsets, values), (from, to), (text, ends), (null, pad));
+            return varying_texts((offsets, values), (from, to), (text, ends), (null, pad, kernels));
         }
         for n in from..to {
             if !null(n) {
-                padded(text, std::str::from_utf8(self.field(n)?).ok()?, pad);
+                padded(text, kernels.utf8(self.field(n)?)?, pad);
             }
             ends.push(text.len());
         }
@@ -528,19 +529,19 @@ impl Body<'_> {
 
 /// \[DESIGN\] (RULES.md D1131) As `Body::texts`, of varying fields of
 /// `values` that `offsets` place: the octets from the first's start to
-/// the last's end judged UTF-8 once, each field then a slice of them,
-/// none if they are not UTF-8 or a field does not begin and end on a
-/// character. Fields that are each UTF-8 are UTF-8 together, so this
+/// the last's end judged UTF-8 once by `kernels` (D1175), each field then
+/// a slice of them, none if they are not UTF-8 or a field does not begin
+/// and end on a character. Fields that are each UTF-8 are UTF-8 together, so this
 /// gives what judging each would.
 fn varying_texts(
     (offsets, values): (&[u8], &[u8]),
     (from, to): (usize, usize),
     (text, ends): (&mut String, &mut Vec<usize>),
-    (null, pad): (impl Fn(usize) -> bool, Option<usize>),
+    (null, pad, kernels): (impl Fn(usize) -> bool, Option<usize>, &dyn Kernels),
 ) -> Option<()> {
     let Some(last) = to.checked_sub(1).filter(|&last| last >= from) else { return Some(()) };
     let (start, end) = (between(offsets, from)?.0, between(offsets, last)?.1);
-    let span = std::str::from_utf8(values.get(start..end)?).ok()?;
+    let span = kernels.utf8(values.get(start..end)?)?;
     for n in from..to {
         if !null(n) {
             let (a, b) = between(offsets, n)?;

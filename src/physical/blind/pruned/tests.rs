@@ -200,3 +200,31 @@ fn a_computed_column_unread_above_still_reads_its_columns() {
     let whole = PhysicalPlanner::describing(&st).pruned(join(scan("T", &[0, 1, 2]), scan("U", &[0, 1, 2]), &[(0, 0)]));
     assert!(!whole.explain().contains("NULL"), "{}", whole.explain());
 }
+
+/// Verifies: [DESIGN] RULES.md D1185, D1167: a sort by the key a
+/// projection makes of a column under a collation by octets reads the
+/// column itself, and the key's place, read by none, is given null; under
+/// FETCH FIRST WITH TIES, which reads the key to find the peers, the key
+/// stays made.
+#[test]
+fn a_sort_by_a_columns_octets_reads_the_column_and_ties_keep_the_key() {
+    use crate::logical::{Fetch, Limit};
+    let keyed = || {
+        let key = Expr::SortKey(Box::new(Expr::Column(1)), crate::value::collation::unpadded_scalar());
+        let exprs = vec![Expr::Column(0), Expr::Column(1), key];
+        let input = Plan::Project { exprs, detail: "T.A, T.B, T.B COLLATE UCS_BASIC".to_owned(), input: Box::new(scan("T", &[0, 1, 2])) };
+        Plan::Sort { keys: vec![SortKey::ascending(2)], detail: "T.B COLLATE UCS_BASIC".to_owned(), input: Box::new(input), most: None }
+    };
+    let st = state();
+    let plan = PhysicalPlanner::describing(&st).pruned(project(&[0], keyed()));
+    let Plan::Project { input, .. } = &plan else { panic!("a projection") };
+    let Plan::Sort { keys, .. } = &**input else { panic!("a sort") };
+    assert_eq!(keys, &[SortKey { octets: true, ..SortKey::ascending(1) }]);
+    assert!(plan.explain().contains("Project T.A, T.B, NULL"), "{}", plan.explain());
+    let ties = Some(vec![SortKey::ascending(2)]);
+    let fetch =
+        Fetch { count: Expr::Const(Value::Null), percent: false, ties, search: crate::logical::Search::default(), hints: Box::default() };
+    let limit = Plan::Limit { limit: Limit { offset: None, fetch: Some(fetch) }, input: Box::new(keyed()), est: 1.0_f64 };
+    let peers_read = PhysicalPlanner::describing(&st).pruned(project(&[0], limit)).explain();
+    assert!(peers_read.contains("Project T.A, T.B, T.B COLLATE UCS_BASIC"), "{peers_read}");
+}

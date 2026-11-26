@@ -86,3 +86,24 @@ fn every_column_of_states_is_read_back_as_written() {
         assert_eq!(bits(&twice), bits(&round_trip(typed, agg, &[1])), "{}: the groups at the places, in their order", agg.label);
     }
 }
+
+/// Verifies: [DESIGN] (RULES.md D1186, D1226) the column of a part of a
+/// set function, which is its function's column, is read back from a
+/// spill by the function the part is of: a part of COUNT and of a sum of
+/// integers, bit for bit, where reading it as the part's own function,
+/// which keeps no column, would refuse it.
+#[test]
+fn a_parts_column_is_read_back_as_its_functions() {
+    use std::sync::Arc;
+    let integer = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
+    let part = |of: AggCall| {
+        let func = crate::functions::AggregateRef(Arc::new(crate::functions::Partial { func: of.func.clone(), result: of.result.clone() }));
+        AggCall { func, result: crate::functions::PART_TYPE, ..of }
+    };
+    let sum = call("SUM", Some(integer));
+    let summed =
+        Exact { kind: ColumnarKind::Sum, units: vec![7, -5, 0], counts: vec![1, 2, 0], scale: Some(0), result: sum.result.clone() };
+    for (agg, typed) in [(part(call("COUNT", None)), Typed::Count(vec![0, 3, 7])), (part(sum), Typed::Exact(summed))] {
+        assert_eq!(bits(&round_trip(&typed, &agg, &[2, 0, 1])), bits(&typed.gathered(&[2, 0, 1])), "{}", agg.label);
+    }
+}

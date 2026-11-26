@@ -34,13 +34,13 @@ impl RowTable {
         let mut frozen = 0_u64;
         let mut held: BTreeMap<(usize, Option<&'static str>), ColumnSizes> = BTreeMap::new();
         for entry in &directory.groups {
-            let group = self.group_of(entry).ok()?;
+            let group = self.group_of(entry, None).ok()?;
             let pages = self.pages_for(&group).ok()?;
             // [DESIGN] RULES.md D1146: an extent's own bytes, else its pages'.
             let bytes = entry.summary.extent.map(|p| p.length);
-            frozen = within(frozen.checked_add(bytes.or_else(|| u64::try_from(group.pages().len()).ok()?.checked_mul(page))?))?;
-            for (column, zones) in group.columns.iter().enumerate().filter(|_| by_column) {
-                for zone in zones {
+            frozen = within(frozen.checked_add(bytes.or_else(|| u64::try_from(group.pages().ok()?.len()).ok()?.checked_mul(page))?))?;
+            for column in (0..group.columns.len()).filter(|_| by_column) {
+                for zone in group.zones(column).ok()?.unwrap_or_default() {
                     add(&mut held, (column, zone), (&pages, page)).ok()?;
                 }
             }

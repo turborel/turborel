@@ -531,7 +531,7 @@ fn noted((value, nulls): (Value, bool), runner: &Runner) -> Value {
 /// Whether `row`'s values of `keys` are those of `values`: of one
 /// partition, or peers [§7.15 GR3, §10.10 GR1e ii 1].
 fn alike(keys: &[SortKey], values: &[Value], row: &Row) -> bool {
-    keys.iter().zip(values).all(|(k, v)| row.get(k.column).is_some_and(|x| k.order().cmp(v, x) == Ordering::Equal))
+    keys.iter().zip(values).all(|(k, v)| row.get(k.column).is_some_and(|x| k.cmp(v, x) == Ordering::Equal))
 }
 
 /// The peers of the rows of a partition, found row after row: a reader of
