@@ -753,6 +753,7 @@ verification approach DO-178C expects (§8).
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
 | D1167 | Each operator carries only the columns read above it |
+| D1172 | COUNT of a column known not null, or of a literal not null, counts rows and reads no value |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
@@ -20478,6 +20479,24 @@ The plan is pruned in place, so the walk of a deep plan holds little
 on the stack. The texts gathered of a vector are found once and copied
 into a buffer made at their length (`storage/batch/gathered.rs`), not
 one grown as they are copied.
+
+#### D1172. COUNT of a column known not null, or of a literal not null, counts rows and reads no value
+
+COUNT of a column read every value of the column, decoded a chunk at a
+time, though of a column declared NOT NULL its count is the count of the
+rows. So a COUNT, not DISTINCT, of a column known to hold no null, or of
+a literal that is not the null value, is rewritten to COUNT(*) (rule
+`count_rows_of_values`, `optimizer/counted_rows.rs`), its filter clause,
+type and label kept. A column is known so as `unnesting::never_null`
+traces it, declared NOT NULL through the operators that pass it on as it
+is and add no row of nulls, never through an outer join. Taking out the
+nulls of such a value takes out none and raises no warning
+[X3.135-1986 §5.8 GR1], so the count and the warnings are as they were
+[GR4]. The rows are then counted with no value read. A bare count of a
+table is answered by what its storage counts (D351, D1180), and of
+batches each batch adds its rows. The column, read by nothing else,
+drops out of the scan (D1167). A column that may hold a null is left, as
+its nulls are not counted and their taking out warns.
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
