@@ -8,31 +8,15 @@
 //! condition may match, so each morsel reads what the whole scan would
 //! (`rows/scan.rs`), on any thread.
 
-use std::cmp::Ordering as Order;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::frozen::{Batched, Directory, Entry, Merged, Merging};
+use super::frozen::{Batched, Directory, Merged, Merging};
 use super::mvcc::{Read, Reader};
 use super::{RowTable, row_id};
 use crate::error::Result;
 use crate::storage::{Batches, Conjunction, Ramp, RowId, Rows, Split};
 use crate::txn::TxId;
-use crate::value::{Value, compare};
-
-/// \[DESIGN\] The most rows of its groups for each row of its tree a table
-/// has whose morsels are bounded (`Split::bounds`): its tree's rows are
-/// read once more to bound them, so a table frozen but for few rows.
-const TREE_SHARE: u64 = 8;
-
-/// `bounds` widened to hold `least` and `greatest`; none if they do not
-/// compare with its own.
-fn widened(bounds: Option<(Value, Value)>, (least, greatest): (&Value, &Value)) -> Option<(Value, Value)> {
-    let Some((lo, hi)) = bounds else { return Some((least.clone(), greatest.clone())) };
-    let lo = if compare(least, &lo)? == Order::Less { least.clone() } else { lo };
-    let hi = if compare(greatest, &hi)? == Order::Greater { greatest.clone() } else { hi };
-    Some((lo, hi))
-}
 
 /// A row table's scan split at row ids.
 pub(super) struct RowSplit {
@@ -112,51 +96,6 @@ impl RowSplit {
         Some((first, self.cuts.get(n).copied()))
     }
 
-    /// The groups of the directory within `range`, in order, if it reads
-    /// any.
-    fn inside(&self, (first, end): (RowId, Option<RowId>)) -> Vec<&Arc<Entry>> {
-        let within = |e: &&Arc<Entry>| e.summary.first >= first && end.is_none_or(|end| e.summary.last < end);
-        self.directory.iter().flat_map(|d| d.groups.iter().filter(within)).collect()
-    }
-
-    /// The ranges of row ids in `range` over which the tree may hold
-    /// entries its groups `inside`, in order, do not hold whole: between
-    /// them or past them, and where their shadow bits say it may
-    /// (`frozen/shadow_bits.rs`).
-    fn unfrozen(&self, (first, end): (RowId, Option<RowId>), inside: &[&Arc<Entry>]) -> Vec<(RowId, Option<RowId>)> {
-        let mut ranges: Vec<(RowId, Option<RowId>)> = Vec::new();
-        let mut from = first;
-        for entry in inside {
-            if from < entry.summary.first {
-                ranges.push((from, Some(entry.summary.first)));
-            }
-            ranges.extend(self.table.shadow_ranges(entry).into_iter().map(|(a, b)| (a, Some(b.saturating_add(1)))));
-            from = entry.summary.last.saturating_add(1);
-        }
-        if end.is_none_or(|end| from < end) {
-            ranges.push((from, end));
-        }
-        ranges
-    }
-
-    /// Widens `bounds` by column `column` of the rows of the tree in
-    /// `ranges` that its reader sees, each version it would read decoded,
-    /// as `tree_rows` reads them; none if an entry cannot be read, or two
-    /// values do not compare.
-    fn tree_bounds(&self, ranges: Vec<(RowId, Option<RowId>)>, column: usize, bounds: &mut Option<(Value, Value)>) -> Option<()> {
-        for entry in RowTable::ranged(&self.table, ranges) {
-            let (key, newest) = entry.ok()?;
-            let id = row_id(&key).ok()?;
-            let Some(record) = self.table.visible_from(newest, self.reader).ok()? else { continue };
-            let row = self.table.decode(id, &record, Some(&[column])).ok()?;
-            let value = row.get(column)?;
-            if !value.is_null() {
-                *bounds = Some(widened(bounds.take(), (value, value))?);
-            }
-        }
-        Some(())
-    }
-
     /// The ranges of the zones the condition may match within `range`.
     fn zones_within(&self, (first, end): (RowId, Option<RowId>)) -> Vec<(RowId, Option<RowId>)> {
         let within = |(from, to): &(RowId, Option<RowId>)| {
@@ -194,7 +133,8 @@ impl Split for RowSplit {
     fn morsel(&self, n: usize) -> Rows {
         let Some(range) = self.range(n) else { return Box::new(std::iter::empty()) };
         let Some(directory) = &self.directory else { return self.tree_rows(range) };
-        let groups = self.inside(range).into_iter().cloned().collect();
+        let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
+        let groups = directory.groups.iter().filter(inside).cloned().collect();
         let part = Arc::new(Directory::part(directory, groups));
         let what = (self.columns.clone(), self.condition.clone());
         Box::new(Merged::within(Arc::clone(&self.table), (Merging::Seen(self.reader), part), what, range))
@@ -212,36 +152,9 @@ impl Split for RowSplit {
         let Some(directory) = &self.directory else {
             return Some(Arc::clone(&self.table).gathered_in((self.reader, Ramp::whole()), &asked, self.zones_within(range)));
         };
-        let part = Arc::new(Directory::part(directory, self.inside(range).into_iter().cloned().collect()));
+        let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
+        let part = Arc::new(Directory::part(directory, directory.groups.iter().filter(inside).cloned().collect()));
         let what = (asked, self.condition.clone());
         Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, self.zones_within(range)).with_late(late)))
-    }
-
-    /// \[DESIGN\] (RULES.md D1121) The bounds in `column` of a morsel's
-    /// groups' zones, widened by the values of the rows the tree holds in
-    /// its range, read and decoded, those past its groups and those
-    /// written since they were frozen. The tree is read only of a table
-    /// whose tree holds at most `1 / TREE_SHARE` as many rows as its
-    /// groups, so bounding every morsel reads little; none else, nor of a
-    /// table of no groups.
-    fn bounds(&self, n: usize, column: usize) -> Option<Option<(Value, Value)>> {
-        let range = self.range(n)?;
-        let directory = self.directory.as_ref()?;
-        let frozen = directory.rows();
-        let tree = self.table.counted.live.load(Ordering::Acquire).saturating_sub(usize::try_from(frozen).unwrap_or(usize::MAX));
-        if u64::try_from(tree).unwrap_or(u64::MAX).saturating_mul(TREE_SHARE) > frozen {
-            return None;
-        }
-        let inside = self.inside(range);
-        let ranges = self.unfrozen(range, &inside);
-        let mut bounds: Option<(Value, Value)> = None;
-        for entry in &inside {
-            let Some((least, greatest)) = &entry.summary.columns.get(column)?.bounds else { continue };
-            bounds = Some(widened(bounds, (least, greatest))?);
-        }
-        if !ranges.is_empty() {
-            self.tree_bounds(ranges, column, &mut bounds)?;
-        }
-        Some(bounds)
     }
 }

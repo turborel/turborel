@@ -715,7 +715,6 @@ verification approach DO-178C expects (§8).
 | D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
 | D1119 | A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them |
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
-| D1121 | A morsel of a grouping run in parallel finishes the groups of values its zones bound no other morsel's rows to hold |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19560,60 +19559,6 @@ each key column for its vector and code, row by row. The places of a
 batch's rows are now made a column at a time, each column's codes read
 in one loop into a vector of places, and the rows then look their
 places up in the memo (`exec/batch/groups/coded.rs`).
-
-#### D1121. A morsel of a grouping run in parallel finishes the groups of values its zones bound no other morsel's rows to hold
-
-A grouping run in parallel by batch split each morsel's groups among the
-partitions, and each partition merged every morsel's groups into a table
-of its own (D293, D356). A table loaded in about the order of a key, as
-TPC-H's LINEITEM is of its order key, is grouped by that key into
-groups whose rows lie in one morsel, or across the edge of two. A
-partition still looked each one up in its table, and every morsel's
-groups were held until merged.
-
-Nothing is taken from an order the table is said to keep, as none is. Its
-tree is keyed by row id, and a load on many threads interleaves blocks of
-ids. The split bounds a morsel's values of a column by the zones of its
-frozen groups (`Split::bounds`, `engine/rows/split.rs`), as a scan trusts
-a zone to hold every value its rows hold when it passes over them (D31).
-The rows of the tree in the morsel's range are not in those zones: rows
-past the last group, which a group does not yet hold, and rows inserted
-or changed since a group was frozen. So the tree is read over the range,
-between the groups, past them, and where a group's shadow bits say the
-tree may hold an entry (D510). Each version the split's reader sees is
-decoded in the column, and the bounds are widened by its value. The tree
-is read so only of a table whose tree holds at most an eighth as many
-rows as its groups (`TREE_SHARE`). Any other table's morsels are
-unbounded. A bound is
-taken through the pipeline's steps only for a column they carry
-unchanged: by a filter, a semi join, a projection of a column, or a hash
-join's probe of the probing row's own columns, never past an outer join
-(`exec/parallel/grouped/waves/owned.rs`).
-
-Of each morsel's bounds `lo` and `hi`, a morsel is clean if every other
-morsel's bounds lie apart from its own or meet them only at `lo` or `hi`.
-Sorted by least value and then greatest, a morsel is not clean if one
-before it ends past its least, or the one after it begins before its
-greatest. A value strictly between a clean morsel's `lo` and `hi` is then
-held by no other morsel's rows. Every group of that value has all its
-rows in the morsel, whatever its other grouping values. The thread that
-grouped the morsel finishes those groups, judges the HAVING condition as
-a partition does (D1073, D1135), and hands them over finished, in the
-order of their first rows. The rest of the morsel's groups go to the
-partitions as before (`GroupTable::made_of`): those of a value at `lo` or
-`hi`, of a null, and every group of a morsel that is not clean. So no
-value has groups both owned and merged. The owned groups, in morsel
-order, are one run, merged by first row with the partitions' runs, so
-the groups come in the order they came before. Their bytes are taken
-from the grant, and the grouping gives way past it as before (D38).
-
-If any morsel is unbounded, no morsel owns a group, since an unbounded
-morsel may hold any value. A column is used only where the grouping's
-equality is the zones' order: exact numbers at any scale, whose groups
-are of equal numbers (D356), and datetimes of no time zone, of one kind
-of moment (`Keys::inside`). A column of any other type, two bounds that
-do not compare, a grouping of DISTINCT, and a pair whose second grouping
-takes every group (D1113, D1133) leave every group to the partitions.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 

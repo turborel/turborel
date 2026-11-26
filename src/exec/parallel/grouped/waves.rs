@@ -11,10 +11,6 @@
 //! last wave finishes each partition's groups, in the order of their first
 //! rows.
 //!
-//! A morsel's groups of a value no other morsel's rows can hold are
-//! finished by the thread that grouped it, and go to no partition
-//! (`owned.rs`).
-//!
 //! A morsel of few groups beside its rows, as few as the statement's
 //! thread merges while the others group the next morsels, is merged there
 //! straight into one table, with no partition's thread to wake nor table
@@ -34,13 +30,8 @@ use crate::exec::Db;
 use crate::exec::batch::morsel_groups;
 use crate::exec::table::{GroupTable, Made};
 use crate::exec::{Runner, broken};
-use crate::spill::row_bytes;
 use crate::storage::Row;
 use crate::txn::TxId;
-
-use self::owned::Owned;
-
-mod owned;
 
 /// \[DESIGN\] The rows of a morsel each of its groups stands for, on each
 /// thread, at least, for the statement's thread to merge the morsel's
@@ -53,12 +44,10 @@ const DIRECT_ROWS: usize = 2;
 type Frozen = Arc<Vec<Mutex<Option<Made>>>>;
 
 /// What a morsel hands over: its groups whole, few beside its rows, for
-/// the statement's thread to merge; or split among the partitions; or
-/// those it owns finished, and the others, if any, split among them.
+/// the statement's thread to merge; or split among the partitions.
 enum Handed {
     Whole(Made),
     Parted(Arc<Made>),
-    Owned(Vec<(u64, Row)>, Option<Arc<Made>>),
 }
 
 /// A grouping's waves as its morsels come: the partitions' groups frozen,
@@ -76,10 +65,6 @@ struct Waves<'a> {
     waved: bool,
     direct: Option<GroupTable>,
     direct_bytes: usize,
-    /// The groups the morsels owned, finished, in the order of their first
-    /// rows, and the bytes they hold.
-    owned: Vec<(u64, Row)>,
-    owned_bytes: usize,
 }
 
 /// The groups of each partition of `grouping`'s pipeline, each finished
@@ -90,7 +75,6 @@ struct Waves<'a> {
 ///
 /// As reading the pipeline, or a set function, fails.
 pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Runs> {
-    let owned = Owned::of(&pipeline, grouping);
     let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
     let count = pipeline.count();
     // The groups the morsel last grouped made, the room the next is given.
@@ -102,7 +86,10 @@ pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degre
         let expected = room.load(Ordering::Relaxed);
         let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed), expected)?;
         room.store(table.len(), Ordering::Relaxed);
-        handed(&making, (m, table, degree), owned.as_ref(), &runner)
+        if table.len().saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= table.taken {
+            return table.frozen().map(Handed::Whole);
+        }
+        table.made(PARTS, making.lanes()).map(|made| Handed::Parted(Arc::new(made)))
     });
     let frozen: Frozen = Arc::new((0..PARTS).map(|_| Mutex::new(None)).collect());
     let mut waves = Waves {
@@ -116,45 +103,17 @@ pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degre
         waved: false,
         direct: None,
         direct_bytes: 0,
-        owned: Vec::new(),
-        owned_bytes: 0,
     };
     for morsel in Morsels::start(db, tx, (count, degree), work) {
         let held = match morsel? {
             Handed::Whole(made) => waves.direct(&made)?,
             Handed::Parted(made) => waves.flushed()? && waves.parted(made)?,
-            Handed::Owned(finished, left) => {
-                waves.owned(finished)
-                    && match left {
-                        Some(made) => waves.flushed()? && waves.parted(made)?,
-                        None => true,
-                    }
-            }
         };
         if !held {
             return Ok(Held::GaveWay);
         }
     }
     waves.finished()
-}
-
-/// What morsel `m` hands over of `table`, its groups, grouped on one of
-/// `degree` threads: whole, if few beside its rows; else those it owns of
-/// `owned` finished, and the others split among the partitions.
-///
-/// # Errors
-///
-/// As finishing a group, or making the morsel's groups, fails.
-fn handed(grouping: &Grouping, (m, table, degree): (usize, GroupTable, usize), owned: Option<&Owned>, runner: &Runner) -> Result<Handed> {
-    if table.len().saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= table.taken {
-        return table.frozen().map(Handed::Whole);
-    }
-    if let Some(mine) = owned.and_then(|o| o.of_morsel(m, &table)) {
-        let finished = grouping.kept_among(&table, &mine, runner)?;
-        let left = mine.iter().any(|&own| !own).then(|| table.made_of(PARTS, grouping.lanes(), &mine)).transpose()?;
-        return Ok(Handed::Owned(finished, left.map(Arc::new)));
-    }
-    table.made(PARTS, grouping.lanes()).map(|made| Handed::Parted(Arc::new(made)))
 }
 
 impl Waves<'_> {
@@ -173,16 +132,6 @@ impl Waves<'_> {
         let more = bytes.saturating_sub(self.direct_bytes);
         self.direct_bytes = bytes;
         Ok(self.limit.take(more))
-    }
-
-    /// Adds `finished`, the groups a morsel owned, to those owned before,
-    /// in the order of their first rows as the morsels come in order:
-    /// whether the grant holds them.
-    fn owned(&mut self, finished: Vec<(u64, Row)>) -> bool {
-        let bytes: usize = finished.iter().map(|(_, row)| row_bytes(row).saturating_add(size_of::<(u64, Row)>())).sum();
-        self.owned_bytes = self.owned_bytes.saturating_add(bytes);
-        self.owned.extend(finished);
-        self.limit.take(bytes)
     }
 
     /// The statement thread's table, if any, handed to the partitions as a
@@ -225,29 +174,21 @@ impl Waves<'_> {
 
     /// Each partition's groups finished, in the order of their first rows:
     /// of the statement thread's table alone if no morsel went to the
-    /// partitions, else of the last wave, that table in it; and the groups
-    /// the morsels owned, one more run.
+    /// partitions, else of the last wave, that table in it.
     ///
     /// # Errors
     ///
     /// As finishing a group, or merging a partition, fails.
     fn finished(mut self) -> Result<Runs> {
-        let owned = std::mem::take(&mut self.owned);
-        let mut runs = if !self.waved && self.wave.is_empty() {
-            match self.direct.take() {
-                Some(table) => vec![self.grouping.kept_of(&table, &Runner::new(self.run.0, self.run.1))?],
-                None => Vec::new(),
-            }
-        } else {
-            if !self.flushed()? {
-                return Ok(Held::GaveWay);
-            }
-            finished_wave((self.grouping, &self.frozen), self.wave, self.run)?
-        };
-        if !owned.is_empty() {
-            runs.push(owned);
+        if !self.waved && self.wave.is_empty() {
+            let Some(table) = self.direct.take() else { return Ok(Held::Kept(Vec::new())) };
+            let groups = self.grouping.kept_of(&table, &Runner::new(self.run.0, self.run.1))?;
+            return Ok(Held::Kept(vec![groups]));
         }
-        Ok(Held::Kept(runs))
+        if !self.flushed()? {
+            return Ok(Held::GaveWay);
+        }
+        finished_wave((self.grouping, &self.frozen), self.wave, self.run).map(Held::Kept)
     }
 }
 

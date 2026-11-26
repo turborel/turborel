@@ -12,8 +12,6 @@
 //! disagree with those bytes. A group's value is given as its first row
 //! gave it: a CHARACTER string with its spaces, a datetime in its zone.
 
-use std::cmp::Ordering;
-
 use crate::exec::batch::put_key;
 use crate::storage::{Batch, Cell, Row};
 use crate::value::datetime::Moment;
@@ -51,14 +49,6 @@ impl<'a> Key<'a> {
 
 /// A datetime no group holds, in the place of a null's.
 const NO_DATETIME: Datetime = Datetime { moment: Moment::Date, utc: 0, zone: 0, zoned: false, precision: 0 };
-
-/// The order of two exact numbers, each units and scale, brought to one
-/// scale; none if one cannot be held there.
-fn exact_order((a, a_scale): (i128, u32), (b, b_scale): (i128, u32)) -> Option<Ordering> {
-    let scale = a_scale.max(b_scale);
-    let up = |units: i128, from: u32| 10_i128.checked_pow(scale.saturating_sub(from)).and_then(|by| units.checked_mul(by));
-    Some(up(a, a_scale)?.cmp(&up(b, b_scale)?))
-}
 
 /// A lane's values, by type.
 #[derive(Debug, Default)]
@@ -494,35 +484,6 @@ impl Keys {
         let mut hashes = lanes.iter().map(|&at| seed.cell(self.lanes.get(at).map_or(Cell::Null, |lane| lane.cell(g))));
         let first = hashes.next().unwrap_or_else(|| seed.null());
         hashes.fold(first, |so_far, next| seed.joined(so_far, next))
-    }
-
-    /// \[DESIGN\] (RULES.md D1121) Of lane `lane`, whether each group's
-    /// value lies strictly between `lo` and `hi` as they compare: exact
-    /// numbers at any scale, or datetimes of no time zone, of one kind of
-    /// moment; no null. None of a lane of values of any other kind, nor of
-    /// bounds not of its kind.
-    pub(super) fn inside(&self, lane: usize, (lo, hi): (&Value, &Value)) -> Option<Vec<bool>> {
-        let lane = self.lanes.get(lane)?;
-        match &lane.data {
-            Data::Ints { units, scale } => {
-                let (Value::Exact(lo), Value::Exact(hi)) = (lo, hi) else { return None };
-                let within = |u: i64| {
-                    let at = (i128::from(u), *scale);
-                    let above = exact_order(at, (lo.units, lo.scale)) == Some(Ordering::Greater);
-                    above && exact_order(at, (hi.units, hi.scale)) == Some(Ordering::Less)
-                };
-                Some(units.iter().enumerate().map(|(g, &u)| !lane.is_null(g) && within(u)).collect())
-            }
-            Data::Datetimes(datetimes) => {
-                let (Value::Datetime(lo), Value::Datetime(hi)) = (lo, hi) else { return None };
-                if lo.zoned || hi.zoned {
-                    return None;
-                }
-                let within = |d: &Datetime| !d.zoned && d.compare(lo) == Some(Ordering::Greater) && d.compare(hi) == Some(Ordering::Less);
-                Some(datetimes.iter().enumerate().map(|(g, d)| !lane.is_null(g) && within(d)).collect())
-            }
-            Data::Unset | Data::Floats(_) | Data::Bools(_) | Data::Texts { .. } | Data::Values { .. } => None,
-        }
     }
 
     /// Keeps the first `len` groups.

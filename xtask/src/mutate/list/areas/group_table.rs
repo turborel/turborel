@@ -5,8 +5,8 @@
 //! accumulators, a grouping run in parallel numbered and ordered by its
 //! groups' first rows, its morsels of few groups merged on the statement's
 //! thread, of the column store too, grouped by runs, its exchange weighed
-//! by the optimizer's groups, the groups a morsel owns finished there; and
-//! EXCEPT and INTERSECT counted in a table (D358, D359, D1121).
+//! by the optimizer's groups; and EXCEPT and INTERSECT counted in a table
+//! (D358, D359).
 
 use super::super::{Mutation, Package};
 
@@ -24,14 +24,8 @@ const SET_COUNTS: &str = "set_tables::set_operations_keep_what_their_counts_say"
 /// The columns of states against their accumulators.
 const STATES: &str = "exec::table::states::tests::columns_of_states_are_their_accumulators";
 
-/// Groupings in parallel of a table frozen in about its key's order.
-const OWNED: &str = "owned_groups::groups_owned_by_their_morsels_come_as_alone";
-
-/// The same, with rows written since the table was frozen.
-const OWNED_SINCE: &str = "owned_groups::rows_written_since_the_table_was_frozen_join_their_keys_groups";
-
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 24] = [
+pub const GROUP_TABLE: [Mutation; 20] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -117,8 +111,8 @@ pub const GROUP_TABLE: [Mutation; 24] = [
         package: Package::Core,
         breaks: "the statement thread's table of few groups goes to the partitions' last wave",
         file: "src/exec/parallel/grouped/waves.rs",
-        original: "            if !self.flushed()? {\n                return Ok(Held::GaveWay);\n            }\n            finished_wave",
-        replacement: "            finished_wave",
+        original: "        if !self.flushed()? {\n            return Ok(Held::GaveWay);\n        }\n        finished_wave",
+        replacement: "        finished_wave",
         integration: &[FEW_MANY],
         unit: &[],
     },
@@ -231,45 +225,5 @@ pub const GROUP_TABLE: [Mutation; 24] = [
         replacement: "entry",
         integration: &[],
         unit: &["exec::batch::groups::coded::tests::rows_grouped_by_their_codes_make_the_groups_of_their_texts"],
-    },
-    Mutation {
-        name: "owned-least-bound-owned",
-        package: Package::Core,
-        breaks: "a morsel owns the groups of its least value, which the morsel before it may hold too (RULES.md D1121)",
-        file: "src/exec/table/keys.rs",
-        original: "let above = exact_order(at, (lo.units, lo.scale)) == Some(Ordering::Greater);",
-        replacement: "let above = exact_order(at, (lo.units, lo.scale)) != Some(Ordering::Less);",
-        integration: &[OWNED],
-        unit: &[],
-    },
-    Mutation {
-        name: "owned-overlap-clean",
-        package: Package::Core,
-        breaks: "a morsel whose bounds overlap another's owns the groups of values both hold (RULES.md D1121)",
-        file: "src/exec/parallel/grouped/waves/owned.rs",
-        original: "*mark = !ends_past && !next_begins;",
-        replacement: "*mark = true;",
-        integration: &[OWNED],
-        unit: &["exec::parallel::grouped::waves::owned::tests::a_morsel_is_clean_if_no_other_bounds_meet_its_own_beyond_an_end"],
-    },
-    Mutation {
-        name: "owned-tree-unread",
-        package: Package::Core,
-        breaks: "a morsel the tree holds rows of is bounded by its groups' zones alone, not the tree's rows (RULES.md D1121)",
-        file: "src/engine/rows/split.rs",
-        original: "            self.tree_bounds(ranges, column, &mut bounds)?;\n",
-        replacement: "",
-        integration: &[OWNED_SINCE],
-        unit: &[],
-    },
-    Mutation {
-        name: "owned-also-parted",
-        package: Package::Core,
-        breaks: "the groups a morsel owned go to the partitions too, so each comes twice (RULES.md D1121)",
-        file: "src/exec/table/made.rs",
-        original: "let gone = |g: usize| left.get(g).copied().unwrap_or(false);",
-        replacement: "let gone = |g: usize| left.get(g).copied().unwrap_or(false) && false;",
-        integration: &[OWNED],
-        unit: &[],
     },
 ];
