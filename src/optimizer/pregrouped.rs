@@ -22,18 +22,31 @@
 //! one column are one value, so which of them a group keeps shows
 //! nowhere.
 //!
+//! \[DESIGN\] (RULES.md D1117) Of a grouping by columns holding a unique
+//! key of the left operand's table, NOT NULL and of no collation, of a
+//! join equating exact numbers, each group takes one joined row: no two
+//! left rows are alike in the key, and a left row matches one group of
+//! the right operand at most. The grouping above is then a projection of
+//! each joined row, each set function's value the one the group below
+//! computed, or of a left row nothing matched its null, with the warning
+//! the set function raised of it.
+//!
 //! Grouping the right operand costs a row grouped for each of its rows,
 //! and spares the join each row beyond one a key, and the grouping above
 //! each row beyond one a left row. So the rewrite is made where the right
 //! operand's rows less its keys, as the planner estimates them, outnumber
 //! the left operand's rows.
 
+use super::elimination::{table_of, unique_key_covered};
 use super::extremes::table_rows;
 use super::{Rule, RuleContext};
+use crate::catalog::TableDesc;
+use crate::error::SqlState;
 use crate::functions::Standard;
 use crate::lexer::kw;
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, OuterJoin, split_and};
 use crate::physical::estimated_rows;
+use crate::value::collation::CollationRef;
 use crate::value::{CompOp, DataType, Decimal, Value};
 
 /// The rule's name, as EXPLAIN shows it and its setting names it.
@@ -84,12 +97,17 @@ impl Rule for GroupBeforeOuterJoin {
             LogicalPlan::OuterJoin { kind: OuterJoin::Left, cond: on, left: Box::new(shape.left.clone()), right: Box::new(grouped) };
         let part = |j: usize| width.saturating_add(first).saturating_add(j);
         let above = aggs.iter().enumerate().map(|(j, a)| above_of(a, part(j), ctx)).collect::<Option<Vec<_>>>()?;
-        let merged = LogicalPlan::Aggregate {
-            groups: groups.clone(),
-            collations: collations.clone(),
-            aggs: above,
-            seeds: Vec::new(),
-            input: Box::new(joined),
+        let merged = if keyed(&shape, (groups, collations), ctx) {
+            let exprs = groups.iter().map(|&g| Expr::Column(g)).chain((0..aggs.len()).map(|j| warned(part(j)))).collect();
+            LogicalPlan::Project { exprs, input: Box::new(joined) }
+        } else {
+            LogicalPlan::Aggregate {
+                groups: groups.clone(),
+                collations: collations.clone(),
+                aggs: above,
+                seeds: Vec::new(),
+                input: Box::new(joined),
+            }
         };
         Some(counted(merged, groups.len(), aggs, ctx))
     }
@@ -163,6 +181,35 @@ fn above_of(a: &AggCall, part: usize, ctx: &RuleContext<'_>) -> Option<AggCall> 
     Some(AggCall { func, arg, result, label: format!("{}({})", kw::SUM, a.label), ..a.clone() })
 }
 
+/// \[DESIGN\] (RULES.md D1117) Whether a grouping by `groups`, of the
+/// collations `collations`, of the rows of the LEFT join `shape` with its
+/// right operand grouped by its keys takes each joined row a group of its
+/// own. The left operand is a table's rows, filtered or not, and `groups`
+/// hold every column of one of its unique keys, each NOT NULL and of no
+/// collation, by a constraint not deferrable, so two of its rows are
+/// never alike in `groups`. Each column the join equates is an exact
+/// number, whose values equal are one value, so the groups of the right
+/// operand's keys differ in the join's equality too, and a left row
+/// matches one of them at most.
+fn keyed(shape: &Shape<'_>, (groups, collations): (&[usize], &[Option<CollationRef>]), ctx: &RuleContext<'_>) -> bool {
+    let (Some((left, _)), Some((right, _))) = (table_of(shape.left), table_rows(shape.right)) else { return false };
+    let (Some(left), Some(right)) = (ctx.db.catalog.table(left), ctx.db.catalog.table(right)) else { return false };
+    let exact = |desc: &TableDesc, at: usize| desc.columns.get(at).is_some_and(|c| matches!(c.data_type, DataType::Exact { .. }));
+    let equated = shape.pairs.iter().all(|&(l, r)| exact(left, l) && exact(right, r));
+    let unique = left.periods.is_empty() && unique_key_covered(left, groups);
+    equated && unique && collations.iter().all(Option::is_none)
+}
+
+/// What a set function of one row gives of the column `part`, its value
+/// as the grouping below computed it: itself, or of a left row no group
+/// matched, its null with the warning that a null was eliminated
+/// [ISO/IEC 9075-2:2023 §10.9 GR4b], which the function of that row's
+/// null raised.
+fn warned(part: usize) -> Expr {
+    let null = Expr::Warned(Box::new(Expr::Column(part)), SqlState::NULL_VALUE_ELIMINATED);
+    Expr::Case(vec![(Cond::IsNull(Expr::Column(part), false), null)].into(), Box::new(Expr::Column(part)))
+}
+
 /// `merged`, the grouping above, of `groups` grouping columns, each sum
 /// it computes for a COUNT of `aggs` given as that count: 0 of a group
 /// whose sum is null, no group below matched, and of COUNT's type.
@@ -191,6 +238,34 @@ fn pays(shape: &Shape<'_>, ctx: &RuleContext<'_>) -> bool {
         seeds: Vec::new(),
         input: Box::new(shape.right.clone()),
     };
-    let (rows, keys) = (estimated_rows(ctx.db, shape.right), estimated_rows(ctx.db, &keyed));
-    rows - keys > estimated_rows(ctx.db, shape.left)
+    let rows = |plan: &LogicalPlan| estimated_rows(ctx.db, ctx.seen, plan);
+    rows(shape.right) - rows(&keyed) > rows(shape.left)
+}
+
+// Unit tests: whether grouping first pays, by one statement's statistics
+// (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::physical::Seen;
+    use crate::physical::seen::ungathered;
+
+    /// Verifies: [DESIGN] RULES.md D1089, D1112: whether grouping the
+    /// right operand first pays is judged by its tables' statistics as the
+    /// statement first saw them, the three estimates it weighs alike. Of
+    /// R's 1,000 rows of one key and L's 700, a statement that asked before
+    /// R's statistics were gathered judges as it did then, though they are
+    /// gathered before it asks again; one asking after judges otherwise.
+    #[test]
+    fn grouping_first_pays_by_the_statistics_its_statement_saw() {
+        let (db, st) = ungathered(&[("L", 700, 700), ("R", 1_000, 1)]);
+        let s = db.session("X");
+        let (left, right) = (s.optimized("SELECT * FROM L").unwrap().1, s.optimized("SELECT * FROM R").unwrap().1);
+        let shape = Shape { left: &left, right: &right, pairs: vec![(0, 0)], keys: vec![0] };
+        let seen = Seen::default();
+        let before = pays(&shape, &RuleContext { db: &st, seen: &seen });
+        db.analyze("X.R").unwrap();
+        assert_eq!(pays(&shape, &RuleContext { db: &st, seen: &seen }), before, "gathered since its statement asked");
+        assert_ne!(pays(&shape, &RuleContext { db: &st, seen: &Seen::default() }), before, "a statement asking afresh");
+    }
 }

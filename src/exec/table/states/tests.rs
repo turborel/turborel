@@ -141,3 +141,57 @@ fn columns_raise_and_widen_as_accumulators() {
     alone.update_ints(&Ints::new(vec![1; 2], 0, None), None, &crate::kernels::Portable).unwrap();
     assert_eq!(format!("{:?}", widened.finish(1)), format!("{:?}", alone.finish()));
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §6.7 GR1e]; [DESIGN] (RULES.md D1201)
+/// the value a group has of a column its grouping columns determine,
+/// kept in a column of values read in place, is its accumulator's of a
+/// row of each value: the first row's, a null kept as a null, of
+/// integers and of character strings; written and merged as the
+/// accumulator's state, a group that has a value keeping it; gathered in
+/// another order; and, given what is no column read in place, turned
+/// into accumulators that give the same.
+#[test]
+fn a_column_of_values_kept_is_its_accumulator() {
+    let db = Arc::new(crate::db::State::with_builtins(Box::new(crate::catalog::MemoryCatalog::default())));
+    let runner = Runner::new(&db, NO_TRANSACTION);
+    let texts = crate::storage::Texts::new(
+        "abbcccdde".to_owned(),
+        vec![1, 3, 6, 6, 8, 9],
+        Some(Mask::from_bools(&[false, true, false, false, false, false])),
+    );
+    let mut both = batch();
+    both.columns.push(Column::Texts(texts));
+    for (c, t) in [(0, INTEGER), (2, DataType::varying(10))] {
+        let agg = crate::binder::group_value(c, &t, "V".to_owned());
+        let mut states = States::of(&agg);
+        (0..3_u32).for_each(|_| states.grow());
+        states.feed((&pending(), &agg), (&both, &Taken::Kept(c), &None), (&mut Vec::new(), &runner)).unwrap();
+        assert!(matches!(states, States::Carried(_)), "kept in a column");
+        let row = |r: usize| Value::Row(vec![both.cell(c, r).to_value()].into());
+        let (mut written, mut expected) = (Vec::new(), Vec::new());
+        for (g, first) in [(0_usize, Some(0_usize)), (1, Some(1)), (2, None)] {
+            let mut alone = agg.func.0.accumulator(agg.result.clone());
+            if let Some(r) = first {
+                alone.update(&row(r)).unwrap();
+            }
+            assert_eq!(format!("{:?}", states.finish(g)), format!("{:?}", alone.finish()), "group {g}");
+            written.clear();
+            expected.clear();
+            assert_eq!(states.write(g, &mut written), alone.write_state(&mut expected));
+            assert_eq!(written, expected, "group {g} written");
+        }
+        // Group 2 takes group 0's state; group 1, which has a null, keeps it.
+        written.clear();
+        states.write(0, &mut written);
+        states.merge_written((2, &agg), &written).unwrap();
+        states.merge_written((1, &agg), &written).unwrap();
+        assert_eq!(format!("{:?}", states.finish(2)), format!("{:?}", states.finish(0)));
+        assert!(states.finish(1).unwrap().is_null() == (c == 2), "a null kept is not replaced");
+        let sent = states.sent().unwrap().gathered(&[2, 1]);
+        let mut thawed = States::thawed(sent, &agg, 2).unwrap();
+        assert_eq!(format!("{:?}", thawed.finish(0)), format!("{:?}", Ok::<_, crate::error::SqlError>(both.cell(c, 0).to_value())));
+        thawed.feed((&Pending::default(), &agg), (&both, &Taken::Count, &None), (&mut Vec::new(), &runner)).unwrap();
+        assert!(matches!(thawed, States::Boxed(_)), "accumulators, of what is no column read in place");
+        assert_eq!(format!("{:?}", thawed.finish(0)), format!("{:?}", Ok::<_, crate::error::SqlError>(both.cell(c, 0).to_value())));
+    }
+}

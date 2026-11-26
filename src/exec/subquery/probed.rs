@@ -59,7 +59,7 @@ impl Runner {
         if !kept.is_some_and(|kept| kept.probes(&self.db)) {
             return false;
         }
-        let built = known.unwrap_or_else(|| estimated_rows(&self.db, &how.plan));
+        let built = known.unwrap_or_else(|| estimated_rows(&self.db, &crate::physical::Seen::default(), &how.plan));
         if let Some(seen) = self.seen.borrow_mut().get_mut(&at) {
             seen.built_rows = Some(built);
         }

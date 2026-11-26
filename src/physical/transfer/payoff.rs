@@ -23,6 +23,7 @@ use super::tree::schedule;
 use crate::db::State;
 use crate::logical::Expr;
 use crate::physical::Plan;
+use crate::physical::Seen;
 
 /// \[DESIGN\] The most the keys of a step's filter may be of the values of
 /// the column it judges: one in two, RPT+'s.
@@ -54,7 +55,7 @@ struct Reduced<'p> {
 
 /// The steps of a phase over the chain `plan`, and what EXPLAIN shows of
 /// it, if one is worth planning.
-pub(super) fn planned(db: &State, plan: &Plan) -> Option<(Vec<Step>, String)> {
+pub(super) fn planned((db, seen): (&State, &Seen), plan: &Plan) -> Option<(Vec<Step>, String)> {
     if plan.can_raise() || !crate::exec::transferable(plan, db) {
         return None;
     }
@@ -69,7 +70,7 @@ pub(super) fn planned(db: &State, plan: &Plan) -> Option<(Vec<Step>, String)> {
     let mut reduced: Vec<Reduced<'_>> = found.iter().zip(&rows).map(|(&leaf, &rows)| Reduced { planned: rows, rows, leaf }).collect();
     let (mut steps, mut gain) = (Vec::new(), -PHASE_ROWS);
     for step in up.into_iter().chain(down).filter(|s| allowed(&keys, *s)) {
-        if let Some(dropped) = taken(db, &mut reduced, step) {
+        if let Some(dropped) = taken((db, seen), &mut reduced, step) {
             steps.push(step);
             gain += dropped;
         }
@@ -80,7 +81,7 @@ pub(super) fn planned(db: &State, plan: &Plan) -> Option<(Vec<Step>, String)> {
 
 /// Of `step`, if it is kept: what it is expected to gain, the rows it
 /// drops less what its filter costs, its leaf's rows reduced by it.
-fn taken(db: &State, reduced: &mut [Reduced<'_>], step: Step) -> Option<f64> {
+fn taken(db: (&State, &Seen), reduced: &mut [Reduced<'_>], step: Step) -> Option<f64> {
     let from = reduced.get(step.from.0)?;
     let of = distinct(db, from.leaf, step.from.1);
     let (keys, planned) = (from.rows.min(of.unwrap_or(from.rows)), from.planned.min(of.unwrap_or(from.planned)));
@@ -98,12 +99,13 @@ fn taken(db: &State, reduced: &mut [Reduced<'_>], step: Step) -> Option<f64> {
 }
 
 /// The values of column `column` of the rows of `leaf`, if it is a scan
-/// of a table, filtered or not, whose statistics tell.
-fn distinct(db: &State, leaf: &Plan, column: usize) -> Option<f64> {
+/// of a table, filtered or not, whose statistics, as the statement sees
+/// them, tell.
+fn distinct(db: (&State, &Seen), leaf: &Plan, column: usize) -> Option<f64> {
     let (mut at, mut column) = (leaf.bare(), column);
     for _ in 0..super::chain::LINKS {
         if let Plan::SeqScan { table, .. } = at {
-            return db.statistics(table)?.distinct(column);
+            return db.1.statistics(db.0, table)?.distinct(column);
         }
         at = if let Plan::Parallel(p) = at {
             p.input.bare()
@@ -172,5 +174,21 @@ mod tests {
         assert!(worth(1.0_f64, 1_usize));
         assert!(!worth(0.0_f64, 1_usize), "no gain");
         assert!(!worth(1.0_f64, 0_usize), "no step");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1089: a step's values are those its
+    /// leaf's table's statistics count as the statement first saw them: of
+    /// a statement that asked before they were gathered, none, though they
+    /// are gathered before it asks again; of one asking after, their count.
+    #[test]
+    fn a_step_counts_by_the_statistics_its_statement_saw() {
+        let (db, st) = crate::physical::seen::ungathered(&[("T", 1_000, 10)]);
+        let seen = Seen::default();
+        assert!(seen.statistics(&st, &crate::physical::seen::named("T")).is_none());
+        db.analyze("X.T").unwrap();
+        let leaf = crate::physical::seen::scanned("T");
+        assert_eq!(distinct((&st, &seen), &leaf, 0), None, "gathered since its statement asked");
+        let fresh = distinct((&st, &Seen::default()), &leaf, 0).unwrap();
+        assert!((fresh - 10.0_f64).abs() < 1.0_f64, "a statement asking afresh: {fresh}");
     }
 }

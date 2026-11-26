@@ -177,6 +177,9 @@ impl Kernels for Simd {
     fn crc32c(&self, register: u32, data: &[u8]) -> u32 {
         arch::crc32c(self.isa, register, data)
     }
+    fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        arch::find_bytes(self.isa, haystack, needle)
+    }
 }
 
 /// XXH3 of long inputs on these kernels: `hash::xxhash::xxh3_64_on(&simd, ...)`.

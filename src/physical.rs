@@ -37,7 +37,9 @@ mod indexed;
 mod join_probe;
 pub use join_probe::{Fields, JoinComparison, JoinProbe, OuterBound, Paired, Preserved, Ranged, Spatial, Supplied, Unmatched};
 mod join;
-pub(crate) use cardinality::estimated_rows;
+#[cfg(test)]
+pub(crate) use cardinality::seen;
+pub(crate) use cardinality::{Seen, estimated_rows};
 pub use join::JoinKey;
 mod kept;
 mod merged;
@@ -534,12 +536,7 @@ impl<'a> PhysicalPlanner<'a> {
     /// The physical plan for `logical`, estimated by one estimator for
     /// the whole planning (RULES.md D370), its columns pruned (D1167).
     pub fn plan(&self, logical: &LogicalPlan) -> Plan {
-        if self.est.is_some() {
-            return self.build(logical, &[]).plan;
-        }
-        plannings::counted();
-        let estimates = Estimates::over(self.db, logical, self.values);
-        self.pruned(estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan))
+        self.plan_seeing(logical, None)
     }
 
     /// Build `logical`, preferring output ordered by the keys `want`, if

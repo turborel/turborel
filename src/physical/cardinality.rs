@@ -15,7 +15,9 @@
 //!
 //! One `Estimates` lives for one planning. It reads the cost model's
 //! weights once, and asks each table's statistics and row count once, as
-//! asking them takes the settings' and the engines' locks. It keeps each
+//! asking them takes the settings' and the engines' locks, through the
+//! statement's snapshot (`cardinality/seen.rs`, D1089), which the
+//! statement's other steps read as well. It keeps each
 //! node's estimate by the node's address. The nodes of the plan being
 //! planned, its subqueries' among them, live the whole planning, so theirs
 //! are kept throughout, and the planner asking at each node it builds asks
@@ -30,12 +32,14 @@
 mod bounds;
 mod composite;
 mod groups;
+mod having;
 mod injected;
 mod joins;
 mod keys;
 mod lineage;
 mod nodes;
 mod past;
+pub(crate) mod seen;
 mod semi;
 mod tables;
 mod width;
@@ -58,6 +62,7 @@ pub(super) use composite::Member;
 pub(in crate::physical) use groups::cardenas;
 pub use injected::Injected;
 pub(super) use joins::{Classes, find};
+pub(crate) use seen::Seen;
 
 // ---------------------------------------------------------------------------
 // [DESIGN] Defaults of the rows of what has no count to read (D35: every
@@ -125,8 +130,8 @@ pub(super) fn at_least_one(rows: f64, of: f64) -> f64 {
 /// \[DESIGN\] The rows `plan` is estimated to give, as planning estimates
 /// them: what a subquery's runner weighs a decorrelated build by
 /// (`exec/subquery/probed.rs`, RULES.md D790).
-pub(crate) fn estimated_rows(db: &State, plan: &LogicalPlan) -> f64 {
-    Estimates::over(db, plan, None).card(plan).rows
+pub(crate) fn estimated_rows(db: &State, seen: &Seen, plan: &LogicalPlan) -> f64 {
+    Estimates::over(db, plan, None).seeing(Some(seen)).card(plan).rows
 }
 
 /// One planning's estimator: the state, the weights read once, and each
@@ -134,10 +139,10 @@ pub(crate) fn estimated_rows(db: &State, plan: &LogicalPlan) -> f64 {
 pub(super) struct Estimates<'a> {
     db: &'a State,
     cost: CostModel,
-    stats: RefCell<HashMap<QualifiedName, Option<Arc<dyn Statistics>>>>,
-    rows: RefCell<HashMap<QualifiedName, Option<f64>>>,
-    /// Each index's distinct keys, by its name, as its sketch counts them.
-    keys: RefCell<HashMap<String, Option<f64>>>,
+    /// The statement's statistics, rows and index keys, if it lends them,
+    /// else the estimator's own (`cardinality/seen.rs`, RULES.md D1089).
+    lent: Option<&'a Seen>,
+    own: Seen,
     /// Each table's unique keys and referential constraints, by its name.
     table_keys: RefCell<HashMap<QualifiedName, Rc<keys::TableKeys>>>,
     /// Each node's estimate, by its address, for the asking under way.
@@ -156,10 +161,21 @@ pub(super) struct Estimates<'a> {
 impl<'a> Estimates<'a> {
     /// An estimator over `db`, its weights read now.
     pub(super) fn new(db: &'a State) -> Estimates<'a> {
-        let (stats, rows, keys) = (RefCell::new(HashMap::new()), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
         let (memo, asking) = (RefCell::new(HashMap::new()), Cell::new(0));
         let (planned, kept, table_keys) = (HashSet::new(), RefCell::new(HashMap::new()), RefCell::new(HashMap::new()));
-        Estimates { db, cost: db.cost(), stats, rows, keys, table_keys, memo, asking, planned, kept, values: None }
+        let (lent, own) = (None, Seen::default());
+        Estimates { db, cost: db.cost(), lent, own, table_keys, memo, asking, planned, kept, values: None }
+    }
+
+    /// It, reading the statistics, rows and index keys of `seen`, the
+    /// statement's, if given.
+    pub(super) fn seeing(self, seen: Option<&'a Seen>) -> Estimates<'a> {
+        Estimates { lent: seen, ..self }
+    }
+
+    /// The statistics, rows and index keys it reads.
+    pub(super) fn seen(&self) -> &Seen {
+        self.lent.unwrap_or(&self.own)
     }
 
     /// An estimator over `db` for the planning of `plan`, whose nodes live
@@ -189,39 +205,20 @@ impl<'a> Estimates<'a> {
         &self.cost
     }
 
-    /// `table`'s statistics, asked of its engine once. The cache's borrow
-    /// is released before the engine is asked (RULES.md R-ERR-4).
+    /// `table`'s statistics, as the statement asked them once.
     pub(super) fn statistics(&self, table: &QualifiedName) -> Option<Arc<dyn Statistics>> {
-        let known = self.stats.borrow().get(table).cloned();
-        if let Some(stats) = known {
-            return stats;
-        }
-        let asked = self.db.statistics(table);
-        self.stats.borrow_mut().insert(table.clone(), asked.clone());
-        asked
+        self.seen().statistics(self.db, table)
     }
 
-    /// `table`'s rows, counted by its engine once.
+    /// `table`'s rows, as the statement counted them once.
     pub(super) fn table_rows(&self, table: &QualifiedName) -> Option<f64> {
-        let known = self.rows.borrow().get(table).copied();
-        if let Some(rows) = known {
-            return rows;
-        }
-        let counted = self.db.row_count(table).map(cost_of);
-        self.rows.borrow_mut().insert(table.clone(), counted);
-        counted
+        self.seen().row_count(self.db, table).map(cost_of)
     }
 
-    /// The distinct keys the index `name`, `index`, counts, asked of it
-    /// once: a sketch's count is an estimate made anew at each asking.
+    /// The distinct keys the index `name`, `index`, counts, as the
+    /// statement asked them once.
     pub(super) fn index_keys(&self, name: &str, index: &dyn Index) -> Option<f64> {
-        let known = self.keys.borrow().get(name).copied();
-        if let Some(keys) = known {
-            return keys;
-        }
-        let counted = index.distinct_keys();
-        self.keys.borrow_mut().insert(name.to_owned(), counted);
-        counted
+        self.seen().index_keys(name, index)
     }
 
     /// The card of `plan`.
@@ -263,6 +260,18 @@ impl<'a> Estimates<'a> {
 }
 
 impl PhysicalPlanner<'_> {
+    /// As `plan`, its estimator reading the statistics, rows and index
+    /// keys `seen` of the statement it plans, if given (RULES.md D1089).
+    pub(crate) fn plan_seeing(&self, logical: &LogicalPlan, seen: Option<&Seen>) -> super::Plan {
+        if self.est.is_some() {
+            return self.build(logical, &[]).plan;
+        }
+        super::plannings::counted();
+        let estimates = Estimates::over(self.db, logical, self.values).seeing(seen);
+        let plan = super::estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan);
+        self.pruned(plan)
+    }
+
     /// `f` of this planning's estimator, or of one made for the call if
     /// the planner was not made by `plan` (a unit test's).
     pub(super) fn estimating<R>(&self, f: impl FnOnce(&Estimates<'_>) -> R) -> R {
@@ -291,6 +300,13 @@ impl PhysicalPlanner<'_> {
     /// this planning.
     pub(super) fn index_keys(&self, name: &str, index: &dyn Index) -> Option<f64> {
         self.est.map_or_else(|| index.distinct_keys(), |est| est.index_keys(name, index))
+    }
+
+    /// The distinct keys the index `name` of `table`, `index`, counts, as
+    /// asked once this statement, its table noted for the maintenance if a
+    /// count is due (`State::distinct_keys`).
+    pub(super) fn table_keys(&self, (table, name): (&QualifiedName, &str), index: &dyn Index) -> Option<f64> {
+        self.est.map_or_else(|| self.db.distinct_keys(table, index), |est| est.seen().table_keys(self.db, (table, name), index))
     }
 
     /// `table`'s rows, as counted once this planning.

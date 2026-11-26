@@ -82,7 +82,7 @@ impl PhysicalPlanner<'_> {
         }
         let cheapest = access_cost(&b.plan);
         let hashed = make(b.plan, false);
-        if self.first.is_none() && super::parallel::runs_parallel(self.db, &hashed) {
+        if self.first.is_none() && self.estimating(|est| super::parallel::runs_parallel(self.db, est.seen(), &hashed)) {
             return Built::unordered(hashed);
         }
         let Some(order) = self.free_order(g.input, g.keys) else { return Built::unordered(hashed) };

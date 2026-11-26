@@ -26,6 +26,7 @@ use super::RuleContext;
 use crate::db::State;
 use crate::error::{Result, SqlState, Warnings};
 use crate::logical::LogicalPlan;
+use crate::physical::Seen;
 use crate::plugin::Bridged;
 use crate::plugin::bridge::leaked;
 use crate::plugin::bridge::rule::{Phase, PluginRule};
@@ -87,19 +88,20 @@ fn run(st: &State, phase: Phase, mut plan: LogicalPlan, trace: &mut Vec<&'static
 /// `st`'s settings leave on, and the extensions' REWRITTEN rules; with
 /// the names of the rules that fired, in order. A rule skipped raises
 /// RULE_SKIPPED to `heard`, if given. The built-in rules named in `except`
-/// are left off.
+/// are left off. Its rules see the statistics as `seen`, the statement's
+/// (RULES.md D1089).
 pub(crate) fn optimize(
-    st: &State,
+    (st, seen): (&State, &Seen),
     logical: LogicalPlan,
     (heard, except): (Option<&Warnings>, &[&str]),
 ) -> (LogicalPlan, Vec<&'static str>) {
     let none = st.extensions.values().all(|e| e.objects.iter().all(|(_, b)| !matches!(b, Bridged::Rule(_))));
     if none {
-        return st.optimizer.optimize_except(logical, &RuleContext { db: st }, except);
+        return st.optimizer.optimize_except(logical, &RuleContext { db: st, seen }, except);
     }
     let mut trace = Vec::new();
     let (bound, early) = run(st, Phase::Bound, logical, &mut trace);
-    let (optimized, built_in) = st.optimizer.optimize_except(bound, &RuleContext { db: st }, except);
+    let (optimized, built_in) = st.optimizer.optimize_except(bound, &RuleContext { db: st, seen }, except);
     trace.extend(built_in);
     let (rewritten, late) = run(st, Phase::Rewritten, optimized, &mut trace);
     if let Some(w) = heard.filter(|_| early || late) {

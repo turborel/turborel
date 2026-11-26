@@ -82,11 +82,16 @@ fn bare_column(e: &Expr) -> Option<usize> {
     }
 }
 
+/// Whether `e` is compared by a collation's sort key, not as it is.
+pub(super) fn by_sort_key(e: &Expr) -> bool {
+    matches!(e, Expr::SortKey(..))
+}
+
 impl Known {
     /// The column `e` is a reference to, compared by its own values: the
     /// column itself, or its sort key by the collation of its base table's
     /// column, which compares its values as they are told apart.
-    fn compared_column(&self, e: &Expr) -> Option<usize> {
+    pub(super) fn compared_column(&self, e: &Expr) -> Option<usize> {
         match e {
             Expr::Column(c) => Some(*c),
             Expr::SortKey(key, by) => {
@@ -163,7 +168,11 @@ impl Known {
     fn equal(&mut self, left: &Expr, right: &Expr) {
         let attribute = |e: &Expr| self.compared_column(e).and_then(|column| self.attribute_of(column));
         match (attribute(left), attribute(right)) {
-            (Some(first), Some(second)) => self.same(first, second),
+            (Some(first), Some(second)) => {
+                if self.compared_alike(left, right) {
+                    self.same(first, second);
+                }
+            }
             (Some(first), None) => self.computed(right, first),
             (None, Some(second)) => self.computed(left, second),
             (None, None) => {}
@@ -197,6 +206,9 @@ impl Known {
         let Some(dja) = self.attributes_of(&read) else { return };
         let mut components = Vec::new();
         and_components(cond, &mut components);
+        if !components.iter().all(|c| self.matches_alike(c, &preserved)) {
+            return;
+        }
         for component in components {
             let Cond::Compare(l, CompOp::Eq, r) = component else { continue };
             for (p, q) in [(l, r), (r, l)] {

@@ -23,14 +23,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::super::super::State;
-use super::super::super::compiled::{plan, plan_slotted};
+use super::super::super::compiled::{plan, plan_seen, plan_slotted};
 use super::super::super::prepared::{Fit, Learned, Learning, Learnt};
 use crate::catalog::{QualifiedName, SequenceDesc};
 use crate::error::{Result, Warnings};
 use crate::exec::{Db, Framed, RangeAt, Slots, Subqueries, SubqueryRows, execute};
 use crate::fulltext::rank::Statistics;
 use crate::logical::{Expr, Invocation, Leaf, LogicalPlan, Slot, Subquery, filled, map_plan_exprs};
-use crate::physical::{Kept, Plan, keepable, prepared_plan};
+use crate::physical::{Kept, Plan, Seen, keepable, prepared_plan};
 use crate::storage::Row;
 use crate::sync::lock;
 use crate::txn::TxId;
@@ -131,19 +131,20 @@ impl LeafPlan {
     ///
     /// As `physical`.
     fn learned(&self, st: &State, outer: &[Value], learning: Learning) -> Result<(Plan, Option<Slots>)> {
-        let (optimized, _, custom) = plan(st, filled(self.slotted.clone(), outer)?);
+        let seen = Seen::default();
+        let (optimized, _, custom) = plan_seen((st, &seen), filled(self.slotted.clone(), outer)?);
         let reads: Arc<[QualifiedName]> = optimized.tables().into();
-        let slotted_plan = plan_slotted(st, self.slotted.clone(), outer);
+        let slotted_plan = plan_slotted((st, &seen), self.slotted.clone(), outer);
         let physical = match learning.after(&custom, slotted_plan).outcome() {
             Learned::Kept(slotted) => {
-                let learnt = Learnt::of(st, &reads, &slotted);
+                let learnt = Learnt::of((st, &seen), &reads, &slotted);
                 match prepared_plan(*slotted, crate::optimizer::prepared::budget(st)) {
                     Ok(slotted) => Physical::Fixed(Arc::new(slotted), reads, Some(learnt)),
                     Err(_) => Physical::Varies(None),
                 }
             }
             Learned::Learning(learning) => Physical::Learning(learning),
-            Learned::Stopped => Physical::Varies(Some(Learnt::rows(st, &reads))),
+            Learned::Stopped => Physical::Varies(Some(Learnt::rows((st, &seen), &reads))),
         };
         *lock(&self.kept)? = physical;
         Ok((custom, None))

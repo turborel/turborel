@@ -26,7 +26,7 @@ use crate::optimizer::RuleContext;
 /// says, of `db`'s tables.
 pub(crate) fn quiet(s: &Subquery, db: &State) -> bool {
     let silent = s.outer.is_empty() && s.plan.one_row_at_most() && warns_none(&s.plan, &*db.catalog, 0);
-    silent && !plan_raises(&s.plan, &RuleContext { db })
+    silent && !plan_raises(&s.plan, &RuleContext { db, seen: &crate::physical::Seen::default() })
 }
 
 /// Whether `plan`, `depth` operators down, raises no warning: its
