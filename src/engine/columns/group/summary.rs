@@ -10,6 +10,7 @@ use std::mem::size_of;
 
 use super::{Group, Part, Run, Zone, bounds_of};
 use crate::disk::pager::PageId;
+use crate::error::Result;
 use crate::storage::{Conjunct, Conjunction, RowId};
 use crate::value::Value;
 
@@ -64,28 +65,29 @@ pub struct Overall {
 impl Summary {
     /// What a table holds in memory of `group`, whose header begins at
     /// `header`.
-    pub fn of(group: &Group, header: PageId) -> Summary {
-        let columns = group
-            .columns
-            .iter()
-            .map(|zones| {
-                let ends: Vec<Value> =
-                    zones.iter().filter_map(|z| z.bounds.clone()).flat_map(|(least, greatest)| [least, greatest]).collect();
-                Overall { nulls: zones.iter().map(|z| z.nulls).fold(0, u32::saturating_add), bounds: bounds_of(&ends).0 }
-            })
-            .collect();
-        Summary {
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if its header was read without a column's chunks.
+    pub fn of(group: &Group, header: PageId) -> Result<Summary> {
+        let mut columns = Vec::with_capacity(group.columns.len());
+        for c in 0..group.columns.len() {
+            let zones = group.zones(c)?.unwrap_or_default();
+            let ends: Vec<Value> = zones.iter().filter_map(|z| z.bounds.clone()).flat_map(|(least, greatest)| [least, greatest]).collect();
+            columns.push(Overall { nulls: zones.iter().map(|z| z.nulls).fold(0, u32::saturating_add), bounds: bounds_of(&ends).0 });
+        }
+        Ok(Summary {
             header,
             first: group.first,
             last: group.last,
             rows: group.rows,
             order: group.order.clone(),
-            blooms: group.blooms(),
+            blooms: group.blooms()?,
             sketched: group.sketched.clone(),
             pax: group.pax,
             columns,
             extent: None,
-        }
+        })
     }
 
     /// Whether a row of it may match every one of `conditions`, each of one
@@ -150,12 +152,14 @@ fn bounds_bytes(bounds: Option<&(Value, Value)>) -> usize {
 
 impl Group {
     /// \[DESIGN\] About the bytes it takes in memory: its structures, and
-    /// its bounds' texts.
+    /// its bounds' texts, of the columns its header was read for.
     pub fn bytes(&self) -> usize {
-        let zones: usize = self.columns.iter().flatten().map(|z| size_of::<Zone>().saturating_add(bounds_bytes(z.bounds.as_ref()))).sum();
+        let zones: usize =
+            self.columns.iter().flatten().flatten().map(|z| size_of::<Zone>().saturating_add(bounds_bytes(z.bounds.as_ref()))).sum();
         let parts: usize = self
             .columns
             .iter()
+            .flatten()
             .flatten()
             .flat_map(|z| &z.parts)
             .map(|p| size_of::<Part>().saturating_add(bounds_bytes(p.bounds.as_ref())))
