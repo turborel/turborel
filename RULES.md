@@ -715,6 +715,7 @@ verification approach DO-178C expects (§8).
 | D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
 | D1119 | A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them |
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
+| D1122 | The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change |
 | D1123 | The second grouping of a pair is made in the executor's table, of the first's groups given as a batch |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
@@ -755,6 +756,7 @@ verification approach DO-178C expects (§8).
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
 | D1167 | Each operator carries only the columns read above it |
+| D1170 | A morsel of set functions of no grouping feeds one set of states by vectors, no row hashed |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
@@ -19570,6 +19572,23 @@ batch's rows are now made a column at a time, each column's codes read
 in one loop into a vector of places, and the rows then look their
 places up in the memo (`exec/batch/groups/coded.rs`).
 
+#### D1122. The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change
+
+A spill area keeps its pages in a pager file of its own (D38), and a
+grouping or sort that spills takes and frees pages there a page at a
+time, so its free list holds many runs. The list found the smallest
+free run that held a request by a pass over every run, and counted its
+free pages by another, at each page taken.
+
+The free runs are now kept by size and first page beside the map by
+first page, and their pages counted as runs are added and removed
+(`disk/pager/free.rs`). The smallest run that holds a request is the
+first of those by size at least the request's, the first by page of
+runs of one size, which is the run the pass found. A request no run
+holds is made as before (D30). The runs by size and the count are
+those of the runs after every change, which a unit test checks through
+merges, splits and the run that ends the file taken and released.
+
 #### D1123. The second grouping of a pair is made in the executor's table, of the first's groups given as a batch
 
 A pair of groupings run as one part (D1113) finished each partition in
@@ -20523,6 +20542,34 @@ The plan is pruned in place, so the walk of a deep plan holds little
 on the stack. The texts gathered of a vector are found once and copied
 into a buffer made at their length (`storage/batch/gathered.rs`), not
 one grown as they are copied.
+
+#### D1170. A morsel of set functions of no grouping feeds one set of states by vectors, no row hashed
+
+Set functions of no grouping run in parallel were grouped as any
+grouping by batch is (D293, D356). Each morsel's table hashed every row
+on a key of no columns, found the one group by it, compared the key and
+took the row for the group, and then fed the group's states. So each
+row cost a hash, a probe, a compare and three pushes, and a sum of a
+column on eight threads took longer than it did on one.
+
+A morsel of no grouping columns now feeds one set of accumulators each
+batch's vectors, as a set function of no grouping run alone is fed
+(`exec/batch.rs`, `exec/batch/groups/morsel.rs`). The vector kernels
+that sum a column, the null lane that counts it and the extremes taken
+a vector at a time all apply. Once the morsel's batches are fed, each
+state is written into the morsel's one group, which is made of its
+first row, numbered as before. The morsels' groups are then merged in
+morsel order as before, so a function keeping its first value keeps
+the first row's, and a grant refused gives way as before. A morsel of
+no rows makes no group, and the set functions of no rows are one row
+as before. A set function whose accumulator writes no state, as a sum
+or an average of approximate or DECFLOAT numbers, is not run in
+parallel at all (D53, `physical/parallel.rs`): its total depends on the
+order its values are added in, so partial totals merged would differ
+from the plan run alone. It keeps its serial plan, fed in the input's
+order, and a morsel that met one anyway would be grouped as before.
+DISTINCT and filtered set functions are not read by batch, so they
+never come here.
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
