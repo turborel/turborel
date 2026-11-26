@@ -25,9 +25,9 @@
 //! groups are split by those columns alone and each partition's thread
 //! makes the second's groups of its own (`regrouped.rs`, RULES.md D1113).
 //! The pieces a grouping holds are charged to one work grant (RULES.md
-//! D38, D298); past it, or bound past it as its first
-//! morsels show, it gives way to the serial grouping, which spills, its
-//! rows read again in the statement's snapshot.
+//! D38, D298). Past it a pipeline read by batch spills its partitions
+//! (`waves/spilled.rs`, RULES.md D1226); another gives way to the serial
+//! grouping, which spills, its rows read again in the statement's snapshot.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
@@ -358,8 +358,7 @@ struct Ordered {
     runs: Vec<Given>,
     /// Each run's group next given, if any.
     heads: Vec<Option<Row>>,
-    /// The first rows' numbers of the heads, each with its run, earliest
-    /// first.
+    /// The heads' first rows' numbers, each with its run, earliest first.
     order: BinaryHeap<Reverse<(u64, usize)>>,
 }
 
