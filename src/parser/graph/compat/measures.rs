@@ -1,5 +1,5 @@
 //! \[EXTENSION\] [GS §10.1] What a query with a MATCH in its WHERE
-//! clause writes of its paths, in SQL Server's syntax:
+//! clause writes of its paths:
 //!
 //! ```text
 //! <path table> ::= <table name> FOR PATH [ [ AS ] <correlation name> ]
@@ -30,11 +30,11 @@ const PATH: &str = "PATH";
 const GRAPH: &str = "GRAPH";
 /// WITHIN, of WITHIN GROUP.
 const WITHIN: &str = "WITHIN";
-/// STRING_AGG, LISTAGG in SQL Server's spelling.
+/// STRING_AGG, which is LISTAGG over a path's elements.
 const STRING_AGG: &str = "STRING_AGG";
 /// LAST_VALUE, of the path's last element.
 const LAST_VALUE: &str = "LAST_VALUE";
-/// The set functions SQL Server names by key words of SQL.
+/// The graph path functions whose names are key words of SQL.
 const KEY_WORD_FUNCTIONS: [&str; 5] = [kw::COUNT, kw::SUM, kw::AVG, kw::MIN, kw::MAX];
 /// How far past its function's right parenthesis WITHIN GROUP ( GRAPH
 /// PATH ) ends.

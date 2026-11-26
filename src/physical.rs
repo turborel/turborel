@@ -9,7 +9,7 @@
 //!     can use to find rows, and whether it gives key order (`IndexMethod`),
 //!   * the remaining weights live in a `CostModel` the user can change.
 //!
-//! "Interesting orders" (System R: Selinger et al., "Access Path Selection in a Relational Database
+//! "Interesting orders" (Selinger et al., "Access Path Selection in a Relational Database
 //! Management System", SIGMOD 1979): when a Sort is required, the order is passed down through
 //! operators that preserve it. A table access may then choose an ordered index path, and the Sort
 //! is dropped if that is cheaper than scanning in any order and sorting.

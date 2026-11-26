@@ -433,8 +433,9 @@ pub fn texts<S: Seal>(
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        let held = prepared
-            .with(pages, (column, zone, t), |chunk, _| Ok(chunk.texts((at(first), at(end)), (&mut text, &mut ends, &mut nulls), t)))?;
+        let held = prepared.with(pages, (column, zone, t), |chunk, _| {
+            Ok(chunk.texts((at(first), at(end)), (&mut text, &mut ends, &mut nulls), (t, pages.kernels)))
+        })?;
         if held.is_none() {
             return Ok(None);
         }
