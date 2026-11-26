@@ -174,9 +174,12 @@ fn whole_first(plan: &Plan, depth: usize) -> bool {
 
 /// Marks the parts of `plan`, `depth` below the root.
 fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
-    // A bare COUNT(*) its table's storage counts, faster than any split,
-    // stays whole (RULES.md D351).
-    if depth >= MAX_DEPTH || crate::exec::storage_counted(plan, asked.db).is_some() {
+    // A bare COUNT(*) its table's storage counts, or MIN and MAX its
+    // summaries answer, faster than any split, stays whole (RULES.md D351,
+    // D1181).
+    if depth >= MAX_DEPTH
+        || crate::exec::storage_counted(plan, asked.db).or_else(|| crate::exec::storage_summarized(plan, asked.db)).is_some()
+    {
         return;
     }
     let rooted = rooted(plan, Some(asked.db));
