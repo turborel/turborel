@@ -29,6 +29,18 @@ pub trait Connector {
     ///
     /// The server cannot be reached, or refuses the connection.
     fn connect(&mut self, server: Option<&str>, user: Option<&str>) -> Result<Connected>;
+
+    /// \[DESIGN\] RULES.md D1148: a connection to the default server, as
+    /// the connector's user, for work beside the first connection's, as a
+    /// job of an import over several connections at once: proved as the
+    /// first was, a password typed for it not asked for again.
+    ///
+    /// # Errors
+    ///
+    /// The server cannot be reached, or refuses the connection.
+    fn spare(&mut self) -> Result<Connected> {
+        self.connect(None, None)
+    }
 }
 
 /// A connection of an agent: its name, none for the default connection.
@@ -110,9 +122,9 @@ impl<C: Connector> Agent<C> {
     ///
     /// # Errors
     ///
-    /// As `Connector::connect`'s.
+    /// As `Connector::spare`'s.
     pub fn spare(&mut self) -> Result<Connected> {
-        self.connector.connect(None, None)
+        self.connector.spare()
     }
 
     /// The current connection, if there is one, to read what its server

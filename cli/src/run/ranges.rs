@@ -5,15 +5,19 @@
 //! the file's, each once. A header, if the file has one, is kept apart,
 //! for each job to read first.
 //!
-//! The file is read once, front to back, to the last range's beginning:
-//! it counts the lines and records before each range, so a job tells a
-//! record by its place in the file, not in its range; and, of CSV, the
-//! quotes, so a range that would begin within a quoted field, after a
-//! line break the field holds, is found before any row is imported. That
-//! import fails, as a record split between two jobs cannot be read whole
-//! by either: one job reads the file whole.
+//! Splitting reads only the header and, from each place a range is to
+//! begin, up to the next line break: the jobs begin at once, and the file
+//! is read in their ranges side by side. Of CSV, a range that would begin
+//! within a quoted field, after a line break the field holds, is found
+//! before any row is imported, by the quotes of each range, counted side
+//! by side: a range begins within a quoted field just when the quotes
+//! before it are odd in number. That import fails, as a record split
+//! between two jobs cannot be read whole by either: one job reads the
+//! file whole. The lines and records before a range are counted only
+//! when a record of a job is told, so it is told by its place in the
+//! file, not in its range.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 
 /// [RFC 4180 §2 rule 1] What ends a line.
 const LF: u8 = b'\n';
@@ -23,16 +27,21 @@ const QUOTE: u8 = b'"';
 /// little beside the bytes looked at.
 const CHUNK: usize = 64 * 1024;
 
-/// A range of a file one job imports, and what comes before it.
+/// A range of a file one job imports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
     /// Where it begins, in bytes from the file's start.
     pub start: u64,
     /// Where it ends, the byte after its last.
     pub end: u64,
-    /// How many lines come before it, a header's among them.
+}
+
+/// What comes before a range.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Before {
+    /// How many lines, a header's among them.
     pub lines: u64,
-    /// How many records of data come before it, a header not counted.
+    /// How many records of data, a header not counted.
     pub records: u64,
 }
 
@@ -61,11 +70,11 @@ pub struct Written {
 pub const STRADDLES: &str = "a quoted field holds a line break where the file is split between jobs, so its record \
                              cannot be read whole by either: import it with --jobs 1";
 
-/// Where a read of the file is, and what it has seen.
+/// What a read of the file from its start has seen.
 #[derive(Default)]
 struct Scan {
-    /// The bytes read.
-    at: u64,
+    /// Whether a field may be enclosed in quotes, so they are counted.
+    quotes: bool,
     /// Whether it is within a quoted field.
     quoted: bool,
     lines: u64,
@@ -74,13 +83,11 @@ struct Scan {
 }
 
 impl Scan {
-    /// Reads `bytes` up to and through the first line break at or after
-    /// `from`, outside a quoted field if `outside`, quotes counted if
-    /// `quoted`: where it ends, or none if there is none.
-    fn through(&mut self, bytes: &[u8], from: u64, (quoted, outside): (bool, bool)) -> Option<usize> {
+    /// Reads `bytes` through the first line break outside a quoted field
+    /// if `first`: where it stopped, or none if it read them all.
+    fn read(&mut self, bytes: &[u8], first: bool) -> Option<usize> {
         for (n, &b) in bytes.iter().enumerate() {
-            self.at = self.at.saturating_add(1);
-            if quoted && b == QUOTE {
+            if self.quotes && b == QUOTE {
                 self.quoted = !self.quoted;
             }
             if b != LF {
@@ -88,7 +95,7 @@ impl Scan {
             }
             self.lines = self.lines.saturating_add(1);
             self.records = self.records.saturating_add(u64::from(!self.quoted));
-            if self.at > from && !(outside && self.quoted) {
+            if first && !self.quoted {
                 return Some(n.saturating_add(1));
             }
         }
@@ -96,44 +103,37 @@ impl Scan {
     }
 }
 
-/// The input read a chunk at a time, the bytes of the chunk not yet
-/// scanned kept.
-struct Chunks<'a, R: Read> {
-    input: &'a mut R,
-    buffer: Vec<u8>,
-    held: std::ops::Range<usize>,
-}
-
-impl<R: Read> Chunks<'_, R> {
-    /// The bytes not yet scanned, reading more if none are held; empty at
-    /// the end.
-    fn next(&mut self) -> io::Result<&[u8]> {
-        if self.held.is_empty() {
-            let n = self.input.read(&mut self.buffer)?;
-            self.held = 0..n;
-        }
-        Ok(self.buffer.get(self.held.clone()).unwrap_or_default())
-    }
-
-    /// Takes `n` of the bytes held as scanned.
-    fn scanned(&mut self, n: usize) {
-        self.held.start = self.held.start.saturating_add(n).min(self.held.end);
-    }
-}
-
-/// Reads `chunks` through the first line break at or after `from`, as
-/// `Scan::through` does: whether there was one.
-fn read_through<R: Read>(chunks: &mut Chunks<'_, R>, scan: &mut Scan, from: u64, how: (bool, bool)) -> io::Result<bool> {
+/// The header of `input`, read from its start, quotes counted if
+/// `quoted`: its bytes, its line break too, and its lines.
+fn header<R: Read>(input: &mut R, quoted: bool) -> io::Result<(Vec<u8>, u64)> {
+    let (mut buffer, mut scan, mut header) = (vec![0; CHUNK], Scan { quotes: quoted, ..Scan::default() }, Vec::new());
     loop {
-        let bytes = chunks.next()?;
-        if bytes.is_empty() {
-            return Ok(false);
+        let n = input.read(&mut buffer)?;
+        let bytes = buffer.get(..n).unwrap_or_default();
+        let found = scan.read(bytes, true);
+        header.extend_from_slice(bytes.get(..found.unwrap_or(n)).unwrap_or_default());
+        if n == 0 || found.is_some() {
+            return Ok((header, scan.lines));
         }
-        let (len, found) = (bytes.len(), scan.through(bytes, from, how));
-        chunks.scanned(found.unwrap_or(len));
-        if found.is_some() {
-            return Ok(true);
+    }
+}
+
+/// Where the first line to begin at or after `from` of `input` begins:
+/// just after the first line break there; none if there is none.
+fn line_start<R: Read + Seek>(input: &mut R, from: u64) -> io::Result<Option<u64>> {
+    input.seek(SeekFrom::Start(from))?;
+    let (mut buffer, mut at) = (vec![0; CHUNK], from);
+    loop {
+        let n = input.read(&mut buffer)?;
+        let bytes = buffer.get(..n).unwrap_or_default();
+        if n == 0 {
+            return Ok(None);
         }
+        if let Some(p) = bytes.iter().position(|&b| b == LF) {
+            let p = u64::try_from(p).unwrap_or(u64::MAX);
+            return Ok(Some(at.saturating_add(p).saturating_add(1)));
+        }
+        at = at.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
     }
 }
 
@@ -149,54 +149,89 @@ fn target(first: u64, len: u64, (k, jobs): (usize, usize)) -> u64 {
 /// `input`, a file of `len` bytes written as `written` says, split into
 /// at most `jobs` ranges: none empty, the first beginning after the
 /// header, each other just after a line break, together the file's
-/// records each once.
+/// records each once. Whether a range begins within a quoted field is
+/// not looked at here (`straddles`).
 ///
 /// # Errors
 ///
-/// The file cannot be read; `STRADDLES` if a range would begin within a
-/// quoted field.
-pub fn split<R: Read>(input: &mut R, len: u64, jobs: usize, written: Written) -> Result<Split, String> {
+/// The file cannot be read.
+pub fn split<R: Read + Seek>(input: &mut R, len: u64, jobs: usize, written: Written) -> Result<Split, String> {
     let unread = |e: io::Error| format!("cannot read: {e}");
-    let mut chunks = Chunks { input, buffer: vec![0; CHUNK], held: 0..0 };
-    let mut scan = Scan::default();
-    let mut header = Vec::new();
-    if written.header {
-        loop {
-            let bytes = chunks.next().map_err(unread)?;
-            if bytes.is_empty() {
-                break;
-            }
-            let found = scan.through(bytes, 0, (written.quoted, true));
-            let taken = found.unwrap_or(bytes.len());
-            header.extend_from_slice(bytes.get(..taken).unwrap_or_default());
-            chunks.scanned(taken);
-            if found.is_some() {
-                break;
-            }
-        }
-    }
-    let header_lines = scan.lines;
-    let first = Range { start: scan.at, end: len, lines: scan.lines, records: 0 };
+    let (header, header_lines) = if written.header { header(input, written.quoted).map_err(unread)? } else { (Vec::new(), 0) };
+    let first = u64::try_from(header.len()).unwrap_or(u64::MAX);
     let mut starts = vec![first];
     for k in 1..jobs {
-        let from = target(first.start, len, (k, jobs)).max(scan.at);
-        if !read_through(&mut chunks, &mut scan, from, (written.quoted, false)).map_err(unread)? {
-            break;
+        let last = starts.last().copied().unwrap_or(first);
+        match line_start(input, target(first, len, (k, jobs)).max(last)).map_err(unread)? {
+            Some(start) if start < len => starts.push(start),
+            Some(_) | None => break,
         }
-        if scan.quoted {
-            return Err(STRADDLES.to_owned());
-        }
-        let records = scan.records.saturating_sub(u64::from(written.header));
-        starts.push(Range { start: scan.at, end: len, lines: scan.lines, records });
     }
     let mut ranges: Vec<Range> = Vec::with_capacity(starts.len());
-    for (n, range) in starts.iter().enumerate() {
-        let end = starts.get(n.saturating_add(1)).map_or(len, |next| next.start);
-        if end > range.start {
-            ranges.push(Range { end, ..*range });
+    for (n, &start) in starts.iter().enumerate() {
+        let end = starts.get(n.saturating_add(1)).copied().unwrap_or(len);
+        if end > start {
+            ranges.push(Range { start, end });
         }
     }
     Ok(Split { header, header_lines, ranges })
+}
+
+/// How many quotes `range` of `input` holds.
+///
+/// # Errors
+///
+/// The file cannot be read.
+pub fn quotes<R: Read + Seek>(input: &mut R, range: Range) -> io::Result<u64> {
+    input.seek(SeekFrom::Start(range.start))?;
+    let mut left = input.take(range.end.saturating_sub(range.start));
+    let (mut buffer, mut count) = (vec![0; CHUNK], 0_u64);
+    loop {
+        let n = left.read(&mut buffer)?;
+        if n == 0 {
+            return Ok(count);
+        }
+        let bytes = buffer.get(..n).unwrap_or_default();
+        // Each byte adds one or none: the count stays below the bytes read.
+        count = bytes.iter().fold(count, |sum, &b| sum.wrapping_add(u64::from(b == QUOTE)));
+    }
+}
+
+/// [RFC 4180 §2 rules 5-7] Whether a range after the first begins within
+/// a quoted field, of the ranges' counts of `quotes`, in their order, the
+/// header's quotes even: whether those before one are odd in number.
+pub fn straddles(quotes: &[u64]) -> bool {
+    let mut odd = false;
+    quotes.split_last().is_some_and(|(_, before)| {
+        before.iter().any(|&q| {
+            odd ^= q % 2 == 1;
+            odd
+        })
+    })
+}
+
+/// The lines and records before each of `starts`, in the file's order,
+/// of `input` read from its start as `written` says.
+///
+/// # Errors
+///
+/// The file cannot be read.
+pub fn before<R: Read>(input: &mut R, starts: &[u64], written: Written) -> io::Result<Vec<Before>> {
+    let mut scan = Scan { quotes: written.quoted, ..Scan::default() };
+    let (mut buffer, mut at, mut told) = (vec![0; CHUNK], 0_u64, Vec::with_capacity(starts.len()));
+    for &start in starts {
+        while at < start {
+            let want = usize::try_from(start.saturating_sub(at)).unwrap_or(CHUNK).min(CHUNK);
+            let n = input.read(buffer.get_mut(..want).unwrap_or_default())?;
+            if n == 0 {
+                break;
+            }
+            scan.read(buffer.get(..n).unwrap_or_default(), false);
+            at = at.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+        }
+        told.push(Before { lines: scan.lines, records: scan.records.saturating_sub(u64::from(written.header)) });
+    }
+    Ok(told)
 }
 
 #[cfg(test)]

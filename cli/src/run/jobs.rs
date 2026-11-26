@@ -6,11 +6,14 @@
 //! file. The rows said are the jobs' together. A job that fails stops the
 //! others at their next record, each committing nothing more; the import
 //! is told as the first of them in the file's order that failed of
-//! itself, with the rows every job committed and rolled back.
+//! itself, with the rows every job committed and rolled back. Ctrl-C
+//! cancels each job's statement, and stops each at its next record: the
+//! import is told once, as cancelled.
 //!
 //! The jobs connect to the server the command line names, each proved as
-//! the first connection was. Standard input cannot be read in ranges, so
-//! a file that is not a regular one is refused.
+//! the first connection was, a password typed for it not asked for again.
+//! Standard input cannot be read in ranges, so a file that is not a
+//! regular one is refused.
 
 use std::fs::File;
 use std::io::{BufReader, Cursor, Read, Seek, SeekFrom};
@@ -23,7 +26,9 @@ use turborel_client::import::{
     self, Cause, Cells, Delimited, Dialect, Heading, Import, ImportError, Imported, Position, Record, Rejected, Source, SourceError,
 };
 
-use super::ranges::{self, Range, Split, Written};
+use crate::interrupt::Interrupts;
+
+use super::ranges::{self, Before, Range, Split, Written};
 use super::{Next, Shell, Statements};
 
 /// What standard input is named as a file.
@@ -35,21 +40,30 @@ const THREAD: &str = "turborel-import";
 const READ_BYTES: usize = 1024 * 1024;
 /// Why a job stopped that did not fail of itself.
 const STOPPED: &str = "[DESIGN] stopped, as another job of the import failed";
+/// Why a job stopped at Ctrl-C.
+const CANCELLED: &str = "[DESIGN] cancelled, as Ctrl-C was pressed";
 
-/// A source a job reads, which gives no record once another job failed.
+/// A source a job reads, which gives no record once another job failed,
+/// or Ctrl-C was pressed.
 struct Stoppable<'a, R: Source> {
     source: R,
     stop: &'a AtomicBool,
-    /// Whether it gave none for that.
+    /// What hears Ctrl-C, and how many times it was pressed before.
+    pressed: Option<(&'a Interrupts, u64)>,
+    /// Whether it gave none for another's failure.
     stopped: bool,
 }
 
 impl<R: Source> Stoppable<'_, R> {
-    /// Fails if another job failed.
+    /// Fails if Ctrl-C was pressed, or another job failed.
     fn go_on(&mut self) -> Result<(), SourceError> {
+        let fail = |message: &str| Err(SourceError { position: Position::default(), message: message.to_owned() });
+        if self.pressed.is_some_and(|(interrupts, before)| interrupts.presses() != before) {
+            return fail(CANCELLED);
+        }
         if self.stop.load(Ordering::Relaxed) {
             self.stopped = true;
-            return Err(SourceError { position: Position::default(), message: STOPPED.to_owned() });
+            return fail(STOPPED);
         }
         Ok(())
     }
@@ -98,14 +112,15 @@ struct Shared<'a> {
     dialect: &'a Dialect,
     into: &'a Import,
     stop: &'a AtomicBool,
+    pressed: Option<(&'a Interrupts, u64)>,
 }
 
 /// `position`, of a job's records, as of the file's: after the records
-/// and lines before `range`, its header's lines, `header_lines`, read
+/// and lines `before` its range, its header's lines, `header_lines`, read
 /// again by the job, not counted twice.
-fn placed(position: Position, range: &Range, header_lines: u64) -> Position {
-    let line = position.line.map(|l| l.saturating_sub(header_lines).saturating_add(range.lines));
-    Position { record: position.record.saturating_add(range.records), line }
+fn placed(position: Position, before: Before, header_lines: u64) -> Position {
+    let line = position.line.map(|l| l.saturating_sub(header_lines).saturating_add(before.lines));
+    Position { record: position.record.saturating_add(before.records), line }
 }
 
 /// An import's failure of `msg`, before any row.
@@ -113,7 +128,8 @@ fn unbegun(msg: String) -> ImportError {
     ImportError { position: None, cause: Cause::Input(msg), committed: 0, rolled_back: 0 }
 }
 
-/// Imports `job`'s range: what it did, and its connection back.
+/// Imports `job`'s range: what it did, its records told by their place in
+/// the range, and its connection back.
 fn run(mut job: Job, shared: &Shared<'_>) -> (Done, Connected) {
     let unread = |e: std::io::Error| unbegun(format!("cannot read: {e}"));
     let opened = File::open(shared.path).and_then(|mut f| f.seek(SeekFrom::Start(job.range.start)).map(|_| f)).map_err(unread);
@@ -121,7 +137,8 @@ fn run(mut job: Job, shared: &Shared<'_>) -> (Done, Connected) {
         Ok(file) => {
             let range = file.take(job.range.end.saturating_sub(job.range.start));
             let input = BufReader::with_capacity(READ_BYTES, Cursor::new(shared.split.header.clone()).chain(range));
-            let mut source = Stoppable { source: Delimited::new(input, shared.dialect.clone()), stop: shared.stop, stopped: false };
+            let source = Delimited::new(input, shared.dialect.clone());
+            let mut source = Stoppable { source, stop: shared.stop, pressed: shared.pressed, stopped: false };
             let mut rejected = Vec::new();
             let result = import::import(&mut job.connection, &mut source, shared.into, &mut |row| rejected.push(row));
             (result, rejected, source.stopped)
@@ -131,10 +148,28 @@ fn run(mut job: Job, shared: &Shared<'_>) -> (Done, Connected) {
     if result.is_err() && !stopped {
         shared.stop.store(true, Ordering::Relaxed);
     }
-    let lines = shared.split.header_lines;
-    let rejected = rejected.into_iter().map(|r| Rejected { position: placed(r.position, &job.range, lines), ..r }).collect();
-    let result = result.map_err(|e| ImportError { position: e.position.map(|p| placed(p, &job.range, lines)), ..e });
     (Done { result, rejected, stopped }, job.connection)
+}
+
+/// The records `done` tells, each job's of its range, told by their place
+/// in the file at `path`, read as `written` says, its ranges those of
+/// `split`. The lines and records before a range are counted only if a
+/// job after the first tells one; if the file cannot be read for them,
+/// each is told by its place in its range.
+fn place(done: &mut [Done], path: &Path, split: &Split, written: Written) {
+    let tells = |d: &Done| !d.rejected.is_empty() || d.result.as_ref().is_err_and(|e| e.position.is_some());
+    let Some(last) = done.iter().rposition(tells).filter(|&last| last > 0) else { return };
+    let starts: Vec<u64> = split.ranges.iter().take(last.saturating_add(1)).map(|r| r.start).collect();
+    let counted = File::open(path).and_then(|file| ranges::before(&mut BufReader::with_capacity(READ_BYTES, file), &starts, written));
+    let (Ok(befores), lines) = (counted, split.header_lines) else { return };
+    for (d, before) in done.iter_mut().zip(befores) {
+        for r in &mut d.rejected {
+            r.position = placed(r.position, before, lines);
+        }
+        if let Err(e) = &mut d.result {
+            e.position = e.position.map(|p| placed(p, before, lines));
+        }
+    }
 }
 
 /// Runs `jobs`, each on a thread of its own: what each did, in their
@@ -187,6 +222,30 @@ fn together(done: &[Done]) -> Result<Imported, ImportError> {
     }
 }
 
+/// How many quotes each of `ranges` of the file at `path` holds, each
+/// counted on a thread of its own, side by side.
+///
+/// # Errors
+///
+/// The file cannot be read.
+fn quotes_of(path: &Path, ranges: &[Range]) -> Result<Vec<u64>, String> {
+    let count = |range: Range| File::open(path).and_then(|mut file| ranges::quotes(&mut file, range));
+    std::thread::scope(|scope| {
+        let started: Vec<_> = ranges
+            .iter()
+            .enumerate()
+            .map(|(n, &range)| std::thread::Builder::new().name(format!("{THREAD}-{n}")).spawn_scoped(scope, move || count(range)))
+            .collect();
+        started
+            .into_iter()
+            .map(|handle| match handle.map(std::thread::ScopedJoinHandle::join) {
+                Ok(Ok(counted)) => counted.map_err(|e| format!("cannot read: {e}")),
+                Ok(Err(_)) | Err(_) => Err("[DESIGN] a job of the import could not run".to_owned()),
+            })
+            .collect()
+    })
+}
+
 /// The ranges of the file at `path` for `jobs` jobs, read as `dialect`
 /// says.
 ///
@@ -208,8 +267,16 @@ fn split_file(path: &Path, dialect: &Dialect, jobs: usize) -> Result<Split, Stri
     if !metadata.is_file() {
         return Err(unranged());
     }
-    let written = Written { quoted: dialect.is_quoted(), header: dialect.has_header() };
-    ranges::split(&mut BufReader::with_capacity(READ_BYTES, file), metadata.len(), jobs, written)
+    let split = ranges::split(&mut { file }, metadata.len(), jobs, written(dialect))?;
+    if dialect.is_quoted() && split.ranges.len() > 1 && ranges::straddles(&quotes_of(path, &split.ranges)?) {
+        return Err(ranges::STRADDLES.to_owned());
+    }
+    Ok(split)
+}
+
+/// How a file written as `dialect` says is, as its split needs it.
+fn written(dialect: &Dialect) -> Written {
+    Written { quoted: dialect.is_quoted(), header: dialect.has_header() }
 }
 
 impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
@@ -224,9 +291,14 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             Err(msg) => return self.imported(&shown, Err(unbegun(format!("[DESIGN] {msg}")))),
         };
         let mut connected = Vec::with_capacity(split.ranges.len());
+        let mut cancellers = Vec::with_capacity(split.ranges.len().saturating_add(1));
+        cancellers.extend(self.connection.canceller());
         for range in &split.ranges {
             match self.connection.spare() {
-                Ok(connection) => connected.push(Job { range: *range, connection }),
+                Ok(connection) => {
+                    cancellers.extend(connection.canceller());
+                    connected.push(Job { range: *range, connection });
+                }
                 Err(failure) => {
                     let begun = ImportError { position: None, cause: Cause::Sql(Box::new(failure)), committed: 0, rolled_back: 0 };
                     return self.imported(&shown, Err(begun));
@@ -234,8 +306,16 @@ impl<S: Statements + ?Sized, C: FnMut() -> Duration> Shell<'_, S, C> {
             }
         }
         let stop = AtomicBool::new(false);
-        let shared = Shared { path, split: &split, dialect, into, stop: &stop };
-        let (done, connections): (Vec<Done>, Vec<Option<Connected>>) = run_all(connected, &shared).into_iter().unzip();
+        let pressed = self.interrupts.map(|interrupts| (interrupts, interrupts.presses()));
+        if let Some(interrupts) = self.interrupts {
+            interrupts.cancel_each(cancellers);
+        }
+        let shared = Shared { path, split: &split, dialect, into, stop: &stop, pressed };
+        let (mut done, connections): (Vec<Done>, Vec<Option<Connected>>) = run_all(connected, &shared).into_iter().unzip();
+        if let Some(interrupts) = self.interrupts {
+            interrupts.cancel_by(self.connection.canceller());
+        }
+        place(&mut done, path, &split, written(dialect));
         for connection in connections.into_iter().flatten() {
             // The import is done; a session that does not end cleanly is
             // the server's to end.
@@ -279,8 +359,27 @@ mod tests {
     /// the header it reads again not counted twice.
     #[test]
     fn a_jobs_records_are_placed_in_the_file() {
-        let range = Range { start: 40, end: 80, lines: 6, records: 4 };
-        assert_eq!(placed(Position { record: 2, line: Some(3) }, &range, 1), Position { record: 6, line: Some(8) });
-        assert_eq!(placed(Position { record: 1, line: None }, &range, 0), Position { record: 5, line: None });
+        let before = Before { lines: 6, records: 4 };
+        assert_eq!(placed(Position { record: 2, line: Some(3) }, before, 1), Position { record: 6, line: Some(8) });
+        assert_eq!(placed(Position { record: 1, line: None }, before, 0), Position { record: 5, line: None });
+    }
+
+    /// Verifies: [DESIGN] RULES.md D46, D1148: a job reads no record once
+    /// Ctrl-C was pressed after it began, failing of itself as cancelled;
+    /// nor once another job failed, stopped for that.
+    #[test]
+    fn a_job_stops_at_ctrl_c_or_another_failing() {
+        let (stop, interrupts) = (AtomicBool::new(false), Interrupts::default());
+        interrupts.press();
+        let source = Delimited::new(Cursor::new(b"1\n2\n3\n".to_vec()), Dialect::csv());
+        let mut job = Stoppable { source, stop: &stop, pressed: Some((&interrupts, interrupts.presses())), stopped: false };
+        assert!(job.record().unwrap().is_some(), "a press before it began");
+        interrupts.press();
+        assert_eq!(job.record().unwrap_err().message, CANCELLED);
+        assert!(!job.stopped, "cancelled of itself");
+        job.pressed = None;
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(job.record().unwrap_err().message, STOPPED);
+        assert!(job.stopped);
     }
 }

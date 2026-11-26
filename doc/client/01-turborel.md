@@ -311,8 +311,9 @@ as neither job could read the record whole. The client finds this
 before it imports any row, and refuses the import, saying to use
 `--jobs 1`. Standard input, and any file that is not a regular one,
 cannot be read in ranges, so with `--jobs` above 1 it is refused. Each
-job's connection proves its user as the first did, a password typed
-asked for again.
+job's connection proves its user as the first did, by the password
+typed for the first, not asked for again. Ctrl-C cancels every job, and
+the import is told once, with the rows the jobs committed.
 
 ```
 $ cat later.csv
