@@ -172,7 +172,7 @@ impl PhysicalPlanner<'_> {
 
     /// The distinct values of the chain's column `col`, else its
     /// relation's rows, as if a key.
-    fn chain_distinct(&self, q: &Query, col: usize) -> Option<f64> {
+    pub(super) fn chain_distinct(&self, q: &Query, col: usize) -> Option<f64> {
         let leaf = q.leaves.get(q.rel_of(col)?)?;
         Some(self.distinct_of(&leaf.plan, col.checked_sub(leaf.start)?))
     }

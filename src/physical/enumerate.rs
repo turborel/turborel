@@ -182,7 +182,7 @@ impl PhysicalPlanner<'_> {
     /// the FROM clause's order, its top join telling the order and the
     /// algorithm, if the plan is shown.
     fn restored(&self, cx: &Context<'_>, done: Realized, algorithm: Algorithm) -> Built {
-        let Realized { mut plan, layout, order, shape } = done;
+        let Realized { mut plan, layout, order, shape, .. } = done;
         if self.shown {
             annotate(&mut plan, &format!("  (join order by {}: {shape})", algorithm.name()));
         }

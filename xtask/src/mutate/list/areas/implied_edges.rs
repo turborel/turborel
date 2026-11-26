@@ -2,7 +2,11 @@
 //! R-TEST-9, D1204): a star taken from a column that is no key, the
 //! implied edges joining nothing, a star past the budget kept, the stars
 //! offered from the relation of most rows, and the unique index of a
-//! deferrable constraint taken for a key (D1205).
+//! deferrable constraint taken for a key (D1205); and of the keys an inner
+//! hash join hashes (D1206): every key of a column hashed, the key of
+//! fewest distinct values kept, a moved key judged nowhere by either
+//! path, and an equality taken for implied though no join below judged
+//! it.
 
 use super::super::{Mutation, Package};
 
@@ -17,8 +21,17 @@ const JOINED: &str = "physical::enumerate::tests::a_key_of_a_class_joins_its_oth
 /// The unit test of the budget.
 const BUDGETED: &str = "physical::enumerate::tests::stars_are_taken_only_within_the_budget";
 
+/// The keys hashed, one a column.
+const SINGLE_FILE: &str = "src/physical/join/single.rs";
+/// The chain's joins made plans.
+const REALIZE_FILE: &str = "src/physical/enumerate/realize.rs";
+/// The integration test of the key hashed and the one judged after.
+const ONE_KEY: &str = "single_keys::an_inner_hash_join_hashes_one_key_of_a_column";
+/// The integration test of an equality nothing below implies.
+const STAYS: &str = "single_keys::an_equality_no_join_below_judged_stays_in_the_filter";
+
 /// Mechanisms of the implied edges whose removal must fail their tests.
-pub const IMPLIED_EDGES: [Mutation; 5] = [
+pub const IMPLIED_EDGES: [Mutation; 10] = [
     Mutation {
         name: "implied-edges-of-any-column",
         package: Package::Core,
@@ -67,6 +80,56 @@ pub const IMPLIED_EDGES: [Mutation; 5] = [
         original: "indexed.filter(|key| !late.contains(key)).collect()",
         replacement: "indexed.collect()",
         integration: &["implied_edges::no_edge_is_implied_without_an_immediate_key"],
+        unit: &[],
+    },
+    Mutation {
+        name: "single-keys-every-key-hashed",
+        package: Package::Core,
+        breaks: "an inner hash join hashes every equality, two of one column too",
+        file: SINGLE_FILE,
+        original: "t.left != key.left && t.right != key.right",
+        replacement: "t.left != key.left || t.right != key.right",
+        integration: &[ONE_KEY],
+        unit: &["physical::join::single::tests::a_column_repeated_keeps_one_key"],
+    },
+    Mutation {
+        name: "single-keys-least-distinct-kept",
+        package: Package::Core,
+        breaks: "of the equalities of one column the one of fewest distinct values is hashed, which leaves the most pairs to judge",
+        file: SINGLE_FILE,
+        original: "b.1.total_cmp(&a.1)",
+        replacement: "a.1.total_cmp(&b.1)",
+        integration: &[ONE_KEY],
+        unit: &["physical::join::single::tests::the_key_of_most_distinct_values_is_kept"],
+    },
+    Mutation {
+        name: "single-keys-moved-key-unjudged",
+        package: Package::Core,
+        breaks: "an equality the enumerated join does not hash is judged nowhere, so pairs it refuses are joined",
+        file: REALIZE_FILE,
+        original: ".filter(|&m| !cx.implied((&l, &r), &keys, m))",
+        replacement: ".filter(|&m| cx.implied((&l, &r), &keys, m))",
+        integration: &[STAYS],
+        unit: &[],
+    },
+    Mutation {
+        name: "single-keys-greedy-key-unjudged",
+        package: Package::Core,
+        breaks: "an equality the join planned without the enumeration does not hash is judged nowhere",
+        file: "src/physical/join.rs",
+        original: "rest.extend(moved.into_iter().map(|k| judged(k, width)));",
+        replacement: "rest.extend(moved.into_iter().filter(|k| k.nulls).map(|k| judged(k, width)));",
+        integration: &[ONE_KEY],
+        unit: &[],
+    },
+    Mutation {
+        name: "single-keys-implied-unjudged-below",
+        package: Package::Core,
+        breaks: "an equality is taken for implied though no join of the operand judged its columns equal, and is judged nowhere",
+        file: REALIZE_FILE,
+        original: "(Some(x), Some(y)) => chained(&side.equated, x, y),",
+        replacement: "(Some(x), Some(y)) => x != y,",
+        integration: &[STAYS],
         unit: &[],
     },
 ];

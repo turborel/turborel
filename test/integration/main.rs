@@ -391,6 +391,7 @@ mod settings;
 mod shared_groupings;
 mod short_name_views;
 mod simple_features;
+mod single_keys;
 mod sketches;
 mod sparse_updates;
 mod spatial_catalog;
