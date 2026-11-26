@@ -135,7 +135,8 @@ impl Spilled {
             let work = self.work.lock().unwrap_or_else(PoisonError::into_inner);
             (work.types().clone(), work.lobs().clone())
         };
-        Ok(given_of(run.into_records()?, (types, lobs), Arc::clone(self)))
+        let held: Arc<Spilled> = Arc::clone(self);
+        Ok(given_of(run.into_records()?, (types, lobs), held))
     }
 
     /// Writes `made`, the groups of partition `p` frozen whole, to a run

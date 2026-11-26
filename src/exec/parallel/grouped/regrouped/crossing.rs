@@ -81,7 +81,7 @@ impl Crossing {
         if groups.is_empty() {
             return Ok(());
         }
-        let (db, tx) = runner.run();
+        let (db, tx) = runner.running();
         let mut kept = self.kept.lock().unwrap_or_else(PoisonError::into_inner);
         if kept.spilled.is_none() {
             let bytes = groups.iter().map(written_bytes).fold(0, usize::saturating_add);

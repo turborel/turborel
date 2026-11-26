@@ -371,7 +371,7 @@ pub struct Runner {
 
 impl Runner {
     /// The database it runs in, and the transaction it runs for.
-    pub(in crate::exec) fn run(&self) -> (&Db, TxId) {
+    pub(in crate::exec) fn running(&self) -> (&Db, TxId) {
         (&self.db, self.tx)
     }
 
