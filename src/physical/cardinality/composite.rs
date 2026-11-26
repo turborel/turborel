@@ -25,7 +25,9 @@
 //!
 //! A guess of one side is at most the other side's key, as the values a
 //! join matches to a key are taken to be among the key's, the assumption
-//! of containment the formula of distinct values already makes. A
+//! of containment the formula of distinct values already makes. So too
+//! a guessed column of a class is at most the values of a key NOT NULL the
+//! class equates, declared alone (D1157). A
 //! referential constraint makes it exact: the referencing columns' values
 //! are among the referenced key's, so their join keeps one pair in as many
 //! as the referenced table has rows. The correction never lowers an
@@ -113,6 +115,8 @@ impl Estimates<'_> {
     /// The classes `members` of the relations `leaves`, each pair of
     /// relations they join with its correction.
     pub(in crate::physical) fn keyed_classes(&self, leaves: &[&LogicalPlan], members: &[Vec<Member>]) -> Classes {
+        let members: Vec<Vec<Member>> = members.iter().map(|class| self.bounded(leaves, class)).collect();
+        let members = members.as_slice();
         let mut pairs = Vec::new();
         for (r, s) in linked(members) {
             let (Some(&r_plan), Some(&s_plan)) = (leaves.get(r), leaves.get(s)) else { continue };
@@ -132,6 +136,37 @@ impl Estimates<'_> {
         }
         let classes = members.iter().map(|class| class.iter().map(|m| (m.rel, m.distinct)).collect()).collect();
         Classes::new(classes).with_pairs(pairs)
+    }
+
+    /// \[DESIGN\] (RULES.md D1157) The members of a class, each whose
+    /// distinct values are guessed of its relation's rows (`guessed`) no
+    /// more than the values of the least declared key the class equates
+    /// (`domain`). The columns a class equates are taken to hold values
+    /// of one domain, the containment the module assumes of a guess and a
+    /// key, so a row of one matches the key on one of its values. A
+    /// key's values are its table's rows, of the catalog and the engine's
+    /// count, so the bound is the same whichever tables statistics have
+    /// counted. A class of no such key is left as it was.
+    fn bounded(&self, leaves: &[&LogicalPlan], class: &[Member]) -> Vec<Member> {
+        let least = class.iter().filter_map(|m| self.domain(*leaves.get(m.rel)?, m.column)).fold(f64::INFINITY, f64::min);
+        let bound = |m: &Member| if self.guessed(leaves, m) { Member { distinct: m.distinct.min(least), ..*m } } else { *m };
+        class.iter().map(bound).collect()
+    }
+
+    /// The values of `plan`'s column `column` if it is NOT NULL and alone
+    /// a declared key of its table (`TableKeys::domain`): the table's
+    /// rows, whatever filters `plan` holds.
+    fn domain(&self, plan: &LogicalPlan, column: usize) -> Option<f64> {
+        let found = origin(plan, column)?;
+        self.table_keys(found.table).domain(found.column).then(|| self.table_rows(found.table)).flatten()
+    }
+
+    /// Whether `member`'s distinct values are guessed: neither statistics
+    /// count them nor a key of its relation proves them.
+    fn guessed(&self, leaves: &[&LogicalPlan], member: &Member) -> bool {
+        let Some(&plan) = leaves.get(member.rel) else { return false };
+        let counted = origin(plan, member.column).and_then(|o| self.statistics(o.table)?.distinct(o.column));
+        counted.is_none() && self.key_of(plan, &[member.column]).is_none()
     }
 
     /// The correction of the join of `r` and `s`: their classes' larger

@@ -730,6 +730,7 @@ verification approach DO-178C expects (§8).
 | D1153 | A stream's morsels ahead of its reader hold no more rows than they scan |
 | D1154 | A hash join of streams probed by batch stops at each batch of pairs it makes |
 | D1155 | Whether a part run in parallel will pass its grant is told by the morsels its reader has taken |
+| D1157 | A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone |
 | D1160 | A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them |
 | D1161 | Rows whose grouping columns are all codes of dictionaries are grouped by their codes |
 | D1162 | A late column of rows kept in order is decoded of their places, none searched for |
@@ -19854,6 +19855,35 @@ counted as seventeen. A part that fit its grant then gave way or not by
 how fast each thread was, and the plan ran again alone. Each caller now
 gives the bytes of the morsels taken (`Limit::on_course`), and what the
 part held before its morsels is read before a thread starts on one.
+
+#### D1157. A column no statistics count is of no more values than a key NOT NULL its class equates, declared alone
+
+A column whose table has no statistics is taken as a key, of its rows'
+distinct values (D302). A class of equalities keeps one row in as many
+as each of its columns but the least distinct has values, so a column
+of 1.5 million rows equated with a key of 25 was counted as 1.5 million
+values. Customers and suppliers of one nation, joined through the
+nations, were estimated at the suppliers' rows where each customer
+meets 4,000 of them, and a plan made before the first statistics joined
+them first, 6 billion rows. D1152 bounded such a column by the least
+counted or keyed column of its class. A count of statistics then moved
+the bound, a sketch a little under a key's rows lowered the other
+column to it, and a join order followed which tables the background job
+had reached. It was taken back.
+
+Each column of a class whose distinct values neither statistics count
+nor a key of its relation proves is now counted of no more values than
+the least key the class equates that is declared alone on a column NOT
+NULL, by a PRIMARY KEY, a UNIQUE constraint or a unique index
+(`physical/cardinality/composite.rs`), for the estimates and the
+enumeration alike. Such a key's values are its table's rows, whatever
+filters read it, known of the catalog and the engine's count before any
+statistics. So the bound is the same whichever tables statistics have
+counted. The bound rests on containment, the assumption the module
+already makes of a guess joined with a key. The columns a class equates
+are taken to hold values of one domain, the key's. A referential constraint makes
+it exact. A UNIQUE of a column that may be null bounds nothing, nor does
+a statistics count, and a class of no such key is left as it was.
 
 #### D1160. A prepared cursor's values are cast to their types as it opens, whether its plan is kept or made with them
 
