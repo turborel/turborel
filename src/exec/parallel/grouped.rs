@@ -88,9 +88,18 @@ type Merging = (u64, Row, Vec<Box<dyn Accumulator>>);
 /// One partition's pieces, by morsel in order.
 type Chunks = Vec<Vec<Piece>>;
 
-/// Each partition's groups with their numbers, in the order of their
-/// first rows (`runs.rs`); or that the grouping gave way.
+/// Each partition's groups, finished with their numbers, in the order of
+/// their first rows; or that the grouping gave way.
 type Runs = Held<Vec<Run>>;
+
+/// A partition's groups, finished with their numbers, in the order of
+/// their first rows, read back one at a time from a run of the spill
+/// (RULES.md D1226).
+type Given = Box<dyn Iterator<Item = Result<(u64, Row)>> + Send>;
+
+/// Each partition's groups held in memory, and those read back from the
+/// spill; or that the grouping gave way.
+type Waved = Held<(Vec<Run>, Vec<Given>)>;
 
 /// What a grouping groups: by `Spec`, or, of DISTINCT, by every column;
 /// and, of a pipeline read by batch, what it reads of each batch
@@ -297,26 +306,27 @@ pub(super) fn grouped_asked(
     }
     grouping.top = top.cloned().filter(|_| top::fits(&grouping));
     let grouping = Arc::new(grouping);
-    let mut runs = if grouping.read.is_some() {
-        let Held::Kept(runs) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
-        runs
+    let (mut runs, mut given) = if grouping.read.is_some() {
+        let Held::Kept(waved) = waves::waved(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
+        waved
     } else {
         let Held::Kept(runs) = merged_all(pipeline, &grouping, (db, tx, degree), &limit)? else { return Ok(Held::GaveWay) };
-        runs
+        (runs, Vec::new())
     };
     // Of a second grouping crossing the first's partitions, its groups
     // merged here of theirs, then those its HAVING keeps (RULES.md D1133).
     if let Some(crossing) = grouping.outer.as_ref().filter(|o| o.crosses()) {
         let Some(merged) = crossing.merged()? else { return Ok(Held::GaveWay) };
         runs = vec![Run::Rows(grouping.kept(merged, &Runner::new(db, tx))?)];
+        given = Vec::new();
     }
-    if runs.iter().all(Run::is_empty) && grouping.spec.groups.is_empty() && !grouping.distinct {
+    if runs.iter().all(Run::is_empty) && given.is_empty() && grouping.spec.groups.is_empty() && !grouping.distinct {
         // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
         runs = vec![Run::Rows(grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?)];
     }
     let rows = match top {
-        Some(top) => top.given(grouping.top.is_some(), runs),
-        None => Box::new(Ordered::of(runs)),
+        Some(top) => top.given(grouping.top.is_some(), (runs, given))?,
+        None => Box::new(Ordered::of(runs, given)?),
     };
     Ok(Held::Kept(limit.keeping(rows)))
 }

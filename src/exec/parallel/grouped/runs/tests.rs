@@ -39,8 +39,10 @@ fn rows() -> Run {
 fn runs_of_rows_and_of_batches_are_given_in_one_order() {
     let empty = Run::Columns(Batch { columns: vec![Column::Ints(Ints::new(Vec::new(), 0, None))], rows: 0 }, Vec::new());
     assert!(empty.is_empty() && Run::Rows(Vec::new()).is_empty() && !columns().is_empty() && !rows().is_empty());
-    let given: Vec<String> =
-        Ordered::of(vec![rows(), empty, columns(), Run::Rows(Vec::new())]).map(|row| format!("{:?}", row.unwrap())).collect();
+    let given: Vec<String> = Ordered::of(vec![rows(), empty, columns(), Run::Rows(Vec::new())], Vec::new())
+        .unwrap()
+        .map(|row| format!("{:?}", row.unwrap()))
+        .collect();
     let text = |s: &str| Value::Char(s.into());
     let expected = [
         vec![exact(10), text("a")],
