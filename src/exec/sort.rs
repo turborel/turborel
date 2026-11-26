@@ -73,12 +73,13 @@ const LATE_SHARE: usize = 4;
 /// Of a sort by `keys` of the first `most` rows of an input of `est` rows
 /// estimated, if known: whether the columns its keys do not read are read
 /// late (RULES.md D380), and the bound of its first key told its scans, of
-/// a key whose nulls sort last (D379).
+/// a key whose nulls sort last (D379) and that does not order strings by
+/// their octets, which no bound holds (D1185).
 pub(super) fn topped_of(keys: &[SortKey], most: Most, est: Option<f64>) -> (bool, Option<Arc<Threshold>>) {
     let rows = est.map(|e| crate::spatial::curves::linearize::count(e, usize::MAX >> 1_u32));
     let late = rows.is_none_or(|rows| most.rows.saturating_mul(LATE_SHARE) < rows);
-    let first = keys.first().map(SortKey::order).filter(|o| !o.nulls_first);
-    (late, first.map(|o| Arc::new(Threshold::new(o.descending))))
+    let first = keys.first().filter(|k| !k.nulls_first && !k.octets);
+    (late, first.map(|k| Arc::new(Threshold::new(k.descending))))
 }
 
 /// The first `most` rows of `input`, a stream's batches each holding every
@@ -269,7 +270,7 @@ fn merged(keys: &[SortKey], mut runs: Vec<Box<dyn SpillRun>>, work: &mut Work) -
 /// one would compare equal.
 pub fn compare_rows(keys: &[SortKey], a: &Row, b: &Row) -> Ordering {
     keys.iter()
-        .map(|k| a.get(k.column).zip(b.get(k.column)).map_or(Ordering::Equal, |(x, y)| k.order().cmp(x, y)))
+        .map(|k| a.get(k.column).zip(b.get(k.column)).map_or(Ordering::Equal, |(x, y)| k.cmp(x, y)))
         .find(|o| o.is_ne())
         .unwrap_or(Ordering::Equal)
 }

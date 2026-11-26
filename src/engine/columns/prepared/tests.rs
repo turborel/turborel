@@ -127,8 +127,8 @@ fn chunks_are_opened_once_for_their_runs() {
     let (pool, file) = file();
     let (pages, group) = group(&pool, file, &Plain);
     let whole = rows(&group, &pages, &TYPES, &[0, 1, 2, 3, 4, 5], (0, ROWS)).unwrap();
-    let chunks: usize = group.columns.iter().map(Vec::len).sum();
-    assert!(group.columns.iter().filter(|zones| zones.len() > 1).count() >= 4, "most columns span chunks");
+    let chunks: usize = group.columns.iter().flatten().map(Vec::len).sum();
+    assert!(group.columns.iter().flatten().filter(|zones| zones.len() > 1).count() >= 4, "most columns span chunks");
     let mut prepared = Prepared::default();
     let runs: Vec<(u32, u32)> = (0..ROWS).step_by(100).map(|f| (f, (f + 100).min(ROWS))).collect();
     for &run in &runs {

@@ -182,8 +182,14 @@ pub(super) fn prefix_of_cell(cell: Cell<'_>, order: SortOrder) -> Option<Prefix>
 }
 
 /// Each row's prefix of `key` and its place, if its values are of one kind
-/// that has prefixes; and whether every prefix holds its value whole.
+/// that has prefixes, and the key does not order strings by their octets;
+/// and whether every prefix holds its value whole.
 fn prefixes(key: &SortKey, rows: &[Row]) -> Option<(Vec<(u64, usize)>, bool)> {
+    // A string's prefix is of the padded order, so a key by octets has
+    // none, and its rows are compared whole (RULES.md D1185).
+    if key.octets {
+        return None;
+    }
     let (mut kind, mut whole) = (Kind::Null, true);
     let mut out = Vec::with_capacity(rows.len());
     for (at, row) in rows.iter().enumerate() {
