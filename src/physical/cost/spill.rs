@@ -43,10 +43,11 @@ pub(in crate::physical) const ENTRY_BYTES: f64 = 16.0;
 /// known: an integer's.
 pub(in crate::physical) const COLUMN_BYTES: f64 = 8.0;
 
-/// The bytes an operator would be granted if it started as the statement
-/// of `db` is planned, as its grant takes them (`spill/grant.rs`, RULES.md
-/// D683): half of the grants' share left, at most MEMORY.WORK_BYTES, at
-/// least the floor, or the ceiling itself below the floor.
+/// The bytes an operator of a statement running alone would be granted,
+/// as its grant takes them (`spill/grant.rs`, RULES.md D683, D1159): half
+/// of the grants' share, of the standing reservations at their bounds and
+/// no grant held, at most MEMORY.WORK_BYTES, at least the floor, or the
+/// ceiling itself below the floor.
 pub(crate) fn grant_bytes(db: &State) -> f64 {
     cost_of(db.work.would_grant(crate::settings::work_bytes(db.settings.get(MEMORY_WORK_BYTES))))
 }

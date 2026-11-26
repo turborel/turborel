@@ -61,14 +61,18 @@ impl WorkAreas {
         Arc::new(grant_of((&self.memory, &self.granted), ceiling))
     }
 
-    /// The bytes a grant of up to `ceiling` would be now, reserving
-    /// nothing: for the planner, which costs what an operator spills past
-    /// its grant (RULES.md D651, D683).
+    /// The bytes a grant of up to `ceiling` would be to a statement
+    /// running alone, reserving nothing: for the planner, which costs what
+    /// an operator spills past its grant (RULES.md D651, D683). No grant is
+    /// taken as held and the standing reservations are taken as planned,
+    /// so the plan depends on the settings alone, not on what runs beside
+    /// it or what the writes keep now (D1159).
     pub(crate) fn would_grant(&self, ceiling: usize) -> usize {
         if self.covered || ceiling <= WORK_FLOOR {
             return ceiling;
         }
-        wanted_of(&self.memory, self.granted.load(Ordering::Acquire), ceiling).max(WORK_FLOOR)
+        let share = self.memory.limit().saturating_sub(self.memory.planned()) >> 1_u32;
+        ceiling.min(share >> 1_u32).max(WORK_FLOOR)
     }
 
     /// Its areas, for the operators of a part of a statement whose grant

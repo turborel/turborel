@@ -245,6 +245,6 @@ impl BufferPool {
         let owed = old.is_some_and(|_| self.owed_taken(frame));
         drop(latch);
         let dirty = frame.dirty.swap(false, Ordering::AcqRel);
-        Ok(Claim { frame: index, write_back: old.filter(|_| dirty || owed), owed })
+        Ok(Claim { frame: index, write_back: old.filter(|_| dirty || owed), owed, evicted: old.is_some() })
     }
 }

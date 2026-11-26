@@ -41,6 +41,7 @@ mod alloc;
 mod estimates;
 mod group_table;
 mod hot_rows;
+mod implied_edges;
 mod insert_values;
 mod join_build;
 mod join_estimates;
@@ -233,8 +234,8 @@ fn second() -> [&'static [Mutation]; 48] {
 /// cost model, orders, probed subqueries, predicate transfer, dead entries
 /// taken back by a scan and scans priced by sampled zones, key plans, a
 /// B-link tree probe's path, a commit's stamps in place, the fixed costs cut from a write, a row's fetch by its id,
-/// EXPLAIN of a data change, the work shared and one statement's statistics.
-fn planner() -> [&'static [Mutation]; 15] {
+/// EXPLAIN of a data change, the work shared, one statement's statistics and the implied edges.
+fn planner() -> [&'static [Mutation]; 16] {
     [
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
@@ -251,6 +252,7 @@ fn planner() -> [&'static [Mutation]; 15] {
         &explain_unrun::EXPLAIN_UNRUN,
         &shared_work::SHARED_WORK,
         &planning_statistics::PLANNING_STATISTICS,
+        &implied_edges::IMPLIED_EDGES,
     ]
 }
 
