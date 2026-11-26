@@ -195,7 +195,7 @@ fn evaluated<'a>(node: &Node, cx: &Cx<'a>) -> Option<Vector<'a>> {
         Node::Compare(op, a, b) => compare::compared(*op, &evaluated(a, cx)?, &evaluated(b, cx)?, n),
         Node::And(..) | Node::Or(..) | Node::Not(_) | Node::Is(..) | Node::IsNull(..) | Node::Truth(_) => logical(node, cx),
         Node::Distinct(a, b) => compare::distinct(&evaluated(a, cx)?, &evaluated(b, cx)?, n),
-        Node::Like(x, pattern) => compare::liked(&evaluated(x, cx)?, pattern.as_ref(), n),
+        Node::Like(x, pattern) => compare::liked(&evaluated(x, cx)?, pattern.as_ref(), n, cx.statement.vector_kernels()),
         Node::LikeOf(x, pattern, escape) => {
             let escape = escape.as_ref().map(|e| evaluated(e, cx)).map_or(Some(None), |e| e.map(Some))?;
             compare::liked_of((&evaluated(x, cx)?, &evaluated(pattern, cx)?, escape.as_ref()), (n, cx.statement))
