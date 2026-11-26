@@ -201,6 +201,10 @@ fn keys_grouped_unpadded_tell_trailing_spaces_apart() {
             assert!(table.find(hash_values(&seed, &values), Key::Values(&values)).is_some(), "{what}: found by its values");
         }
         assert_eq!((table.len(), padded.len()), (4, 3), "{what}: 'a' and 'a ' apart unpadded, one padded");
+        // Looked for where 'a' hashes, 'a ' is not the group found there.
+        let (bare, spaced_key) = ([text("a"), text("x")], [text("a "), text("x")]);
+        assert_eq!(table.find(hash_values(&seed, &bare), Key::Values(&spaced_key)), None, "{what}: compared by octets");
+        assert!(padded.find(hash_values(&plain, &bare), Key::Values(&spaced_key)).is_some(), "{what}: padded, the same group");
         let thawed = GroupTable::thawed(table.made(1, &[]).unwrap(), &[], &seed).unwrap();
         assert_eq!(thawed.len(), 4);
         let mut thawed = thawed;

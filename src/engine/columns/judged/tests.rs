@@ -228,8 +228,9 @@ fn a_conjunct_unpadded_is_judged_by_octets() {
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
 /// chunk coded by symbols compares each text with a constant's octets in
 /// place, unpadded, as the decoded text's octets order against it: of
-/// constants found, the same with spaces or a tab after, a prefix, the
-/// empty string and one past every text; codes ending in an escape
+/// constants found, the same with spaces or a tab after, one a text
+/// begins that goes on with a space alone, which is above the text, a
+/// prefix, the empty string and one past every text; codes ending in an escape
 /// compare as none.
 #[test]
 fn texts_coded_by_symbols_compare_unpadded() {
@@ -243,6 +244,7 @@ fn texts_coded_by_symbols_compare_unpadded() {
     let constants = [
         "customer10@mail3.example.com",
         "customer7@mail0.example.com  ",
+        "customer9@mail2.example.com ",
         "customer7@mail0.example.com\t",
         "customer",
         "",

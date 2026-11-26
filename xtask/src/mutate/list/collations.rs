@@ -191,7 +191,7 @@ pub const COLLATIONS: [Mutation; 27] = [
         file: "src/engine/columns/judged.rs",
         original: "        Against::Unpadded(octets) => text.as_bytes().cmp(octets),",
         replacement: "        Against::Unpadded(octets) => compare_strings(text, std::str::from_utf8(octets).unwrap_or_default()),",
-        integration: &["unpadded_collations::a_filter_compares_octets_unpadded_8_2"],
+        integration: &[],
         unit: &["engine::columns::judged::tests::a_conjunct_unpadded_is_judged_by_octets"],
     },
     Mutation {
@@ -221,7 +221,7 @@ pub const COLLATIONS: [Mutation; 27] = [
         file: "src/exec/table/keys.rs",
         original: "            return mine == theirs;",
         replacement: "            return trimmed(mine) == trimmed(theirs);",
-        integration: &["unpadded_collations::grouping_and_extremes_are_unpadded_8_2"],
+        integration: &[],
         unit: &["exec::table::tests::keys_grouped_unpadded_tell_trailing_spaces_apart"],
     },
     Mutation {

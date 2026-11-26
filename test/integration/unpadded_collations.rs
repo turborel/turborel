@@ -176,6 +176,11 @@ fn order_by_is_by_octets_10_10() {
             assert_eq!(rows(&a, &first).unwrap(), ["[a]"], "{table} {batches}");
             let last = format!("SELECT '[' || S || ']' FROM {table} WHERE S LIKE 'a_' ORDER BY S, K FETCH FIRST 1 ROW ONLY");
             assert_eq!(rows(&a, &last).unwrap(), ["[a\t]"], "{table} {batches}");
+            // Read whole, so the key is made of the column's vector: the
+            // greatest of a tab and a space after 'a' is the space.
+            let greatest =
+                format!("SELECT '[' || S || ']' FROM {table} WHERE S LIKE 'a_' AND S <> 'ab' ORDER BY S DESC, K FETCH FIRST 1 ROW ONLY");
+            assert_eq!(rows(&a, &greatest).unwrap(), ["[a ]"], "{table} {batches}");
         }
     }
 }
