@@ -150,6 +150,17 @@ impl Deferred {
         Deferred { reduced: true, unread: without(&unread, &read), bound: None, told: Vec::new() }
     }
 
+    /// \[DESIGN\] (RULES.md D1096) Of an inner hash join's rows, its left
+    /// operand `width` columns wide: the columns of its right operand's rows
+    /// it gives late, those none above reads, if an operator above drops
+    /// rows or gathers them again (`storage::Late::built`).
+    pub(in crate::exec) fn right_of(&self, width: usize) -> Vec<usize> {
+        if !self.reduced {
+            return Vec::new();
+        }
+        self.unread.iter().filter_map(|c| c.checked_sub(width)).collect()
+    }
+
     /// The runtime filters told it.
     pub(in crate::exec) fn filters(&self) -> &[Told] {
         &self.told

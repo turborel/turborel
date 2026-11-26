@@ -16,7 +16,7 @@ use std::sync::Arc;
 use super::super::stream::Kept;
 use crate::error::{Result, SqlError};
 use crate::kernels::Kernels;
-use crate::storage::{BATCH_ROWS, Batch, Column, NO_ROW, Picks, Row};
+use crate::storage::{BATCH_ROWS, Batch, Column, Late, NO_ROW, Picks, Row};
 use crate::value::Value;
 
 /// The joined rows of a join of streams, as they are made, and the batches
@@ -35,6 +35,9 @@ pub(super) struct Out {
     /// The right operand held as vectors, if it is, and of each joined row
     /// not yet in a batch, its right row's place there, or `NO_ROW`.
     held: Option<(Arc<Batch>, Vec<u32>)>,
+    /// Of each vector of the right operand held, whether it is given late
+    /// (RULES.md D1096).
+    late: Vec<bool>,
     ready: VecDeque<Batch>,
     failed: Option<SqlError>,
     /// The kernels its integers are gathered on.
@@ -52,7 +55,7 @@ impl Out {
     pub(super) fn new(left_width: usize, right_columns: Vec<usize>, kernels: Arc<dyn Kernels>) -> Out {
         let right = right_columns.iter().map(|_| Vec::with_capacity(BATCH_ROWS)).collect();
         let left = Vec::with_capacity(BATCH_ROWS);
-        Out { left, right, left_width, right_columns, held: None, ready: VecDeque::new(), failed: None, kernels }
+        Out { left, right, left_width, right_columns, held: None, late: Vec::new(), ready: VecDeque::new(), failed: None, kernels }
     }
 
     /// No joined rows yet, of batches of `left_width` left vectors, then
@@ -62,6 +65,14 @@ impl Out {
         let mut out = Out::new(left_width, Vec::new(), kernels);
         out.held = Some((right, Vec::with_capacity(BATCH_ROWS)));
         out
+    }
+
+    /// It, the right operand's vectors at which `late` is true given late
+    /// (RULES.md D1096).
+    #[must_use]
+    pub(super) fn late(mut self, late: Vec<bool>) -> Out {
+        self.late = late;
+        self
     }
 
     /// Adds a joined row: row `l` of `batch`, or nulls; then row `r` of the
@@ -98,9 +109,7 @@ impl Out {
             .collect();
         columns.extend(self.right.iter_mut().map(|v| Column::Values(std::mem::replace(v, Vec::with_capacity(BATCH_ROWS)))));
         if let Some((right, picks)) = &mut self.held {
-            let picks_of = Picks::new(picks);
-            columns.extend(right.columns.iter().map(|c| c.gathered_by(&picks_of, kernels)));
-            drop(picks_of);
+            columns.extend(gathered_right(right, (None, &self.late), picks, kernels));
             picks.clear();
         }
         drop(left);
@@ -138,6 +147,29 @@ impl Out {
 /// all its `count` rows.
 pub(super) fn kept_rows(rows: Option<crate::storage::Sel>, count: usize) -> Vec<usize> {
     crate::storage::sel::places_of(rows, count)
+}
+
+/// \[DESIGN\] (RULES.md D1096) The vectors of `right`, a built operand,
+/// at `at`, or all, of its rows `rows`, `NO_ROW` for a null: each whose
+/// place `late` marks given late, as those rows, one list shared by them
+/// all; each other gathered.
+pub(super) fn gathered_right(
+    right: &Arc<Batch>,
+    (at, late): (Option<&[usize]>, &[bool]),
+    rows: &[u32],
+    kernels: &dyn Kernels,
+) -> Vec<Column> {
+    let picks = Picks::new(rows);
+    let shared: Option<Arc<[u32]>> = late.contains(&true).then(|| rows.into());
+    let all: Vec<usize>;
+    let at = if let Some(at) = at {
+        at
+    } else {
+        all = (0..right.columns.len()).collect();
+        &all
+    };
+    let of = |a: usize| shared.as_ref().filter(|_| late.get(a).copied().unwrap_or(false)).and_then(|r| Late::built(right, a, r));
+    at.iter().filter_map(|&a| right.columns.get(a).map(|c| of(a).map_or_else(|| c.gathered_by(&picks, kernels), Column::Late))).collect()
 }
 
 // Unit tests: a probe's batches made as they are read (RULES.md R-TEST-1).

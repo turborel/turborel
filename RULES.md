@@ -703,6 +703,7 @@ verification approach DO-178C expects (§8).
 | D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
 | D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
 | D1095 | A probe of a table built for a pipeline locates its batch's rows before it pairs any, their first entries prefetched |
+| D1096 | An inner join gives the built rows' columns none above reads late, gathered once of the rows kept |
 | D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
@@ -19222,6 +19223,44 @@ found by its key and makes no first pass.
 
 A prefetch names only a value of its slice, a place past the end passed
 by, so a kernel cannot be asked of an address that is not the program's.
+
+#### D1096. An inner join gives the built rows' columns none above reads late, gathered once of the rows kept
+
+An inner hash join gathered every column of its built operand into each
+batch it gave, at the built rows its pairs named. A join above gathered
+those values again at its own pairs, and a filter or join above then
+dropped most of them. Each gather of a built text reads a row of the
+operand at random, and a profile of TPC-H's ninth query put about half
+of its last-level cache misses on the gathers of its joins.
+
+A join now gives late each column of its right operand's rows that no
+operator above reads before the stream is read whole, if an operator
+above drops rows or gathers them again (`Deferred::right_of`). Such a
+column is the built rows of its rows, `NO_ROW` for a null, one list
+shared by every late column of a batch (`storage::Late::built`). A join
+above gathers it as four bytes a row (`Late::gathered`). It is resolved
+where the scan's late columns are (D361), by one gather from the built
+vector of the rows kept alone, the others null (`Late::resolved`), so a
+column of integers keeps its kernel gather (D570). The serial probe of a
+held operand (`batch/joined/pairs.rs`) and a pipeline's probe of a shared
+table (`batch/joined/shared/probing.rs`, `parallel/batched.rs`) give
+columns so. A LEFT join, a semi or mark join, and an operand partitioned
+past the work area gather as before. A vector that is late itself is
+never wrapped.
+
+A built late column holds only its own batch's rows. A reader that did not
+resolve it gathers those rows (`Late::made`), never the operand whole,
+and no batch's gathering widens another's.
+
+It holds the built operand while it lives. The join's grant is charged
+for the operand, and the column must not outlive the join. Every reader
+of a join's stream that is given late columns resolves each batch as it
+is given (`resolved`), while the iterator it reads holds the join, and so
+does a pipeline's morsel at its end (`morsel_kept`). A top-N, which keeps
+the batches it takes, gathers their built late columns as it takes them
+(`Batch::resolve_built`) and leaves the scan's late. A grouping, a sort,
+a build above, a spill and the rows sent to the client are fed by those
+readers, so none of them keeps a built late column.
 
 #### D1097. A fetch of a frozen row is priced by the number of columns it reads
 

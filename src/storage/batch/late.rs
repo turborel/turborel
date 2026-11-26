@@ -19,6 +19,8 @@ use super::mask::index;
 use super::{Batch, Column, Value};
 use crate::error::Result;
 
+mod built;
+
 /// \[DESIGN\] (RULES.md D361) Where a late column's values are decoded
 /// from. It is a storage foundation trait (RULES.md D30), so a `dyn`
 /// boundary (R-SAFE-3). Its implementation keeps what it reads readable while it
@@ -33,20 +35,35 @@ pub trait LateSource: Send + Sync {
     fn decode(&self, column: usize, positions: &[u32]) -> Result<Column>;
 }
 
-/// \[DESIGN\] (RULES.md D361) A column not yet decoded: of each row, its
-/// place in its source.
+/// \[DESIGN\] (RULES.md D361, D1096) A column not yet decoded: of each
+/// row, its place in a column store's group, or its row of a join's built
+/// operand.
 #[derive(Clone)]
 pub struct Late {
-    source: Arc<dyn LateSource>,
+    places: Places,
     column: usize,
+    /// Its values decoded whole, made the first time a reader that did
+    /// not resolve it asks for them; none if decoding failed.
+    made: OnceLock<Option<Box<Column>>>,
+}
+
+/// Where a late column's rows are.
+#[derive(Clone)]
+enum Places {
+    Scanned(Scanned),
+    /// Of a join's built operand (`built.rs`).
+    Built(built::Built),
+}
+
+/// The rows of a late column of a column store's scan.
+#[derive(Clone)]
+struct Scanned {
+    source: Arc<dyn LateSource>,
     /// The places in the source of the rows it was made of, ascending.
     positions: Arc<[u32]>,
     /// Of each row, which of `positions` it is, or none for a null: as a
     /// join gathered it. Without them row `n` is the `n`th.
     picks: Option<Arc<[Option<u32>]>>,
-    /// Its values decoded whole, made the first time a reader that did
-    /// not resolve it asks for them; none if decoding failed.
-    made: OnceLock<Option<Box<Column>>>,
 }
 
 impl std::fmt::Debug for Late {
@@ -58,12 +75,15 @@ impl std::fmt::Debug for Late {
 impl Late {
     /// Column `column` of `source`, of the rows at `positions`, ascending.
     pub fn new(source: Arc<dyn LateSource>, column: usize, positions: Arc<[u32]>) -> Late {
-        Late { source, column, positions, picks: None, made: OnceLock::new() }
+        Late { places: Places::Scanned(Scanned { source, positions, picks: None }), column, made: OnceLock::new() }
     }
 
     /// How many rows.
     pub fn len(&self) -> usize {
-        self.picks.as_ref().map_or(self.positions.len(), |p| p.len())
+        match &self.places {
+            Places::Scanned(s) => s.len(),
+            Places::Built(b) => b.len(),
+        }
     }
 
     /// Whether it has no rows.
@@ -71,6 +91,58 @@ impl Late {
         self.len() == 0
     }
 
+    /// \[DESIGN\] Its values of the rows `rows`, or of all, decoded, the
+    /// others null: each place in the source decoded once, ascending, then
+    /// gathered to the rows, a row taken as often as a join paired it; of a
+    /// built operand's, gathered of its rows alone (`built.rs`).
+    ///
+    /// # Errors
+    ///
+    /// As `LateSource::decode`.
+    pub fn resolved(&self, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<Column> {
+        match &self.places {
+            Places::Scanned(s) => s.resolved(self.column, rows, kernels),
+            Places::Built(b) => Ok(b.resolved(self.column, rows, kernels)),
+        }
+    }
+
+    /// Its values decoded whole, made once: for a reader that did not
+    /// resolve it, none if decoding failed.
+    pub fn made(&self) -> Option<&Column> {
+        self.made.get_or_init(|| self.resolved(None, &crate::kernels::Portable).ok().map(Box::new)).as_deref()
+    }
+
+    /// The rows at `picks`, in order, a null for none: still late, its
+    /// picks composed with these.
+    #[must_use]
+    pub fn gathered(&self, picks: &[Option<usize>]) -> Late {
+        let places = match &self.places {
+            Places::Scanned(s) => Places::Scanned(s.gathered(picks)),
+            Places::Built(b) => Places::Built(b.gathered(picks)),
+        };
+        Late { places, column: self.column, made: OnceLock::new() }
+    }
+
+    /// The bytes it holds, near enough to bound a work area by. A built
+    /// operand's rows are charged to its join's grant (`built.rs`).
+    pub fn bytes(&self) -> usize {
+        match &self.places {
+            Places::Scanned(s) => {
+                let picks = s.picks.as_ref().map_or(0, |p| p.len().saturating_mul(size_of::<Option<u32>>()));
+                s.positions.len().saturating_mul(size_of::<u32>()).saturating_add(picks)
+            }
+            Places::Built(b) => b.len().saturating_mul(size_of::<u32>()),
+        }
+    }
+
+    /// Its values, made the first time they are asked for: none if
+    /// decoding failed.
+    pub fn values(&self) -> &[Value] {
+        self.made().map_or(&[][..], Column::values)
+    }
+}
+
+impl Scanned {
     /// Which of `positions` row `r` is, if it is one.
     fn place(&self, r: usize) -> Option<usize> {
         match &self.picks {
@@ -79,21 +151,20 @@ impl Late {
         }
     }
 
-    /// \[DESIGN\] Its values of the rows `rows`, or of all, decoded, the
-    /// others null: each place in the source decoded once, ascending, then
-    /// gathered to the rows, a row taken as often as a join paired it.
-    ///
-    /// # Errors
-    ///
-    /// As `LateSource::decode`.
-    pub fn resolved(&self, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<Column> {
+    /// How many rows.
+    fn len(&self) -> usize {
+        self.picks.as_ref().map_or(self.positions.len(), |p| p.len())
+    }
+
+    /// As `Late::resolved`, of column `column` of its source.
+    fn resolved(&self, column: usize, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<Column> {
         if self.picks.is_none() && rows.is_none() {
-            return self.source.decode(self.column, &self.positions);
+            return self.source.decode(column, &self.positions);
         }
         if let (None, Some(rows)) = (&self.picks, rows)
             && rows.is_sorted_by(|a, b| a < b)
         {
-            return self.kept(rows, kernels);
+            return self.kept(column, rows, kernels);
         }
         let all: Vec<u32>;
         let rows = if let Some(rows) = rows {
@@ -108,7 +179,7 @@ impl Late {
             wanted.sort_unstable();
         }
         wanted.dedup();
-        let decoded = self.source.decode(self.column, &wanted)?;
+        let decoded = self.source.decode(column, &wanted)?;
         let mut picks = vec![super::NO_ROW; self.len()];
         for &r in rows {
             let at = self.place(index(r)).and_then(|p| self.positions.get(p)).and_then(|q| wanted.binary_search(q).ok());
@@ -127,9 +198,9 @@ impl Late {
     /// # Errors
     ///
     /// As `LateSource::decode`.
-    fn kept(&self, rows: &[u32], kernels: &dyn crate::kernels::Kernels) -> Result<Column> {
+    fn kept(&self, column: usize, rows: &[u32], kernels: &dyn crate::kernels::Kernels) -> Result<Column> {
         let wanted: Vec<u32> = rows.iter().filter_map(|&r| self.positions.get(index(r)).copied()).collect();
-        let decoded = self.source.decode(self.column, &wanted)?;
+        let decoded = self.source.decode(column, &wanted)?;
         let mut picks = vec![super::NO_ROW; self.len()];
         let mut next = 0_u32;
         for &r in rows {
@@ -141,37 +212,11 @@ impl Late {
         Ok(decoded.gathered_by(&super::Picks::new(&picks), kernels))
     }
 
-    /// Its values decoded whole, made once: for a reader that did not
-    /// resolve it, none if decoding failed.
-    pub fn made(&self) -> Option<&Column> {
-        self.made.get_or_init(|| self.resolved(None, &crate::kernels::Portable).ok().map(Box::new)).as_deref()
-    }
-
-    /// The rows at `picks`, in order, a null for none: still late, its
-    /// picks composed with these.
-    #[must_use]
-    pub fn gathered(&self, picks: &[Option<usize>]) -> Late {
+    /// The rows at `picks`, its picks composed with these.
+    fn gathered(&self, picks: &[Option<usize>]) -> Scanned {
         let composed: Vec<Option<u32>> =
             picks.iter().map(|p| p.and_then(|r| self.place(r)).and_then(|place| u32::try_from(place).ok())).collect();
-        Late {
-            source: Arc::clone(&self.source),
-            column: self.column,
-            positions: Arc::clone(&self.positions),
-            picks: Some(composed.into()),
-            made: OnceLock::new(),
-        }
-    }
-
-    /// The bytes it holds, near enough to bound a work area by.
-    pub fn bytes(&self) -> usize {
-        let picks = self.picks.as_ref().map_or(0, |p| p.len().saturating_mul(size_of::<Option<u32>>()));
-        self.positions.len().saturating_mul(size_of::<u32>()).saturating_add(picks)
-    }
-
-    /// Its values, made the first time they are asked for: none if
-    /// decoding failed.
-    pub fn values(&self) -> &[Value] {
-        self.made().map_or(&[][..], Column::values)
+        Scanned { source: Arc::clone(&self.source), positions: Arc::clone(&self.positions), picks: Some(composed.into()) }
     }
 }
 
@@ -186,6 +231,25 @@ impl Batch {
     pub fn resolve(&mut self, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<()> {
         for column in &mut self.columns {
             if let Column::Late(late) = column {
+                *column = late.resolved(rows, kernels)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// \[DESIGN\] (RULES.md D1096) Gathers each of its columns late of a
+    /// join's built operand of the rows `rows`, or of all, the others
+    /// null, so no batch an operator keeps holds the built operand once
+    /// its join is done; columns late of a scan stay so.
+    ///
+    /// # Errors
+    ///
+    /// As `Late::resolved`, which a built operand's never raises.
+    pub fn resolve_built(&mut self, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<()> {
+        for column in &mut self.columns {
+            if let Column::Late(late) = column
+                && late.is_built()
+            {
                 *column = late.resolved(rows, kernels)?;
             }
         }

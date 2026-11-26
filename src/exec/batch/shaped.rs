@@ -35,8 +35,9 @@ pub(in crate::exec) enum Shaped {
     /// [X3.135-1986 §5.25 GR2] each expression evaluated of its vectors.
     Compute(Vec<Place>),
     /// [X3.135-1986 §5.20 GR2b] each row joined with each built row whose
-    /// keys, of its vectors at these places, equal its own.
-    Probe(Arc<SharedTable>, Vec<usize>),
+    /// keys, of its vectors at these places, equal its own; the built
+    /// vectors marked given late (RULES.md D1096).
+    Probe(Arc<SharedTable>, Vec<usize>, Vec<bool>),
     /// [ISO/IEC 9075:1992 §7.5 GR4, GR5b] each row joined with each built
     /// row whose keys equal its own, or with nulls if none does (RULES.md
     /// D1076).
@@ -59,15 +60,17 @@ pub(in crate::exec) fn runtime_step(told: &[Told], layout: &[usize]) -> Shaped {
 
 /// The step of a probe of `table` by keys of the columns `left` of
 /// batches of `layout` of rows `width` wide, and the layout and width
-/// after it; none if a key's column is not among the layout's.
+/// after it; none if a key's column is not among the layout's. The
+/// columns `late` of the built operand's rows are given late (RULES.md
+/// D1096).
 pub(in crate::exec) fn probe_step(
     table: &Arc<SharedTable>,
-    left: &[usize],
+    (left, late): (&[usize], &[usize]),
     (layout, width): (&[usize], usize),
 ) -> Option<(Shaped, Vec<usize>, usize)> {
     let places = left.iter().map(|c| layout.iter().position(|l| l == c)).collect::<Option<Vec<usize>>>()?;
     let (after, joined) = table.joined_layout((layout, width));
-    Some((Shaped::Probe(Arc::clone(table), places), after, joined))
+    Some((Shaped::Probe(Arc::clone(table), places, table.late_of(late)), after, joined))
 }
 
 /// As `probe_step`, of a LEFT outer join's probe (RULES.md D1076).
@@ -121,7 +124,7 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&D
             Box::new(inner.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows))))
         }
         Shaped::Compute(places) => computed(inner, places.clone(), Runner::new(db, tx)),
-        Shaped::Probe(table, places) => probed(inner, Arc::clone(table), places.clone()),
+        Shaped::Probe(table, places, late) => probed(inner, Arc::clone(table), (places.clone(), late.clone())),
         Shaped::Outer(table, places) => {
             let (table, places) = (Arc::clone(table), places.clone());
             Box::new(inner.flat_map(move |kept| -> Batches {
@@ -148,10 +151,10 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&D
 /// `batches`, each kept row joined with each built row of `table` its
 /// keys at `places` match, in order, a batch of pairs made as it is asked
 /// for (RULES.md D1151); an error after the pairs before it.
-fn probed(batches: Batches, table: Arc<SharedTable>, places: Vec<usize>) -> Batches {
+fn probed(batches: Batches, table: Arc<SharedTable>, (places, late): (Vec<usize>, Vec<bool>)) -> Batches {
     Box::new(batches.flat_map(move |kept| -> Batches {
         match kept {
-            Ok(kept) => Box::new(SharedTable::probing(Arc::clone(&table), kept, (places.clone(), None), false)),
+            Ok(kept) => Box::new(SharedTable::probing(Arc::clone(&table), kept, (places.clone(), None), false).late(late.clone())),
             Err(e) => Box::new(std::iter::once(Err(e))),
         }
     }))

@@ -200,3 +200,29 @@ fn a_top_raises_its_bound_to_its_greatest_held() {
     );
     assert!(bound.bound().is_none(), "none of no rows");
 }
+
+/// Verifies: [DESIGN] RULES.md D1096: a top-N gathers the columns a batch
+/// holds late of a join's built rows as it takes the batch, so no batch it
+/// keeps holds the built operand: when it asks for the next batch, the
+/// operand is held by its join alone; and its rows are those it gives of
+/// the same values gathered early.
+#[test]
+fn a_top_holds_no_built_operand() {
+    use crate::storage::{Batch, Column, Late};
+    let right = Arc::new(Batch { columns: vec![Column::Values((0..8).map(|v| Value::Exact(Decimal::new(v, 0))).collect())], rows: 8 });
+    let held = Arc::clone(&right);
+    let input: crate::exec::batch::Batches = Box::new((0..3_i128).map(move |n| {
+        assert_eq!(Arc::strong_count(&held), 2, "batch {n}: no batch kept holds the operand");
+        let keys = Column::Values((0..4).map(|k| Value::Exact(Decimal::new(n * 4 + k, 0))).collect());
+        let rows: Arc<[u32]> = vec![7, 1, 3, 5].into();
+        Ok((Batch { columns: vec![keys, Column::Late(Late::built(&held, 0, &rows).unwrap())], rows: 4 }, None))
+    }));
+    let most = Most { rows: 3, ties: false };
+    let got: Vec<Row> = top_batches(&[SortKey::ascending(0)], input, (most, None), &mut work(), Arc::new(crate::kernels::Portable))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    let int = |v| Value::Exact(Decimal::new(v, 0));
+    assert_eq!(format!("{got:?}"), format!("{:?}", vec![vec![int(0), int(7)], vec![int(1), int(1)], vec![int(2), int(3)]]));
+    assert_eq!(Arc::strong_count(&right), 1);
+}

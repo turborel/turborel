@@ -25,7 +25,7 @@ use crate::error::Result;
 use crate::exec::batch::{Batches, resolved};
 use crate::exec::{RowIter, broken};
 use crate::logical::{Most, SortKey};
-use crate::storage::{BATCH_ROWS, Batch, Threshold};
+use crate::storage::{BATCH_ROWS, Batch, Sel, Threshold};
 
 /// \[DESIGN\] The fewest rows of a batch that is gathered to those held:
 /// fewer cost little to keep.
@@ -89,7 +89,10 @@ pub(in crate::exec::sort) fn top_batches(
     let (batches, live, heap, peers) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let mut top = Top { keys, most, layout: None, batches, live, heap, peers, seq: 0, bound, kernels };
     while let Some(kept) = input.next() {
-        let (batch, rows) = kept?;
+        let (mut batch, rows) = kept?;
+        // A built operand's rows gathered as the batch is taken, so a batch
+        // held holds no table its join is done with (RULES.md D1096).
+        batch.resolve_built(rows.as_ref().map(Sel::as_slice), &*top.kernels)?;
         let rows = crate::storage::sel::places_of(rows, batch.rows);
         if let Some(k) = keys.iter().find(|k| k.column >= batch.columns.len()).filter(|_| !rows.is_empty()) {
             return Err(broken(&format!("sort column {} is not in the rows sorted", k.column)));

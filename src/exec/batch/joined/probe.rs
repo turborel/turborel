@@ -51,8 +51,8 @@ pub(super) enum Kind {
 pub(super) fn probed(
     (left, right, keys): (Plan, Plan, Vec<JoinKey>),
     (kind, deferred, building): (Kind, Deferred, Vec<Told>),
-    db: &Db,
-    tx: TxId,
+    late: &[usize],
+    (db, tx): (&Db, TxId),
 ) -> Result<Batches> {
     let (left_columns, _) = stream::layout(&left, db).unwrap_or_default();
     let (right_columns, _) = stream::layout(&right, db).unwrap_or_default();
@@ -78,7 +78,8 @@ pub(super) fn probed(
     // The right operand first, held as vectors if it fits the work area.
     let rest = match held::read(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
         Read::Held(held) => {
-            let out = Out::over(left_columns.len(), Arc::clone(&held.batch), crate::db::kernels::chosen(db));
+            let late: Vec<bool> = right_columns.iter().map(|c| late.contains(c)).collect();
+            let out = Out::over(left_columns.len(), Arc::clone(&held.batch), crate::db::kernels::chosen(db)).late(late);
             let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };
             let mut told = deferred.filters().to_vec();
             told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told::of(Arc::clone(f), key.left))));

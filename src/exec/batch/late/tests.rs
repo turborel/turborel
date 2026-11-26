@@ -40,3 +40,19 @@ fn a_top_bound_is_told_its_scan_where_its_rows_are_the_scans() {
     assert_eq!(told_column(&Deferred::all(4)), None, "read whole");
     assert!(!Deferred::all(0).any());
 }
+
+/// Verifies: [DESIGN] RULES.md D1096: an inner join gives late the columns
+/// of its right operand's rows none above reads, once an operator above
+/// drops rows, each as the operand's own column; a column a filter above
+/// reads is read; read whole with no row dropped above, none; and the left
+/// operand of a join above drops rows, so the join below gives them late.
+#[test]
+fn a_join_gives_late_the_right_columns_none_above_reads() {
+    assert_eq!(Deferred::all(5).right_of(2), Vec::<usize>::new(), "no row dropped above");
+    let cond = Cond::Compare(Expr::Column(3), crate::value::CompOp::Eq, Expr::Const(crate::value::Value::Null));
+    let filtered = Deferred::all(5).filtered(&cond);
+    assert_eq!(filtered.right_of(2), vec![0, 2], "column 3 read by the filter");
+    let above = Deferred::all(7).left_of(&[JoinKey { left: 1, right: 0, nulls: false }], 5);
+    assert_eq!(above.right_of(2), vec![0, 1, 2], "a join above, its key the left's column 1");
+    assert_eq!(above.right_of(5), Vec::<usize>::new(), "past the left's columns, none");
+}

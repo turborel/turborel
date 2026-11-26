@@ -199,8 +199,9 @@ pub(super) fn batches_with(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferre
         let (told, built) = (runtime::taken(&plan, deferred.filters(), db).0, runtime::built_side(&plan, deferred.filters(), db));
         let Plan::HashJoin { left, right, keys, .. } = plan else { return Err(crate::exec::broken("a hash join is not one")) };
         let width = stream::layout(&left, db).map_or(0, |(_, width)| width);
-        let below = if deferred.any() { deferred.left_of(&keys, width) } else { Deferred::default() };
-        let joined = probe::probed((*left, *right, keys), (Kind::Inner, below.with_told(told), built), db, tx)?;
+        let (below, late) =
+            if deferred.any() { (deferred.left_of(&keys, width), deferred.right_of(width)) } else { (Deferred::default(), Vec::new()) };
+        let joined = probe::probed((*left, *right, keys), (Kind::Inner, below.with_told(told), built), &late, (db, tx))?;
         return Ok(Box::new(checked(joined, stop)));
     }
     if let Plan::SemiJoin(_) = plan {
@@ -281,7 +282,7 @@ fn product_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
 /// As `batches_with`.
 fn hash_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
     let Plan::HashJoin { left, right, keys, .. } = plan else { return no_join(plan, db, tx) };
-    probe::probed((*left, *right, keys), (Kind::Inner, Deferred::default(), Vec::new()), db, tx)
+    probe::probed((*left, *right, keys), (Kind::Inner, Deferred::default(), Vec::new()), &[], (db, tx))
 }
 
 /// The batches of `plan`, an outer join of streams: a LEFT one probing, if
@@ -295,7 +296,7 @@ fn outer_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Batches> {
         return Err(crate::exec::broken("an outer join is not one"));
     };
     if kind == OuterJoin::Left && own.is_none() && cond.as_ref().is_none_or(|c| !c.can_raise()) {
-        return probe::probed((*left, *right, keys), (Kind::Left(cond, widths), Deferred::default(), Vec::new()), db, tx);
+        return probe::probed((*left, *right, keys), (Kind::Left(cond, widths), Deferred::default(), Vec::new()), &[], (db, tx));
     }
     outer::joined(Joining { kind, keys, cond, own, widths }, (*left, *right), db, tx)
 }

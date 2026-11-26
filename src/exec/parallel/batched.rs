@@ -45,24 +45,27 @@ pub(super) fn by_batch(branches: &[Branch], db: &State) -> Option<ByBatch> {
     let (mut steps, mut late) = (Vec::with_capacity(branches.len()), Vec::with_capacity(branches.len()));
     let mut shape: Option<(Vec<usize>, usize)> = None;
     for branch in branches {
-        let (shaped, layout, width) = branch_steps(branch)?;
+        let (scanned, built) = late_of(branch);
+        let (shaped, layout, width) = branch_steps(branch, &built)?;
         if shape.as_ref().is_some_and(|(l, w)| (l, *w) != (&layout, width)) {
             return None;
         }
         shape = Some((layout, width));
         steps.push(shaped);
-        late.push(late_of(branch, width));
+        late.push(scanned);
     }
     let (layout, width) = shape?;
     Some(ByBatch { steps, late, layout, width })
 }
 
 /// The steps of `branch` over its batches, and the columns its batches
-/// hold at its end and their rows' width, if each step is read by batch.
-fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
+/// hold at its end and their rows' width, if each step is read by batch;
+/// of each step at `n`, the columns `built[n]` of a probe's built rows given
+/// late (RULES.md D1096).
+fn branch_steps(branch: &Branch, built: &[Vec<usize>]) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
     let (mut layout, mut width) = branch.scanned.clone()?;
     let mut shaped = Vec::with_capacity(branch.steps.len());
-    for step in &branch.steps {
+    for (n, step) in branch.steps.iter().enumerate() {
         match step {
             Step::Filter(cond) => shaped.push(filter_step(cond, &layout)),
             Step::Project(exprs) => {
@@ -73,7 +76,8 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
             Step::Probe(table) => {
                 let left: Vec<usize> = table.keys().iter().map(|k| k.left).collect();
                 let made;
-                (made, layout, width) = probe_step(&table.shared, &left, (&layout, width))?;
+                let late = built.get(n).map_or(&[][..], Vec::as_slice);
+                (made, layout, width) = probe_step(&table.shared, (&left, late), (&layout, width))?;
                 shaped.push(made);
             }
             Step::Outer(table) => {
@@ -94,15 +98,17 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
 }
 
 /// \[DESIGN\] (RULES.md D361, D366, D1081) The columns of `branch`'s scan
-/// no step reads before its rows, `width` wide at its end, are made, if a
+/// no step reads before its rows are made at its end, if a
 /// filter or a hash join's probe drops rows on the way: its morsels give
 /// them late, decoded of the rows kept at the pipeline's end
 /// (`morsel_kept`), as the serial stream does. A probe reads its keys'
 /// columns and carries the left's others as their rows' places
 /// (`Deferred::left_of`), so a column of the probing table is decoded of
-/// the rows every join of the pipeline kept alone.
-fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
-    let Some((scanned, read)) = &branch.scanned else { return Vec::new() };
+/// the rows every join of the pipeline kept alone. Of each step, the
+/// columns of a probe's built rows given late too (`Deferred::right_of`),
+/// resolved at the pipeline's end with the scan's, while its table lives.
+fn late_of(branch: &Branch) -> (Vec<usize>, Vec<Vec<usize>>) {
+    let Some((scanned, read)) = &branch.scanned else { return (Vec::new(), Vec::new()) };
     // The width of the rows each step is given.
     let (mut given, mut wide) = (Vec::with_capacity(branch.steps.len()), *read);
     for step in &branch.steps {
@@ -113,18 +119,22 @@ fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
             Step::Filter(_) | Step::Semi(..) | Step::Runtime(_) | Step::Count(_) => wide,
         };
     }
-    let mut deferred = Deferred::all(width);
-    for (step, &left) in branch.steps.iter().zip(&given).rev() {
+    let mut deferred = Deferred::all(wide);
+    let mut built = vec![Vec::new(); branch.steps.len()];
+    for ((step, &left), late) in branch.steps.iter().zip(&given).zip(&mut built).rev() {
         deferred = match step {
             Step::Filter(cond) => deferred.filtered(cond),
             Step::Project(exprs) => deferred.projected(exprs),
-            Step::Probe(table) => deferred.left_of(table.keys(), left),
+            Step::Probe(table) => {
+                *late = deferred.right_of(left);
+                deferred.left_of(table.keys(), left)
+            }
             Step::Outer(_) | Step::Semi(..) => Deferred::default(),
             Step::Runtime(told) => deferred.judged(&told.iter().map(|t| t.column).collect::<Vec<_>>()),
             Step::Count(_) => deferred,
         };
     }
-    deferred.late_of(scanned)
+    (deferred.late_of(scanned), built)
 }
 
 impl Pipeline {
@@ -230,5 +240,38 @@ mod tests {
         let filtered = Plan::Filter { cond, detail: String::new(), est: 0.0_f64, of_read: false, input: Box::new(joined(0)) };
         assert_eq!(late(&db, &filtered), [1], "a column a filter above reads is read");
         assert_eq!(late(&db, &scan("F", vec![0, 1, 2])), Vec::<usize>::new(), "no step drops a row");
+    }
+
+    /// Of each built vector of the first probe of `plan`'s pipeline,
+    /// whether it is given late.
+    fn built_late(db: &Database, plan: &Plan) -> Vec<bool> {
+        let state = Db::from(db.snapshot().unwrap());
+        let Held::Kept(pipeline) = Pipeline::of(plan, (&state, crate::txn::NO_TRANSACTION), &Limit::of(&state)).unwrap() else {
+            panic!("the pipeline gave way")
+        };
+        let steps = pipeline.batched.unwrap().steps.remove(0);
+        steps.into_iter().find_map(|s| if let super::Shaped::Probe(_, _, late) = s { Some(late) } else { None }).unwrap()
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1096: a probe gives late the built
+    /// operand's columns no step above reads, once a step above drops rows:
+    /// none read whole with no row dropped; both of D under a filter of F's
+    /// column; D's N read by a filter above, its K alone.
+    #[test]
+    fn a_probe_gives_its_built_columns_late() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE F (K INTEGER, P INTEGER, Q INTEGER) CREATE TABLE D (K INTEGER, N INTEGER)")
+            .unwrap();
+        let a = db.session("A");
+        a.run("INSERT INTO F VALUES (1, 10, 100), (2, 20, 200)").unwrap();
+        a.run("INSERT INTO D VALUES (1, 7)").unwrap();
+        a.commit().unwrap();
+        assert_eq!(built_late(&db, &joined(0)), [false, false], "read whole, no row dropped");
+        let over = |column: usize| {
+            let cond = Cond::Compare(Expr::Column(column), CompOp::Ge, Expr::Const(Value::Exact(Decimal::new(5, 0))));
+            Plan::Filter { cond, detail: String::new(), est: 0.0_f64, of_read: false, input: Box::new(joined(0)) }
+        };
+        assert_eq!(built_late(&db, &over(2)), [true, true], "a filter of F's column above");
+        assert_eq!(built_late(&db, &over(4)), [true, false], "D's N read by the filter");
     }
 }

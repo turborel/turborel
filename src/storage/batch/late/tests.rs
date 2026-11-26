@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::error::{Code, SqlError};
-use crate::storage::Ints;
+use crate::storage::{Ints, NO_ROW};
 
 /// A source whose value of a place is ten times it, the places it was
 /// asked to decode noted; it fails if asked for place 99.
@@ -80,4 +80,56 @@ fn rows_kept_in_order_are_decoded_of_their_places_alone() {
     assert_eq!(resolved(&[]), ["NULL", "NULL", "NULL", "NULL", "NULL"]);
     let joined = late.gathered(&[Some(4), Some(1)]);
     assert_eq!(shown(&joined.resolved(Some(&[0, 1]), &crate::kernels::Portable).unwrap()), ["90", "40"], "a join's picks");
+}
+
+/// Verifies: [DESIGN] RULES.md D1096: a built operand's late column is its
+/// rows of the operand, gathered through a join as rows, a null for none,
+/// and resolved by one gather of the rows kept alone, the others null; read
+/// before it is resolved, it gathers its own rows, never the operand's;
+/// a vector late itself is never made a built one; and once every batch is
+/// resolved the operand is held by its join alone.
+#[test]
+fn a_built_late_column_is_gathered_of_its_own_rows() {
+    let texts: Vec<Value> = ["a", "b", "c", "d", "e"].iter().map(|t| Value::Char((*t).into())).collect();
+    let right = Arc::new(Batch { columns: vec![Column::from(texts), Column::Ints(Ints::new(vec![1, 2, 3, 4, 5], 0, None))], rows: 5 });
+    let rows: Arc<[u32]> = vec![4, 0, NO_ROW, 2].into();
+    let late = Late::built(&right, 0, &rows).unwrap();
+    assert!(late.is_built());
+    assert_eq!(late.len(), 4);
+    assert_eq!(shown(&late.resolved(Some(&[0, 3]), &crate::kernels::Portable).unwrap()), ["e", "NULL", "NULL", "c"]);
+    let joined = late.gathered(&[Some(3), None, Some(1), Some(3)]);
+    assert_eq!(shown(&joined.resolved(None, &crate::kernels::Portable).unwrap()), ["c", "NULL", "a", "c"]);
+    assert_eq!(joined.made().map(|c| c.values().len()), Some(4), "read before, its own rows alone");
+    let ints = Late::built(&right, 1, &rows).unwrap();
+    assert_eq!(shown(&ints.resolved(None, &crate::kernels::Portable).unwrap()), ["5", "1", "NULL", "3"]);
+    assert!(Late::built(&right, 2, &rows).is_none(), "no such vector");
+    let scanned: Arc<dyn LateSource> = Arc::new(Tens::default());
+    let inner = Arc::new(Batch { columns: vec![Column::Late(Late::new(scanned, 0, vec![1].into()))], rows: 1 });
+    assert!(Late::built(&inner, 0, &rows).is_none(), "a late vector is not wrapped");
+    let mut batch = Batch { columns: vec![Column::Late(late), Column::Late(joined), Column::Late(ints)], rows: 4 };
+    assert_eq!(Arc::strong_count(&right), 4);
+    batch.resolve_built(Some(&[1]), &crate::kernels::Portable).unwrap();
+    assert!(!batch.has_late());
+    assert_eq!(shown(&batch.columns[0]), ["NULL", "a", "NULL", "NULL"]);
+    assert_eq!(Arc::strong_count(&right), 1, "the operand held by its join alone");
+}
+
+/// Verifies: [DESIGN] RULES.md D1096: a scan's late columns of two
+/// neighbouring batches each decode their own places: one read whole
+/// before it is resolved never widens what the other asks, and a batch's
+/// built late columns resolved leave its scan's late.
+#[test]
+fn neighbouring_late_batches_decode_their_own_rows() {
+    let tens = Arc::new(Tens::default());
+    let source: Arc<dyn LateSource> = Arc::<Tens>::clone(&tens);
+    let first = Late::new(Arc::clone(&source), 0, vec![1, 2, 3].into());
+    let second = Late::new(source, 0, vec![4, 5, 6].into());
+    assert_eq!(first.made().map(|c| c.values().len()), Some(3));
+    assert_eq!(tens.asked.lock().unwrap().pop(), Some(vec![1, 2, 3]));
+    let _ = second.resolved(Some(&[1]), &crate::kernels::Portable).unwrap();
+    assert_eq!(tens.asked.lock().unwrap().pop(), Some(vec![5]), "its own row alone");
+    let mut batch = Batch { columns: vec![Column::Late(second)], rows: 3 };
+    batch.resolve_built(None, &crate::kernels::Portable).unwrap();
+    assert!(batch.has_late(), "a scan's late column stays late");
+    assert!(tens.asked.lock().unwrap().is_empty(), "nothing decoded");
 }

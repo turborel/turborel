@@ -296,6 +296,12 @@ impl SharedTable {
         self.table.parts()
     }
 
+    /// Of each of its vectors, whether a probe gives it late, `late` the
+    /// columns of the operand's rows given so (RULES.md D1096).
+    pub(in crate::exec) fn late_of(&self, late: &[usize]) -> Vec<bool> {
+        self.columns.iter().map(|c| late.contains(c)).collect()
+    }
+
     /// Whether its table is direct (RULES.md D601).
     #[cfg(test)]
     pub(in crate::exec) fn is_direct(&self) -> bool {
@@ -407,20 +413,16 @@ impl SharedTable {
     /// The batch of `pairs`, emptied: the left's vectors of `batch` at
     /// `left_shown`, or all, gathered at their left rows, then its own
     /// shown at their built rows.
-    fn gathered(&self, (batch, left_shown): (&Batch, Option<&[usize]>), pairs: &mut Pairs) -> Kept {
+    fn gathered(&self, (batch, left_shown): (&Batch, Option<&[usize]>), pairs: &mut Pairs, late: &[bool]) -> Kept {
         let rows = pairs.0.len();
         let lefts: Vec<&Column> = match left_shown {
             Some(at) => at.iter().filter_map(|&a| batch.columns.get(a)).collect(),
             None => batch.columns.iter().collect(),
         };
-        let rights: Vec<&Column> = match &self.shown {
-            Some(at) => at.iter().filter_map(|&a| self.right.columns.get(a)).collect(),
-            None => self.right.columns.iter().collect(),
-        };
-        let (of_left, of_right) = (Picks::new(&pairs.0), Picks::new(&pairs.1));
+        let of_left = Picks::new(&pairs.0);
         let mut columns: Vec<Column> = lefts.iter().map(|c| c.gathered_by(&of_left, &*self.kernels)).collect();
-        columns.extend(rights.iter().map(|c| c.gathered_by(&of_right, &*self.kernels)));
-        drop((of_left, of_right));
+        drop(of_left);
+        columns.extend(super::pairs::gathered_right(&self.right, (self.shown.as_deref(), late), &pairs.1, &*self.kernels));
         pairs.0.clear();
         pairs.1.clear();
         (Batch { columns, rows }, None)

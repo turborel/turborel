@@ -42,6 +42,8 @@ pub(in crate::exec) struct Probing<T> {
     left_shown: Option<Vec<usize>>,
     /// Of a LEFT join, a row no built row matches paired with none.
     outer: bool,
+    /// Of each built vector, whether it is given late (RULES.md D1096).
+    late: Vec<bool>,
     /// The place in `given` of the row it pairs now, how many of its
     /// key's built rows it looked at, and whether one matched.
     at: usize,
@@ -75,7 +77,24 @@ impl SharedTable {
         table.prefetch_keys(&located);
         let pairs = (Vec::with_capacity(BATCH_ROWS), Vec::with_capacity(BATCH_ROWS));
         let (at, seen, any, ended) = (0, 0, false, false);
-        Probing { table, batch, given, hashes, screened, located, left, left_shown, outer, at, seen, any, pairs, failed, ended }
+        Probing {
+            table,
+            batch,
+            given,
+            hashes,
+            screened,
+            located,
+            left,
+            left_shown,
+            outer,
+            late: Vec::new(),
+            at,
+            seen,
+            any,
+            pairs,
+            failed,
+            ended,
+        }
     }
 }
 
@@ -184,6 +203,16 @@ fn matched(any: &mut bool, (r, p): (usize, u32), pairs: &mut Pairs) -> bool {
     pairs.0.len() < BATCH_ROWS
 }
 
+impl<T> Probing<T> {
+    /// It, the built vectors at which `late` is true given late (RULES.md
+    /// D1096).
+    #[must_use]
+    pub(in crate::exec) fn late(mut self, late: Vec<bool>) -> Probing<T> {
+        self.late = late;
+        self
+    }
+}
+
 impl<T: Deref<Target = SharedTable>> Iterator for Probing<T> {
     type Item = Result<Kept, SqlError>;
 
@@ -200,7 +229,8 @@ impl<T: Deref<Target = SharedTable>> Iterator for Probing<T> {
             if let Err(e) = self.pair(&mut pairs) {
                 self.failed = Some(e);
             }
-            let made = (!pairs.0.is_empty()).then(|| self.table.gathered((&self.batch, self.left_shown.as_deref()), &mut pairs));
+            let made =
+                (!pairs.0.is_empty()).then(|| self.table.gathered((&self.batch, self.left_shown.as_deref()), &mut pairs, &self.late));
             // Emptied by `gathered`, the lists keep their room for the next.
             self.pairs = pairs;
             if let Some(kept) = made {

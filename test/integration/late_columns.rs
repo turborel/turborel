@@ -68,7 +68,7 @@ fn tables() -> (Database, Session) {
 }
 
 /// The queries each table answers alike, `{t}` its name.
-const QUERIES: [&str; 31] = [
+const QUERIES: [&str; 35] = [
     "SELECT SUM(A), SUM(D), SUM(E) FROM {t} WHERE C < 60",
     "SELECT K, A, D, T, U, S FROM {t} WHERE C < 60",
     "SELECT K, U FROM {t} WHERE C BETWEEN 100 AND 3100",
@@ -100,6 +100,10 @@ const QUERIES: [&str; 31] = [
     "SELECT SUM(D), MAX(D), COUNT(D) FROM {t} WHERE D < 0.30",
     "SELECT Y.S, COUNT(*), SUM(X.A), MAX(X.U) FROM {t} X JOIN R Y ON X.N = Y.K WHERE Y.C < 900 GROUP BY Y.S",
     "SELECT COUNT(*), SUM(X.D), MIN(X.T) FROM {t} X JOIN R Y ON X.K = Y.K JOIN R Z ON X.N = Z.K WHERE Z.C < 2000 AND X.A < 40",
+    "SELECT X.K, Y.U, Z.T, Z.S FROM {t} X JOIN R Y ON X.K = Y.K JOIN {t} Z ON X.N = Z.K WHERE X.C < 3000",
+    "SELECT Z.S, MAX(Y.U), MIN(Y.T), COUNT(*) FROM {t} X JOIN {t} Y ON X.K = Y.K JOIN R Z ON X.N = Z.K WHERE X.A < 30 GROUP BY Z.S",
+    "SELECT X.K, Y.U, Y.D FROM {t} X JOIN R Y ON X.N = Y.K WHERE X.C < 2000 ORDER BY X.K FETCH FIRST 7 ROWS ONLY",
+    "SELECT X.K, Y.U FROM {t} X JOIN {t} Y ON X.N = Y.K WHERE X.C + Y.C < 900",
 ];
 
 /// What `s` reads of table `table` by each query, sorted.
@@ -132,7 +136,9 @@ fn alike(s: &Session, what: &str) {
 /// texts, texts coded by symbols, padded and not found, and runs; of
 /// nulls; of a filter it is not told; grouped, sorted, distinct, joined,
 /// of a union; of a grouping over one join and over two, whose probes
-/// carry its unread columns late (D1081); its rows frozen and not.
+/// carry its unread columns late (D1081), and of joins whose built rows'
+/// unread columns are carried late, kept by a top-N and grouped (D1096);
+/// its rows frozen and not.
 #[test]
 fn late_columns_answer_as_rows() {
     let (_db, a) = tables();

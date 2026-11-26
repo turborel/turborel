@@ -51,7 +51,7 @@ const COLLATED: &str = "src/physical/collated.rs";
 /// The test of joins on computed keys.
 const COMPUTED: &str = "computed_keys::an_equality_of_computed_keys_is_a_hash_join";
 
-pub const JOIN_BUILD: [Mutation; 24] = [
+pub const JOIN_BUILD: [Mutation; 27] = [
     Mutation {
         name: "probe-units-reversed",
         package: Package::Core,
@@ -117,8 +117,8 @@ pub const JOIN_BUILD: [Mutation; 24] = [
         package: Package::Core,
         breaks: "a pipeline's probe carries the probing table's unread columns late (D1081)",
         file: "src/exec/parallel/batched.rs",
-        original: "            Step::Probe(table) => deferred.left_of(table.keys(), left),",
-        replacement: "            Step::Probe(_) => Deferred::default(),",
+        original: "                deferred.left_of(table.keys(), left)\n",
+        replacement: "                Deferred::default()\n",
         integration: &[],
         unit: &["exec::parallel::batched::tests::a_probe_carries_the_probing_tables_unread_columns_late"],
     },
@@ -291,5 +291,38 @@ pub const JOIN_BUILD: [Mutation; 24] = [
         replacement: "            *found = Located::default();",
         integration: &[],
         unit: &["exec::batch::joined::shared::probing::tests::a_located_probe_pairs_as_the_nested_comparison"],
+    },
+    Mutation {
+        name: "built-late-none",
+        package: Package::Core,
+        breaks: "an inner join gives late its right operand's columns none above reads (D1096)",
+        file: "src/exec/batch/late.rs",
+        original: "        self.unread.iter().filter_map(|c| c.checked_sub(width)).collect()",
+        replacement: "        Vec::new()",
+        integration: &[],
+        unit: &[
+            "exec::batch::late::tests::a_join_gives_late_the_right_columns_none_above_reads",
+            "exec::parallel::batched::tests::a_probe_gives_its_built_columns_late",
+        ],
+    },
+    Mutation {
+        name: "built-late-resolved-whole",
+        package: Package::Core,
+        breaks: "a built late column resolved gathers the rows kept alone, the others null (D1096)",
+        file: "src/storage/batch/late/built.rs",
+        original: "        let mut picks = vec![NO_ROW; self.len()];",
+        replacement: "        let mut picks = self.rows.to_vec();",
+        integration: &[],
+        unit: &["storage::batch::late::tests::a_built_late_column_is_gathered_of_its_own_rows"],
+    },
+    Mutation {
+        name: "top-holds-built-operand",
+        package: Package::Core,
+        breaks: "a top-N gathers a batch's built late columns as it takes it (D1096)",
+        file: "src/exec/sort/top/batched.rs",
+        original: "        batch.resolve_built(rows.as_ref().map(Sel::as_slice), &*top.kernels)?;",
+        replacement: "        let _ = (&mut batch, rows.as_ref().map(Sel::as_slice));",
+        integration: &[],
+        unit: &["exec::sort::top::tests::a_top_holds_no_built_operand"],
     },
 ];
