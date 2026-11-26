@@ -332,7 +332,7 @@ fn pieces(pipeline: Pipeline, grouping: Arc<Grouping>, (db, tx, degree): (&Db, T
         if !handed(morsel?, &mut chunks, limit) {
             return Ok(Held::GaveWay);
         }
-        if !limit.on_course(from, (done, count)) {
+        if !limit.on_course((from, limit.held().saturating_sub(from)), (done, count)) {
             return Ok(Held::GaveWay);
         }
     }

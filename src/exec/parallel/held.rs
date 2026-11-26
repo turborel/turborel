@@ -83,7 +83,7 @@ pub(in crate::exec) fn held_left(
         };
         parts.push(batch);
         bytes = bytes.saturating_add(held);
-        if !limit.on_course(0, (m.saturating_add(1), count)) {
+        if !limit.on_course((0, bytes), (m.saturating_add(1), count)) {
             limit.give(bytes);
             return Ok(Held::Kept(Left::Rest(rest(parts, (None, morsels), (&pipeline, &limit), (db, tx)))));
         }
