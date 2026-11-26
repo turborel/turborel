@@ -48,7 +48,7 @@ pub(super) enum Found {
 /// [§4.27] The primary key or the preferred candidate key of the rows of
 /// `plan`, of the database `db`.
 pub(crate) fn described_key(db: &State, plan: &LogicalPlan) -> DescribedKey {
-    super::known(&Walk { db, next: std::cell::Cell::new(0) }, plan).described()
+    super::known(&Walk { db, next: std::cell::Cell::new(0), strict: false }, plan).described()
 }
 
 impl Known {

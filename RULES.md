@@ -737,6 +737,7 @@ verification approach DO-178C expects (§8).
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
+| D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 
 ### The project
 
@@ -20024,6 +20025,85 @@ give 1 - 1/e of them. Far more values than rows give the rows, each
 meeting a value of its own. A product of distinct counts past every
 number is taken as the greatest one, so the formula never multiplies
 nothing by infinity. The result stays within one group and n.
+
+#### D1201. A grouping column functionally dependent on the others is carried, not grouped by
+
+A grouping by a table's key and other columns of that table, as a
+report by customer that shows the customer's name and address, hashed
+and compared every column written, the wide ones too, though the key
+alone tells the groups apart. The rule `reduce_grouping_keys`
+(`optimizer/dependent_keys.rs`) now leaves out of the grouping columns
+each one the others determine, and carries its value as the set function
+that keeps a group's first row's value of a column
+(`functions/any_value.rs`), which is what a query that references such a
+column without grouping by it gets [ISO/IEC 9075-2:2023 §6.7 GR1e]. A
+projection above puts the columns where they were.
+
+It is sound by the standard's own definition. A dependency A ↦ B holds
+if two rows not distinct in A are not distinct in B [§4.26.1], and two
+rows are of one group if they are not distinct in every grouping column
+[§9.12]. So rows grouped by A alone fall into the groups A and B
+together made, each group has the rows it had, in the same number, and
+every set function, DISTINCT, filtered or ordered, is given what it was
+given. Nothing is evaluated of a row or a group it was not before (D15).
+HAVING, ORDER BY and the select list read the carried column at the
+place the grouping column had.
+
+The dependencies are the known functional dependencies of the grouping's
+input, found by the rules the binder already follows for column
+references (`binder/dependencies.rs`), with these conditions.
+
+- A key is a PRIMARY KEY, or a UNIQUE constraint of columns known not
+  null or NULLS NOT DISTINCT, not deferrable [§4.26.3]. A UNIQUE column
+  that may be null determines nothing, as two rows null in it are not
+  distinct and may differ elsewhere.
+- An equality AND-component of a WHERE or an inner join's ON makes each
+  of two columns determine the other [§4.26.12], so a key reaches the
+  columns of a table joined on its key, and theirs in turn.
+- Of an outer join, a dependency of the operand extended with nulls
+  holds only where a column of its determinant is known not null, and
+  the condition adds what §4.26.7 gives of the preserved operand's
+  columns. A FULL join's condition adds nothing.
+- Only the strict dependencies are used (`dependencies/strict.rs`).
+  Character strings equal but for trailing spaces or by a collation,
+  two approximate zeros and datetimes of one instant in two zones are
+  not distinct, yet an expression tells them apart. A dependency on the
+  columns an expression or a generation expression reads is kept only
+  of exact numbers, truth values and datetimes of no zone. An equality
+  counts only where it compares both columns by their own values under
+  one relation, so not an approximate number with an exact one. An
+  outer join's condition counts only if each AND-component that reads
+  the preserved operand is such an equality or reads such types alone.
+  An ordinality column determines nothing, and nothing is known of a
+  grouping made by a collation.
+- A column takes part only if the grouping groups by it as its own
+  values are told apart, by its base column's collation or by none of
+  none. A column grouped by another collation stays a grouping column
+  and determines nothing. A column left out is compared by nothing, so
+  its collation drops out of the grouping.
+- A grouping that makes groups before any row, of an empty grouping set
+  [§7.13 GR2a], is left. Grouping sets otherwise read rows whose masked
+  columns are new columns, of which nothing is known. One grouping
+  column at least is kept, as a grouping by none is one group even of
+  no rows.
+- A column whose declared type is not known is kept.
+
+Of two columns that determine each other the first written is kept.
+
+The rule is a late one. The optimizer applies the late rules once the
+others have reached their fixpoint, and does not apply the others again
+(`Optimizer::add_late`). The rules that move a HAVING condition of
+grouping columns into WHERE (D15), turn a join under a grouping into a
+semi join (D542) or group below an outer join (D1112) read the grouping
+as it was written first, and a column carried is none of theirs.
+
+A grouping read by batches keeps the values it carries in a column of
+them, a value a group, its first row's, read of the batch's column in
+place (`exec/table/states/carried.rs`). An accumulator a group was given
+a row made of the value of every row, and had each batch's rows sorted
+by group to be fed them. A group written, merged or finished is as its
+accumulator writes, merges and finishes it, and a column given what is
+no column read in place turns into accumulators.
 
 ## 2. Project layout
 

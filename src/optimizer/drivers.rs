@@ -27,7 +27,7 @@ fn restarting(on: &[&dyn Rule], plan: LogicalPlan, ctx: &RuleContext<'_>, trace:
 
 /// `plan` rewritten by the replaced driver, to its fixpoint.
 fn restarted(optimizer: &Optimizer, mut plan: LogicalPlan, ctx: &RuleContext<'_>) -> (LogicalPlan, usize) {
-    let on: Vec<&dyn Rule> = optimizer.rules.iter().map(|r| &*r.rule).collect();
+    let on: Vec<&dyn Rule> = optimizer.rules.iter().filter(|r| !r.late).map(|r| &*r.rule).collect();
     let mut trace = Vec::new();
     for passes in 1..=super::DEFAULT_MAX_PASSES {
         let (p, changed) = restarting(&on, plan, ctx, &mut trace);
@@ -112,7 +112,7 @@ fn rewriting_a_node_again_takes_fewer_passes() {
     for sql in QUERIES {
         let (st, bound) = s.bound_plan(sql).unwrap();
         let ctx = RuleContext { db: &st };
-        let on: Vec<&dyn Rule> = st.optimizer.rules.iter().map(|r| &*r.rule).collect();
+        let on: Vec<&dyn Rule> = st.optimizer.rules.iter().filter(|r| !r.late).map(|r| &*r.rule).collect();
         let (mut plan, mut budget, mut trace) = (bound.clone(), usize::MAX, Vec::new());
         for _ in 0..super::DEFAULT_MAX_PASSES {
             let (p, changed) = super::pass(&on, plan, (&ctx, &mut budget), &mut trace);
@@ -183,4 +183,21 @@ fn rules_undoing_each_other_end_within_the_budget() {
     optimizer.add(Box::new(Flip(false)));
     let (_, all) = optimizer.optimize(plan_of(40), &ctx);
     assert_eq!(all.len(), 41 * super::DEFAULT_MAX_PASSES);
+}
+
+/// Verifies: [DESIGN] RULES.md D1201: a late rule is applied once the
+/// others have reached their fixpoint, and they are not applied again.
+/// Of two rules that undo each other, the late one rewrites each node
+/// once and the other, which found nothing to rewrite before it, never.
+#[test]
+fn a_late_rule_is_applied_after_the_others() {
+    let db = Database::new();
+    let st = db.snapshot().unwrap();
+    let ctx = RuleContext { db: &st };
+    let mut optimizer = Optimizer::empty();
+    optimizer.add_late(Box::new(Flip(true)));
+    optimizer.add(Box::new(Flip(false)));
+    let (plan, trace) = optimizer.optimize(plan_of(5), &ctx);
+    assert_eq!(trace, ["flip"; 5]);
+    assert!(!format!("{plan:?}").contains("Const(True)"), "{plan:?}");
 }

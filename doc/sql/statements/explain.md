@@ -540,6 +540,54 @@ OK
 (12 rows)
 ```
 
+Each department's pay, grouped by the department's key and its name.
+The rule reduce_grouping_keys groups by the key alone and carries the
+name, which the key decides
+([Functionally dependent columns](../06-queries.md#functionally-dependent-columns)):
+
+```sql
+CREATE TABLE DEPT (ID INTEGER PRIMARY KEY, NAME VARCHAR(10));
+CREATE TABLE EMP (ID INTEGER PRIMARY KEY, DEPT INTEGER NOT NULL, PAY INTEGER);
+INSERT INTO DEPT VALUES (1, 'north'), (2, 'south');
+INSERT INTO EMP VALUES (1, 1, 100), (2, 2, 200), (3, 2, 300);
+COMMIT;
+EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) FROM DEPT D JOIN EMP E ON E.DEPT = D.ID GROUP BY D.ID, D.NAME;
+```
+
+```
+OK
+OK
+OK
+OK
+OK
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project D.ID, D.NAME, SUM(E.PAY)
+   Aggregate group by [D.ID, D.NAME] computing [SUM(E.PAY)]
+     Filter E.DEPT = D.ID
+       Product
+         Scan ANN.DEPT
+         Scan ANN.EMP
+ -- rules: reduce_grouping_keys
+ -- optimized:
+ Project D.ID, D.NAME, SUM(E.PAY)
+   Project D.ID, D.NAME, SUM(E.PAY)
+     Aggregate group by [D.ID] computing [SUM(E.PAY), D.NAME]
+       Filter E.DEPT = D.ID
+         Product
+           Scan ANN.DEPT
+           Scan ANN.EMP
+ -- physical:
+ Project D.ID, D.NAME, SUM(E.PAY)
+   Aggregate group by [D.ID] computing [SUM(E.PAY), D.NAME]
+     Project D.ID, D.NAME, E.ID, E.DEPT, E.PAY
+       HashJoin E.DEPT = D.ID
+         SeqScan ANN.EMP  (rows=3, cost=2.8)
+         SeqScan ANN.DEPT  (rows=2, cost=2.0)
+(23 rows)
+```
+
 A join of SALES and PARTS, run on one thread. Each row of SALES probes
 the index of PARTS's key:
 

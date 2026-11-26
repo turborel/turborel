@@ -99,6 +99,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | OPTIMIZER.PUSH_HAVING_INTO_WHERE | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_LIMIT_THROUGH_UNION | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT | ON | ONE OF ON, OFF | at once | *session* |
+| OPTIMIZER.REDUCE_GROUPING_KEYS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.REMOVE_REDUNDANT_DISTINCT | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.SEMI_JOINS | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.SEMI_REDUCTION | ON | ONE OF ON, OFF | at once | *session* |
@@ -227,6 +228,7 @@ Each in a sentence:
 - **OPTIMIZER.PUSH_HAVING_INTO_WHERE**: Whether the optimizer's rule push_having_into_where rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_LIMIT_THROUGH_UNION**: Whether the optimizer's rule push_limit_through_union rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.PUSH_RAISING_FILTER_INTO_PRODUCT**: Whether the optimizer's rule push_raising_filter_into_product rewrites plans: ON; or OFF, as to compare plans made without it.
+- **OPTIMIZER.REDUCE_GROUPING_KEYS**: Whether the optimizer's rule reduce_grouping_keys rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.REMOVE_REDUNDANT_DISTINCT**: Whether the optimizer's rule remove_redundant_distinct rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.SEMI_JOINS**: Whether the optimizer's rule semi_joins rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.SEMI_REDUCTION**: Whether the optimizer's rule semi_reduction rewrites plans: ON; or OFF, as to compare plans made without it.

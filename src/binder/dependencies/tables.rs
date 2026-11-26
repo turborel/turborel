@@ -32,6 +32,10 @@ pub(super) fn base_table(w: &Walk<'_>, table: &QualifiedName, width: usize) -> K
             known.keys.push((key, *primary));
         }
     }
+    if w.strict {
+        known.types =
+            desc.columns.iter().enumerate().filter_map(|(c, col)| Some((known.attribute_of(c)?, col.data_type.clone()))).collect();
+    }
     generated(w, desc, &mut known);
     known.collations = desc
         .columns
@@ -68,7 +72,8 @@ fn generated(w: &Walk<'_>, desc: &TableDesc, known: &mut Known) {
     for (at, e) in bound {
         let mut read = Vec::new();
         expr_columns(&e, &mut read);
-        if let (Some(from), Some(c)) = (known.attributes_of(&read), known.attribute_of(at)) {
+        let from = known.attributes_of(&read).filter(|from| known.told_alike(from));
+        if let (Some(from), Some(c)) = (from, known.attribute_of(at)) {
             known.depends(from, Attrs::from([c]));
         }
     }

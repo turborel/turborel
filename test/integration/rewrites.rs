@@ -5,6 +5,7 @@
 //! batches and row by row, of the row store and the column store, and
 //! EXPLAIN telling whether the rule rewrote it.
 
+mod dependent_keys;
 mod elimination;
 mod extremes;
 mod hoisting;

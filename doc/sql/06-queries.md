@@ -749,6 +749,17 @@ SELECT ID, NAME, SALARY FROM STAFF GROUP BY ID HAVING SALARY > 6000;
 (2 rows)
 ```
 
+A grouping column that the other grouping columns decide adds nothing to
+the grouping's work. Of `GROUP BY D.DEPT, D.TITLE` the groups are told
+apart by DEPT alone, and TITLE is carried with each group as if GROUP BY
+had not named it. For this turborel counts only the dependencies that
+hold of values however they are told apart. One through an expression or
+a generated column counts of exact numbers, truth values and datetimes
+without a time zone, and an equality counts between two values of one
+kind. Two character strings that differ in trailing spaces are equal and
+yet differ in length, so a column computed of a string stays a grouping
+column.
+
 ### Grouping sets
 
 GROUP BY may group the rows several ways in one query, each way a

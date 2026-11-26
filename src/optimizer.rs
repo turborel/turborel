@@ -5,7 +5,10 @@
 //! driver applies the enabled rules bottom-up, in registration order, until
 //! no rule fires (or the setting `OPTIMIZER.MAX_PASSES` is reached). After
 //! a rule fires at a node, the rules are tried at the node again before the
-//! walk goes up, within a budget of rewrites (RULES.md D371).
+//! walk goes up, within a budget of rewrites (RULES.md D371). The late
+//! rules are applied so once the others have reached their fixpoint, and
+//! the others not again: a late rule makes a shape the others would read
+//! less of (RULES.md D1201).
 //!
 //! Every rule here must preserve the result *and* the run-time errors of the
 //! query ([X3.135-1986 §3.3] the implementation "shall achieve the same effect"). That is
@@ -17,6 +20,7 @@
 //! Rules are storage-agnostic. Anything that depends on engines, indexes or
 //! costs belongs in physical.rs.
 
+mod dependent_keys;
 mod disjunctions;
 mod distinct_aggregates;
 mod elimination;
@@ -62,6 +66,7 @@ pub const PUSH_HAVING_INTO_WHERE: &str = "push_having_into_where";
 /// See [`CONSTANT_FOLDING`].
 pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 
+pub use dependent_keys::{REDUCE_GROUPING_KEYS, ReduceGroupingKeys};
 pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
 pub use elimination::{ELIMINATE_JOINS, EliminateJoins};
@@ -131,6 +136,9 @@ pub fn switch_name(rule: &str) -> String {
 struct Switched {
     rule: Arc<dyn Rule>,
     switch: Option<Key>,
+    /// Whether it is applied once the rules that are not have reached
+    /// their fixpoint.
+    late: bool,
 }
 
 /// The rules, in the order they are tried, each turned on or off by a
@@ -198,13 +206,20 @@ impl Optimizer {
         o.add(Box::new(ExtremesByOrder));
         // After the filters of a join's operand alone are moved into it.
         o.add(Box::new(GroupBeforeOuterJoin));
+        o.add_late(Box::new(ReduceGroupingKeys));
         o
     }
 
     /// Rules run in the order they were added. Its setting is declared as
     /// the change that adds it is published (`Database::with_optimizer`).
     pub fn add(&mut self, rule: Box<dyn Rule>) {
-        self.rules.push(Switched { rule: Arc::from(rule), switch: None });
+        self.rules.push(Switched { rule: Arc::from(rule), switch: None, late: false });
+    }
+
+    /// As `add`, of a late rule: one applied once the rules that are not
+    /// late have reached their fixpoint, which are not applied again.
+    pub fn add_late(&mut self, rule: Box<dyn Rule>) {
+        self.rules.push(Switched { rule: Arc::from(rule), switch: None, late: true });
     }
 
     /// Each rule's name, in the order they run.
@@ -240,22 +255,22 @@ impl Optimizer {
     pub fn optimize_except(&self, mut plan: LogicalPlan, ctx: &RuleContext<'_>, except: &[&str]) -> (LogicalPlan, Vec<&'static str>) {
         let mut trace = Vec::new();
         let settings = &ctx.db.settings;
-        let on: Vec<&dyn Rule> = self
-            .rules
-            .iter()
-            .filter(|r| r.switch.is_none_or(|k| settings.is_on(k)) && !except.contains(&r.rule.name()))
-            .map(|r| &*r.rule)
-            .collect();
+        let on = |late: bool| -> Vec<&dyn Rule> {
+            let taken = |r: &&Switched| r.late == late && r.switch.is_none_or(|k| settings.is_on(k)) && !except.contains(&r.rule.name());
+            self.rules.iter().filter(taken).map(|r| &*r.rule).collect()
+        };
         // A safety net against rules that keep undoing each other.
         let passes = usize::try_from(settings.integer(OPTIMIZER_MAX_PASSES)).unwrap_or(DEFAULT_MAX_PASSES);
-        // As many rewrites as the passes of the driver before D371 made at
-        // most, one at each node in each pass.
-        let mut budget = nodes(&plan).saturating_mul(passes);
-        for _ in 0..passes {
-            let (p, changed) = pass(&on, plan, (ctx, &mut budget), &mut trace);
-            plan = p;
-            if !changed {
-                break;
+        for rules in [on(false), on(true)] {
+            // As many rewrites as the passes of the driver before D371 made
+            // at most, one at each node in each pass.
+            let mut budget = nodes(&plan).saturating_mul(passes);
+            for _ in 0..passes {
+                let (p, changed) = pass(&rules, plan, (ctx, &mut budget), &mut trace);
+                plan = p;
+                if !changed {
+                    break;
+                }
             }
         }
         (plan, trace)
