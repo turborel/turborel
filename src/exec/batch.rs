@@ -20,6 +20,7 @@
 mod count;
 mod counted;
 mod expr;
+mod first;
 mod groups;
 mod joined;
 mod judge;
@@ -39,6 +40,7 @@ use std::sync::Arc;
 
 pub(crate) use count::{storage_counted, storage_summarized};
 use expr::Program;
+pub(super) use first::fewer_groups;
 pub(super) use groups::morsel_groups;
 pub(super) use joined::{Filters, Frame, SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
 pub(crate) use judge::bound_by;
@@ -177,6 +179,7 @@ pub(super) fn distinct_grouping(plan: Plan, width: usize) -> Plan {
         input,
         est,
         streamed,
+        first: None,
     }
 }
 
@@ -202,7 +205,7 @@ pub(super) fn filterable(plan: &Plan, db: &State) -> bool {
 
 /// The rows of the aggregation `plan`, one read by batches (`aggregable`).
 pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
-    let (Some(read), Plan::Aggregate { aggs, input, streamed, .. }) = (read_of(&plan, db), plan) else {
+    let (Some(read), Plan::Aggregate { aggs, input, streamed, first, .. }) = (read_of(&plan, db), plan) else {
         return failed(super::broken("an aggregation not read by batches"));
     };
     // A bare COUNT(*), counted by the table's storage if it can (`count.rs`).
@@ -228,7 +231,7 @@ pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
     if streamed {
         return groups::streamed(read, aggs, (db, tx), stream.batches);
     }
-    groups::grouped_all(&read, &aggs, (db, tx), stream.batches).unwrap_or_else(failed)
+    groups::grouped_all(&read, &aggs, (db, tx), (stream.batches, first)).unwrap_or_else(failed)
 }
 
 /// Feeds `states` the rows of one group of `batch`, as `taken` says: the
@@ -511,6 +514,7 @@ mod tests {
             input: Box::new(scan()),
             est: 0.0_f64,
             streamed: false,
+            first: None,
         };
         assert!(aggregable(&aggregate(Vec::new(), Vec::new()), &st));
         assert!(!aggregable(&aggregate(vec![Vec::new()], Vec::new()), &st));

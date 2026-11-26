@@ -147,6 +147,7 @@ fn a_groupings_input_carries_only_what_it_reads() {
         input,
         est: 1.0_f64,
         streamed: false,
+        first: None,
     };
     assert_eq!(read(&PhysicalPlanner::new(&st).pruned(grouping), "T"), Some(vec![1]));
 }
