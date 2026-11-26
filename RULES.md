@@ -714,6 +714,7 @@ verification approach DO-178C expects (§8).
 | D1118 | A LIKE pattern's pieces are each made once into a finder that marks eight places at a time |
 | D1119 | A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them |
 | D1120 | The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time |
+| D1122 | A LIKE of a constant pattern of texts coded by symbols is judged of their codes, the column given late and never decoded where nothing else reads it |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -19520,6 +19521,72 @@ each key column for its vector and code, row by row. The places of a
 batch's rows are now made a column at a time, each column's codes read
 in one loop into a vector of places, and the rows then look their
 places up in the memo (`exec/batch/groups/coded.rs`).
+
+#### D1122. A LIKE of a constant pattern of texts coded by symbols is judged of their codes, the column given late and never decoded where nothing else reads it
+
+TPC-H Q13 counts each customer's orders whose comment is NOT LIKE
+`'%special%requests%'`. The column store codes the comments by a table
+of symbols (FSST), and a filter read the column decoded, so a scan
+decoded every comment of 15 million rows to judge them and threw the
+text away. Decoding was the largest part of the query's time.
+
+A filter's conjunct LIKE or NOT LIKE a constant pattern, ESCAPE a
+constant if given, now reads its column late (D361, `exec/batch/late.rs`).
+A column no other operator reads before the stream is read whole is
+given late by the scan, as its rows' places. The filter judges the
+conjunct of the late column through its source (`LateSource::like`,
+`exec/batch/judge/liked.rs`). The column store's source judges each
+chunk of the rows (`engine/columns/scan/liked.rs`). Of a chunk coded by
+symbols, the pattern is made into a machine for the chunk's table, and
+each value's codes are stepped through it, no text decoded
+(`value/like/codes.rs`). The filter still judges every row the scan
+gives (D15), and keeps the rows the decoded values would keep. A
+grouping run in parallel drops a late column it does not read before
+its rows are decoded, so a column only the filter read is never
+decoded at all (`parallel/batched.rs`).
+
+The machine is the pattern's pieces (D1074) over bytes. Its states are
+the bytes of the first piece read, then of each piece between the bytes
+of it last read, by the piece's prefix function (Knuth, Morris and
+Pratt, 1977), then the bytes of the last piece the bytes read end with.
+Each piece between is taken at the first place it ends, which leaves
+the most bytes to the pieces after it, so no other placement matches
+where this one fails. A table of the state after each byte, and of the
+state after each code's symbol, is made once per chunk, so a value
+takes one step a code. The states number the pattern's bytes and a
+few more, at most 65,535.
+
+It is sound of these cases, each of which a test checks against a row
+store's rows or the pieces' own match of the decoded value.
+
+- The patterns are those of no `_`, of the default collation, as a
+  collated LIKE makes no pieces (D1074). A pattern with `_` has no
+  machine, and the column is decoded of the rows judged and matched as
+  text. ESCAPE is taken when the pattern is split, so an escaped `%` or
+  `_` is a byte of its piece like any other.
+- A byte no symbol takes is written as the escape code 255 and the
+  byte. It steps the machine by the byte's own entry of the table.
+- A piece that spans two symbols, or a symbol and an escaped byte, is
+  stepped through byte by byte all the same, as the machine never looks
+  at where a symbol ends. A symbol that ends one piece and begins the
+  next steps through both.
+- An empty piece between, of `%%`, is none, as the pieces keep none. An
+  empty last piece, of a pattern that ends in `%`, is met once the
+  pieces between are, and the value's other codes are not read. An
+  empty pattern matches only the empty string, the state it starts in
+  being the end.
+- A null is unknown of LIKE and NOT LIKE alike, so neither keeps it. A
+  null pattern or escape is unknown of every row.
+- A chunk coded any other way, by a dictionary or plainly, has no codes
+  to judge, so the column is decoded of the rows judged and judged as
+  text, a dictionary's entries each once (D31). So is a column a join
+  gathered, and a value whose codes are malformed, whose decoding then
+  reports the damage.
+- Codes that end in an escape, or a code of no symbol, give no answer.
+
+A condition that can raise an error is judged a row at a time whole,
+its late column made of every row as before. A column the filter
+gives on, or another operator reads, is decoded as before.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 

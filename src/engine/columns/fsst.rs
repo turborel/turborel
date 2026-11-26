@@ -29,7 +29,7 @@ const MOST_SYMBOLS: usize = 64;
 /// \[DESIGN\] The longest symbol.
 const LONGEST: usize = 8;
 /// The code of a byte written as itself, the next.
-const ESCAPE: u8 = 255;
+const ESCAPE: u8 = crate::value::CODE_ESCAPE;
 /// \[DESIGN\] The bytes of texts a table is chosen by.
 const SAMPLE: usize = 16 << 10;
 /// \[DESIGN\] The runs of texts a table is chosen of.
@@ -358,6 +358,18 @@ impl<'a> Coded<'a> {
     /// Where the codes of value `n` begin and end.
     fn between(&self, n: usize) -> Option<(usize, usize)> {
         read_word(self.offsets, n.checked_mul(WORD)?).ok().zip(read_word(self.offsets, n.checked_add(1)?.checked_mul(WORD)?).ok())
+    }
+
+    /// Each symbol's bytes, by its code (RULES.md D1122).
+    pub(super) fn symbols(&self) -> Vec<&[u8]> {
+        let held: &Symbols = &self.symbols;
+        held.words.iter().zip(&held.lens).take(held.count).filter_map(|(word, &len)| word.get(..usize::from(len))).collect()
+    }
+
+    /// The codes of value `n` (RULES.md D1122).
+    pub(super) fn codes_of(&self, n: usize) -> Option<&[u8]> {
+        let (a, b) = self.between(n)?;
+        self.codes.get(a..b)
     }
 
     /// The text of value `n`, decoded.

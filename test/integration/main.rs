@@ -32,6 +32,7 @@
 mod adjacency_index;
 mod alter_columns;
 mod certified_columns;
+mod coded_like;
 mod collated_indexes;
 mod collation_derivation;
 mod collation_usage;

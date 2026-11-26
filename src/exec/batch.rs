@@ -82,6 +82,24 @@ pub(in crate::exec) struct Read {
     pub(in crate::exec) groups: Vec<usize>,
 }
 
+impl Read {
+    /// The places of a batch it reads: its grouping columns, the columns
+    /// its set functions take and those their expressions read.
+    pub(in crate::exec) fn places(&self) -> Vec<usize> {
+        let mut places = self.groups.clone();
+        for taken in &self.taken {
+            match taken {
+                Taken::Count => {}
+                Taken::Column(at) => places.push(*at),
+                Taken::Expr(program) => places.extend_from_slice(&program.inputs),
+            }
+        }
+        places.sort_unstable();
+        places.dedup();
+        places
+    }
+}
+
 /// What each of `aggs` takes of a batch of `columns`, if each counts rows
 /// or takes an expression of columns the batch holds, no subquery in it,
 /// and none is DISTINCT, filtered or an inverse distribution function,

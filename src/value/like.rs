@@ -16,6 +16,7 @@
 //! pattern 'ABC', but matches 'ABC%' and 'ABC  '.
 
 mod arena;
+mod codes;
 mod collated;
 mod finder;
 mod octets;
@@ -27,6 +28,7 @@ use std::collections::HashMap;
 use super::Value;
 use crate::error::{Code, Result, SqlState, fail_with};
 pub use arena::BytesLike;
+pub use codes::{CodeMatcher, ESCAPE as CODE_ESCAPE};
 pub use collated::collated;
 pub use octets::OctetPattern;
 

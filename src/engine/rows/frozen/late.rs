@@ -10,11 +10,11 @@ use std::sync::{Arc, Mutex};
 use super::Entry;
 use crate::engine::columns::group::Group;
 use crate::engine::columns::prepared::Prepared;
-use crate::engine::columns::scan::column_at;
+use crate::engine::columns::scan::{column_at, liked_at};
 use crate::engine::rows::RowTable;
 use crate::error::Result;
 use crate::storage::{Column, LateSource};
-use crate::value::Value;
+use crate::value::{LikePattern, Value};
 
 /// \[DESIGN\] A frozen group, the source of late columns of its rows.
 pub(super) struct FrozenLate {
@@ -48,5 +48,18 @@ impl LateSource for FrozenLate {
             *held = Some(prepared);
         }
         decoded
+    }
+
+    /// \[DESIGN\] (RULES.md D1122) Judged of the chunks' codes
+    /// (`columns/scan/liked.rs`), as `decode` reads them.
+    fn like(&self, column: usize, positions: &[u32], pattern: &LikePattern) -> Result<Option<Vec<Option<bool>>>> {
+        let pages = self.table.group_pages()?;
+        let Some(t) = self.table.format.types().get(column) else { return Ok(None) };
+        let mut prepared = self.prepared.lock().ok().and_then(|mut held| held.take()).unwrap_or_default();
+        let judged = liked_at(&self.group, (&pages, &mut prepared), (column, t), (positions, pattern));
+        if let Ok(mut held) = self.prepared.lock() {
+            *held = Some(prepared);
+        }
+        judged
     }
 }

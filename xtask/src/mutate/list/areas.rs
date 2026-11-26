@@ -11,6 +11,7 @@ mod call_modes;
 mod char_strings;
 mod checkpoint;
 mod checkpoint_cost;
+mod coded_like;
 mod explain_unrun;
 mod io_path;
 // The count's, kept beside the other areas' files.
@@ -298,11 +299,11 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
-/// semi joins', mark joins', skipping's, the undo store's memory's, the
+/// semi joins', LIKE's of coded texts', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
 /// debugger's and a morsel's memory's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 30] {
+fn closing() -> [&'static [Mutation]; 31] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -322,6 +323,7 @@ fn closing() -> [&'static [Mutation]; 30] {
         &semi_joins::SEMI_JOINS,
         &grouped_parts::GROUPED_PARTS,
         &like_pieces::LIKE_PIECES,
+        &coded_like::CODED_LIKE,
         &outer_steps::OUTER_STEPS,
         &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,

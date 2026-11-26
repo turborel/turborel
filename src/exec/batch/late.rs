@@ -73,7 +73,9 @@ impl Deferred {
     }
 
     /// Of a filter's input, `cond` the filter's condition: the columns it
-    /// reads read, rows dropped, a bound kept unless it can raise. A
+    /// reads read, but a column only a conjunct LIKE or NOT LIKE a constant
+    /// reads, which is judged of the column given late (RULES.md D1122,
+    /// `judge/liked.rs`); rows dropped, a bound kept unless it can raise. A
     /// condition with a subquery is judged of rows made of every column,
     /// so it reads them all.
     pub(in crate::exec) fn filtered(&self, cond: &Cond) -> Deferred {
@@ -81,7 +83,7 @@ impl Deferred {
             return Deferred::default();
         }
         let mut read = Vec::new();
-        cond_columns(cond, &mut read);
+        liked_apart(cond, &mut read);
         // A condition that can raise sees every row, so no group is passed
         // over under it.
         let bound = self.bound.clone().filter(|_| !cond.can_raise());
@@ -145,6 +147,41 @@ impl Deferred {
             return Vec::new();
         }
         columns.iter().copied().filter(|c| self.unread.binary_search(c).is_ok()).collect()
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1122) Pushes to `read` the columns `cond` reads,
+/// but those its conjuncts LIKE or NOT LIKE a constant pattern, and a
+/// constant ESCAPE if any, read of a column alone: the conjuncts gathered
+/// on a stack of their own, as an AND is as long as its statement's
+/// (RULES.md R-CF-6).
+fn liked_apart(cond: &Cond, read: &mut Vec<usize>) {
+    let mut stack = vec![cond];
+    while let Some(at) = stack.pop() {
+        let like = match at {
+            Cond::And(a, b) => {
+                stack.push(b);
+                stack.push(a);
+                continue;
+            }
+            Cond::Not(inner) => inner.as_ref(),
+            Cond::Const(_)
+            | Cond::Or(..)
+            | Cond::Compare(..)
+            | Cond::IsNull(..)
+            | Cond::Distinct(..)
+            | Cond::Like(..)
+            | Cond::Exists(_)
+            | Cond::Quantified(..)
+            | Cond::Is(..)
+            | Cond::Unique(..)
+            | Cond::Match { .. }
+            | Cond::Value(_)
+            | Cond::In(..) => at,
+        };
+        if !matches!(like, Cond::Like(Expr::Column(_), Expr::Const(_), None | Some(Expr::Const(_)))) {
+            cond_columns(at, read);
+        }
     }
 }
 

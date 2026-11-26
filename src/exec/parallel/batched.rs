@@ -23,6 +23,7 @@ use crate::exec::batch::{
     Batches, Deferred, Shaped, filter_step, outer_step, probe_step, project_step, resolved, rows_of, runtime_step, semi_step, through,
 };
 use crate::exec::{RowIter, broken};
+use crate::storage::{Batch, Column, Nulls};
 use crate::txn::TxId;
 
 /// How a pipeline's morsels are read by batch: each branch's steps over
@@ -93,6 +94,18 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
     Some((shaped, layout, width))
 }
 
+/// `batch`, each column given late at a place not among `reading` made
+/// nulls, never decoded (RULES.md D1122).
+fn unread_dropped(mut batch: Batch, reading: &[usize]) -> Batch {
+    let rows = batch.rows;
+    for (at, column) in batch.columns.iter_mut().enumerate() {
+        if matches!(column, Column::Late(_)) && !reading.contains(&at) {
+            *column = Column::Nulls(Nulls::new(rows));
+        }
+    }
+    batch
+}
+
 /// \[DESIGN\] (RULES.md D361, D366, D1081) The columns of `branch`'s scan
 /// no step reads before its rows, `width` wide at its end, are made, if a
 /// filter or a hash join's probe drops rows on the way: its morsels give
@@ -137,6 +150,19 @@ impl Pipeline {
     /// SQLCODE -910 if the pipeline is not read by batch, or `n` is past its
     /// last morsel.
     pub(super) fn morsel_kept(&self, n: usize, (db, tx): (&Db, TxId)) -> Result<Batches> {
+        self.morsel_reading(n, (db, tx), None)
+    }
+
+    /// \[DESIGN\] (RULES.md D1122) As `morsel_kept`, of what reads only the
+    /// places `reading` of its batches, if given: a column given late at
+    /// another place is dropped, never decoded, as nothing reads it, so a
+    /// column only a filter of the pipeline judged, of how it is stored
+    /// (`judge/liked.rs`), is never decoded at all.
+    ///
+    /// # Errors
+    ///
+    /// As `morsel_kept`.
+    pub(super) fn morsel_reading(&self, n: usize, (db, tx): (&Db, TxId), reading: Option<Arc<[usize]>>) -> Result<Batches> {
         let by = self.batched.as_ref().ok_or_else(|| broken("a pipeline not read by batch"))?;
         let mut at = n;
         for ((branch, steps), late) in self.branches.iter().zip(&by.steps).zip(&by.late) {
@@ -144,7 +170,11 @@ impl Pipeline {
             if at < morsels {
                 let read = branch.split.morsel_batches(at, late).ok_or_else(|| broken("a morsel not read by batch"))?;
                 let kept: Batches = Box::new(read.map(|b| b.map(|b| (b, None))));
-                return Ok(resolved(through(kept, steps, (db, tx)), crate::db::kernels::chosen(db)));
+                let mut stepped = through(kept, steps, (db, tx));
+                if let Some(reading) = reading {
+                    stepped = Box::new(stepped.map(move |batch| batch.map(|(batch, rows)| (unread_dropped(batch, &reading), rows))));
+                }
+                return Ok(resolved(stepped, crate::db::kernels::chosen(db)));
             }
             at = at.saturating_sub(morsels);
         }
@@ -174,7 +204,9 @@ mod tests {
     use crate::exec::Db;
     use crate::logical::{Cond, Expr};
     use crate::physical::{JoinKey, Plan};
+    use crate::storage::{Batch, Column, Late, LateSource};
     use crate::value::{CompOp, Decimal, Value};
+    use std::sync::Arc;
 
     /// A scan of `columns` of table `ident` of schema A.
     fn scan(ident: &str, columns: Vec<usize>) -> Plan {
@@ -230,5 +262,49 @@ mod tests {
         let filtered = Plan::Filter { cond, detail: String::new(), est: 0.0_f64, of_read: false, input: Box::new(joined(0)) };
         assert_eq!(late(&db, &filtered), [1], "a column a filter above reads is read");
         assert_eq!(late(&db, &scan("F", vec![0, 1, 2])), Vec::<usize>::new(), "no step drops a row");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1122: a column a filter reads only by
+    /// LIKE or NOT LIKE a constant pattern is still given late, judged of
+    /// how it is stored; one another conjunct reads is read.
+    #[test]
+    fn a_column_only_a_like_reads_is_given_late() {
+        let db = Database::new();
+        db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE F (K INTEGER, P VARCHAR(9), Q VARCHAR(9))").unwrap();
+        let a = db.session("A");
+        a.run("INSERT INTO F VALUES (1, 'ab', 'cd')").unwrap();
+        a.commit().unwrap();
+        let like = |c: usize| Cond::Like(Expr::Column(c), Expr::Const(Value::Char("%b%".into())), None);
+        let filter = |cond: Cond| Plan::Filter {
+            cond,
+            detail: String::new(),
+            est: 0.0_f64,
+            of_read: false,
+            input: Box::new(scan("F", vec![0, 1, 2])),
+        };
+        assert_eq!(late(&db, &filter(like(1))), [0, 1, 2], "LIKE");
+        assert_eq!(late(&db, &filter(Cond::Not(Box::new(like(2))))), [0, 1, 2], "NOT LIKE");
+        let both = Cond::And(Box::new(like(1)), Box::new(Cond::IsNull(Expr::Column(2), false)));
+        assert_eq!(late(&db, &filter(both)), [0, 1], "a column IS NULL reads is read");
+    }
+
+    /// A source of nulls.
+    struct Nulled;
+
+    impl LateSource for Nulled {
+        fn decode(&self, _: usize, positions: &[u32]) -> crate::error::Result<Column> {
+            Ok(Column::from(vec![Value::Null; positions.len()]))
+        }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1122: of what reads some places of a
+    /// batch, a late column at another place is dropped, one it reads kept
+    /// late, and a column not late kept.
+    #[test]
+    fn a_late_column_not_read_is_dropped() {
+        let late = || Column::Late(Late::new(Arc::new(Nulled), 0, Arc::from(vec![0_u32, 1])));
+        let batch = Batch { columns: vec![late(), late(), Column::from(vec![Value::Null, Value::Null])], rows: 2 };
+        let dropped = super::unread_dropped(batch, &[1]);
+        assert!(matches!(dropped.columns.as_slice(), [Column::Nulls(_), Column::Late(_), Column::Values(_) | Column::Nulls(_)]));
     }
 }

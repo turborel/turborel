@@ -18,6 +18,7 @@ use std::sync::{Arc, OnceLock};
 use super::mask::index;
 use super::{Batch, Column, Value};
 use crate::error::Result;
+use crate::value::LikePattern;
 
 /// \[DESIGN\] (RULES.md D361) Where a late column's values are decoded
 /// from. It is a storage foundation trait (RULES.md D30), so a `dyn`
@@ -31,6 +32,19 @@ pub trait LateSource: Send + Sync {
     ///
     /// As reading what it reads fails: a damaged page.
     fn decode(&self, column: usize, positions: &[u32]) -> Result<Column>;
+
+    /// \[DESIGN\] (RULES.md D1122) Whether each value of column `column`
+    /// at `positions`, ascending, matches `pattern`, unknown of a null,
+    /// judged of how it is stored, none decoded; none if it cannot judge
+    /// them so, the column then decoded. By default it cannot.
+    ///
+    /// # Errors
+    ///
+    /// As reading what it reads fails: a damaged page.
+    fn like(&self, column: usize, positions: &[u32], pattern: &LikePattern) -> Result<Option<Vec<Option<bool>>>> {
+        let _ = (column, positions, pattern);
+        Ok(None)
+    }
 }
 
 /// \[DESIGN\] (RULES.md D361) A column not yet decoded: of each row, its
@@ -69,6 +83,28 @@ impl Late {
     /// Whether it has no rows.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// \[DESIGN\] (RULES.md D1122) Whether each of the rows `rows`, or of
+    /// all, matches `pattern`, unknown of a null, as its source judges it
+    /// with no value decoded (`LateSource::like`); none if it cannot, or a
+    /// join gathered the column.
+    ///
+    /// # Errors
+    ///
+    /// As `LateSource::like`.
+    pub fn like(&self, pattern: &LikePattern, rows: Option<&[u32]>) -> Result<Option<Vec<Option<bool>>>> {
+        if self.picks.is_some() {
+            return Ok(None);
+        }
+        match rows {
+            None => self.source.like(self.column, &self.positions, pattern),
+            Some(rows) => {
+                let wanted: Option<Vec<u32>> = rows.iter().map(|&r| self.positions.get(index(r)).copied()).collect();
+                let Some(wanted) = wanted.filter(|w| w.is_sorted_by(|a, b| a < b)) else { return Ok(None) };
+                self.source.like(self.column, &wanted, pattern)
+            }
+        }
     }
 
     /// Which of `positions` row `r` is, if it is one.

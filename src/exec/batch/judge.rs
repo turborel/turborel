@@ -50,8 +50,9 @@ pub(super) enum Judged {
     /// NOT IN them: a long list by its set, made once (`logical/sets.rs`).
     In(usize, Arc<InSet>, bool),
     /// [X3.135-1986 §5.14] the column LIKE a constant pattern, split once;
-    /// none if a null pattern or escape makes it unknown of every row.
-    Like(usize, Option<LikePattern>),
+    /// none if a null pattern or escape makes it unknown of every row. If
+    /// the flag, NOT LIKE, never true of a null (RULES.md D1122).
+    Like(usize, Option<LikePattern>, bool),
     /// [X3.135-1986 §5.14] the column LIKE a pattern not a constant, a
     /// column's or a constant, ESCAPE one if given (`judge/likes.rs`).
     LikeOf(usize, Operand, Option<Operand>),
@@ -74,7 +75,7 @@ impl Judged {
     /// that raises an error of one; such a LIKE matched by `subqueries`.
     fn kept(&self, batch: &Batch, over: Option<&[u32]>, subqueries: &dyn Subqueries, kernels: &dyn Kernels) -> Option<Vec<u32>> {
         let at = match self {
-            Judged::Compare(at, ..) | Judged::IsNull(at, _) | Judged::In(at, ..) | Judged::Like(at, _) => *at,
+            Judged::Compare(at, ..) | Judged::IsNull(at, _) | Judged::In(at, ..) | Judged::Like(at, ..) => *at,
             Judged::Any(disjuncts) => return kinds::any(disjuncts, batch, over, (subqueries, kernels)),
             Judged::Truth(program, _) => return program.kept(batch, over, (subqueries, kernels)),
             Judged::LikeOf(at, pattern, escape) => {
@@ -82,6 +83,10 @@ impl Judged {
             }
         };
         let column = batch.columns.get(at);
+        // A column given late, judged of how it is stored (RULES.md D1122).
+        if let (Judged::Like(_, pattern, not), Some(Column::Late(late))) = (self, column) {
+            return liked::late((pattern.as_ref(), *not), late, over, kernels);
+        }
         let typed = match column {
             Some(Column::Ints(column)) => ints::kept(self, column, over, kernels),
             Some(Column::Floats(column)) => kinds::floats(self, column, over, kernels),
@@ -113,9 +118,9 @@ impl Judged {
             // is; NOT of it true only if every one is false.
             Judged::In(_, set, not) => set.truth(v) == wanted(*not),
             // [X3.135-1986 §5.14 GR4, GR5] unknown of a null.
-            Judged::Like(_, pattern) => {
+            Judged::Like(_, pattern, not) => {
                 if let (Some(pattern), Value::Char(s)) = (pattern, v) {
-                    pattern.matches(s)
+                    pattern.matches(s) != *not
                 } else {
                     false
                 }
@@ -323,7 +328,10 @@ fn gather(cond: &Cond, columns: &[usize], (judged, rest): (&mut Vec<Judged>, &mu
             .or_else(|| disjoined(cond, columns))
             .or_else(|| vectored(cond, columns)),
         Cond::In(..) => listed(cond).and_then(|(c, set)| Some(Judged::In(place(c)?, set, false))).or_else(|| vectored(cond, columns)),
-        Cond::Not(inner) => listed(inner).and_then(|(c, set)| Some(Judged::In(place(c)?, set, true))).or_else(|| vectored(cond, columns)),
+        Cond::Not(inner) => listed(inner)
+            .and_then(|(c, set)| Some(Judged::In(place(c)?, set, true)))
+            .or_else(|| not_liked(inner, columns))
+            .or_else(|| vectored(cond, columns)),
         Cond::Like(Expr::Column(c), pattern, escape) => liked((*c, pattern, escape.as_ref()), columns).or_else(|| vectored(cond, columns)),
         Cond::Compare(..)
         | Cond::Distinct(..)
@@ -383,7 +391,7 @@ fn liked((c, pattern, escape): (usize, &Expr, Option<&Expr>), columns: &[usize])
     // Constants that may raise, with no partitioning, are rest: judged a
     // row at a time, as every batch would be.
     if let (Expr::Const(p), Some(e)) = (pattern, constant) {
-        return constant_pattern(p, e).map(|split| Judged::Like(place, split));
+        return constant_pattern(p, e).map(|split| Judged::Like(place, split, false));
     }
     let operand = |e: &Expr| match place_of(e, columns)? {
         Place::Column(at) => Some(Operand::At(at)),
@@ -395,6 +403,20 @@ fn liked((c, pattern, escape): (usize, &Expr, Option<&Expr>), columns: &[usize])
         None => None,
     };
     Some(Judged::LikeOf(place, operand(pattern)?, escape))
+}
+
+/// \[DESIGN\] (RULES.md D1122) Of `inner`, the operand of a NOT, how it
+/// is judged over a batch of `columns` if it is a column LIKE a constant
+/// pattern: as the LIKE, its truth turned, a null's unknown kept.
+fn not_liked(inner: &Cond, columns: &[usize]) -> Option<Judged> {
+    let Cond::Like(Expr::Column(c), Expr::Const(p), escape) = inner else { return None };
+    let place = columns.iter().position(|x| x == c)?;
+    let escape = match escape {
+        None => None,
+        Some(Expr::Const(e)) => Some(e),
+        Some(_) => return None,
+    };
+    constant_pattern(p, escape).map(|split| Judged::Like(place, split, true))
 }
 
 /// The column and constants of `cond`, if it is IN a list of them: its
@@ -426,6 +448,7 @@ mod bound;
 mod calls;
 mod ints;
 mod kinds;
+mod liked;
 mod likes;
 mod texts;
 

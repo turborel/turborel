@@ -40,11 +40,13 @@ pub(super) fn kept(judged: &Judged, texts: &Texts, over: Option<&[u32]>, kernels
         // [X3.135-1986 §5.15 GR2-GR4] never unknown.
         Judged::IsNull(_, not) => Some(super::kinds::nulls_kept(texts.nulls.as_ref(), (texts.len(), over), *not, kernels)),
         // [X3.135-1986 §5.14 GR4, GR5] unknown of a null.
-        Judged::Like(_, pattern) => Some(
-            pattern
-                .as_ref()
-                .map_or_else(Vec::new, |pattern| arena(pattern, texts, over, kernels).unwrap_or_else(|| keep(&|s| pattern.matches(s)))),
-        ),
+        // NOT of it unknown of a null too (RULES.md D1122).
+        Judged::Like(_, pattern, not) => Some(pattern.as_ref().map_or_else(Vec::new, |pattern| {
+            arena(pattern, texts, over, kernels).map_or_else(
+                || keep(&|s| pattern.matches(s) != *not),
+                |matched| if *not { unmatched(&matched, texts, over) } else { matched },
+            )
+        })),
         Judged::Compare(_, op, Value::Char(constant)) => Some(keep(&|s| holds(*op, Some(compare_strings(s, constant))))),
         // [X3.135-1986 §5.13 GR2, §5.18] an OR of equalities; NOT of it.
         Judged::In(_, set, not) => {
@@ -85,4 +87,17 @@ fn arena(pattern: &LikePattern, texts: &Texts, over: Option<&[u32]>, kernels: &d
         Some(rows) => rows.iter().copied().filter(kept).collect(),
         None => rows_of(0..all.len()).into_iter().filter(kept).collect(),
     })
+}
+
+/// The rows of `over`, or of all, of `texts`, not null and not among
+/// `matched`, ascending as they are: those NOT LIKE keeps (RULES.md D1122).
+fn unmatched(matched: &[u32], texts: &Texts, over: Option<&[u32]>) -> Vec<u32> {
+    let rows = over.map_or_else(|| rows_of(0..texts.len()), <[u32]>::to_vec);
+    let mut taken = matched.iter().peekable();
+    rows.into_iter()
+        .filter(|&n| {
+            while taken.next_if(|&&m| m < n).is_some() {}
+            taken.peek() != Some(&&n) && texts.get(index(n)).is_some()
+        })
+        .collect()
 }

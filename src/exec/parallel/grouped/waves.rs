@@ -76,13 +76,15 @@ struct Waves<'a> {
 /// As reading the pipeline, or a set function, fails.
 pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Runs> {
     let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
+    // What the grouping reads of the batches: no other column decoded.
+    let reading: Option<Arc<[usize]>> = grouping.read.as_ref().map(|read| read.places().into());
     let count = pipeline.count();
     // The groups the morsel last grouped made, the room the next is given.
     let room = AtomicUsize::new(0);
     let work = Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
-        let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
+        let batches = pipeline.morsel_reading(m, (&db_for, tx), reading.clone())?;
         let expected = room.load(Ordering::Relaxed);
         let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed), expected)?;
         room.store(table.len(), Ordering::Relaxed);

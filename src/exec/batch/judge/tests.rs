@@ -158,14 +158,14 @@ fn a_like_is_judged_over_vectors() {
     let cond = and(like(text("a%c_"), None), compare(Expr::Column(1), CompOp::Eq, int(1)));
     let (judged, rest) = split(&cond, &[1, 3]);
     assert!(rest.is_none());
-    assert!(matches!(judged.as_slice(), [Judged::Compare(..), Judged::Like(1, Some(_))]), "the LIKE last: {judged:?}");
+    assert!(matches!(judged.as_slice(), [Judged::Compare(..), Judged::Like(1, Some(_), false)]), "the LIKE last: {judged:?}");
     for (value, keeps) in [("abcd", true), ("ac!", true), ("abc", false), ("ä…cd", false), ("aäcé", true), ("a\u{1F600}cz", true)] {
         assert_eq!(judged[1].keeps(&text(value)), keeps, "{value}");
         assert_eq!(crate::value::like(value, "a%c_", None).unwrap(), keeps, "{value}: as a row's LIKE");
     }
     assert!(!judged[1].keeps(&Value::Null), "unknown of a null");
     let (nulled, _) = split(&like(Value::Null, None), &[3]);
-    assert!(matches!(nulled.as_slice(), [Judged::Like(0, None)]) && !nulled[0].keeps(&text("a")));
+    assert!(matches!(nulled.as_slice(), [Judged::Like(0, None, false)]) && !nulled[0].keeps(&text("a")));
     let (escaped, _) = split(&like(text("a!%%"), Some(text("!"))), &[3]);
     assert!(escaped[0].keeps(&text("a%z")) && !escaped[0].keeps(&text("az")));
     let (raising, none) = split(&like(text("a!x"), Some(text("!"))), &[3]);
@@ -222,7 +222,7 @@ fn conjuncts_judged_over_integers_keep_what_values_keep() {
         None,
         "a list of an approximate"
     );
-    assert_eq!(ints::kept(&Judged::Like(0, None), &ints, Some(&all), &Portable), None, "LIKE");
+    assert_eq!(ints::kept(&Judged::Like(0, None, false), &ints, Some(&all), &Portable), None, "LIKE");
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR5, §5.13, §5.14,
@@ -249,9 +249,9 @@ fn conjuncts_judged_over_texts_keep_what_values_keep() {
     let all: Vec<u32> = rows_of(0..values.len());
     let char_of = |s: &str| Value::Char(s.into());
     let mut judged = vec![
-        Judged::Like(0, constant_pattern(&char_of("a%"), None).unwrap()),
-        Judged::Like(0, constant_pattern(&char_of("_b"), None).unwrap()),
-        Judged::Like(0, None),
+        Judged::Like(0, constant_pattern(&char_of("a%"), None).unwrap(), false),
+        Judged::Like(0, constant_pattern(&char_of("_b"), None).unwrap(), false),
+        Judged::Like(0, None, false),
     ];
     for c in ["ab", "a", "é", ""] {
         for op in [CompOp::Eq, CompOp::Ne, CompOp::Lt, CompOp::Le, CompOp::Gt, CompOp::Ge] {
@@ -324,7 +324,7 @@ fn conjuncts_judged_over_floats_keep_as_values() {
             "{j:?}"
         );
     }
-    assert_eq!(kinds::floats(&Judged::Like(0, None), &floats, Some(&over), &Portable), None, "not of numbers");
+    assert_eq!(kinds::floats(&Judged::Like(0, None, false), &floats, Some(&over), &Portable), None, "not of numbers");
 }
 
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.14]: a LIKE of a
