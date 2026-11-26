@@ -744,6 +744,7 @@ verification approach DO-178C expects (§8).
 | D1164 | A start that changes nothing records no catalog image |
 | D1165 | What each column takes, by the encoding of its chunks, is shown, and a tree's bytes are counted |
 | D1166 | A count past 2^32 is itself, as an estimate and as a sum of bytes |
+| D1167 | Each operator carries only the columns read above it |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
@@ -20207,6 +20208,49 @@ pages.
 A count is now exact to 2^53 and the nearest `f64` past it, its high and
 low words each converted. The ceiling of an estimate is the most a
 count holds only of one reaching it.
+
+#### D1167. Each operator carries only the columns read above it
+
+A scan reads the columns its statement uses, and each operator carried
+every column its input gave. A column a filter alone reads, or a join's
+key, was copied into each row of every join above it, though nothing
+read it again. TPC-H's query 9 matches the names of its parts with LIKE
+and copied each name once for every line item joined to the part, at
+every join, and each join's keys at every join above.
+
+A plan is now walked from the top, once it is planned, with the columns
+of each operator's rows read above it (`physical/blind/pruned.rs`). The
+plan's own columns are all read. A scan reads those and the ones it is
+ordered by. A filter reads its condition's columns, a sort its keys', a
+grouping its groups' and its set functions', and a join its keys' and
+its conditions'. A projection's column moved is read only if one above
+reads it. Any other expression reads its columns whether or not it is
+read, so no error it raises is lost. An operator with a subquery reads
+every column of its input, as the subquery may read the row, and so
+does one of any other kind; the inputs below it are walked as plans of
+their own. A located scan, whose row's id follows its columns, reads
+them all.
+
+An operand of a join, built or probing, or the input of a sort, that
+gives a column neither it nor one above reads is put under a projection
+of its columns giving that column null, or, if it is a projection of
+columns, gives the null itself. An operand whose columns holding a
+value are not known here, as an index's scan, is left as it is, and the
+join over it is the one put under the projection. The join or the sort
+carries a vector of nulls in its place, which costs nothing to copy.
+Such a vector is charged to a work area only once its values are made
+(`storage/batch/held.rs`). It was charged a value a row, so an operand
+mostly of nulls outgrew its work area and was joined row by row. A filter's
+column or a join's key drops out after its operator. Every column keeps its
+place, so nothing above is renumbered and the plan's columns and their
+order are as they were. EXPLAIN shows each such projection, the columns
+kept by name and the others as NULL. A projection of columns and the
+null value moves its vectors and makes a vector of nulls
+(`exec/batch/picks.rs`), so it costs a pipeline no more than a move.
+The plan is pruned in place, so the walk of a deep plan holds little
+on the stack. The texts gathered of a vector are found once and copied
+into a buffer made at their length (`storage/batch/gathered.rs`), not
+one grown as they are copied.
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 

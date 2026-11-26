@@ -21,6 +21,7 @@ use super::Step;
 use super::chain::{Key, keys, leaves};
 use super::tree::schedule;
 use crate::db::State;
+use crate::logical::Expr;
 use crate::physical::Plan;
 use crate::physical::Seen;
 
@@ -101,7 +102,7 @@ fn taken(db: (&State, &Seen), reduced: &mut [Reduced<'_>], step: Step) -> Option
 /// of a table, filtered or not, whose statistics, as the statement sees
 /// them, tell.
 fn distinct(db: (&State, &Seen), leaf: &Plan, column: usize) -> Option<f64> {
-    let mut at = leaf.bare();
+    let (mut at, mut column) = (leaf.bare(), column);
     for _ in 0..super::chain::LINKS {
         if let Plan::SeqScan { table, .. } = at {
             return db.1.statistics(db.0, table)?.distinct(column);
@@ -109,6 +110,12 @@ fn distinct(db: (&State, &Seen), leaf: &Plan, column: usize) -> Option<f64> {
         at = if let Plan::Parallel(p) = at {
             p.input.bare()
         } else if let Plan::Filter { input, .. } = at {
+            input.bare()
+        } else if let Plan::Project { exprs, input, .. } = at
+            && let Some(Expr::Column(c)) = exprs.get(column)
+        {
+            // A projection of the columns read above (RULES.md D1167).
+            column = *c;
             input.bare()
         } else {
             return None;

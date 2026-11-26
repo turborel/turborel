@@ -268,7 +268,8 @@ impl PhysicalPlanner<'_> {
         }
         super::plannings::counted();
         let estimates = Estimates::over(self.db, logical, self.values).seeing(seen);
-        super::estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan)
+        let plan = super::estimate::valued(self.values, || PhysicalPlanner { est: Some(&estimates), ..*self }.build(logical, &[]).plan);
+        self.pruned(plan)
     }
 
     /// `f` of this planning's estimator, or of one made for the call if

@@ -22,6 +22,7 @@ use std::sync::Arc;
 use super::joined;
 use super::judge::Judging;
 use super::late::{Deferred, resolved};
+use super::picks::{pick, picked};
 use super::project::{computed, place_of};
 use super::runtime::{self, Told};
 use super::told;
@@ -30,9 +31,9 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::Runner;
-use crate::logical::{Cond, Expr, Window, pushed_conjuncts};
+use crate::logical::{Cond, Window, pushed_conjuncts};
 use crate::physical::Plan;
-use crate::storage::{Batch, Column, Conjunct, Conjunction, Sel};
+use crate::storage::{Batch, Conjunct, Conjunction, Sel};
 use crate::txn::{TxId, counted};
 
 /// A batch, and the rows of it a filter kept, if one did.
@@ -142,12 +143,6 @@ fn appended_owned(plan: Plan) -> Vec<Plan> {
         }
     }
     out
-}
-
-/// The place among `columns` of each of `exprs`, if each is a column they
-/// hold.
-pub(super) fn picked(exprs: &[Expr], columns: &[usize]) -> Option<Vec<usize>> {
-    exprs.iter().map(|e| if let Expr::Column(c) = e { columns.iter().position(|held| held == c) } else { None }).collect()
 }
 
 /// The layout of `input`, a part run in parallel: a window's over batches,
@@ -534,22 +529,6 @@ fn appended_batches(chain: Plan, (db, tx): (&Db, TxId), _deferred: &Deferred) ->
     let later = db.clone();
     let operands = appended_owned(chain).into_iter();
     Ok(Box::new(operands.flat_map(move |operand| batches(operand, &later, tx).unwrap_or_else(|e| Box::new(std::iter::once(Err(e)))))))
-}
-
-/// `batch` with the vectors at `picks`, in order: each moved, or copied if
-/// a later pick takes it too.
-pub(super) fn pick(batch: Batch, picks: &[usize]) -> Batch {
-    let mut held: Vec<Option<Column>> = batch.columns.into_iter().map(Some).collect();
-    let columns = picks
-        .iter()
-        .enumerate()
-        .map(|(n, &at)| {
-            let again = picks.get(n.saturating_add(1)..).is_some_and(|rest| rest.contains(&at));
-            let vector = if again { held.get(at).cloned().flatten() } else { held.get_mut(at).and_then(Option::take) };
-            vector.unwrap_or_default()
-        })
-        .collect();
-    Batch { columns, rows: batch.rows }
 }
 
 /// A scan's batches (`TableStorage::scan_batches`), its columns `deferred`

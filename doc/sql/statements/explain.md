@@ -324,7 +324,9 @@ a phase of predicate transfer reads the three tables first, the
 suppliers in Oslo filtering the offers by a Bloom filter of their keys
 and those offers the parts, so each join is given only the rows that
 can match (PLANNER.PREDICATE_TRANSFER). Its line tells the chain's
-tables and the filters it makes:
+tables and the filters it makes. The offers' suppliers and the
+suppliers' keys are read by their join alone, so the projection over it
+gives them as NULL and the join above carries no copy of them:
 
 ```sql
 CREATE TABLE SUPPLIERS (ID INTEGER PRIMARY KEY, CITY VARCHAR(20));
@@ -371,11 +373,12 @@ OK
    Project PARTS.NAME, SUPPLIERS.CITY, OFFERS.PRICE
      HashJoin PARTS.ID = OFFERS.PART  (join order by DPccp: (PARTS (OFFERS SUPPLIERS)))
        SeqScan ANN.PARTS  (rows=1000, cost=1000.0)
-       HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
-         SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
-         Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
-           SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
-(28 rows)
+       Project OFFERS.PART, NULL, OFFERS.PRICE, NULL, SUPPLIERS.CITY
+         HashJoin OFFERS.SUPPLIER = SUPPLIERS.ID
+           SeqScan ANN.OFFERS  (rows=5000, cost=5000.0)
+           Filter SUPPLIERS.CITY = 'Oslo'  (est. rows=0)
+             SeqScan ANN.SUPPLIERS  (rows=10, cost=10.0)
+(29 rows)
 ```
 
 A correlated subquery unnested ([Query Expressions](../06-queries.md#correlated-subqueries)),
@@ -430,7 +433,7 @@ OK
  Project S.NAME
    Filter S.SALARY > CASE WHEN 1 IS NULL THEN NULL ELSE AVG(T.SALARY) END
      HashJoin S.DEPT = T.DEPT
-       Project S.ID, S.NAME, S.DEPT, S.SALARY, S.DEPT
+       Project NULL, S.NAME, NULL, S.SALARY, S.DEPT
          SeqScan ANN.STAFF  (rows=4, cost=3.8)
        Project T.DEPT, 1, AVG(T.SALARY)
          Project T.DEPT, AVG(T.SALARY)

@@ -560,12 +560,13 @@ EXPLAIN SELECT * FROM GRAPH_TABLE (BANK
  Project OWNER
    HashJoin ID = SRC
      SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
-     Project ID, OWNER, ID, SRC, DST, AMOUNT
+     Project NULL, NULL, NULL, SRC, NULL, NULL
        HashJoin DST = ID
          SeqScan ANN.TRANSFER  (rows=5, cost=5.0)
-         Filter OWNER = 'Mike'  (est. rows=0)
-           SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
-(30 rows)
+         Project ACCOUNT.ID, NULL
+           Filter OWNER = 'Mike'  (est. rows=0)
+             SeqScan ANN.ACCOUNT  (rows=4, cost=4.0)
+(31 rows)
 ```
 
 A pattern whose edges close a cycle is matched by a worst-case optimal

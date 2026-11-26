@@ -534,7 +534,7 @@ impl<'a> PhysicalPlanner<'a> {
     }
 
     /// The physical plan for `logical`, estimated by one estimator for
-    /// the whole planning (RULES.md D370).
+    /// the whole planning (RULES.md D370), its columns pruned (D1167).
     pub fn plan(&self, logical: &LogicalPlan) -> Plan {
         self.plan_seeing(logical, None)
     }
