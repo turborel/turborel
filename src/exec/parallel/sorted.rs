@@ -80,8 +80,10 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resul
     let (pipeline, keys, db_for, within) = (Arc::new(pipeline), Arc::new(keys.clone()), db.clone(), limit.clone());
     let (count, keys_for) = (pipeline.count(), Arc::clone(&keys));
     let each = Box::new(move |m: usize| morsel_run(&pipeline, m, (&keys_for, most), (&db_for, tx), &within));
+    // What it held before its morsels, read before a thread starts on one.
+    let from = limit.held();
     let morsels = Morsels::start(db, tx, (count, degree), each);
-    let (mut runs, mut spilled) = held_runs(morsels, &keys, (db, tx, count), &limit)?;
+    let (mut runs, mut spilled) = held_runs(morsels, &keys, (db, tx, count), (&limit, from))?;
     // The runs held as vectors are made rows to be merged in memory, if
     // those rows fit too.
     if spilled.is_none() && !limit.take(runs.iter().map(Run::made_bytes).sum()) {
@@ -115,9 +117,9 @@ fn held_runs(
     morsels: Morsels<Made>,
     keys: &[SortKey],
     (db, tx, count): (&Db, TxId, usize),
-    limit: &Limit,
+    (limit, from): (&Limit, usize),
 ) -> Result<(Vec<Run>, Option<Spilling>)> {
-    let (mut runs, from) = (Vec::new(), limit.held());
+    let (mut runs, mut read) = (Vec::new(), 0_usize);
     let mut spilled: Option<Spilling> = None;
     for (done, made) in (1_usize..).zip(morsels) {
         let run = match made? {
@@ -139,7 +141,10 @@ fn held_runs(
         };
         if let Some((sorter, work)) = spilled.as_mut() {
             run.push_to(sorter, work)?;
-        } else if !limit.take(run.bytes()) || !limit.on_course(from, (done, count)) {
+            continue;
+        }
+        read = read.saturating_add(run.bytes());
+        if !limit.take(run.bytes()) || !limit.on_course((from, read), (done, count)) {
             spilled = Some(spilled_of(keys, runs.drain(..).chain(std::iter::once(run)), (db, tx))?);
         } else {
             runs.push(run);
