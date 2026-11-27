@@ -2,7 +2,12 @@
 //! block's value that runs past its word given the wrong rest, ALP's
 //! header bit not written, a decimal kept that its factors do not give
 //! back, an n made an `f64` off by one ulp, the cache of opened chunks
-//! keyed by zone alone, not column too, and a chunk opened never found again.
+//! keyed by zone alone, not column too, and a chunk opened never found again;
+//! and of 16-byte fields read as integers (D1287): a field's high half
+//! not tested in the loop, one field cut to 64 bits, a constant past 64
+//! bits read as 0, the chunks' bounds not tested, the chunks before a run
+//! or of no position tested with its own, and a wide column's conjunct
+//! not the scan's.
 
 use super::super::{Mutation, Package};
 
@@ -21,8 +26,17 @@ const DECIMALS: &str = "engine::columns::alp::tests::chunks_of_decimals_read_bac
 /// The unit test of the cache over runs.
 const OPENED_ONCE: &str = "engine::columns::prepared::tests::chunks_are_opened_once_for_their_runs";
 
+/// A chunk's values as integers.
+const WORDS_FILE: &str = "src/engine/columns/encoded/words.rs";
+/// The unit test of what a chunk of 16-byte fields refuses.
+const PAST: &str = "engine::columns::tests::wide::a_value_past_64_bits_is_not_read_as_an_integer";
+/// The unit test of a wide column's runs.
+const WIDE_RUNS: &str = "engine::columns::prepared::tests::wide::a_wide_column_reads_as_integers_where_64_bits_hold_its_values";
+/// The unit test of a wide column's positions.
+const WIDE_PLACES: &str = "engine::columns::prepared::tests::wide::a_wide_column_reads_as_integers_at_positions";
+
 /// Mechanisms of the decode kernels whose removal must fail their tests.
-pub const DECODE: [Mutation; 6] = [
+pub const DECODE: [Mutation; 13] = [
     Mutation {
         name: "decode-block-spill-shift",
         package: Package::Core,
@@ -82,5 +96,75 @@ pub const DECODE: [Mutation; 6] = [
         replacement: "if let Some(at) = kept.iter().position(|h| h.first == first && h.end < first) {",
         integration: &[],
         unit: &[OPENED_ONCE],
+    },
+    Mutation {
+        name: "decode-wide-fields-cut",
+        package: Package::Core,
+        breaks: "fixed fields of 16 bytes are integers only if each one's high half is its sign alone",
+        file: WORDS_FILE,
+        original: "        fit &= i64::from_le_bytes(*high) == units.wrapping_shr(SIGN_SHIFT);",
+        replacement: "        fit &= high.len() == FRAMED;",
+        integration: &[],
+        unit: &[PAST],
+    },
+    Mutation {
+        name: "decode-wide-field-cut",
+        package: Package::Core,
+        breaks: "a field of 16 bytes read alone, or a dictionary's entry, is an integer only if 64 bits hold it",
+        file: WORDS_FILE,
+        original: "        Ok(wide) => i64::try_from(i128::from_le_bytes(wide)).ok(),",
+        replacement: "        Ok(wide) => wide.first_chunk::<FRAMED>().map(|low| i64::from_le_bytes(*low)),",
+        integration: &[],
+        unit: &[PAST],
+    },
+    Mutation {
+        name: "decode-wide-constant-zero",
+        package: Package::Core,
+        breaks: "a constant past 64 bits is no integer, not 0",
+        file: WORDS_FILE,
+        original: "    if field.is_empty() { Some(0) } else { narrowed(field) }",
+        replacement: "    Some(narrowed(field).unwrap_or(0))",
+        integration: &[],
+        unit: &[PAST],
+    },
+    Mutation {
+        name: "decode-wide-bounds-untested",
+        package: Package::Core,
+        breaks: "a run of a wide column is refused by its chunks' bounds, before a chunk is opened",
+        file: "src/engine/columns/scan.rs",
+        original: "    Ok(zones.iter().filter(|z| touched(z)).all(fits).then_some(scale))",
+        replacement: "    Ok(zones.iter().filter(|z| touched(z)).all(|z| fits(z) || z.run.rows > 0).then_some(scale))",
+        integration: &[],
+        unit: &[WIDE_RUNS],
+    },
+    Mutation {
+        name: "decode-wide-run-chunks",
+        package: Package::Core,
+        breaks: "a run of a wide column is judged by the bounds of the chunks it reads alone",
+        file: "src/engine/columns/scan.rs",
+        original: "    let touched = |z: &Zone| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from;",
+        replacement: "    let touched = |z: &Zone| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from.min(0);",
+        integration: &[],
+        unit: &[WIDE_RUNS],
+    },
+    Mutation {
+        name: "decode-wide-position-chunks",
+        package: Package::Core,
+        breaks: "positions of a wide column are judged by the bounds of the chunks that hold one of them alone",
+        file: "src/engine/columns/scan/positions.rs",
+        original: ".is_some_and(|&p| p < z.run.first.saturating_add(z.run.rows))",
+        replacement: ".is_some_and(|&p| p >= z.run.first)",
+        integration: &[],
+        unit: &[WIDE_PLACES],
+    },
+    Mutation {
+        name: "decode-wide-conjunct-unjudged",
+        package: Package::Core,
+        breaks: "a conjunct on a wide exact column is the scan's to judge",
+        file: "src/engine/columns/judged.rs",
+        original: "        DataType::Exact { .. }\n        | DataType::Approximate { .. }",
+        replacement: "        DataType::Exact { precision, .. } => *precision < 19,\n        DataType::Approximate { .. }",
+        integration: &[],
+        unit: &["engine::columns::prepared::tests::wide::a_scan_judges_a_wide_column_where_it_reads_integers"],
     },
 ];

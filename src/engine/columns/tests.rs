@@ -6,6 +6,7 @@ use crate::value::{Decimal, Spelled};
 
 mod pinned;
 mod truncated;
+mod wide;
 
 /// The records of `fields`, a value's or none for a null each, end to end.
 pub(super) fn records_of(fields: &[Option<Vec<u8>>]) -> crate::storage::lanes::Records {

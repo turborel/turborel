@@ -519,6 +519,7 @@ mod views;
 mod warnings;
 mod weblog;
 mod wide_exact;
+mod wide_narrowed;
 mod width_bucket;
 mod window_batches;
 mod window_distinct;

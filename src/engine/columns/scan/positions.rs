@@ -10,10 +10,9 @@ use super::super::group::{Group, Seal, Zone};
 use super::super::packed::dense;
 use super::super::prepared::Made;
 use super::super::{Chunk, padding};
-use super::{Reading, Words, datetime_shape, float_of, nulls_of};
+use super::{Reading, Words, datetime_shape, float_of, ints_scale, nulls_of};
 use crate::error::Result;
 use crate::storage::{Coded, Column, Datetimes, Floats, Ints, Mask, Texts};
-use crate::value::types::narrow_scale;
 use crate::value::{DataType, Value};
 
 /// \[DESIGN\] Column `c`, of type `t`, of the rows at `positions` of
@@ -95,7 +94,11 @@ pub fn ints_at<S: Seal>(
     (column, t): (usize, &DataType),
     positions: &[u32],
 ) -> Result<Option<Ints>> {
-    let Some(scale) = narrow_scale(t) else { return Ok(None) };
+    // A chunk is read of if a position asked for is among its rows.
+    let touched = |z: &Zone| {
+        positions.get(positions.partition_point(|&p| p < z.run.first)).is_some_and(|&p| p < z.run.first.saturating_add(z.run.rows))
+    };
+    let Some(scale) = ints_scale(group, (column, t), touched)? else { return Ok(None) };
     Ok(words_at(group, (pages, prepared), (column, t), positions)?.map(|(units, nulls)| Ints::new(units, scale, nulls_of(nulls))))
 }
 

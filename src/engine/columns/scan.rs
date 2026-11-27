@@ -4,13 +4,13 @@
 //! (zone maps), and by the parts' Bloom filters; and the rows of a run, only
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
-use super::group::{Group, PART_ROWS, Pages, Seal};
+use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
 use super::prepared::Prepared;
 use super::{Chunk, bloom, imprints, padding};
 use crate::error::Result;
 use crate::storage::{Column, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Row, Texts};
 use crate::value::datetime::Moment;
-use crate::value::types::narrow_scale;
+use crate::value::types::{narrow_scale, wide_scale, word_holds};
 use crate::value::{DataType, Value};
 
 mod positions;
@@ -256,8 +256,9 @@ pub fn values<S: Seal>(
     Ok(out)
 }
 
-/// The 8-byte fields of a column, each as a signed integer, and whether
-/// each is null: none if one of them is not so.
+/// The fields of a column that are integers, of 8 bytes or of 16 that 64
+/// bits hold, each as a signed integer, and whether each is null: none if
+/// one of them is not so.
 type Words = Option<(Vec<i64>, Mask)>;
 
 /// 8-byte fields, whether each is null, and where each run of one value
@@ -275,10 +276,33 @@ fn float_of(word: i64) -> f64 {
     f64::from_bits(u64::from_le_bytes(word.to_le_bytes()))
 }
 
+/// \[DESIGN\] (RULES.md D1287) The scale of the integers that column
+/// `column` of `group`, of type `t`, is read as, of the chunks `touched`
+/// says a reading takes of: that of an exact numeric type of no more
+/// digits than 64 bits hold (`narrow_scale`), which a record writes as its
+/// units in 8 bytes; and that of a wider one if the least and greatest
+/// values of each chunk read fit 64 bits, so every value of it does. A
+/// wide column whose values pass 64 bits pays this test alone, decoding
+/// nothing twice. None of another type, or of a chunk holding a value past
+/// 64 bits, whose rows are read as values.
+///
+/// # Errors
+///
+/// As `Group::zones`.
+fn ints_scale(group: &Group, (column, t): (usize, &DataType), touched: impl Fn(&Zone) -> bool) -> Result<Option<u32>> {
+    if let Some(scale) = narrow_scale(t) {
+        return Ok(Some(scale));
+    }
+    let Some(scale) = wide_scale(t) else { return Ok(None) };
+    let Some(zones) = group.zones(column)? else { return Ok(None) };
+    let fits = |z: &Zone| z.bounds.as_ref().is_none_or(|(least, greatest)| word_holds(least, scale) && word_holds(greatest, scale));
+    Ok(zones.iter().filter(|z| touched(z)).all(fits).then_some(scale))
+}
+
 /// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
 /// positions `from` to `to` of `group`, as integers (`storage::Ints`), if
-/// `t` is an exact numeric type of no more digits than 64 bits hold
-/// (`narrow_scale`), which a record writes as its units in 8 bytes, and every chunk's encoding holds integers.
+/// `t` is an exact numeric type whose values among them 64 bits hold
+/// (`ints_scale`), and every chunk's encoding holds integers.
 ///
 /// # Errors
 ///
@@ -289,7 +313,8 @@ pub fn ints<S: Seal>(
     (column, t): (usize, &DataType),
     (from, to): (u32, u32),
 ) -> Result<Option<Ints>> {
-    let Some(scale) = narrow_scale(t) else { return Ok(None) };
+    let touched = |z: &Zone| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from;
+    let Some(scale) = ints_scale(group, (column, t), touched)? else { return Ok(None) };
     Ok(words(group, (pages, prepared), (column, t), (from, to))?.map(|((units, nulls), runs)| {
         let ints = Ints::new(units, scale, nulls_of(nulls));
         match runs {

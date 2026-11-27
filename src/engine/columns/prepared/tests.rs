@@ -11,6 +11,8 @@ use crate::memory::MemoryBudget;
 use crate::storage::{Row, Texts};
 use crate::value::{Decimal, Spelled, Value};
 
+mod wide;
+
 const INTEGER: DataType = DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Integer };
 const TEXT: DataType = DataType::varying(100);
 const DOUBLE: DataType = DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision };
