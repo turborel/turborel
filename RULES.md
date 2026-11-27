@@ -23316,7 +23316,7 @@ under a target's directory is a module of that target.
 | R-DOC-6 | Every file **shall** start with a `//!` doc giving its responsibility and clauses implemented. | review |
 | R-DOC-7 | Each implementation-defined choice **shall** be listed in CONFORMANCE.md with its implementing file. | review |
 | R-DOC-8 | A change visible to a user, operator or program **shall** update the manual, `doc/`, in the same commit: every page stating what changed, in its format (statement pages: NAME, SYNOPSIS, DESCRIPTION, RULES, PRIVILEGES, ERRORS, EXAMPLES, STANDARD, SEE ALSO; chapters: sections). New statements, settings, program options and events get a page or entry. Claims are checked against the code; examples are run, with the changed output pasted. | review |
-| R-DOC-9 | A major feature, a finished TODO.md item or a new capability users would look for, **shall** update README.md's "What it has" in the same commit: one short line added or an existing line extended, never a paragraph, so the summary does not go stale. | review |
+| R-DOC-9 | README.md's "What it has" **shall** name each area of capability a user would look for in one short line that says what can be done and nothing of how it is built, in no more than 24 lines. A major feature of an area already named extends that line by a few words or leaves it alone, and a line is added only for a new area. How a feature works belongs to the manuals, and CONFORMANCE.md lists every feature. | review |
 
 ### R-CONST: no magic numbers or strings
 
