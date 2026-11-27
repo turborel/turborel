@@ -91,6 +91,100 @@ fn partitions_merged_by_columns_hold_what_the_morsels_hold() {
     }
 }
 
+/// Verifies: [DESIGN] (RULES.md D1260) a morsel whose rows are each made
+/// a group of their own, none looked for, a key held three times among
+/// them, gives its partitions' tables the groups a morsel grouped in a
+/// table gives them: every key once, its first row the earliest, its
+/// counts and sums merged, of integers and of texts, whole and split
+/// among partitions.
+#[test]
+fn rows_appended_apart_merge_into_the_groups_a_table_makes() {
+    for text in [false, true] {
+        let keyed = |n: i128| if text { vec![exact(n % 700), Value::Char(format!("k{} ", n % 700).into())] } else { vec![exact(n % 700)] };
+        let keys: Vec<Vec<Value>> = (0..2100).map(keyed).collect();
+        let (width, seed) = (if text { 2 } else { 1 }, Seed::fixed(0x5EED));
+        let (mut apart, mut tabled) = (GroupTable::unplaced(width, &calls(), &seed, 0), GroupTable::with_room(width, &calls(), &seed, 0));
+        for (n, key) in (100_u64..).zip(&keys) {
+            let hash = hash_values(&seed, key);
+            let own = apart.appended(hash, Key::Values(key), n);
+            fed(&mut apart, own, (n, key));
+            let found = tabled.found_or_made(hash, Key::Values(key), n);
+            fed(&mut tabled, found, (n, key));
+        }
+        assert_eq!((apart.len(), tabled.len()), (2100, 700), "a group a row, and a group a key");
+        let (handed, grouped) = (apart.made(8, &[]).unwrap(), tabled.made(8, &[]).unwrap());
+        for p in 0..8 {
+            let merged = |made: &Made| {
+                let mut table = GroupTable::new(width, &calls(), &seed, usize::MAX);
+                table.reserve(made, made.groups_of(p));
+                table.absorb(made, p).unwrap();
+                table.finished().unwrap().iter().map(|(first, row)| format!("{first} {row:?}")).collect::<Vec<_>>()
+            };
+            assert_eq!(merged(&handed), merged(&grouped), "partition {p}, text keys: {text}");
+        }
+    }
+}
+
+/// A row to merge: its key's hash, its key, and its number.
+type Given = (u64, Vec<Value>, u64);
+
+/// Feeds group `g` of `table` the row `n` of `key`: one row counted, its
+/// key's number summed and kept as least and greatest.
+fn fed(table: &mut GroupTable, g: u32, (n, key): (u64, &Vec<Value>)) {
+    let units = if let Some(Value::Exact(d)) = key.first() { d.units } else { 7 };
+    let (mut total, mut value) = (Vec::new(), Vec::new());
+    put_value(&mut total, &exact(units));
+    put_value(&mut value, &exact(units));
+    table.merge_written(g, (n, &[1_i128.to_le_bytes().to_vec(), total, value.clone(), value])).unwrap();
+}
+
+/// `rows` each a group of its own, none looked for, frozen whole: groups
+/// that may share a key.
+fn handed(rows: &[Given], seed: &Seed) -> Made {
+    let mut table = GroupTable::unplaced(1, &calls(), seed, 0);
+    for (hash, key, n) in rows {
+        let g = table.appended(*hash, Key::Values(key), *n);
+        fed(&mut table, g, (*n, key));
+    }
+    table.frozen().unwrap()
+}
+
+/// Verifies: [DESIGN] (RULES.md D1275, D357) groups merged in one pass
+/// are the groups that finding or making each in turn gives, with the
+/// same numbers, first rows and states: of groups no two of a key, of
+/// groups that share keys among themselves, of groups whose keys the
+/// table already holds, and of groups whose hashes collide, so that a
+/// probe grows past the longest mid-way and the table places the rest,
+/// keys held twice among them, by keyed hashes.
+#[test]
+fn groups_merged_in_one_pass_are_those_found_or_made_in_turn() {
+    let seed = Seed::fixed(0x5EED);
+    let given = |key: i128, n: u64, collides: bool| {
+        let key = vec![exact(key)];
+        (if collides { 42 } else { hash_values(&seed, &key) }, key, n)
+    };
+    let apart: Vec<Given> = (0..1500).map(|n| given(i128::from(n), n, false)).collect();
+    let shared: Vec<Given> = (0..3000).map(|n| given(i128::from(n * 7 % 2500), 5000 + n, false)).collect();
+    let mut colliding: Vec<Given> = (0..300).map(|n| given(i128::from(3000 + n % 200), 9000 + n, false)).collect();
+    colliding.extend((0..600).map(|n| given(i128::from(4000 + n % 150), 9300 + n, true)));
+    colliding.extend((0..300).map(|n| given(i128::from(n * 11 % 5000), 9900 + n, false)));
+    let (mut merged, mut in_turn) = (GroupTable::new(1, &calls(), &seed, usize::MAX), GroupTable::new(1, &calls(), &seed, usize::MAX));
+    for (rows, keyed) in [(&apart, false), (&shared, false), (&colliding, true)] {
+        merged.absorb_whole(&handed(rows, &seed)).unwrap();
+        for (hash, key, n) in rows {
+            let g = in_turn.found_or_made(*hash, Key::Values(key), *n);
+            fed(&mut in_turn, g, (*n, key));
+        }
+        assert_eq!((merged.is_keyed(), in_turn.is_keyed()), (keyed, keyed));
+        let shown =
+            |table: &GroupTable| table.finished().unwrap().iter().map(|(first, row)| format!("{first} {row:?}")).collect::<Vec<_>>();
+        assert_eq!(shown(&merged), shown(&in_turn));
+    }
+    let keys: std::collections::BTreeSet<String> =
+        [&apart, &shared, &colliding].iter().flat_map(|rows| rows.iter()).map(|(_, key, _)| format!("{key:?}")).collect();
+    assert_eq!(merged.len(), keys.len(), "every key once");
+}
+
 /// Verifies: [DESIGN] (RULES.md D1113) groups split by the hashes of
 /// their first lane alone put every group of a value of it in one
 /// partition, in each morsel alike, of integers and of texts, and the
