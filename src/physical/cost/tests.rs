@@ -80,11 +80,11 @@ fn passes_cost_the_probing_side_read_again_up_to_the_most() {
     assert!(same(pass_limit(0.1_f64, 0.0_f64), pass_limit(1.0_f64, 0.0_f64)));
     assert!(same(pass_limit(5.0_f64, 20.0_f64), 1.0_f64 + ((PARTITIONED_ROW + SPILLED_BYTE * 20.0_f64) / 5.0_f64).floor()));
     let (bytes, grant) = (100.0_f64, 300_000.0_f64);
-    assert!(same(passed_spilled((3_000.0_f64, bytes), (1e6_f64, 1e6_f64, 16.0_f64), grant), 0.0_f64));
-    let most = pass_limit(1.0_f64, 16.0_f64);
+    assert!(same(passed_spilled((3_000.0_f64, bytes), (1e6_f64, 1e6_f64), grant), 0.0_f64));
+    let most = pass_limit(1.0_f64, ENTRY_BYTES);
     let at_most = (most - 0.5_f64) * grant / PASS_SHARE / bytes;
-    let cost = passed_spilled((at_most, bytes), (1e6_f64, 1e6_f64, 16.0_f64), grant);
+    let cost = passed_spilled((at_most, bytes), (1e6_f64, 1e6_f64), grant);
     assert!(same(cost, at_most * (SPILLED_ROW + SPILLED_BYTE * bytes) + (most - 1.0_f64) * 1e6_f64), "{cost}");
-    let past = passed_spilled(((most + 0.5_f64) * grant / PASS_SHARE / bytes, bytes), (1e6_f64, 1e6_f64, 16.0_f64), grant);
+    let past = passed_spilled(((most + 0.5_f64) * grant / PASS_SHARE / bytes, bytes), (1e6_f64, 1e6_f64), grant);
     assert!(past.is_infinite());
 }

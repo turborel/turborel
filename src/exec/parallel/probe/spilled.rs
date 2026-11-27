@@ -299,6 +299,10 @@ impl Spilling {
         }
         let mut hashes = KeyHashes::default();
         hashes.of_batch((batch, None), (&self.places, &self.nulls()), self.hashing())?;
+        // A row costs its pass's table what its batch was charged a row and
+        // its place in the table, as the planner weighs a built row: not what
+        // it takes held as values, which its list spills past its share.
+        let per_row = charged.div_ceil(batch.rows).saturating_add(TABLE_ROW_BYTES);
         for (r, (&hash, &miss)) in hashes.hashes.iter().zip(&hashes.misses).enumerate() {
             if miss {
                 continue;
@@ -306,7 +310,7 @@ impl Spilling {
             let row: Row = (0..batch.columns.len()).map(|c| batch.cell(c, r).to_value()).collect();
             let part = part_of_cell(cell_of(hash));
             if let (Some(list), Some(bytes)) = (self.parts.get_mut(part), self.bytes.get_mut(part)) {
-                *bytes = bytes.saturating_add(crate::spill::row_bytes(&row).saturating_add(TABLE_ROW_BYTES));
+                *bytes = bytes.saturating_add(per_row);
                 list.push(row)?;
             }
         }
@@ -389,7 +393,8 @@ impl Spilling {
                 units.push(Pass { mask, lists: vec![list], bytes });
                 continue;
             }
-            for cell in self.cells(list, part)? {
+            let per_row = bytes.checked_div(list.len()).unwrap_or_default();
+            for cell in self.cells(list, (part, per_row))? {
                 if cell.bytes > pass {
                     return Ok(None);
                 }
@@ -410,9 +415,9 @@ impl Spilling {
         Ok(Some(passes))
     }
 
-    /// The rows of `list`, part `part`'s, split by their cells, each cell
-    /// a unit of a pass.
-    fn cells(&self, list: HeldRows<Row>, part: usize) -> Result<Vec<Pass>> {
+    /// The rows of `list`, part `part`'s, each weighed `per_row` as the
+    /// part's were, split by their cells, each cell a unit of a pass.
+    fn cells(&self, list: HeldRows<Row>, (part, per_row): (usize, usize)) -> Result<Vec<Pass>> {
         let mut cells: Vec<Pass> = (0..PARTS)
             .map(|within| {
                 let mut mask = PassMask::none();
@@ -424,16 +429,16 @@ impl Spilling {
         for row in list {
             chunk.push(row?);
             if chunk.len() >= BATCH_ROWS {
-                self.split(std::mem::take(&mut chunk), &mut cells)?;
+                self.split(std::mem::take(&mut chunk), (&mut cells, per_row))?;
             }
         }
-        self.split(chunk, &mut cells)?;
+        self.split(chunk, (&mut cells, per_row))?;
         Ok(cells)
     }
 
     /// Adds each of `rows`, of one part, to its cell of `cells`, the cells
-    /// within the part in order.
-    fn split(&self, rows: Vec<Row>, cells: &mut [Pass]) -> Result<()> {
+    /// within the part in order, each weighed `per_row`.
+    fn split(&self, rows: Vec<Row>, (cells, per_row): (&mut [Pass], usize)) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
@@ -442,9 +447,8 @@ impl Spilling {
         hashes.of_batch((&batch, None), (&self.places, &self.nulls()), self.hashing())?;
         for (row, &hash) in rows.into_iter().zip(&hashes.hashes) {
             let within = cell_of(hash) >> PART_BITS;
-            let bytes = crate::spill::row_bytes(&row).saturating_add(TABLE_ROW_BYTES);
             if let Some(cell) = cells.get_mut(within) {
-                cell.bytes = cell.bytes.saturating_add(bytes);
+                cell.bytes = cell.bytes.saturating_add(per_row);
                 if let Some(list) = cell.lists.first_mut() {
                     list.push(row)?;
                 }

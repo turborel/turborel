@@ -101,16 +101,18 @@ pub(crate) fn pass_limit(probe_row: f64, bytes: f64) -> f64 {
 /// \[DESIGN\] (RULES.md D1240) The cost more of a hash join run in
 /// parallel building `built` rows of `bytes` bytes past a grant of
 /// `grant` bytes in passes, its probing side costing `probing` to read
-/// and giving `rows` rows of `wide` bytes: the built rows written and read
-/// back once, and the probing side read again for each pass past the
-/// first; none if they fit, without bound past the passes `pass_limit`
-/// allows, as the join then gives way.
-pub(in crate::physical) fn passed_spilled((built, bytes): (f64, f64), (probing, rows, wide): (f64, f64, f64), grant: f64) -> f64 {
+/// and giving `rows` rows: the built rows written and read back once, and
+/// the probing side read again for each pass past the first; none if they
+/// fit, without bound past the passes `pass_limit` allows, as the join
+/// then gives way. A probing row's bytes are an entry's, as the run, which
+/// knows no estimate of its width, takes them (`passes_of`), so the plan
+/// never counts on more passes than the run allows.
+pub(in crate::physical) fn passed_spilled((built, bytes): (f64, f64), (probing, rows): (f64, f64), grant: f64) -> f64 {
     if built * bytes <= grant {
         return 0.0_f64;
     }
     let passes = (built * bytes / (grant / PASS_SHARE)).ceil();
-    if passes > pass_limit(probing / rows.max(1.0_f64), wide) {
+    if passes > pass_limit(probing / rows.max(1.0_f64), ENTRY_BYTES) {
         return f64::INFINITY;
     }
     built * (SPILLED_ROW + SPILLED_BYTE * bytes) + (passes - 1.0_f64) * probing

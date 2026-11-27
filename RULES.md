@@ -21714,7 +21714,11 @@ whole operand (D369).
 The parts are then put in passes, in order, each of no more than a third
 of what the grant has free once the keys are let go, as the first pass's
 table is held to the end beside the pass probed and the next. A part
-past a pass is split into its 64 cells by the hash's next six bits. The
+past a pass is split into its 64 cells by the hash's next six bits. A
+built row weighs in a pass what its batch was charged a row and its
+place in the table, as the planner weighs a built row by its width and
+an entry, not what it takes held as values, which its list spills past
+its share. The
 first pass's table is made at once and its join is a step of the
 pipeline, with a step before its probe that keeps the rows whose keys
 fall in its cells. The pipeline's morsels are those of each pass in
@@ -21735,7 +21739,8 @@ rows are written once either way. So passes win while the passes past
 the first, times what making a probing row again costs, stay within
 that. The cost of a probing row is the probing side's plan cost over its
 estimated rows (`rescanned`), at least a scanned row's, and its bytes
-are taken at an entry's, the least a row holds, so the limit errs low.
+are taken at an entry's, the least a row holds, so the limit errs low,
+in the plan as at the run, which knows no estimate of its width.
 The planner costs a join run in parallel past its grant the least of
 both operands partitioned and the build written once and the probing
 side read again for each pass (`passed_spilled`). The same limit is

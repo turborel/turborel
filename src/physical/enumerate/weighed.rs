@@ -111,7 +111,7 @@ impl Space<'_> {
         let mut spill = hash_spilled((built.1, m.bytes(built.0)), left.rows.max(right.rows), w.grant_bytes);
         if threads > 1.0_f64 {
             let (cost, rows) = if probes_left { (probe, left.rows) } else { (read, right.rows) };
-            spill = spill.min(passed_spilled((built.1, m.bytes(built.0)), (cost, rows, m.bytes(probing)), w.grant_bytes));
+            spill = spill.min(passed_spilled((built.1, m.bytes(built.0)), (cost, rows), w.grant_bytes));
         }
         Linear {
             fixed: right_read + per_row(!probes_left) * right.rows / on_right + start + spill,
