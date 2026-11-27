@@ -86,6 +86,7 @@ mod undo_memory;
 mod first_groups;
 mod grouped_parts;
 mod kernels;
+mod like_coded;
 mod like_pieces;
 mod mark_joins;
 mod morsel_memory;
@@ -309,13 +310,13 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
 /// materialization's, the table of groups', the join table's, XXH3's,
-/// semi joins', mark joins', skipping's, the undo store's memory's, the
+/// semi joins', a LIKE judged on codes', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
 /// window narrowed's and a join built in passes' last, as `last` holds no
 /// more.
-fn closing() -> [&'static [Mutation]; 35] {
+fn closing() -> [&'static [Mutation]; 36] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -336,6 +337,7 @@ fn closing() -> [&'static [Mutation]; 35] {
         &grouped_parts::GROUPED_PARTS,
         &first_groups::FIRST_GROUPS,
         &like_pieces::LIKE_PIECES,
+        &like_coded::LIKE_CODED,
         &outer_steps::OUTER_STEPS,
         &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,

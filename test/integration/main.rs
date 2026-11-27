@@ -104,6 +104,7 @@ mod check_rebind;
 mod checkpoint_phases;
 mod checkpoints;
 mod checks;
+mod coded_likes;
 mod column_store;
 mod column_usage;
 mod conformance_views;

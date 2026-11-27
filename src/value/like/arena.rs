@@ -17,9 +17,10 @@
 //! alone and gains nothing from the arena, and a pattern with `_` has no
 //! pieces: each is matched a value at a time as before.
 //!
-//! A scan that decodes each value into a buffer of its own matches it by
-//! its bytes (`BytesLike`), the pieces made once for its conjunct. A LIKE
-//! with a collation never makes a `LikePattern`, as its matching is the
+//! A column store's scan told a LIKE matches a value kept as it was
+//! written by its bytes where they lie, none decoded (`BytesLike`,
+//! RULES.md D1251), the pieces made once for its conjunct. A LIKE with a
+//! collation never makes a `LikePattern`, as its matching is the
 //! collation's (`like/collated.rs`).
 
 use super::LikePattern;

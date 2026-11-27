@@ -30,6 +30,15 @@
 //! comparison is, of a dictionary's entries, of texts coded by symbols in
 //! place and of plain texts.
 //!
+//! \[DESIGN\] (RULES.md D1251) A LIKE or NOT LIKE of a constant
+//! pattern of no `_` is judged of a VARCHAR column's texts where they
+//! lie, a chunk at a time, after the conjuncts that cost less a row:
+//! texts coded by symbols by the pattern's machine stepped a code at a
+//! time (`judged/coded.rs`), and other texts by their octets as written.
+//! Its column is never decoded to judge it. Of a CHARACTER column, and
+//! of a chunk that is malformed, it is not judged, and the filter judges
+//! it of the rows given.
+//!
 //! A scan is told only conjuncts every row its filter keeps satisfies, of a
 //! condition that cannot raise an error (`logical/pushed.rs`), and the
 //! filter still judges every row the scan gives (RULES.md D15). So a row
@@ -54,6 +63,14 @@ use crate::storage::sel::rows_of;
 use crate::storage::{Column, Condition, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Texts};
 use crate::value::types::narrow_scale;
 use crate::value::{CompOp, DataType, Decimal, Value, compare_strings};
+
+/// \[DESIGN\] The share of a run's rows, one in this many, past which the
+/// run is given whole and the filter selects the rows kept of it
+/// (`rows/frozen/batches/run.rs`): so many rows are read as cheaply
+/// decoded whole as at their places, and a batch of them selected costs
+/// less than one gathered. A LIKE stops being judged of a run once the
+/// rows it keeps are seen to reach that share (`coded.rs`).
+pub const KEPT_SHARE: usize = 8;
 
 /// \[DESIGN\] A conjunct of one column the scan judges, and whether it is
 /// true of a null.
@@ -90,7 +107,7 @@ impl Judgment {
     /// comparison with a constant, IS NULL, IN, NOT IN or an OR of these,
     /// of a type whose vectors it judges (`judged_type`).
     pub fn of(condition: Option<&Conjunction>, types: &[DataType]) -> Judgment {
-        let preds = condition
+        let mut preds: Vec<Pred> = condition
             .iter()
             .flat_map(|c| c.conjuncts().iter().enumerate())
             .filter(|(_, c)| judged_conjunct(c))
@@ -102,14 +119,18 @@ impl Judgment {
                 Some(Pred { at, column, conjunct: c.clone(), of_null: c.matches_key(&[&Value::Null]) })
             })
             .collect();
+        // A LIKE goes last, as it reads every code of a text where a
+        // comparison reads a code or two, so the others leave it fewer rows.
+        preds.sort_by_key(Pred::liked);
         Judgment { preds }
     }
 
     /// Puts its conjuncts in the order of `order`, their places in the
     /// condition, narrowest first (`scan::read_ordered`, RULES.md D511);
-    /// one `order` leaves out after the rest, as they were.
+    /// one `order` leaves out after the rest, as they were, and a LIKE
+    /// after them all (RULES.md D1251).
     pub fn order_by(&mut self, order: &[usize]) {
-        self.preds.sort_by_key(|p| order.iter().position(|&at| at == p.at).unwrap_or(usize::MAX));
+        self.preds.sort_by_key(|p| (p.liked(), order.iter().position(|&at| at == p.at).unwrap_or(usize::MAX)));
     }
 
     /// Whether it judges nothing.
@@ -150,6 +171,12 @@ impl Judgment {
             let Some(pred) = pred.now() else { continue };
             let pred = &*pred;
             let Some(t) = types.get(pred.column) else { continue };
+            // A LIKE is judged in place or left to the filter, its
+            // column not decoded to judge it (RULES.md D1251).
+            if let Conjunct::Like { like, .. } = &pred.conjunct {
+                kept = coded::liked(group, (pages, &mut *prepared), (pred, like, t), (from, to), kept.as_deref())?.or(kept);
+                continue;
+            }
             if let Some(rows) = coded::kept(group, (pages, &mut *prepared), (pred, t), (from, to), kept.as_deref())? {
                 kept = Some(rows);
                 continue;
@@ -176,8 +203,9 @@ fn judged_conjunct(conjunct: &Conjunct) -> bool {
             judged_leaf(conjunct)
         }
         // A sort's bound is the test it is of a row as a run is judged
-        // (`Pred::now`, RULES.md D1241).
-        Conjunct::Dynamic { .. } => true,
+        // (`Pred::now`, RULES.md D1241), and a LIKE is judged of texts
+        // coded by symbols (RULES.md D1251).
+        Conjunct::Dynamic { .. } | Conjunct::Like { .. } => true,
         // A join's spans pass over groups and parts alone (RULES.md D600).
         Conjunct::Spans { .. } => false,
     }
@@ -191,7 +219,7 @@ fn judged_leaf(conjunct: &Conjunct) -> bool {
         | Conjunct::In { .. }
         | Conjunct::NotIn { .. }
         | Conjunct::Unpadded { .. } => true,
-        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => false,
+        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } | Conjunct::Like { .. } => false,
     }
 }
 
@@ -255,8 +283,14 @@ impl Pred {
             | Conjunct::Any(_)
             | Conjunct::Dynamic { .. }
             | Conjunct::Spans { .. }
-            | Conjunct::Unpadded { .. } => None,
+            | Conjunct::Unpadded { .. }
+            | Conjunct::Like { .. } => None,
         }
+    }
+
+    /// Whether it is a LIKE (RULES.md D1251).
+    fn liked(&self) -> bool {
+        matches!(self.conjunct, Conjunct::Like { .. })
     }
 
     /// \[DESIGN\] (RULES.md D1241) It as a run is judged: itself, but of a
@@ -381,7 +415,7 @@ fn text_keeps(conjunct: &Conjunct, order: &dyn Fn(Against<'_>) -> Option<Orderin
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Unpadded { .. } => {
             leaf_text_keeps(conjunct, order)
         }
-        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
+        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } | Conjunct::Like { .. } => None,
     }
 }
 
@@ -401,7 +435,7 @@ fn leaf_text_keeps(conjunct: &Conjunct, order: &dyn Fn(Against<'_>) -> Option<Or
         Conjunct::Unpadded { op, octets, .. } => Some(holds(*op, order(Against::Unpadded(octets)))),
         Conjunct::In { values, .. } => values.iter().try_fold(false, |any, v| Some(any | equal(v)?)),
         Conjunct::NotIn { values, .. } => values.iter().try_fold(true, |all, v| Some(all & apart(v)?)),
-        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => None,
+        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } | Conjunct::Like { .. } => None,
     }
 }
 
