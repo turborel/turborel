@@ -31,6 +31,8 @@ behind it, and each can be replaced or added to.
   on many threads at once and survive a crash with multi-version concurrency
   control, a write-ahead log written once per transaction at its commit,
   checkpoints and recovery.
+- Commits that wait for the log's sync or, by LOG.COMMIT_SYNC OFF, return
+  before it, the log then synced within LOG.SYNC_AFTER_MS.
 - Savepoints, with SAVEPOINT, RELEASE SAVEPOINT and ROLLBACK TO SAVEPOINT
   at the savepoint levels of routines and ATOMIC blocks.
 - [Data change delta tables](doc/sql/24-delta-tables.md), OLD, NEW and

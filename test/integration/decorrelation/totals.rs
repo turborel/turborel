@@ -104,7 +104,7 @@ fn a_sum_that_can_overflow_is_computed_for_the_outer_keys_alone() {
 
 /// Verifies: [X3.135-1986 §5.13 GR2; ISO/IEC 9075:1992 §7.11 GR1] [DESIGN]
 /// RULES.md D1060, D541: IN of a subquery whose condition compares with a
-/// correlated subquery of SUM, as TPC-H query 20 writes it, is a semi
+/// correlated subquery of SUM is a semi
 /// join of the subquery's rows, the SUM grouped once with no domain, as
 /// a subquery of one row at most whose sum fits raises nothing; one whose
 /// condition compares with a subquery that may give two rows, and so may

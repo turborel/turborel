@@ -197,7 +197,7 @@ fn an_insert_takes_its_defaults_at_each_execution() {
 /// The tables and procedures of the INSERT ... SELECT cases. LN has a
 /// key, a UNIQUE column, a foreign key to P and one to itself, a NOT NULL
 /// column and a CHECK. LINES inserts the rows of arrays UNNEST gives, as
-/// a TPC-C order's lines are, a scalar subquery for each. COPYL inserts
+/// an order's lines are, a scalar subquery for each. COPYL inserts
 /// rows of LN read from LN. DG holds the ten digits, and MANY inserts the
 /// ten thousand rows of four of it joined into BIG.
 const LINES: [&str; 7] = [

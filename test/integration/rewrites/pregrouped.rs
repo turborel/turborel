@@ -79,7 +79,7 @@ fn grouped_above(s: &Session, alias: &str, sql: &str) -> bool {
 /// gives the same rows and the same warning of a left row nothing matched,
 /// of either store: COUNT, MIN and MAX, with another grouping column, with
 /// a filter of the left operand, and under a second grouping of the
-/// counts, as TPC-H Q13 groups them.
+/// counts.
 #[test]
 fn a_grouping_by_a_key_of_the_left_is_a_projection() {
     let (_db, s) = with_orders();

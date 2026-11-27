@@ -186,3 +186,45 @@ fn fetch_first_stops_a_streamed_grouping() {
         assert!(grouped.rows <= 4, "{batches}: {}", analyzed.text);
     }
 }
+
+/// The lines of `shown`, a plan, from its grouping's on.
+fn from_grouping(shown: &str) -> String {
+    let lines: Vec<&str> = shown.lines().map(str::trim).collect();
+    let at = lines.iter().position(|l| l.contains("Aggregate")).unwrap_or_else(|| panic!("no grouping: {shown}"));
+    lines[at..].join("\n")
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §7.17 GR5b, GR7] [DESIGN] RULES.md
+/// D1218, D552: a sort of a grouping's results under FETCH FIRST reads
+/// every group, so the grouping is planned as with no FETCH FIRST: of a
+/// table kept in the order of its key, where its parts may run in
+/// parallel, hashed in a part, not streamed on one thread for the few
+/// rows asked, under a HAVING condition too; and a grouping whose own
+/// order the sort asks keeps the goal, streamed over the ordered read,
+/// which stops once the rows are given. Each gives the rows it gives run
+/// alone.
+#[test]
+fn a_sort_that_reads_every_group_passes_no_row_goal() {
+    let (db, a) = tables();
+    db.set_setting("EXECUTOR.WORKERS", &turborel::value::Value::Exact(turborel::value::Decimal::new(4, 0))).unwrap();
+    let grouped = "SELECT G, AVG(X) AS A, COUNT(*) FROM C GROUP BY G";
+    let serial: Vec<Vec<String>> =
+        ["ORDER BY A DESC, G FETCH FIRST 5 ROWS ONLY", "HAVING COUNT(*) > 2 ORDER BY 3 DESC, G FETCH FIRST 5 ROWS ONLY"]
+            .iter()
+            .map(|tail| rows(&a, &format!("{grouped} {tail}")).unwrap())
+            .collect();
+    for set in ["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"] {
+        exec(&a, set).unwrap();
+    }
+    let whole = plan(&a, &format!("{grouped} ORDER BY A DESC, G"));
+    assert!(whole.contains("Parallel") && !whole.contains("streamed"), "{whole}");
+    let first = format!("{grouped} ORDER BY A DESC, G FETCH FIRST 5 ROWS ONLY");
+    assert_eq!(from_grouping(&plan(&a, &first)), from_grouping(&whole), "the grouping under FETCH FIRST is the one without");
+    assert_eq!(rows(&a, &first).unwrap(), serial[0]);
+    let having = format!("{grouped} HAVING COUNT(*) > 2 ORDER BY 3 DESC, G FETCH FIRST 5 ROWS ONLY");
+    let shown = plan(&a, &having);
+    assert!(shown.contains("Parallel") && !shown.contains("streamed"), "{shown}");
+    assert_eq!(rows(&a, &having).unwrap(), serial[1]);
+    let own = plan(&a, &format!("{grouped} ORDER BY G FETCH FIRST 5 ROWS ONLY"));
+    assert!(own.contains("Aggregate streamed") && !own.contains("Sort"), "{own}");
+}
