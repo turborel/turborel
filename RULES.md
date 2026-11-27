@@ -801,6 +801,7 @@ verification approach DO-178C expects (§8).
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
 | D1245 | A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked |
+| D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 
 ### The project
@@ -21222,11 +21223,35 @@ each to drop nearly all of them.
   dictionary and then by the rows' codes, of texts coded by symbols in
   place with no text decoded, and of plain texts where they lie. A null
   is left out, as D1241 says of every bound.
-- It passes over no group and no part (`Threshold::may_match`). Their
-  least and greatest are kept in the padded order, where a string and
-  the same with spaces after it are one value and a tab after a letter
-  is below the letter alone, so a range whose ends look past the bound
-  may hold a row at or before it by octets.
+- It passes over a group or a part only where that is proved right
+  (`Threshold::may_match`, `threshold/octets.rs`). Their least and
+  greatest are kept in the padded order, which differs from the order
+  of octets in two cases alone (D1183). A string and the same with
+  spaces after it are one value padded and apart by octets, the shorter
+  the less. And a string that goes on past another with an octet below
+  a space, after any spaces, is the less padded and the greater by
+  octets. So a range whose ends look past the bound may hold a row at
+  or before it by octets, and comparing the ends with the bound as
+  values would lose rows. Each rule reads the first octet at which the
+  range's end and the bound differ, both having one there. Of a
+  descending key the range is past the bound if its greatest has the
+  lesser octet there. Of an ascending key it is past the bound if its
+  least has the greater octet there, that octet is above a space, and
+  no octet of the least before it is below a space. A range whose end
+  is a prefix of the bound, or the bound of it, is never passed over.
+  `octets.rs` gives the proof, and a test tries both rules over every
+  string of at most four octets of a tab, a space and two letters, as
+  a zone's contents and as the bound
+  (`a_zone_passed_over_holds_no_string_at_or_before_the_bound`).
+
+The zones of a column of such a collation are not rebuilt in the order
+of octets. A zone's least and greatest are written once, when a group
+is frozen, as values of the column's type, and every other reader of
+them compares values padded, a comparison of the column under the
+default collation among them, which a column of any collation may
+still be asked. Keeping a second pair of ends by octets for such a
+column is a change of the store's format and is not made here. The
+rules above take from the ends that exist what they can prove.
 
 What D1241 says of when a bound is read holds here unchanged. The
 bound only narrows, a run judged by a bound read before the sort last
