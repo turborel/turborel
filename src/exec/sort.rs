@@ -101,16 +101,23 @@ pub(super) fn first_batches(
 }
 
 /// The first `most` rows of `input`, a morsel's batches each holding every
-/// column of its rows, sorted by `keys`, in a work area of `db` for the
+/// column of its rows, its columns the keys do not read late if its
+/// pipeline left them so, sorted by `keys`, in a work area of `db` for the
 /// statement of `tx`, as a sort of its first rows holds them, so no more
 /// are sorted nor made (`sort/top/batched.rs`): a run of such a sort run
-/// in parallel.
+/// in parallel. It raises `bound`, the bound of the first key the morsels
+/// share, if given (RULES.md D1241).
 ///
 /// # Errors
 ///
 /// As reading the input, or a spill, fails.
-pub(super) fn first_of_morsel(keys: &[SortKey], input: super::batch::Batches, most: usize, (db, tx): (&State, TxId)) -> Result<Vec<Row>> {
-    let most = (Most { rows: most, ties: false }, None);
+pub(super) fn first_of_morsel(
+    keys: &[SortKey],
+    input: super::batch::Batches,
+    (most, bound): (usize, Option<Arc<Threshold>>),
+    (db, tx): (&State, TxId),
+) -> Result<Vec<Row>> {
+    let most = (Most { rows: most, ties: false }, bound);
     top::top_batches(keys, input, most, &mut Work::of(db, tx), crate::db::kernels::chosen(db))?.collect()
 }
 

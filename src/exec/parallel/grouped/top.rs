@@ -96,7 +96,7 @@ impl Top {
         let numbers = firsts.iter().map(|&first| i64::try_from(first).unwrap_or(i64::MAX)).collect();
         columns.push(Column::Ints(Ints::new(numbers, 0, None)));
         let batches = Box::new(std::iter::once(Ok((Batch { columns, rows }, None))));
-        first_of_morsel(&self.keys, batches, self.most, (&self.run.0, self.run.1))
+        first_of_morsel(&self.keys, batches, (self.most, None), (&self.run.0, self.run.1))
     }
 
     /// [X3.135-1986 §8.3 GR3b] The first rows of `rows`, the partitions'

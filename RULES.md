@@ -780,6 +780,7 @@ verification approach DO-178C expects (§8).
 | D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
 | D1216 | SUM of a value and a constant is computed from the value's sum and count, shared among such sums |
 | D1218 | A sort that reads its input whole passes it no row goal |
+| D1219 | COUNT(DISTINCT) of no GROUP BY runs as one part, a string argument under a collation of octets grouped as it is |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1227 | A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read |
@@ -787,6 +788,7 @@ verification approach DO-178C expects (§8).
 | D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 | D1231 | The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends |
+| D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 
 ### The project
 
@@ -21796,6 +21798,51 @@ when something below the grouping plans otherwise for a few rows, as a
 join's left operand may, and no statement was found whose plan shows
 that difference there. It was changed by reading, as the same defect.
 
+#### D1219. COUNT(DISTINCT) of no GROUP BY runs as one part, a string argument under a collation of octets grouped as it is
+
+A DISTINCT set function is computed by two groupings (D340), and a part
+runs the pair whole where the second groups by some of the first's
+columns (D1113) or counts across its partitions (D1133). A second
+grouping by no column was left above the part. So of COUNT(DISTINCT x)
+with no GROUP BY, every group of the first, one a distinct value, was
+made a row by its partition's thread, the partitions' rows were merged
+in the order of their first rows, and the statement's thread counted
+them one at a time while the workers waited.
+
+Such a second grouping whose set functions are COUNT alone now crosses
+the partitions as D1133's does (`physical::crosses`). Its one group
+takes groups of every partition. Each partition's thread counts its
+own, and the statement's thread merges the counts
+(`exec/parallel/grouped/regrouped.rs`). A count is the same whatever
+order its values are taken in. Of no rows the merge still gives one
+group, COUNT of it 0. A HAVING condition is judged of the merged group.
+Another set function there, as SUM(DISTINCT), takes its values in the
+order of their first rows, so its second grouping stays above the part,
+as does one with groups of empty grouping sets.
+
+A second grouping that crosses the partitions with no projection
+between the two now reads each partition's groups of the first as a
+batch from their table (D1123, `grouped/second.rs`) and writes each of
+its groups' states for the merge. No row is made of a group of the
+first. One over a projection makes rows as before, as the projection is
+evaluated of each.
+
+The binder gives a DISTINCT function of a string under a collation the
+string's sort key for its argument, so the rewrite's projection made a
+binary string of every row and the first grouping keyed its groups by
+those values. Where the collation's key is the text itself (D1183), the
+rewrite now groups by the string under that collation
+(`optimizer/distinct_aggregates.rs`, `Slot::of`), which a table hashes
+and compares in place. Two strings are in one group exactly when their
+keys are equal, so the groups are the same. COUNT then counts the
+strings, as a key is null exactly when its string is. Any other
+function takes the key, made of each group in the second grouping, as
+it took it before. An argument under any other collation is grouped by
+its key as before.
+
+Results, their warnings and the row of no rows are as before. EXPLAIN
+shows both groupings under one `Parallel`.
+
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 
 A node stops before its database closes (D57). Its transport ends, its
@@ -22026,6 +22073,89 @@ first position asked, as it ran from the open before. A rollback, a
 replica's replay and the checkpoint job ask up to the log's end. The
 appends write nothing for the count, and the commit reads only the
 position of the last checkpoint.
+#### D1241. A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound
+
+A sort under FETCH FIRST tells the scan under it the bound of its first
+key (D379), and the scan passed over groups and parts whose zone maps
+lie past it. Within a part it read every row. A filter of a wide column
+over such a scan, as LIKE of a text, then decoded that column of every
+row of every part read, though the sort would drop nearly all of them
+by their key. And D291 kept such a sort of a column store table on the
+statement's thread, from when a worker made each row of its morsel.
+Since D380 a morsel is read and sorted as batches, so that reason no
+longer held.
+
+The scan now judges the bound of each row (`engine/columns/judged.rs`).
+A bound that holds a value is a comparison of its column with that
+value, at or before it as the key is ordered, read as each run of a
+group is judged and judged by the kernel over the column's vector. A
+bound that holds none yet is not judged, and its column is not decoded
+for it. The rows a run keeps are decoded of the filter's other columns
+at their places alone (D366). A row left out is past the first key of
+the greatest row the sort holds, so the sort would drop it whatever its
+other keys. A null is left out too, as a bound is told only of a key
+whose nulls sort last, and it holds no null. A row equal to the bound
+is kept, as the sort's other keys or its peers decide of it. The bound
+is told only where no filter or projection on the way can raise (D379),
+so no error of a row left out is lost. A scan may still give a run
+whole where most of its rows are kept, as the sort judges every row it
+is given.
+
+A sort over a column store table that FETCH FIRST asks for a count of
+rows, ONLY, is now a part (`physical/parallel.rs`, `Asked::under`), as
+it is over the row store. The planner knows it by the limit above it,
+through what the limit tells a sort through, a projection that raises
+nothing. A whole sort of one, one under OFFSET alone, WITH TIES or of a
+percentage stays on the statement's thread as before. A part's pipeline
+read by such a sort of few rows, whose batches hold every column, is
+told what the serial stream is told (`Pipeline::topped`,
+`parallel/sorted.rs`). Each branch's scan is told the bound through its
+steps as `Deferred` carries it, by a split told one conjunct more
+(`Split::told`). The columns neither a step nor a key reads are left
+late past the pipeline's end, and each morsel's sort decodes them of
+the rows it gives alone, where a morsel decoded them of every row its
+filter kept.
+
+One bound is shared by every morsel (`Threshold::shared`). A filter
+that keeps few rows leaves most morsels with fewer rows than are asked,
+so a morsel's own rows seldom prove a bound. Each morsel's sort
+therefore offers the bound the first key of every row it takes, and the
+bound keeps the first so many keys offered by them all. Once as many
+are offered as rows are asked, the bound is the last of those. That
+many rows of the sort's input are then at or before it, so no row past
+it is among the first of all. The bound only narrows, under a lock, and
+a scan that reads it before another thread narrowed it only reads more
+rows. Each morsel keeps its rows equal to the bound, and the runs are
+merged in morsel order as before, so rows of equal keys come in the
+order the serial sort gives them.
+
+No result and no plan depends on the order the threads narrow the
+bound in, nor on when a scan reads it. The plan is chosen before any
+morsel is read and reads no bound. A row among the first of all is
+never past the bound, whatever it holds when the row is judged, as the
+bound is never before the last of those rows, so every morsel's run
+holds each such row of its morsel. A morsel's run is its own first rows
+in the order of its rows, and the runs are merged in morsel order, so
+the rows given and the order of peers are those of the keys and the
+rows' places alone. What does vary from run to run is how many rows a
+scan reads before the bound narrows, which EXPLAIN ANALYZE counts of a
+part, and no more than that.
+
+The scan judges the bound as the test the bound gives of a row
+(`Threshold::row_test`, `Pred::now` in `engine/columns/judged.rs`), a
+conjunct judged as any other the scan is told. The bound chooses the
+kind of test by the kind of value it holds, so a bound of another kind
+of key is judged by the same loop.
+
+A run the scan judged and kept one row in eight or more of is given
+whole, and its late columns were then decoded with it (D366), as those
+rows were taken to be the ones kept. Under a sort's bound the sort
+keeps few of them, so such a run now leaves its late columns late
+(`frozen/batches/run.rs`).
+
+The rows given, their order and the errors are as before. EXPLAIN shows
+`Parallel` over such a sort, and EXPLAIN ANALYZE counts fewer rows of
+its scan.
 
 ## 2. Project layout
 

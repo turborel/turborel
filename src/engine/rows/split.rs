@@ -15,7 +15,7 @@ use super::frozen::{Batched, Directory, Merged, Merging};
 use super::mvcc::{Read, Reader};
 use super::{RowTable, row_id};
 use crate::error::Result;
-use crate::storage::{Batches, Conjunction, Ramp, RowId, Rows, Split};
+use crate::storage::{Batches, Conjunct, Conjunction, Ramp, RowId, Rows, Split};
 use crate::txn::TxId;
 
 /// A row table's scan split at row ids.
@@ -156,5 +156,26 @@ impl Split for RowSplit {
         let part = Arc::new(Directory::part(directory, directory.groups.iter().filter(inside).cloned().collect()));
         let what = (asked, self.condition.clone());
         Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, self.zones_within(range)).with_late(late)))
+    }
+
+    /// Its morsels as they are cut, their scans told `more` after the
+    /// condition, its column decoded after those asked for as the
+    /// condition's are. The zones are those the condition alone may
+    /// match, which hold every row `more` is true of.
+    fn told(&self, more: Conjunct) -> Option<Arc<dyn Split>> {
+        let mut columns = self.columns.clone();
+        columns.extend(more.columns());
+        let mut condition = self.condition.clone().unwrap_or_else(|| Conjunction(Vec::new()));
+        condition.0.push(more);
+        Some(Arc::new(RowSplit {
+            table: Arc::clone(&self.table),
+            reader: self.reader,
+            columns,
+            asked: self.asked,
+            condition: Some(condition),
+            directory: self.directory.clone(),
+            zones: self.zones.clone(),
+            cuts: self.cuts.clone(),
+        }))
     }
 }

@@ -262,3 +262,43 @@ fn texts_coded_by_symbols_compare_unpadded() {
     let Body::Fsst(broken) = &broken.body else { panic!("not coded by symbols") };
     assert_eq!(broken.compare_unpadded(299, b"customer299@mail5.example.com\t"), None, "an escape at the end");
 }
+
+/// Verifies: [DESIGN] RULES.md D1241: the scan judges a sort's bound of
+/// each row. A bound that holds no value keeps every row and is not
+/// judged; once raised, ascending it keeps the rows at or before it,
+/// one equal to it too, and descending those at or after it; a null is
+/// left out either way; a bound raised again keeps fewer; and of
+/// datetimes it is judged as of integers.
+#[test]
+fn a_sorts_bound_is_judged_of_each_row() {
+    use crate::storage::Threshold;
+    let nulls = Mask::from_bools(&(0_i32..200_i32).map(|n| n % 13_i32 == 0_i32).collect::<Vec<_>>());
+    let units: Vec<i64> = (0..200_i64).map(|n| (n * 37) % 101 - 50).collect();
+    let column = Column::Ints(Ints::new(units.clone(), 0, Some(nulls.clone())));
+    let exact = |n: i64| Value::Exact(Decimal::new(i128::from(n), 0));
+    let kept_where =
+        |keeps: &dyn Fn(i64) -> bool| -> Vec<u32> { (0..200_u32).filter(|&r| !nulls.get(index(r)) && keeps(units[index(r)])).collect() };
+    for descending in [false, true] {
+        let threshold = Arc::new(Threshold::new(descending));
+        let conjunct = Conjunct::Dynamic { column: 0, threshold: Arc::clone(&threshold) };
+        assert!(judged_conjunct(&conjunct));
+        let pred = Pred { at: 0, column: 0, conjunct, of_null: true };
+        assert!(pred.now().is_none(), "no value yet");
+        threshold.raise(&exact(7));
+        let first = pred.now().unwrap().kept(&column, None, &crate::kernels::Portable).unwrap();
+        assert_eq!(first, kept_where(&|u| if descending { u >= 7 } else { u <= 7 }), "descending {descending}");
+        assert!(units.contains(&7) && first.iter().any(|&r| units[index(r)] == 7), "a row equal to the bound is kept");
+        threshold.raise(&exact(if descending { 20 } else { -20 }));
+        let given: Vec<u32> = (0..200).step_by(3).collect();
+        let narrowed: Vec<u32> =
+            given.iter().copied().filter(|r| kept_where(&|u| if descending { u >= 20 } else { u <= -20 }).contains(r)).collect();
+        assert_eq!(pred.now().unwrap().kept(&column, Some(&given), &crate::kernels::Portable), Some(narrowed), "narrowed, of rows given");
+    }
+    let dates = Column::Datetimes(Datetimes::new((0..200).map(|n| n * 86_400_000_000).collect(), None, (Moment::Date, false, 0), None));
+    let threshold = Arc::new(Threshold::new(false));
+    threshold.raise(&dates.values()[9]);
+    let pred = Pred { at: 0, column: 0, conjunct: Conjunct::Dynamic { column: 0, threshold }, of_null: true };
+    assert_eq!(pred.now().unwrap().kept(&dates, None, &crate::kernels::Portable), Some((0..10).collect::<Vec<u32>>()), "datetimes");
+    let plain = Pred { at: 0, column: 0, conjunct: Conjunct::Null { column: 0, not: true }, of_null: false };
+    assert!(matches!(plain.now().as_deref().map(|p| &p.conjunct), Some(Conjunct::Null { .. })), "any other conjunct is itself");
+}
