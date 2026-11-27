@@ -778,6 +778,7 @@ verification approach DO-178C expects (§8).
 | D1218 | A sort that reads its input whole passes it no row goal |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
+| D1227 | A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read |
 | D1228 | A second grouping crossing the first's partitions holds its groups of a grant of its own and spills them by key past it |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
@@ -21575,6 +21576,33 @@ until the statement read them outgrew the memory the server was given.
 Of a grouping that keeps the first rows a sort asks of its tables
 (D1124), a part's run holds those rows alone.
 
+#### D1227. A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read
+
+A window function split by row, EXCEPT and INTERSECT run in parallel
+split their rows into 64 partitions by key, each held in a list of its
+share of the grant that spills, and run the serial operator over each
+partition on a thread, in a share of the grant too (D295). The
+partitions' results, though, were each gathered whole as rows and
+merged into one more vector of every row before the statement read the
+first, none of it charged to the grant. A window over a table of a
+hundred million rows held them all twice at the end, past the memory
+the server was given, at any grant.
+
+Each partition's thread now pushes its result into a list of its own
+share of the grant, which spills past it as the partition's input does
+(`exec/parallel/partitioned.rs`), and the statement's thread merges the
+lists as it reads them (`partitioned/merged.rs`): of each list's next
+row, the least by the window's sort keys, or, of a set operation, by the
+place of the first operand's row carried after its columns, a tie taken
+from the earlier partition. A window's partitions are never tied, as
+its sort keys begin with its partitioning, and the place is a number
+each row has alone, so the rows come in the order the plan alone gives
+them. No more of the result is held at once than the lists hold in
+memory, one grant in all, and a row of each.
+
+A window computed over batches (D560) computes its partitions in
+pieces up to its work area and gives them as they are done; it gathers
+no partition's result, and is as it was.
 #### D1228. A second grouping crossing the first's partitions holds its groups of a grant of its own and spills them by key past it
 
 A second grouping over a first that crosses its partitions, by a set
