@@ -74,6 +74,10 @@ impl PhysicalPlanner<'_> {
         let every = !inner.is_empty() && g.keys.iter().all(|&k| inner.iter().any(|i| i.column == k));
         let goal = if streams && every { self.divided(|| g.groups / self.card(g.input).rows.max(1.0_f64)) } else { self.whole() };
         let b = goal.grouped_input(g, inner);
+        // An input that does not give the order is read whole, by a sort
+        // or a hashed grouping, so it is planned with no goal (RULES.md
+        // D1218).
+        let b = if b.ordered || goal.first.is_none() { b } else { self.whole().grouped_input(g, inner) };
         if !streams {
             return Built { ordered: !inner.is_empty() && b.ordered, plan: make(b.plan, false) };
         }

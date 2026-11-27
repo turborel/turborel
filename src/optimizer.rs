@@ -38,6 +38,7 @@ pub(crate) mod prepared;
 mod raising;
 mod reduced;
 mod setops;
+pub mod shifted;
 mod transitivity;
 pub(crate) mod unnesting;
 mod views;
@@ -211,6 +212,7 @@ impl Optimizer {
         o.add(Box::new(RemoveRedundantDistinct));
         o.add(Box::new(DistinctAggregates));
         o.add(Box::new(ExtremesByOrder));
+        o.add(Box::new(shifted::ShareShiftedSums));
         o.add(Box::new(CountRowsOfValues));
         // After the filters of a join's operand alone are moved into it.
         o.add(Box::new(GroupBeforeOuterJoin));
