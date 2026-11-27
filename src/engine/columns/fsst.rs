@@ -25,6 +25,9 @@ use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 use crate::kernels::Kernels;
 
+mod stepped;
+pub(super) use stepped::{Stepped, Steps};
+
 /// \[DESIGN\] The most symbols of a table: 64 of 8 bytes take 577 with
 /// their lengths and count, a fourteenth of a page of 8 KiB.
 const MOST_SYMBOLS: usize = 64;
@@ -218,8 +221,10 @@ pub(super) fn encode(fields: Cells<'_>, table: &Table, out: &mut Vec<u8>) -> Res
 }
 
 /// A table of symbols, read: each code's bytes as a word of 8, and its
-/// length, so a code is decoded by a copy of 8 bytes and a cut.
-#[derive(Debug, Clone, Copy)]
+/// length, so a code is decoded by a copy of 8 bytes and a cut. The
+/// bytes of a word past its symbol's length are zero, so two tables of
+/// the same symbols are equal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct Symbols {
     words: [[u8; LONGEST]; MOST_SYMBOLS],
     lens: [u8; MOST_SYMBOLS],
@@ -410,6 +415,18 @@ impl<'a> Coded<'a> {
     pub(super) fn compare_padded(&self, n: usize, constant: &[u8]) -> Option<Ordering> {
         let (a, b) = self.between(n)?;
         self.symbols.compare_padded(self.codes.get(a..b)?, constant)
+    }
+
+    /// Its table of symbols.
+    pub(super) fn symbols(&self) -> &Symbols {
+        &self.symbols
+    }
+
+    /// \[DESIGN\] (RULES.md D1251) Whether value `n` matches the pattern
+    /// of `steps`, made of this table, as `Steps::matches` tells it.
+    pub(super) fn liked(&self, n: usize, steps: &Steps) -> Option<bool> {
+        let (a, b) = self.between(n)?;
+        steps.matches(self.codes.get(a..b)?)
     }
 
     /// The texts at positions `from` to `to`, pushed to `text` and where

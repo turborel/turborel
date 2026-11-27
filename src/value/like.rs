@@ -18,6 +18,9 @@
 mod arena;
 mod collated;
 mod finder;
+#[cfg(test)]
+pub(crate) mod fixtures;
+pub(crate) mod machine;
 mod octets;
 mod pieces;
 mod streamed;

@@ -95,7 +95,12 @@ fn ints_of(columns: &[&Column]) -> Option<Lane> {
     }
     let (mut units, mut nulls) = (Vec::new(), Vec::new());
     for (u, n) in parts {
-        units.extend_from_slice(u);
+        match n {
+            None => units.extend_from_slice(u),
+            // A null's place holds whatever its vector's maker left there
+            // (RULES.md D1289), and a sum over a frame adds every place.
+            Some(mask) => units.extend(u.iter().enumerate().map(|(r, &unit)| if mask.get(r) { 0_i64 } else { unit })),
+        }
         nulls.extend((0..u.len()).map(|r| n.is_some_and(|m| m.get(r))));
     }
     Some(Lane::Ints { units, scale: scale.unwrap_or_default(), nulls })
@@ -106,7 +111,7 @@ fn floats_of(columns: &[&Column]) -> Option<Lane> {
     let (mut numbers, mut nulls) = (Vec::new(), Vec::new());
     for column in columns {
         let Column::Floats(floats) = column else { return None };
-        numbers.extend_from_slice(&floats.numbers);
+        numbers.extend(floats.numbers.iter().enumerate().map(|(r, &f)| if floats.is_null(r) { 0.0_f64 } else { f }));
         nulls.extend((0..floats.numbers.len()).map(|r| floats.is_null(r)));
     }
     Some(Lane::Floats { numbers, nulls })
@@ -191,3 +196,8 @@ impl Built {
         }
     }
 }
+
+// Unit tests: a lane's places of nulls hold no number (RULES.md R-TEST-1,
+// D1289).
+#[cfg(test)]
+mod tests;

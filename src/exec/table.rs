@@ -23,6 +23,7 @@ mod hash;
 mod join;
 mod keys;
 mod made;
+mod merged;
 mod runtime;
 mod slots;
 mod states;
