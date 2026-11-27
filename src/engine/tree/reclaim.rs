@@ -34,7 +34,15 @@
 //! tree. And `retire` moves the tree's stamp before it notes the page, so a
 //! read that loaded the stamp inside its epoch and finds it unchanged holds
 //! the number of no page retired since.
+//!
+//! **In the epoch, by the types** (RULES.md D1270). A page number read from
+//! a node may be followed only by an operation counted in the epoch, and
+//! every path of the tree that reads or locks a page by such a number
+//! takes a `Within`, which only an operation counted lends: its guard, or a
+//! scan's or a pin's count. A descent made outside the epoch does not
+//! compile. `Within` holds nothing, so passing it costs no instruction.
 
+use std::marker::PhantomData;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -75,15 +83,57 @@ pub(crate) struct Entered {
     parity: usize,
 }
 
-/// An operation under way, counted until it is dropped.
+/// \[DESIGN\] (RULES.md D1270) Proof that its holder is counted in a
+/// tree's epoch for as long as `'e`: lent by an operation's guard, or by
+/// the count a scan or a pin holds, and made nowhere else. It is of no
+/// size. It does not say which tree's epoch, so lending one tree's to
+/// another tree's path is a mistake the types do not catch.
+#[derive(Clone, Copy)]
+pub(super) struct Within<'e>(PhantomData<&'e ()>);
+
+impl<'e> Within<'e> {
+    /// The proof `count` lends while it is borrowed: a guard, or the
+    /// count a scan or a pin keeps.
+    #[inline]
+    fn lent<T>(_count: &'e T) -> Within<'e> {
+        Within(PhantomData)
+    }
+}
+
+impl Entered {
+    /// What the scan or the pin counted by it lends its reads, while it
+    /// keeps the count.
+    #[inline]
+    pub(super) fn within(&self) -> Within<'_> {
+        Within::lent(self)
+    }
+}
+
+/// An operation under way: counted until it is dropped, unless the thread
+/// has the tree pinned, whose count is then its own (`pin.rs`).
 pub(super) struct Guard<'e> {
-    epochs: &'e Epochs,
-    entered: Entered,
+    counted: Option<(&'e Epochs, Entered)>,
 }
 
 impl Drop for Guard<'_> {
     fn drop(&mut self) {
-        self.epochs.leave(self.entered);
+        if let Some((epochs, entered)) = self.counted {
+            epochs.leave(entered);
+        }
+    }
+}
+
+impl Guard<'_> {
+    /// What the operation lends the paths it takes through the tree.
+    #[inline]
+    pub(super) fn within(&self) -> Within<'_> {
+        Within::lent(self)
+    }
+
+    /// Whether it holds a count of its own, not its thread's pin's.
+    #[cfg(test)]
+    pub(super) fn counted(&self) -> bool {
+        self.counted.is_some()
     }
 }
 
@@ -117,7 +167,17 @@ impl Epochs {
     /// An operation counted until the guard is dropped, whether or not
     /// the thread has the tree pinned (`pin.rs`).
     pub(super) fn guarded(&self) -> Guard<'_> {
-        Guard { epochs: self, entered: self.enter() }
+        Guard { counted: Some((self, self.enter())) }
+    }
+
+    /// An operation guarded until the guard is dropped: counted, unless
+    /// the thread has the tree pinned, which counts it already
+    /// (`pin.rs`).
+    pub(super) fn guard(&self) -> Guard<'_> {
+        if super::pin::noted(self.number) {
+            return Guard { counted: None };
+        }
+        self.guarded()
     }
 
     /// Its number, never 0.
@@ -190,9 +250,9 @@ impl BLinkTree {
     /// # Errors
     ///
     /// The buffer pool's errors; SQLCODE -916 if a node is malformed.
-    pub(super) fn unlink(&self, (leaf, key): (PageId, &[u8]), path: &Path) -> Result<()> {
+    pub(super) fn unlink(&self, within: Within<'_>, (leaf, key): (PageId, &[u8]), path: &Path) -> Result<()> {
         if let Some(&parent) = path.stack.last() {
-            self.unlink_under((leaf, key), parent)?;
+            self.unlink_under(within, (leaf, key), parent)?;
         }
         self.free_freeable();
         Ok(())
@@ -232,8 +292,8 @@ impl BLinkTree {
     /// The entry is found by `key`, one of the leaf's range, as a descent
     /// finds a child, not by a walk of the parent's entries, which a
     /// delete from a sparse leaf that cannot merge made at every delete.
-    fn around(&self, parent: PageId, (leaf, key): (PageId, &[u8])) -> Result<Option<(PageId, usize, PageId)>> {
-        let page = self.pool.read(self.file, parent.0)?;
+    fn around(&self, within: Within<'_>, parent: PageId, (leaf, key): (PageId, &[u8])) -> Result<Option<(PageId, usize, PageId)>> {
+        let page = self.page(within, parent)?;
         let node = Node::parse(&page)?;
         if node.level != 1 || node.deleted {
             return Ok(None);
@@ -254,16 +314,16 @@ impl BLinkTree {
 
     /// Whether `left`, `leaf` and `right` are neighbours in that order,
     /// none taken out.
-    fn linked(&self, (left, leaf, right): (PageId, PageId, PageId)) -> Result<bool> {
-        let (leaf_page, left_page) = (self.pool.read(self.file, leaf.0)?, self.pool.read(self.file, left.0)?);
+    fn linked(&self, within: Within<'_>, (left, leaf, right): (PageId, PageId, PageId)) -> Result<bool> {
+        let (leaf_page, left_page) = (self.page(within, leaf)?, self.page(within, left)?);
         let (l, p) = (Node::parse(&leaf_page)?, Node::parse(&left_page)?);
         Ok(l.level == 0 && !l.deleted && !p.deleted && p.right == Some(leaf) && l.right == Some(right))
     }
 
     /// What merging `leaf` into `right` makes of `right` now; if `locked`
     /// is not, only whether it may be tried (`merge.rs`).
-    fn merging(&self, leaf: PageId, right: PageId, locked: bool) -> Result<Merging> {
-        let (leaf_page, right_page) = (self.pool.read(self.file, leaf.0)?, self.pool.read(self.file, right.0)?);
+    fn merging(&self, within: Within<'_>, leaf: PageId, right: PageId, locked: bool) -> Result<Merging> {
+        let (leaf_page, right_page) = (self.page(within, leaf)?, self.page(within, right)?);
         let (l, r) = (Node::parse(&leaf_page)?, Node::parse(&right_page)?);
         if r.deleted || r.level != 0 || !self.may_merge(&l, &r) {
             return Ok(Merging::Full);
@@ -273,18 +333,18 @@ impl BLinkTree {
 
     /// `unlink`'s work under `parent`: nothing if a check fails. The leaf's
     /// entries, if it has any left, go to its right neighbour first.
-    fn unlink_under(&self, (leaf, key): (PageId, &[u8]), parent: PageId) -> Result<()> {
-        let Some((left, _, right)) = self.around(parent, (leaf, key))? else { return Ok(()) };
-        if matches!(self.merging(leaf, right, false)?, Merging::Full) {
+    fn unlink_under(&self, within: Within<'_>, (leaf, key): (PageId, &[u8]), parent: PageId) -> Result<()> {
+        let Some((left, _, right)) = self.around(within, parent, (leaf, key))? else { return Ok(()) };
+        if matches!(self.merging(within, leaf, right, false)?, Merging::Full) {
             return Ok(());
         }
         // Bottom to top, left to right, as every writer locks.
-        let _locks = (self.lock(left)?, self.lock(leaf)?, self.lock(right)?, self.lock(parent)?);
-        let Some((still_left, at, still_right)) = self.around(parent, (leaf, key))? else { return Ok(()) };
-        if still_left != left || still_right != right || !self.linked((left, leaf, right))? {
+        let _locks = (self.lock(within, left)?, self.lock(within, leaf)?, self.lock(within, right)?, self.lock(within, parent)?);
+        let Some((still_left, at, still_right)) = self.around(within, parent, (leaf, key))? else { return Ok(()) };
+        if still_left != left || still_right != right || !self.linked(within, (left, leaf, right))? {
             return Ok(());
         }
-        match self.merging(leaf, right, true)? {
+        match self.merging(within, leaf, right, true)? {
             Merging::Full => return Ok(()),
             Merging::Range => {}
             Merging::Content(content) => {

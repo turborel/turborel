@@ -6,11 +6,6 @@
 
 use super::*;
 
-/// The leaf of `tree` whose range holds key `k`.
-fn leaf_of(tree: &BLinkTree, k: u64) -> PageId {
-    tree.descend(Target::Key(&key(k)), 0, &mut Path::default(), |_| Ok(())).unwrap().0
-}
-
 /// A table's tree, keyed by row id, of keys `1..=n`.
 fn rows(test: &str, n: u64) -> (BLinkTree, Scratch) {
     let (tree, scratch) = tree(test);

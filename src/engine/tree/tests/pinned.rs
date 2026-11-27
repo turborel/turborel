@@ -15,13 +15,13 @@ fn a_pin_guards_its_threads_operations_until_it_is_dropped() {
     let (tree, _scratch) = tree("pinned");
     let (other, _other) = super::tree("pinned-other");
     fill(&tree, 400);
-    assert!(tree.epochs.guard().is_some(), "not pinned");
+    assert!(tree.epochs.guard().counted(), "not pinned");
     let pin = tree.pin();
-    assert!(tree.epochs.guard().is_none(), "the pin guards it");
-    assert!(other.epochs.guard().is_some(), "another tree");
+    assert!(!tree.epochs.guard().counted(), "the pin guards it");
+    assert!(other.epochs.guard().counted(), "another tree");
     let second = tree.pin();
     drop(second);
-    assert!(tree.epochs.guard().is_none(), "the first pin still noted");
+    assert!(!tree.epochs.guard().counted(), "the first pin still noted");
     for k in 100..300 {
         assert!(tree.delete(&key(k)).unwrap().is_some());
     }
@@ -31,13 +31,13 @@ fn a_pin_guards_its_threads_operations_until_it_is_dropped() {
         assert!(tree.epochs.freeable().is_empty(), "kept while the thread is pinned");
     }
     drop(pin);
-    assert!(tree.epochs.guard().is_some(), "unnoted");
+    assert!(tree.epochs.guard().counted(), "unnoted");
     let freed: usize = (0..4_u8).map(|_| tree.epochs.freeable().len()).sum();
     assert!(freed > 0, "freed once the pin is gone");
     let many: Vec<(BLinkTree, Scratch)> = (0..17_u8).map(|n| super::tree(&format!("pinned-{n}"))).collect();
     let pins: Vec<Pinned<'_>> = many.iter().map(|(one, _)| one.pin()).collect();
-    let noted = many.iter().filter(|(one, _)| one.epochs.guard().is_none()).count();
+    let noted = many.iter().filter(|(one, _)| !one.epochs.guard().counted()).count();
     assert_eq!(noted, 16, "one more than the places");
     drop(pins);
-    assert!(many.iter().all(|(one, _)| one.epochs.guard().is_some()));
+    assert!(many.iter().all(|(one, _)| one.epochs.guard().counted()));
 }

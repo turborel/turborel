@@ -42,6 +42,19 @@ fn fill(tree: &BLinkTree, n: u64) {
     }
 }
 
+/// The leaf of key `k`, by a descent made in the tree's epoch, as an
+/// operation makes it (RULES.md D1270).
+fn leaf_of(tree: &BLinkTree, k: u64) -> PageId {
+    let op = tree.epochs.guard();
+    tree.descend((op.within(), Target::Key(&key(k))), 0, &mut Path::default(), |_| Ok(())).unwrap().0
+}
+
+/// The keys of `1..=n` in the leaf that holds key `k`.
+fn in_leaf(tree: &BLinkTree, n: u64, k: u64) -> Vec<u64> {
+    let leaf = leaf_of(tree, k);
+    (1..=n).filter(|&i| leaf_of(tree, i) == leaf).collect()
+}
+
 fn keys(tree: &BLinkTree, direction: Direction) -> Vec<Vec<u8>> {
     tree.scan(Bound::Unbounded, Bound::Unbounded, direction).map(|e| e.unwrap().0).collect()
 }
@@ -56,7 +69,8 @@ fn keys(tree: &BLinkTree, direction: Direction) -> Vec<Vec<u8>> {
 fn stale_paths_move_right_and_find_their_parent_again() {
     let (tree, _scratch) = tree("stale-paths");
     let mut path = Path::default();
-    let (first, ()) = tree.descend(Target::Key(&key(0)), 0, &mut path, |_| Ok(())).unwrap();
+    let op = tree.epochs.guard();
+    let (first, ()) = tree.descend((op.within(), Target::Key(&key(0))), 0, &mut path, |_| Ok(())).unwrap();
     assert!(path.stack.as_slice().is_empty(), "the tree was one leaf");
     let n = 20_000;
     fill(&tree, n);
@@ -64,16 +78,17 @@ fn stale_paths_move_right_and_find_their_parent_again() {
     let before = tree.counts();
     // Longer than the room its prefix left in the full leaf.
     let long = [7_u8; 400];
-    assert!(matches!(tree.write_from(&path, first, (&key(0), &long), Mode::Insert).unwrap(), Written::Done(None, _)));
+    assert!(matches!(tree.write_from((op.within(), &path), first, (&key(0), &long), Mode::Insert).unwrap(), Written::Done(None, _)));
     let after = tree.counts();
     assert!(after.splits > before.splits && after.root_splits == before.root_splits, "the full leaf split; no new root");
     assert_eq!(tree.get(&key(0)).unwrap(), Some(long.to_vec()));
     let mut expected: Vec<Vec<u8>> = (0..=n).map(|i| key(i).to_vec()).collect();
     assert_eq!(keys(&tree, Direction::Forward), expected);
-    assert_eq!(tree.delete_from(&Path::default(), first, &key(19_000), None).unwrap(), Some(VALUE.to_vec()));
+    assert_eq!(tree.delete_from((op.within(), &Path::default()), first, &key(19_000), None).unwrap(), Some(VALUE.to_vec()));
     assert!(tree.counts().right_moves > after.right_moves + 400, "moved right across the leaves");
     assert_eq!(tree.get(&key(19_000)).unwrap(), None);
-    assert!(matches!(tree.write_from(&Path::default(), first, (&key(19_000), b"back"), Mode::Insert).unwrap(), Written::Done(None, _)));
+    let back = tree.write_from((op.within(), &Path::default()), first, (&key(19_000), b"back"), Mode::Insert).unwrap();
+    assert!(matches!(back, Written::Done(None, _)));
     assert_eq!(tree.get(&key(19_000)).unwrap(), Some(b"back".to_vec()));
     expected.reverse();
     assert_eq!(keys(&tree, Direction::Backward), expected);
@@ -156,8 +171,8 @@ fn leaves_after(runs: u64, per_run: u64, scattered: bool) -> usize {
     for k in keys {
         assert!(tree.insert(&key(k), &value).unwrap());
     }
-    let mut path = Path::default();
-    let (mut id, ()) = tree.descend(Target::First, 0, &mut path, |_| Ok(())).unwrap();
+    let op = tree.epochs.guard();
+    let (mut id, ()) = tree.descend((op.within(), Target::First), 0, &mut Path::default(), |_| Ok(())).unwrap();
     let mut leaves = 1_usize;
     while let Some(right) = Node::parse(&tree.pool.read(tree.file, id.0).unwrap()).unwrap().right {
         id = right;
@@ -207,58 +222,6 @@ fn a_tree_is_loaded_from_entries_in_order() {
     let (empty, _third) = tree("load-empty");
     empty.load(&mut std::iter::empty()).unwrap();
     assert_eq!(empty.height().unwrap(), 1);
-}
-
-/// Verifies: [DESIGN] RULES.md D31, taking out emptied leaves (Lanin and
-/// Shasha 1986), its stale paths made on one thread: a writer and a
-/// deleter given a leaf taken out since follow its link to the leaf that
-/// took its range; a scan whose next leaf was taken out goes on from that
-/// leaf, returning nothing twice; the page taken out is freed only once no
-/// operation that began before can hold it.
-#[test]
-fn stale_paths_follow_a_leaf_taken_out() {
-    let (tree, _scratch) = tree("unlink-stale");
-    fill(&tree, 400);
-    // A leaf in the middle, and a scan stopped just before it.
-    let mut path = Path::default();
-    let (leaf, low) = tree.descend(Target::Key(&key(200)), 0, &mut path, |n| Ok(n.key(0)?.to_vec())).unwrap();
-    let first_of_leaf = u64::from_be_bytes(<[u8; 8]>::try_from(low.as_slice()).unwrap());
-    let mut scan = tree.scan(Bound::Unbounded, Bound::Unbounded, Direction::Forward);
-    let mut seen: Vec<Vec<u8>> = Vec::new();
-    for entry in scan.by_ref() {
-        let found = entry.unwrap().0;
-        let last = found == key(first_of_leaf - 1);
-        seen.push(found);
-        if last {
-            break;
-        }
-    }
-    let held = tree.epochs.guard();
-    // Empty the leaf: it is taken out, its page kept while `held` lives.
-    let in_leaf: Vec<u64> = tree
-        .scan(Bound::Included(&key(first_of_leaf)), Bound::Unbounded, Direction::Forward)
-        .map(|e| u64::from_be_bytes(<[u8; 8]>::try_from(e.unwrap().0.as_slice()).unwrap()))
-        .take_while(|&k| tree.descend(Target::Key(&key(k)), 0, &mut Path::default(), |_| Ok(())).unwrap().0 == leaf)
-        .collect();
-    for k in &in_leaf {
-        assert!(tree.delete(&key(*k)).unwrap().is_some());
-    }
-    assert_eq!(tree.counts().unlinked, 1);
-    let page = tree.pool.read(tree.file, leaf.0).unwrap();
-    assert!(Node::parse(&page).unwrap().deleted, "kept, marked, while an operation may hold it");
-    drop(page);
-    let moved = in_leaf[0];
-    assert!(matches!(tree.write_from(&path, leaf, (&key(moved), &VALUE), Mode::Insert).unwrap(), Written::Done(None, _)));
-    assert_eq!(tree.get(&key(moved)).unwrap(), Some(VALUE.to_vec()));
-    assert_eq!(tree.delete_from(&Path::default(), leaf, &key(moved), None).unwrap(), Some(VALUE.to_vec()));
-    seen.extend(scan.map(|e| e.unwrap().0));
-    let left: Vec<Vec<u8>> = (1..=400_u64).filter(|k| !in_leaf.contains(k)).map(|k| key(k).to_vec()).collect();
-    assert_eq!(seen, left, "the scan went on past the leaf taken out");
-    let early: Vec<PageId> = (0..3_u8).flat_map(|_| tree.epochs.freeable()).collect();
-    assert!(!early.contains(&leaf), "not while an operation that began before may hold it");
-    drop(held);
-    let freed: Vec<PageId> = (0..3_u8).flat_map(|_| tree.epochs.freeable()).collect();
-    assert_eq!(freed, [leaf], "once none may");
 }
 
 /// Verifies: [DESIGN] CONFORMANCE.md, Limits: a B-link tree counts an
@@ -547,6 +510,10 @@ mod hinted;
 
 // Threads writing and reading at once, against models.
 mod stress;
+
+// The epoch that keeps a leaf taken out while an operation may hold it
+// (RULES.md D31, D1270).
+mod epochs;
 
 // Writers on hot nodes (RULES.md D503).
 mod hot;

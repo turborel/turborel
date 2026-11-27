@@ -10,7 +10,8 @@ use super::*;
 /// The leaf of `tree` whose range holds key `k`, read with no copy made.
 fn leaf_of(tree: &BLinkTree, k: u64) -> PageId {
     let mut path = Path { above_leaf: true, ..Path::default() };
-    let found = tree.descend(Target::Key(&key(k)), 0, &mut path, |node| node.child(&key(k)).map(|(child, _)| child));
+    let op = tree.epochs.guard();
+    let found = tree.descend((op.within(), Target::Key(&key(k))), 0, &mut path, |node| node.child(&key(k)).map(|(child, _)| child));
     found.unwrap().1
 }
 
