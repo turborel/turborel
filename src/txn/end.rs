@@ -114,7 +114,9 @@ impl State {
     /// \[DESIGN\] The commit of `tx`, which changed nothing, so it read one
     /// committed state, its snapshot, and is serializable there: no engine
     /// need check its reads, and it takes no commit timestamp (RULES.md
-    /// D29).
+    /// D29). It collects nothing and notes no table for maintenance. A
+    /// read that makes some wanted is told of by the table's engine
+    /// (`spill/asks.rs`, RULES.md D1212).
     fn commit_read(tx: &Txn, joined: &[Joined]) -> Result<()> {
         for participant in joined {
             participant.storage.commit(tx.id, tx.snapshot());

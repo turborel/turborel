@@ -20,7 +20,7 @@ pub const NO_ROW: u32 = u32::MAX;
 /// made as options once, the first time a vector not of integers is
 /// gathered of them.
 pub struct Picks<'a> {
-    rows: &'a [u32],
+    pub(super) rows: &'a [u32],
     options: OnceCell<Vec<Option<usize>>>,
 }
 

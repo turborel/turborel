@@ -2,13 +2,21 @@
 //! index of sort keys honest, the order of a key, and how DROP COLLATION,
 //! REVOKE USAGE and DROP SCHEMA revert a collation's columns; and, of a
 //! collation of NO PAD that orders strings as their octets do, each place
-//! its strings are compared in place (D1183), and the pair of groupings a
-//! DISTINCT set function makes under one (D1184).
+//! its strings are compared in place (D1183), the pair of groupings a
+//! DISTINCT set function makes under one (D1184), and the bound a sort
+//! of its first rows by one tells its scan (D1187).
 
 use super::{Mutation, Package};
 
+/// The file of the bound a sort of its first rows tells its scan.
+const THRESHOLD: &str = "src/storage/condition/threshold.rs";
+/// The unit test of a bound of a key by octets.
+const OCTETS_BOUND: &str = "storage::condition::threshold::tests::a_threshold_by_octets_holds_a_string_ordered_by_its_octets";
+/// The unit test of a bound of a key by octets shared by a sort's morsels.
+const OCTETS_SHARED: &str = "storage::condition::threshold::tests::a_shared_threshold_by_octets_counts_strings_by_their_octets";
+
 /// The mutations of collations, in the order they run.
-pub const COLLATIONS: [Mutation; 30] = [
+pub const COLLATIONS: [Mutation; 35] = [
     Mutation {
         name: "collated-read-tracked",
         package: Package::Core,
@@ -314,5 +322,55 @@ pub const COLLATIONS: [Mutation; 30] = [
         replacement: "true",
         integration: &[],
         unit: &["physical::parallel::tests::a_pair_under_another_collation_or_keyed_apart_is_no_pair"],
+    },
+    Mutation {
+        name: "octets-bound-ordered-padded",
+        package: Package::Core,
+        breaks: "a top-N's bound of a key by octets narrows and counts its strings in the padded order (D1187)",
+        file: THRESHOLD,
+        original: "if let (Value::Char(a), Value::Char(b)) = (a, b) { Some(a.as_bytes().cmp(b.as_bytes())) } else { None }",
+        replacement: "compare(a, b)",
+        integration: &[],
+        unit: &[OCTETS_BOUND, OCTETS_SHARED],
+    },
+    Mutation {
+        name: "octets-bound-tested-padded",
+        package: Package::Core,
+        breaks: "the test a bound by octets is of a row compares the strings padded (D1187)",
+        file: THRESHOLD,
+        original: "Some(Conjunct::Unpadded { column, op, octets: text.as_bytes().to_vec() })",
+        replacement: "Some(Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value: Value::Char(text) } }))",
+        integration: &[],
+        unit: &[OCTETS_BOUND, "engine::columns::judged::tests::a_sorts_bound_by_octets_is_judged_of_each_text"],
+    },
+    Mutation {
+        name: "octets-bound-passes-over-ranges",
+        package: Package::Core,
+        breaks: "a bound by octets passes over groups by their least and greatest, which are of the padded order (D1187)",
+        file: THRESHOLD,
+        original: "        if self.octets {\n            return true;\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &[OCTETS_BOUND],
+    },
+    Mutation {
+        name: "octets-bound-shared-of-numbers",
+        package: Package::Core,
+        breaks: "the bound the morsels of a sort by octets share holds numbers, so it counts no string (D1187)",
+        file: THRESHOLD,
+        original: "Threshold { octets: self.octets, ..Threshold::shared(self.descending, most) }",
+        replacement: "Threshold::shared(self.descending, most)",
+        integration: &[],
+        unit: &[OCTETS_SHARED],
+    },
+    Mutation {
+        name: "octets-top-told-no-bound",
+        package: Package::Core,
+        breaks: "a top-N by a key by octets tells its scan no bound, so the scan gives every row (D1187)",
+        file: "src/exec/sort.rs",
+        original: "let first = keys.first().filter(|k| !k.nulls_first);",
+        replacement: "let first = keys.first().filter(|k| !k.nulls_first && !k.octets);",
+        integration: &["octets_sorts::a_top_n_by_octets_tells_its_scan_a_bound_of_strings_7_17"],
+        unit: &[],
     },
 ];

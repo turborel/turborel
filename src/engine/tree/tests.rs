@@ -586,3 +586,6 @@ mod by_copies;
 
 // The pages a tree takes, counted (RULES.md D1165).
 mod pages;
+
+// Keys written in key order, a leaf's run at a time (RULES.md D1235).
+mod sorted;

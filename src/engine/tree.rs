@@ -73,6 +73,7 @@ mod reclaim;
 mod retired;
 mod room;
 mod scan;
+mod sorted;
 mod write;
 
 use std::collections::HashSet;
@@ -87,6 +88,7 @@ pub use pin::Pinned;
 pub use placed::Placed;
 pub(crate) use reclaim::{Entered, Epochs};
 pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of, scan_owned};
+pub use sorted::SortedChange;
 pub use write::{Descended, Update, Updated};
 #[cfg(test)]
 use write::{Mode, Written};

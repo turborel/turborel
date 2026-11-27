@@ -60,15 +60,17 @@ impl Zone {
 }
 
 impl Zones {
-    /// Whether a zone is due, and the zones are not resting after a pass
-    /// over them (`REST`), so the maintenance thread is to be asked for.
+    /// Whether a zone is due, one was asked for since the table was made
+    /// or opened (RULES.md D1212), and the zones are not resting after a
+    /// pass over them (`REST`), so the maintenance thread is to be asked
+    /// for.
     pub(in crate::engine::rows) fn wanted(&self) -> bool {
         self.wanted_at(self.elapsed())
     }
 
     /// `wanted` at `clock` nanoseconds after the zones were made.
     pub(in crate::engine::rows) fn wanted_at(&self, clock: u64) -> bool {
-        self.due() && clock >= self.rest_until.load(AtomicOrdering::Acquire)
+        self.asked() && self.due() && clock >= self.rest_until.load(AtomicOrdering::Acquire)
     }
 
     /// The nanoseconds since the zones were made.

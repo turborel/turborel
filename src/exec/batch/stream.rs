@@ -32,7 +32,7 @@ use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::Runner;
 use crate::logical::{Cond, Window, pushed_conjuncts};
-use crate::physical::Plan;
+use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Conjunct, Conjunction, Sel};
 use crate::txn::{TxId, counted};
 
@@ -208,8 +208,7 @@ pub(super) fn untold(plan: &Plan) -> bool {
     }
 }
 
-/// Whether every table `plan` scans reads by batch
-/// (`TableStorage::reads_by_batch`).
+/// Whether every table `plan` scans reads by batch (`TableStorage::reads_by_batch`).
 pub(in crate::exec) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
     reads(plan, db, false)
 }
@@ -315,6 +314,20 @@ pub(in crate::exec) fn whole_batches(plan: Plan, db: &Db, tx: TxId) -> Result<Ba
 pub(super) fn whole_told(plan: Plan, (db, tx): (&Db, TxId), told: Vec<Told>) -> Result<Batches> {
     let width = layout(&plan, db).map_or(0, |(_, width)| width);
     Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width).with_told(told))?, crate::db::kernels::chosen(db)))
+}
+
+/// \[DESIGN\] (RULES.md D1221) As `whole_batches`, for a join that builds
+/// of `plan` and finds the rows it built by `keys` alone. A grouping run
+/// in parallel whose every grouping column is a key is asked for its
+/// groups in any order (`parted::keyed_whole`).
+///
+/// # Errors
+///
+/// As `open`.
+pub(in crate::exec) fn whole_keyed(plan: Plan, keys: &[JoinKey], db: &Db, tx: TxId) -> Result<Batches> {
+    let width = layout(&plan, db).map_or(0, |(_, width)| width);
+    let asked = Deferred::all(width).in_any_order(super::parted::keyed_whole(&plan, keys));
+    Ok(resolved(batches_with(plan, (db, tx), &asked)?, crate::db::kernels::chosen(db)))
 }
 
 /// A function giving the batches of a plan of one kind, its columns the
@@ -471,8 +484,23 @@ fn filter_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Res
     let below = deferred.filtered(&cond).with_told(deferred.filters().to_vec());
     // A grouping its input and its subqueries compute alike, read once (RULES.md D1129).
     let (input, runner) = crate::exec::shared::readied(&cond, *input, db, tx);
-    let (inner, columns) = told(input, &cond, (db, tx), &below)?;
+    // An input that is no scan is read from here, so each filter over a
+    // join of a deep chain adds one call to the stack, not two (RULES.md
+    // R-CF-6).
+    let (inner, columns) = if scanned(&input) {
+        told(input, &cond, (db, tx), &below)?
+    } else {
+        let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
+        (batches_with(input, (db, tx), &below)?, columns)
+    };
     Ok(filtered(inner, (Judging::of(&cond, &columns), runner)))
+}
+
+/// Whether `plan`, a filter's input, is one `told` reads: a scan in no
+/// order, which it tells the filter's simple conjuncts, or a counted
+/// operator, whose rows it counts.
+fn scanned(plan: &Plan) -> bool {
+    if let Plan::SeqScan { order, .. } = plan { order.is_empty() } else { matches!(plan, Plan::Counted(_)) }
 }
 
 /// The batches of `inner`, the input of a filter of `cond`, its scans'
@@ -505,7 +533,7 @@ fn projected_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> 
     let Plan::Project { exprs, input, .. } = plan else { return Err(crate::exec::broken("a projection is not one")) };
     let input = *input;
     let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
-    let below = if deferred.any() { deferred.projected(&exprs) } else { Deferred::default() };
+    let below = if deferred.any() || deferred.any_order() { deferred.projected(&exprs) } else { Deferred::default() };
     let below = below.with_told(runtime::projected(&exprs, deferred.filters()));
     let inner = batches_with(input, (db, tx), &below)?;
     if let Some(picks) = picked(&exprs, &columns) {

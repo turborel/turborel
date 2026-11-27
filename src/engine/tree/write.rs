@@ -457,7 +457,7 @@ impl BLinkTree {
 /// with `begins`: not if the place is first in the node, the node before
 /// beyond reach, nor if it is last and the node's high key begins with
 /// them (`BLinkTree::update_alone`).
-fn alone_at(node: &Node<'_>, found: std::result::Result<usize, usize>, begins: &[u8]) -> Result<bool> {
+pub(super) fn alone_at(node: &Node<'_>, found: std::result::Result<usize, usize>, begins: &[u8]) -> Result<bool> {
     let (before, after) = match found {
         Ok(at) => (at.checked_sub(1), at.saturating_add(1)),
         Err(at) => (at.checked_sub(1), at),

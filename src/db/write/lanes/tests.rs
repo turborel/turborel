@@ -39,14 +39,14 @@ fn by_column(table: &str, rows: usize) -> usize {
 
 /// Verifies: [DESIGN] RULES.md D1148: a load by column into a table of the
 /// column store that qualifies goes in by column, a CHECK and a default
-/// with it; one into a table with a key, or of the row store, or set to
-/// load through its tree, goes in as rows; so do more rows than a group
-/// takes.
+/// with it, and, by RULES.md D1235, a primary key; one into a table of
+/// the row store, or set to load through its tree, goes in as rows; so do
+/// more rows than a group takes.
 #[test]
 fn a_load_goes_by_column_only_where_nothing_needs_a_row() {
     let store = "USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 4096";
     assert_eq!(by_column(&format!("CREATE TABLE T (K INTEGER NOT NULL, A INTEGER CHECK (A >= 0), B INTEGER DEFAULT 3) {store})"), 4000), 1);
-    assert_eq!(by_column(&format!("CREATE TABLE T (K INTEGER PRIMARY KEY, A INTEGER) {store})"), 4000), 0);
+    assert_eq!(by_column(&format!("CREATE TABLE T (K INTEGER PRIMARY KEY, A INTEGER) {store})"), 4000), 1);
     assert_eq!(by_column(&format!("CREATE TABLE T (K INTEGER, A INTEGER) {store}, COLUMNSTORE.LOAD = 'TREE')"), 4000), 0);
     assert_eq!(by_column("CREATE TABLE T (K INTEGER, A INTEGER)", 4000), 0);
     assert_eq!(by_column(&format!("CREATE TABLE T (K INTEGER, A INTEGER) {store})"), 5000), 0);

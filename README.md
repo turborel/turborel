@@ -64,7 +64,8 @@ behind it, and each can be replaced or added to.
   kernel, moving frames by prefix sums and segment trees.
 - Sorts by normalized keys, radix sorted, spilled runs merged by a tree of
   losers, and FETCH FIRST that makes only the rows it gives, reading its
-  other columns late and skipping groups past its bound.
+  other columns late and skipping groups and rows past its bound, in
+  parallel on one shared bound.
 - [Partitioned tables](doc/sql/23-partitioning.md) by RANGE, LIST, HASH
   or a strategy a plug-in registers, many levels deep, attached and
   detached, rows routed and moved, reads pruned and merged in order, joins

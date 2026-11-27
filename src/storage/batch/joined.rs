@@ -24,6 +24,10 @@ pub(super) fn joined_column(parts: &[Part<'_>], rows: usize) -> Column {
     }
     let each = || parts.iter().flat_map(|&(column, places)| places.iter().map(move |&r| (column, r)));
     let all = |kind: fn(&Column) -> bool| parts.iter().all(|(c, _)| c.is_some_and(kind));
+    // Codes of one dictionary kept codes (RULES.md D1099).
+    if let Some(codes) = super::coded::of_codes(parts, rows, || nulls(parts)) {
+        return codes;
+    }
     if all(|c| matches!(c, Column::Texts(_))) {
         let (mut text, mut ends) = (String::new(), Vec::with_capacity(rows));
         for (c, r) in each() {

@@ -81,7 +81,7 @@ impl WorkAreas {
     pub(crate) fn covered(&self) -> WorkAreas {
         let place = self.place.read().unwrap_or_else(PoisonError::into_inner).clone();
         let granted = Arc::clone(&self.granted);
-        WorkAreas { memory: Arc::clone(&self.memory), place: RwLock::new(place), covered: true, granted }
+        WorkAreas { memory: Arc::clone(&self.memory), place: RwLock::new(place), covered: true, granted, asks: Arc::clone(&self.asks) }
     }
 }
 

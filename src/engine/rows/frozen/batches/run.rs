@@ -58,7 +58,9 @@ impl Batched {
         let whole = rows >= KEPT_ROWS || !group.imprinted();
         if self.pending.is_empty() && whole && kept.len().saturating_mul(KEPT_SHARE) >= rows {
             if !shadowed {
-                return self.dense(&group, (from, to), (judged.decoded, false)).map(Some);
+                // Under a sort's bound the sort keeps few of the rows
+                // given, so late columns stay late (RULES.md D1241).
+                return self.dense(&group, (from, to), (judged.decoded, self.judgment.bounded())).map(Some);
             }
             let mut once = Pending::default();
             once.add(&kept, (&judged.kept, &judged.decoded));
@@ -91,7 +93,8 @@ impl Batched {
     /// The batch of every row of the run `from` to `to` of `group`, each
     /// column read a chunk at a time, those in `decoded` as they are, late
     /// ones not decoded if `late`: not of a run the scan judged and kept
-    /// many rows of, as those are decoded as cheaply whole as late.
+    /// many rows of, as those are decoded as cheaply whole as late, but
+    /// under a sort's bound, whose sort keeps few of the rows it is given.
     fn dense(&mut self, group: &Group, (from, to): (u32, u32), (mut decoded, late): (Vec<(usize, Column)>, bool)) -> Result<Batch> {
         let rows = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
         let pages = self.table.pages_for(group)?;

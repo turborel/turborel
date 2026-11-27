@@ -2,12 +2,13 @@
 //! a write staling its zone only when a bound may move inward, a zone settled
 //! from its rows' newest versions, the rest after a pass, a zone summed up
 //! in its loose columns alone from its rows' newest versions once no reader
-//! reads an older one, and hot zones waiting longer.
+//! reads an older one, hot zones waiting longer, and a table opened's zones
+//! waiting until one is asked for.
 
 use super::{Mutation, Package};
 
 /// The mutations of zone maintenance, in the order they run.
-pub const ZONES: [Mutation; 17] = [
+pub const ZONES: [Mutation; 23] = [
     Mutation {
         name: "zone-stale-inside",
         package: Package::Core,
@@ -180,5 +181,65 @@ pub const ZONES: [Mutation; 17] = [
         replacement: "            let unsettled = true;",
         integration: &[],
         unit: &["engine::rows::zones::tests::a_zone_saved_settled_visible_opens_so"],
+    },
+    Mutation {
+        name: "zone-wanted-unasked",
+        package: Package::Core,
+        breaks: "zone maintenance: a table opened is summed up though none of its zones was asked for, so a start pays for tables nothing reads",
+        file: "src/engine/rows/zones/summed.rs",
+        original: "        self.asked() && self.due() && clock >= self.rest_until.load(AtomicOrdering::Acquire)",
+        replacement: "        self.due() && clock >= self.rest_until.load(AtomicOrdering::Acquire)",
+        integration: &["zones_due::a_table_opened_is_summed_up_only_once_its_zones_are_asked_for"],
+        unit: &["engine::rows::zones::asked::an_opened_tables_zones_wait_until_one_is_asked_for"],
+    },
+    Mutation {
+        name: "zone-opened-asked",
+        package: Package::Core,
+        breaks: "zone maintenance: a table opened warm counts as asked from the first, so its zones are summed up at every start",
+        file: "src/engine/rows/zones/saved.rs",
+        original: "        self.opened();\n",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::rows::zones::asked::an_opened_tables_zones_wait_until_one_is_asked_for"],
+    },
+    Mutation {
+        name: "zone-ask-unnoted",
+        package: Package::Core,
+        breaks: "zone maintenance: an ask of a table opened's zones is not noted, so they are never summed up and its scans never skip",
+        file: "src/engine/rows/zones/cold.rs",
+        original: "        self.warm_cold();\n        // After it is warm, so a table asked is never cold.\n        self.asked.store(true, Ordering::Release);",
+        replacement: "        self.warm_cold();",
+        integration: &[],
+        unit: &["engine::rows::zones::asked::each_ask_of_a_zone_makes_an_opened_tables_wanted"],
+    },
+    Mutation {
+        name: "zone-ask-untold",
+        package: Package::Core,
+        breaks: "zone maintenance: the first ask of a table's zones is not told to its database, so a read alone never has them summed up",
+        file: "src/engine/rows/zones/cold.rs",
+        original: "            work.maintenance().ask();",
+        replacement: "            let _ = work.maintenance();",
+        integration: &["zones_due::a_table_opened_is_summed_up_only_once_its_zones_are_asked_for"],
+        unit: &["engine::rows::zones::asked::the_first_ask_is_told_to_the_work_areas_once"],
+    },
+    Mutation {
+        name: "zone-ask-unheard",
+        package: Package::Core,
+        breaks: "zone maintenance: the maintenance job notes no table as a read asked, so zones a read alone asked wait for a write",
+        file: "src/db/maintenance.rs",
+        original: "    if st.work.maintenance().take() {\n        st.note_due_maintenance();",
+        replacement: "    if st.work.maintenance().take() {",
+        integration: &["zones_due::a_table_opened_is_summed_up_only_once_its_zones_are_asked_for"],
+        unit: &[],
+    },
+    Mutation {
+        name: "zone-made-tells",
+        package: Package::Core,
+        breaks: "zone maintenance: a read of a table made in the session asks for the maintenance job, so its plans change with when the job ran",
+        file: "src/engine/rows/zones/cold.rs",
+        original: "work.filter(|_| self.held.load(Ordering::Acquire))",
+        replacement: "work",
+        integration: &[],
+        unit: &["engine::rows::zones::asked::the_first_ask_is_told_to_the_work_areas_once"],
     },
 ];
