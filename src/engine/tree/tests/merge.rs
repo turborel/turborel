@@ -10,17 +10,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::*;
 
-/// The leaf of `tree` whose range holds key `k`.
-fn leaf_of(tree: &BLinkTree, k: u64) -> PageId {
-    tree.descend(Target::Key(&key(k)), 0, &mut Path::default(), |_| Ok(())).unwrap().0
-}
-
-/// The keys of `1..=n` in the leaf that holds key `k`.
-fn in_leaf(tree: &BLinkTree, n: u64, k: u64) -> Vec<u64> {
-    let leaf = leaf_of(tree, k);
-    (1..=n).filter(|&i| leaf_of(tree, i) == leaf).collect()
-}
-
 /// The number key `k` is.
 fn number(k: &[u8]) -> u64 {
     u64::from_be_bytes(<[u8; 8]>::try_from(k).unwrap())

@@ -5,11 +5,6 @@
 
 use super::*;
 
-/// The leaf of `tree` whose range holds key `k`.
-fn leaf_of(tree: &BLinkTree, k: u64) -> PageId {
-    tree.descend(Target::Key(&key(k)), 0, &mut Path::default(), |_| Ok(())).unwrap().0
-}
-
 /// The keys of `1..=n` in the leaf that holds key 1.
 fn first_leaf(tree: &BLinkTree, n: u64) -> Vec<u64> {
     let leaf = leaf_of(tree, 1);
@@ -138,7 +133,7 @@ fn a_read_is_shown_its_value_where_it_lies() {
     };
     assert_eq!(tree.get_near_with(&key(900), &mut near, never).unwrap(), None);
     assert!(!called, "absent, nothing shown");
-    let leaf = tree.descend(Target::Key(&key(150)), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
+    let leaf = leaf_of(&tree, 150);
     hints::note(150, leaf.0);
     let hinted = tree.counts().hinted;
     assert_eq!(tree.get_near_with(&key(150), &mut Near::default(), first_byte).unwrap(), Some((150, 92)));

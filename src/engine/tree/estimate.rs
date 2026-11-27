@@ -52,11 +52,11 @@ impl BLinkTree {
     /// The share of its entries below `key`, or of those equal to it too
     /// if `side` is `Above`, by one descent.
     fn share_below(&self, key: &[u8], side: Side) -> Result<f64> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let mut id = PageId(self.root.load(Ordering::Acquire));
         let (mut before, mut width) = (0.0_f64, 1.0_f64);
         for _ in 0..=u8::MAX {
-            let page = self.pool.read(self.file, id.0)?;
+            let page = self.page(op.within(), id)?;
             let node = Node::parse(&page)?;
             let found = node.search(key)?;
             if node.level == 0 {

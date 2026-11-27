@@ -8,7 +8,7 @@ use super::*;
 fn leaves(tree: &BLinkTree, n: u64) -> Vec<u64> {
     let mut found: Vec<u64> = Vec::new();
     for k in 1..=n {
-        let leaf = tree.descend(Target::Key(&key(k)), 0, &mut Path::default(), |_| Ok(())).unwrap().0.0;
+        let leaf = leaf_of(tree, k).0;
         if found.last() != Some(&leaf) {
             found.push(leaf);
         }

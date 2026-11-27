@@ -72,10 +72,15 @@ fn a_write_starts_where_its_read_found_the_key() {
 fn a_delete_and_an_update_change_the_leaf_covering_their_key() {
     let (tree, _scratch) = tree("covering");
     assert!(tree.insert(&key(3_000), &VALUE).unwrap());
-    let leaf = tree.descend(Target::Key(&key(3_000)), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
+    let leaf = leaf_of(&tree, 3_000);
+    let op = tree.epochs.guard();
     fill(&tree, 2_999);
-    assert_eq!(tree.delete_from(&Path::default(), leaf, &key(3_000), Some(b"other")).unwrap(), None, "not the value expected");
-    assert!(tree.delete_from(&Path::default(), leaf, &key(3_000), Some(&VALUE)).unwrap().is_some());
+    assert_eq!(
+        tree.delete_from((op.within(), &Path::default()), leaf, &key(3_000), Some(b"other")).unwrap(),
+        None,
+        "not the value expected"
+    );
+    assert!(tree.delete_from((op.within(), &Path::default()), leaf, &key(3_000), Some(&VALUE)).unwrap().is_some());
     assert_eq!(tree.get(&key(3_000)).unwrap(), None);
     let mut shown = None;
     let keep = |old: Option<&[u8]>| {

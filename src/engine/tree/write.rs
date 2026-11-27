@@ -7,7 +7,7 @@ use std::cell::Cell;
 
 use super::here::Here;
 use super::node::{self, CHILD, Node};
-use super::{BLinkTree, Path, Slot, Split, Target};
+use super::{BLinkTree, Path, Slot, Split, Target, Within};
 use crate::disk::buffer::{Owned as NodeLock, PageMut};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
@@ -71,8 +71,9 @@ impl BLinkTree {
     ///
     /// The buffer pool's errors; SQLCODE -916 if a node is malformed.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let _guard = self.epochs.guard();
-        let (_, value) = self.descend(Target::Key(key), 0, &mut Path { tallied: true, ..Path::default() }, |leaf| value_of(leaf, key))?;
+        let op = self.epochs.guard();
+        let mut path = Path { tallied: true, ..Path::default() };
+        let (_, value) = self.descend((op.within(), Target::Key(key)), 0, &mut path, |leaf| value_of(leaf, key))?;
         Ok(value)
     }
 
@@ -98,14 +99,14 @@ impl BLinkTree {
     ///
     /// As `get`.
     pub fn get_for_write_into(&self, key: &[u8], into: &mut Vec<u8>) -> Result<Option<Descended>> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let stamp = self.epochs.stamp();
         into.clear();
-        if let Some((leaf, found)) = self.at_noted(key, |leaf| value_into(leaf, key, into))? {
+        if let Some((leaf, found)) = self.at_noted(op.within(), key, |leaf| value_into(leaf, key, into))? {
             return Ok(found.then(|| Descended { path: Path::default(), leaf: PageId(leaf), stamp }));
         }
         let mut path = Path { tallied: true, ..Path::default() };
-        let (leaf, found) = self.descend(Target::Key(key), 0, &mut path, |leaf| value_into(leaf, key, into))?;
+        let (leaf, found) = self.descend((op.within(), Target::Key(key)), 0, &mut path, |leaf| value_into(leaf, key, into))?;
         path.tallied = false;
         Ok(found.then_some(Descended { path, leaf, stamp }))
     }
@@ -119,12 +120,13 @@ impl BLinkTree {
     ///
     /// As `insert`.
     pub fn replace_found(&self, found: &Descended, key: &[u8], (expected, value): (&[u8], &[u8])) -> Result<bool> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         if self.epochs.stamp() != found.stamp {
             return self.replace_if(key, expected, value);
         }
         self.fits(key, value)?;
-        Ok(matches!(self.write_from(&found.path, found.leaf, (key, value), Mode::ReplaceIf(expected))?, Written::Done(..)))
+        let written = self.write_from((op.within(), &found.path), found.leaf, (key, value), Mode::ReplaceIf(expected))?;
+        Ok(matches!(written, Written::Done(..)))
     }
 
     /// As `replace_if`, from the leaf `near` holds after a `get_near` of
@@ -137,12 +139,14 @@ impl BLinkTree {
     ///
     /// As `insert`.
     pub fn replace_if_near(&self, key: &[u8], (expected, value): (&[u8], &[u8]), near: &Near) -> Result<bool> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let Some((leaf, _)) = near.leaf.filter(|&(_, stamp)| stamp == self.epochs.stamp()) else {
             return self.replace_if(key, expected, value);
         };
         self.fits(key, value)?;
-        let Written::Done(_, into) = self.write_from(&Path::default(), PageId(leaf), (key, value), Mode::ReplaceIf(expected))? else {
+        let Written::Done(_, into) =
+            self.write_from((op.within(), &Path::default()), PageId(leaf), (key, value), Mode::ReplaceIf(expected))?
+        else {
             return self.replace_if(key, expected, value);
         };
         if let Some(row) = self.row_of(key) {
@@ -192,10 +196,10 @@ impl BLinkTree {
     ///
     /// As `get`.
     pub fn delete_if(&self, key: &[u8], expected: &[u8]) -> Result<bool> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let mut path = Path::default();
-        let leaf = self.leaf_for_write(key, &mut path)?;
-        Ok(self.delete_from(&path, leaf, key, Some(expected))?.is_some())
+        let leaf = self.leaf_for_write(op.within(), key, &mut path)?;
+        Ok(self.delete_from((op.within(), &path), leaf, key, Some(expected))?.is_some())
     }
 
     /// Removes `key`; its value, read under the leaf's lock: none if it was
@@ -206,10 +210,10 @@ impl BLinkTree {
     ///
     /// As `get`.
     pub fn delete(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let mut path = Path::default();
-        let leaf = self.leaf_for_write(key, &mut path)?;
-        self.delete_from(&path, leaf, key, None)
+        let leaf = self.leaf_for_write(op.within(), key, &mut path)?;
+        self.delete_from((op.within(), &path), leaf, key, None)
     }
 
     /// The rest of `delete`, from `leaf`, reached by `path`, which may have
@@ -217,9 +221,15 @@ impl BLinkTree {
     /// and then an empty value stands for the one removed.
     /// The leaf is searched, the value compared and the entry removed
     /// under one latch (`here.rs`).
-    pub(super) fn delete_from(&self, path: &Path, leaf: PageId, key: &[u8], expected: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
-        let mut held = self.lock(leaf)?;
-        let page = self.latched_covering(&mut held, key)?;
+    pub(super) fn delete_from(
+        &self,
+        (within, path): (Within<'_>, &Path),
+        leaf: PageId,
+        key: &[u8],
+        expected: Option<&[u8]>,
+    ) -> Result<Option<Vec<u8>>> {
+        let mut held = self.lock(within, leaf)?;
+        let page = self.latched_covering(within, &mut held, key)?;
         let node = Node::parse(&page)?;
         let Ok(at) = node.search(key)? else { return Ok(None) };
         let old = node.value(at)?;
@@ -229,7 +239,7 @@ impl BLinkTree {
         // Only a delete of whatever is there gives the value back: one of
         // a value expected has it, and copies none.
         let old = if expected.is_some() { Vec::new() } else { old.to_vec() };
-        self.removed(path, held, page, (key, at))?;
+        self.removed((within, path), held, page, (key, at))?;
         Ok(Some(old))
     }
 
@@ -237,13 +247,19 @@ impl BLinkTree {
     /// writing as `page`, reached by `path`; takes the leaf out, its
     /// entries merged into its right neighbour, if that leaves it empty or
     /// sparse (`merge.rs`), once its latch and its lock are released.
-    fn removed<'a>(&'a self, path: &Path, held: NodeLock<'a>, mut page: PageMut<'a>, (key, at): (&[u8], usize)) -> Result<()> {
+    fn removed<'a>(
+        &'a self,
+        (within, path): (Within<'_>, &Path),
+        held: NodeLock<'a>,
+        mut page: PageMut<'a>,
+        (key, at): (&[u8], usize),
+    ) -> Result<()> {
         let leaf = held.id;
         node::remove(&mut page, at)?;
         let sparse = self.underfull(&Node::parse(&page)?);
         drop(page);
         drop(held);
-        if sparse { self.unlink((leaf, key), path) } else { Ok(()) }
+        if sparse { self.unlink(within, (leaf, key), path) } else { Ok(()) }
     }
 
     /// Changes `key`'s entry as `change` says, given its value, or none if
@@ -312,14 +328,15 @@ impl BLinkTree {
         value: &mut Vec<u8>,
         change: impl FnOnce(Option<&[u8]>, &mut Vec<u8>) -> Result<Updated>,
     ) -> Result<bool> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
+        let within = op.within();
         let mut path = Path::default();
-        let leaf = self.leaf_for_write(key, &mut path)?;
-        let mut held = self.lock(leaf)?;
+        let leaf = self.leaf_for_write(within, key, &mut path)?;
+        let mut held = self.lock(within, leaf)?;
         let begins = key.get(..prefix).unwrap_or(key);
         // Searched, shown to `change` where it lies, and changed under one
         // latch (`here.rs`).
-        let mut page = self.latched_covering(&mut held, key)?;
+        let mut page = self.latched_covering(within, &mut held, key)?;
         let (found, alone, update) = {
             let node = Node::parse(&page)?;
             let found = node.search(key)?;
@@ -331,7 +348,7 @@ impl BLinkTree {
         };
         let slot = match (update, found) {
             (Updated::Keep, _) | (Updated::Remove, Err(_)) => return Ok(alone),
-            (Updated::Remove, Ok(at)) => return self.removed(&path, held, page, (key, at)).map(|()| alone),
+            (Updated::Remove, Ok(at)) => return self.removed((within, &path), held, page, (key, at)).map(|()| alone),
             (Updated::Put, Ok(at)) => Slot::Replace(at),
             (Updated::Put, Err(at)) => Slot::Insert(at),
         };
@@ -342,7 +359,7 @@ impl BLinkTree {
             Some(copy) => self.split(held.id, &copy, (key, value), slot)?,
             None => Vec::new(),
         };
-        self.posted(&path, held, key, splits).map(|_| alone)
+        self.posted((within, &path), held, key, splits).map(|_| alone)
     }
 
     /// The leaf a writer of `key` locks, `path` the way to it: its page
@@ -350,9 +367,9 @@ impl BLinkTree {
     /// writer reads it once it owns it, moving right past a split or a
     /// leaf taken out, as from a leaf read (RULES.md D840). A root that is
     /// a leaf is the leaf.
-    pub(super) fn leaf_for_write(&self, key: &[u8], path: &mut Path) -> Result<PageId> {
+    pub(super) fn leaf_for_write(&self, within: Within<'_>, key: &[u8], path: &mut Path) -> Result<PageId> {
         path.above_leaf = true;
-        let found = self.descend(Target::Key(key), 0, path, |node| match node.level {
+        let found = self.descend((within, Target::Key(key)), 0, path, |node| match node.level {
             0 => Ok(None),
             _ => node.child(key).map(|(child, _)| Some(child)),
         });
@@ -383,14 +400,14 @@ impl BLinkTree {
 
     /// Inserts or replaces `key`'s entry, as `mode` says (§5, insert).
     pub(super) fn write(&self, key: &[u8], value: &[u8], mode: Mode<'_>) -> Result<Written> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         self.fits(key, value)?;
         let mut path = Path::default();
-        let leaf = match self.edge_for(key)? {
+        let leaf = match self.edge_for(op.within(), key)? {
             Some(leaf) => leaf,
-            None => self.leaf_for_write(key, &mut path)?,
+            None => self.leaf_for_write(op.within(), key, &mut path)?,
         };
-        let written = self.write_from(&path, leaf, (key, value), mode)?;
+        let written = self.write_from((op.within(), &path), leaf, (key, value), mode)?;
         // A table's row: its leaf noted for its index entries (`hints.rs`).
         if let (Written::Done(_, into), Some(row)) = (&written, self.row_of(key)) {
             super::hints::note(row, into.0);
@@ -403,14 +420,20 @@ impl BLinkTree {
     /// The leaf is searched and changed under one latch (`here.rs`); one
     /// that no longer covers `key` is moved right from, and the leaf
     /// reached is written the same way.
-    pub(super) fn write_from(&self, path: &Path, leaf: PageId, (key, value): (&[u8], &[u8]), mode: Mode<'_>) -> Result<Written> {
-        let mut held = self.lock(leaf)?;
+    pub(super) fn write_from(
+        &self,
+        (within, path): (Within<'_>, &Path),
+        leaf: PageId,
+        (key, value): (&[u8], &[u8]),
+        mode: Mode<'_>,
+    ) -> Result<Written> {
+        let mut held = self.lock(within, leaf)?;
         loop {
             match self.write_here(&held, (key, value), mode)? {
-                Here::Elsewhere => self.move_right(&mut held, key, |_| Ok(()))?,
+                Here::Elsewhere => self.move_right(within, &mut held, key, |_| Ok(()))?,
                 Here::Refused => return Ok(Written::Refused),
                 Here::Done(old, past_the_end, splits) => {
-                    let into = self.posted(path, held, key, splits)?;
+                    let into = self.posted((within, path), held, key, splits)?;
                     if past_the_end {
                         self.note_edge(into);
                     }
@@ -423,13 +446,19 @@ impl BLinkTree {
     /// Posts `splits`, those a change of `key` in the leaf `held` caused,
     /// up the tree from `path`. The leaf the entry is in: the right page
     /// of the highest separator it is past, if any.
-    pub(super) fn posted<'a>(&'a self, path: &Path, held: NodeLock<'a>, key: &[u8], splits: Vec<Split>) -> Result<PageId> {
+    pub(super) fn posted<'a>(
+        &'a self,
+        (within, path): (Within<'_>, &Path),
+        held: NodeLock<'a>,
+        key: &[u8],
+        splits: Vec<Split>,
+    ) -> Result<PageId> {
         let leaf = splits
             .iter()
             .filter(|s| key > s.separator.as_slice())
             .max_by(|a, b| a.separator.cmp(&b.separator))
             .map_or(held.id, |s| s.right);
-        self.post(path, held, splits)?;
+        self.post(within, path, held, splits)?;
         Ok(leaf)
     }
 
@@ -439,14 +468,14 @@ impl BLinkTree {
     /// (§5); a further split of one change, its page reached meanwhile
     /// through the right links, is posted after, as a split past the top
     /// of a path is (`fit.rs`).
-    fn post<'a>(&'a self, path: &Path, held: NodeLock<'a>, splits: Vec<Split>) -> Result<()> {
+    fn post<'a>(&'a self, within: Within<'_>, path: &Path, held: NodeLock<'a>, splits: Vec<Split>) -> Result<()> {
         let mut held = Some(held);
         for done in splits {
             let mut up = Path { stack: path.stack, ..Path::default() };
-            let Some((parent, at)) = self.lock_parent(&mut up, &done)? else { continue };
+            let Some((parent, at)) = self.lock_parent(within, &mut up, &done)? else { continue };
             drop(held.take());
             let more = self.change(&parent, &done.separator, &done.right.0.to_le_bytes(), Slot::Insert(at))?;
-            self.post(&up, parent, more)?;
+            self.post(within, &up, parent, more)?;
         }
         drop(held);
         Ok(())
