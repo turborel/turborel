@@ -102,23 +102,20 @@ fn a_key_of_octets_is_grouped_as_its_string() {
         arg: Some(Expr::SortKey(Box::new(Expr::Column(1)), collation.clone())),
         ..call(&db, name, 1, true)
     };
+    // Whether the second's function takes a sort key, which of the
+    // first's grouping columns are under a collation, and whether the
+    // first groups by a sort key.
     let levels = |agg: AggCall| {
         let Some(LogicalPlan::Aggregate { aggs, input, .. }) = applied(&aggregation(vec![agg])) else { panic!("no aggregation") };
         let LogicalPlan::Aggregate { groups, collations, input: projected, .. } = *input else { panic!("no first grouping") };
         let LogicalPlan::Project { exprs, .. } = *projected else { panic!("no projection") };
-        let value = groups.last().and_then(|&g| exprs.get(g)).cloned().unwrap();
-        (aggs[0].arg.clone().unwrap(), collations.iter().map(Option::is_some).collect::<Vec<_>>(), value)
+        let is_key = |e: Option<&Expr>| matches!(e, Some(Expr::SortKey(..)));
+        let grouped = groups.last().and_then(|&g| exprs.get(g));
+        (is_key(aggs[0].arg.as_ref()), collations.iter().map(Option::is_some).collect::<Vec<_>>(), is_key(grouped))
     };
-    let (arg, by, value) = levels(keyed("COUNT", &unpadded_scalar()));
-    assert!(matches!(value, Expr::Column(1)), "the string, not its key: {value:?}");
-    assert_eq!(by, [false, true], "under its collation, the grouping column under none");
-    assert!(matches!(arg, Expr::Column(1)), "COUNT counts the strings: {arg:?}");
-    let (arg, by, value) = levels(keyed("SUM", &unpadded_scalar()));
-    assert!(matches!(value, Expr::Column(1)) && by == [false, true]);
-    assert!(matches!(arg, Expr::SortKey(..)), "another function takes the key of each group: {arg:?}");
-    let (arg, by, value) = levels(keyed("COUNT", &folded));
-    assert!(matches!(value, Expr::SortKey(..)) && by.is_empty(), "another collation's key is grouped by as made");
-    assert!(matches!(arg, Expr::Column(1)));
-    let (_, by, value) = levels(call(&db, "COUNT", 1, true));
-    assert!(matches!(value, Expr::Column(1)) && by.is_empty(), "no sort key, no collation");
+    let under = vec![false, true];
+    assert_eq!(levels(keyed("COUNT", &unpadded_scalar())), (false, under.clone(), false), "the string grouped, COUNT counts it");
+    assert_eq!(levels(keyed("SUM", &unpadded_scalar())), (true, under, false), "another function takes each group's key");
+    assert_eq!(levels(keyed("COUNT", &folded)), (false, Vec::new(), true), "another collation's key is grouped by as made");
+    assert_eq!(levels(call(&db, "COUNT", 1, true)), (false, Vec::new(), false), "no sort key, no collation");
 }

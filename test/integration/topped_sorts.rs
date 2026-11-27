@@ -173,7 +173,7 @@ fn a_scan_judges_a_top_bound_of_each_row_and_a_top_is_a_part() {
     };
     let all = u64::try_from(ROWS).unwrap();
     let bounded = scanned("SELECT * FROM C WHERE U LIKE '%mail%' ORDER BY A FETCH FIRST 10 ROWS ONLY");
-    assert!(bounded < all / 2, "rows past the bound are left out: {bounded}");
+    assert!(bounded.saturating_mul(2) < all, "rows past the bound are left out: {bounded}");
     assert_eq!(scanned("SELECT * FROM C WHERE U LIKE '%mail%' ORDER BY A NULLS FIRST FETCH FIRST 10 ROWS ONLY"), all, "no bound");
     for statement in ["SET EXECUTOR.DEGREE = 16", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0", "SET EXECUTOR.MORSEL_ROWS = 512"] {
         exec(&s, statement).unwrap();

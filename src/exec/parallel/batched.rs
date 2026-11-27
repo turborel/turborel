@@ -312,8 +312,8 @@ mod tests {
         assert_eq!((by.late.clone(), by.unresolved), (vec![vec![0]], true), "all but the filter's column and the key");
         assert!(told(&topped), "the bound reaches the scan through the filter");
         let early = pipeline_of(&filtered).topped((&[1], false), &bound());
-        let by = early.batched.as_ref().unwrap();
-        assert_eq!((by.late.clone(), by.unresolved), (vec![vec![0, 1]], false), "as any reader of the pipeline is given");
+        let read = early.batched.as_ref().unwrap();
+        assert_eq!((read.late.clone(), read.unresolved), (vec![vec![0, 1]], false), "as any reader of the pipeline is given");
         let bare = pipeline_of(&scan("F", vec![0, 1, 2])).topped((&[1], true), &bound());
         assert_eq!(bare.batched.as_ref().unwrap().late, vec![vec![0, 2]], "the sort drops rows, with no filter too");
         assert!(!told(&pipeline_of(&joined(0))), "a join's probing side is told none");
