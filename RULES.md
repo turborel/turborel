@@ -792,6 +792,7 @@ verification approach DO-178C expects (§8).
 | D1246 | A run's workers number one fewer than its degree, the statement's thread the last, and a thread's runs keep their workers |
 | D1247 | A grouping stops handing morsels whole once the statement thread's table holds more groups than a morsel has rows |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
+| D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 
 ### The project
 
@@ -22295,6 +22296,53 @@ and forgets it, or the write finds the transaction over and notes none.
 Recovery is unchanged. Nothing in the log tells a transaction rolled
 back in memory from one a crash stopped, so the rule is kept where
 records are written.
+
+#### D1262. A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold
+
+A run gives its results in the order of its morsels and took no morsel
+more than two a thread past the one its reader waits for (D290), so
+that a reader stopping early left little read for nothing. Where the
+morsels of a run cost unevenly, as under a filter that keeps the rows
+of some and few of others, or its reader works in bursts, the threads
+that finished early had taken the window's morsels and waited for the
+one slow morsel the reader wanted, most of the processors idle
+meanwhile.
+
+A reader that holds all its input stops early of nothing, so its run
+may lead it further. A grouping read by batch now asks its run a lead
+(`exec/parallel/run.rs`, `Lead`, `grouped/waves.rs`), sixteen morsels
+a thread in place of two. A sweep of 2 to 128 a thread, over groupings
+of few groups and of many, whose morsels cost unevenly, and a join's
+probe that makes several rows of each, on eight threads and on two,
+falls to sixteen and is level past it, so the least that is level is
+taken, as a longer lead only holds more. A stream stays at two, as its reader sets its
+pace and the rows held ahead of it are bounded by the window (D1153).
+A sort, a join's build and the partitioned operators stay at two as
+well, their morsels charged to the grant as they are gathered (D1150).
+
+What the threads of a grouping hold ahead of the statement's thread was
+charged to nothing until it was read (D1155), which two morsels a
+thread kept small. So the lead is metered. Each morsel's groups count
+their bytes as its thread lands them and no longer once the reader is
+given them, and a thread takes a morsel past the two a thread only
+while the bytes so held are fewer than what the grant has left, its
+bytes less those the grouping holds. At any moment, then, the bytes the
+grouping holds and the bytes held ahead of its reader are within the
+grant, but for the one morsel each thread is grouping at that moment,
+as before. Of a small MEMORY.WORK_BYTES the lead narrows itself to the
+two a thread it was.
+
+The meter is apart from the grant's own count and decides nothing else.
+The reader charges each morsel's groups as it takes them, in the order
+of the morsels, as before, and by those charges alone a wave is merged,
+a partition written to the spill or the grouping gives way. So how many
+waves a grouping merges and how often it spills are the same whatever
+its lead, and whatever the threads' timing. The order of the results is
+kept as it was. Each partition merges its morsels in the order of their
+numbers, so a set function whose state depends on the order of its
+values, as MIN of strings equal under their collation and different in
+their octets, gives what the plan run alone gives. Timing changes when
+a thread waits, and nothing a statement can see.
 
 ## 2. Project layout
 

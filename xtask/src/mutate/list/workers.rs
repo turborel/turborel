@@ -5,7 +5,9 @@
 //! last, not served by the same workers; and of a grouping's morsels
 //! handed whole (D1247): the statement thread's table never taken to the
 //! partitions for its groups, and a morsel handed whole after morsels no
-//! longer are.
+//! longer are; and of a run's lead past its window (D1262): a lead taken
+//! whatever the bytes held ahead, and a result's bytes held after the
+//! reader was given it.
 
 use super::{Mutation, Package};
 
@@ -19,7 +21,30 @@ const WAVES: &str = "src/exec/parallel/grouped/waves.rs";
 /// The unit test of a grouping of many groups.
 const MANY: &str = "exec::parallel::grouped::waves::tests::a_grouping_of_many_groups_stops_handing_morsels_whole";
 
-pub const WORKERS: [Mutation; 5] = [
+/// The unit test of a run's lead.
+const LED: &str = "exec::parallel::run::tests::a_run_leads_its_reader_while_what_it_holds_has_room";
+
+pub const WORKERS: [Mutation; 7] = [
+    Mutation {
+        name: "a-lead-whatever-is-held-ahead",
+        package: Package::Core,
+        breaks: "a run leads its reader past its window though the bytes held ahead leave no room (RULES.md D1262)",
+        file: RUN,
+        original: "led.held.load(Ordering::Acquire) < (led.lead.room)()",
+        replacement: "led.held.load(Ordering::Acquire) < usize::MAX",
+        integration: &[],
+        unit: &[LED],
+    },
+    Mutation {
+        name: "a-result-given-stays-held-ahead",
+        package: Package::Core,
+        breaks: "a result's bytes stay counted as held ahead after the reader was given it (RULES.md D1262)",
+        file: RUN,
+        original: "led.held.fetch_sub(self.bytes_of(&result), Ordering::AcqRel);",
+        replacement: "led.held.fetch_sub(0, Ordering::AcqRel);",
+        integration: &[],
+        unit: &[LED],
+    },
     Mutation {
         name: "a-table-of-many-groups-stays-the-statements",
         package: Package::Core,
