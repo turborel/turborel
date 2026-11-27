@@ -140,6 +140,10 @@ impl Log for GroupLog {
     fn end(&self) -> Lsn {
         self.driver.core.lock().unwrap_or_else(PoisonError::into_inner).end()
     }
+
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        self.driver.core.lock().unwrap_or_else(PoisonError::into_inner).bytes_between(from, to)
+    }
 }
 
 /// \[EXTENSION\] What makes a replica's consensus: of the group's

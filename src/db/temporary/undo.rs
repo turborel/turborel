@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use crate::disk::buffer::{BufferPool, FileId};
 use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
+use crate::log::marks::{ByteMarks, place};
 use crate::log::{Log, LogCapabilities, Lsn, Records};
 use crate::sync::lock_builtin;
 
@@ -32,6 +33,8 @@ pub(super) struct PagedLog {
 struct State {
     pages: BTreeMap<Lsn, PageId>,
     last: u64,
+    /// The bytes of the records kept (RULES.md D1231).
+    marks: ByteMarks,
 }
 
 impl PagedLog {
@@ -61,6 +64,7 @@ impl Log for PagedLog {
         drop(content);
         state.last = last;
         state.pages.insert(Lsn(last), page);
+        state.marks.push(record.len());
         Ok(Lsn(last))
     }
 
@@ -89,12 +93,20 @@ impl Log for PagedLog {
         while let Some((&at, &page)) = state.pages.first_key_value().filter(|(at, _)| **at < before) {
             self.pool.free(self.file, page)?;
             state.pages.remove(&at);
+            state.marks.drain_front(1);
         }
         Ok(())
     }
 
     fn end(&self) -> Lsn {
         Lsn(lock_builtin(&self.state).last.saturating_add(1))
+    }
+
+    /// Positions are consecutive from the first kept.
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        let state = lock_builtin(&self.state);
+        let first = state.pages.first_key_value().map_or(state.last.saturating_add(1), |(at, _)| at.0);
+        state.marks.between(place(first, from.0), place(first, to.0))
     }
 }
 

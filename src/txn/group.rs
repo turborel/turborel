@@ -223,6 +223,10 @@ mod tests {
         fn end(&self) -> Lsn {
             self.inner.end()
         }
+
+        fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+            self.inner.bytes_between(from, to)
+        }
     }
 
     /// Three commits' records in `log`, and their commit timestamps, ended

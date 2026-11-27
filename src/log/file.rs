@@ -44,9 +44,8 @@
 //!
 //! Its formats (RULES.md D48: STORAGE.CHECKSUM_KEY, STORAGE.ENCODINGS)
 //! change while it is open too (`Log::set_formats`): a segment in them is
-//! asked for at each append until one is begun, so a record after the
-//! change may still go to a segment of the formats before; the segments there are read as
-//! they were written, each naming its own.
+//! asked for at each append until one is begun, so a record after the change may still
+//! go to a segment of the formats before, read as written, each naming its own.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -594,5 +593,8 @@ impl Log for FileLog {
     fn end(&self) -> Lsn {
         let active = self.active.read().unwrap_or_else(PoisonError::into_inner);
         lsn(active.number, active.blocks.end())
+    }
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        segments::distance(from, to, self.options.segment_size)
     }
 }
