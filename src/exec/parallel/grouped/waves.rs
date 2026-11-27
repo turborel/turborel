@@ -459,7 +459,9 @@ impl Waves<'_> {
     ///
     /// As finishing a group, or merging a partition, fails.
     fn finished(mut self) -> Result<Waved> {
-        if !self.waved && self.wave.is_empty() {
+        // A table that went to the spill as it was, no wave merged, is
+        // the partitions' too, though `waved` does not tell of it.
+        if !self.waved && self.wave.is_empty() && self.spilled.is_none() {
             let Some(table) = self.direct.take() else { return Ok(Held::Kept((Vec::new(), Vec::new()))) };
             let groups = self.grouping.kept_of(table, &Runner::new(self.run.0, self.run.1))?;
             return Ok(Held::Kept((vec![groups], Vec::new())));

@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 35] = [
+pub const GROUPED_PARTS: [Mutation; 36] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -363,5 +363,15 @@ pub const GROUPED_PARTS: [Mutation; 35] = [
         replacement: "return spilled.write_parts(made.as_ref());",
         integration: &["spilled_groups::a_grouping_spilled_holds_its_partitions_in_one_area"],
         unit: &[],
+    },
+    Mutation {
+        name: "spilled-table-of-the-statements-thread-lost",
+        package: Package::Core,
+        breaks: "a grouping whose statement thread's table went to the spill with no wave merged gives the last such table's groups alone (RULES.md D1247, D1226)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "if !self.waved && self.wave.is_empty() && self.spilled.is_none() {",
+        replacement: "if !self.waved && self.wave.is_empty() {",
+        integration: &[],
+        unit: &["exec::parallel::grouped::waves::tests::a_table_of_the_statements_thread_past_the_grant_loses_no_group"],
     },
 ];
