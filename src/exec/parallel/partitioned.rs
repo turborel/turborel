@@ -9,10 +9,14 @@
 //! A partition's rows are held in a list that spills, each of its share
 //! of a work area, and its operator runs in its share too, so the parts
 //! together hold one work area (RULES.md D38), each spilling on its own.
-//! The partitions' rows are merged back in the order the operator alone
-//! gives: a window's by its sort keys, its partitions' rows never tied;
-//! a set operation's by the place of each first operand's row, each
-//! carried through it after the columns it compares.
+//! Each partition's result is held in a list of its own share of the
+//! grant that spills too (RULES.md D1227), and the lists are merged back
+//! as the statement reads them, in the order the operator alone gives: a
+//! window's by its sort keys, its partitions' rows never tied; a set
+//! operation's by the place of each first operand's row, each carried
+//! through it after the columns it compares (`partitioned/merged.rs`).
+
+mod merged;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -21,7 +25,6 @@ use super::pipeline::Pipeline;
 use super::probe::{PARTS, part_of};
 use super::rows::morsel_rows;
 use super::run::Morsels;
-use super::sorted::merge_by;
 use super::{Held, Limit};
 use crate::db::State;
 use crate::error::Result;
@@ -34,6 +37,7 @@ use crate::spill::{ListSpace, norm_row};
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::{Decimal, Value};
+use merged::Merged;
 
 /// \[DESIGN\] The bits of a row's place its place in its morsel takes:
 /// more than any morsel's rows need.
@@ -79,7 +83,7 @@ pub(super) fn windowed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Res
         Plan::Window { window: Box::new(shape.with_input(|()| sorted)), detail: detail.clone(), est: 0.0_f64 }
     };
     let outs = per_part(parts, (db, tx, degree), (each, limit.most()))?;
-    Ok(Held::Kept(limit.keeping(Box::new(merge_by(&outs, &keys).into_iter().map(Ok)))))
+    Ok(Held::Kept(limit.keeping(Box::new(Merged::of(outs, &keys)?))))
 }
 
 /// [ISO/IEC 9075:1992 §7.10 GR1b] The rows of EXCEPT or INTERSECT, `plan`,
@@ -109,9 +113,11 @@ pub(super) fn set_operation(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -
     };
     let outs = per_part_numbered(parts, (db, tx, degree), (each, limit.most()))?;
     let place = SortKey::new(width, crate::value::SortOrder::of(false, None));
-    let rows = merge_by(&outs, &[place]).into_iter().map(move |mut row| {
-        row.truncate(width);
-        Ok(row)
+    let rows = Merged::of(outs, &[place])?.map(move |row| {
+        row.map(|mut row| {
+            row.truncate(width);
+            row
+        })
     });
     Ok(Held::Kept(limit.keeping(Box::new(rows))))
 }
@@ -213,12 +219,13 @@ fn morsel_parts(pipeline: &Arc<Pipeline>, m: usize, (db, tx): (&Db, TxId), how: 
 }
 
 /// Runs the plan `each` makes of each partition's rows on a thread of up
-/// to `degree`, each in a share of `bytes`: their rows, by partition.
+/// to `degree`, each in a share of `bytes`: their rows, by partition, each
+/// partition's held in a list of its share of `bytes` that spills.
 fn per_part(
     parts: Parts,
     (db, tx, degree): (&Db, TxId, usize),
     (each, bytes): (impl Fn(TransitionRows) -> Plan + Send + Sync + 'static, usize),
-) -> Result<Vec<Vec<Row>>> {
+) -> Result<Parts> {
     per_part_numbered(parts, (db, tx, degree), (move |rows, _| each(rows), bytes))
 }
 
@@ -227,15 +234,20 @@ fn per_part_numbered(
     parts: Parts,
     (db, tx, degree): (&Db, TxId, usize),
     (each, bytes): (impl Fn(TransitionRows, usize) -> Plan + Send + Sync + 'static, usize),
-) -> Result<Vec<Vec<Row>>> {
+) -> Result<Parts> {
     let shared = shared(db, bytes.checked_div(degree.max(1)).unwrap_or_default().max(1));
+    let (share, db_for) = (bytes.checked_div(PARTS).unwrap_or_default().max(1), db.clone());
     let parts: Arc<Vec<Mutex<Option<HeldRows<Row>>>>> = Arc::new(parts.into_iter().map(|p| Mutex::new(Some(p))).collect());
     let work = Box::new(move |p: usize| {
         let rows = parts
             .get(p)
             .and_then(|r| r.lock().unwrap_or_else(PoisonError::into_inner).take())
             .ok_or_else(|| broken("a partition run twice"))?;
-        execute(each(TransitionRows::with(rows), p), &shared, tx).collect::<Result<Vec<Row>>>()
+        let mut out = HeldRows::new(space(&db_for, share));
+        for row in execute(each(TransitionRows::with(rows), p), &shared, tx) {
+            out.push(row?)?;
+        }
+        Ok(out)
     });
     Morsels::start(db, tx, (PARTS, degree), work).collect()
 }

@@ -196,7 +196,8 @@ mod tests {
         assert_eq!(d.utc, [10, 20, 30, 60, 40]);
         assert_eq!(marked(d.nulls.as_ref()), [false, false, false, true, false]);
         let plain = joined_column(&[(Some(&first), &[0, 1, 2]), (Some(&first), &[1])], 4);
-        assert!(matches!(&plain, Column::Datetimes(p) if p.nulls.is_none() && p.utc == [10, 20, 30, 20]), "{plain:?}");
+        let Column::Datetimes(p) = &plain else { panic!("not datetimes: {plain:?}") };
+        assert!(p.nulls.is_none() && p.utc == [10, 20, 30, 20], "{plain:?}");
         let (yes, no) = (truths_of(&[true, false, true], None), truths_of(&[false, true, true], Some(vec![true, false, false])));
         let truths = joined_column(&[(Some(&yes), &[0, 1, 2]), (Some(&no), &[2, 0])], 5);
         let Column::Bools(b) = &truths else { panic!("not truth values: {truths:?}") };
@@ -205,7 +206,8 @@ mod tests {
         let stamps = Column::Datetimes(Datetimes::new(vec![7], None, (Moment::Timestamp, false, 6), None));
         assert!(matches!(joined_column(&[(Some(&first), &[0]), (Some(&stamps), &[0])], 2), Column::Values(_)), "two types");
         let lacking = joined_column(&[(Some(&first), &[0]), (None, &[0])], 2);
-        assert!(matches!(&lacking, Column::Values(v) if v.get(1).is_some_and(Value::is_null)), "{lacking:?}");
+        let Column::Values(v) = &lacking else { panic!("not values: {lacking:?}") };
+        assert!(v.get(1).is_some_and(Value::is_null), "{lacking:?}");
     }
 
     /// Verifies: [DESIGN] RULES.md D1053: integers and approximate numbers
@@ -216,7 +218,8 @@ mod tests {
         let ints = |units: Vec<i64>| Column::Ints(Ints::new(units, 2, None));
         let (a, b) = (ints(vec![1, 2, 3]), ints(vec![4, 5]));
         let joined = joined_column(&[(Some(&a), &[0, 1, 2]), (Some(&b), &[1, 0, 9])], 6);
-        assert!(matches!(&joined, Column::Ints(i) if i.units == [1, 2, 3, 5, 4, 0] && i.scale == 2 && i.nulls.is_none()), "{joined:?}");
+        let Column::Ints(i) = &joined else { panic!("not integers: {joined:?}") };
+        assert!(i.units == [1, 2, 3, 5, 4, 0] && i.scale == 2 && i.nulls.is_none(), "{joined:?}");
         let floats = Column::Floats(Floats::new(vec![1.5_f64, 2.5_f64], Some(vec![false, true].into())));
         let halves = joined_column(&[(Some(&floats), &[1, 0])], 2);
         let Column::Floats(f) = &halves else { panic!("not numbers: {halves:?}") };

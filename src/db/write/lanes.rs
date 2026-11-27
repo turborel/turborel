@@ -122,8 +122,13 @@ fn records_of(target: &Target, (lanes, types): (&Lanes, &[DataType])) -> Result<
     for (at, column) in target.desc.columns.iter().enumerate() {
         let given = target.object().iter().position(|&c| c == at).and_then(|i| Some((lanes.columns.get(i)?, types.get(i)?)));
         let records = match given {
-            Some((lane, param)) if *param == column.data_type => parse(param, lane, lanes.rows)?,
-            Some((lane, param)) => parsed((param, &column.data_type), lane, lanes.rows)?,
+            Some((lane, param)) => {
+                if *param == column.data_type {
+                    parse(param, lane, lanes.rows)?
+                } else {
+                    parsed((param, &column.data_type), lane, lanes.rows)?
+                }
+            }
             None => repeated(&column.data_type, target.defaults.get(at).unwrap_or(&Value::Null), lanes.rows)?,
         };
         columns.push(records);

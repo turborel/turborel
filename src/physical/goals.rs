@@ -8,7 +8,10 @@
 //!
 //! A projection, a sort and a scan pass the goal as it is. A sort's input
 //! is read whole unless an ordered read gives its order, and that read
-//! gives the sort's first rows as its own. A filter divides it by the
+//! gives the sort's first rows as its own. So a sort's input that does
+//! not give its order is planned again with no goal, and so is the input
+//! of a grouping asked an order it does not give (`ordered.rs`,
+//! `streamed.rs`, RULES.md D1218). A filter divides it by the
 //! share of its input's rows it keeps, a table read's own condition too.
 //! A read that probes by the condition reads only rows it keeps, so the
 //! goal is then more than it reads, which prices the ordered read at no

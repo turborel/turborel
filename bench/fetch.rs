@@ -1,5 +1,5 @@
 //! What one fetch of a row by its row id costs (RULES.md D31, D862): a
-//! table shaped as TPC-C's STOCK, 100,000 rows of 17 columns under a
+//! table of an order entry's stock, 100,000 rows of 17 columns under a
 //! unique index of two integers, every page in the pool. One integer
 //! column is read by row id through `TableStorage::get_listed` with a
 //! `Near` held from read to read, for row ids scattered and in key order,

@@ -117,6 +117,8 @@ fn session(options: &Options) -> Result<ExitCode, String> {
     // Typed before Ctrl-C is taken, so it ends the program as it would.
     let password = matches!(options.credentials, Credentials::Ask).then(|| rpassword::prompt_password("password: "));
     let interrupts = Interrupts::listen((interrupted, not_cancelled))?;
+    // An import's jobs are proved by it too, not asked for it again.
+    let typed_once = password.as_ref().and_then(|typed| typed.as_ref().ok()).cloned();
     let connection = turborel_cli::connect(options, || password.unwrap_or_else(|| Err(std::io::Error::other("none was typed"))))?;
     interrupts.cancel_by(connection.canceller());
     let stdin = std::io::stdin();
@@ -124,8 +126,9 @@ fn session(options: &Options) -> Result<ExitCode, String> {
     if typed {
         println!("{}", turborel_cli::banner(options, &connection));
     }
-    // Each connection CONNECT makes asks for its own password.
-    let dialer = Dialer::new(options.clone(), Box::new(|| rpassword::prompt_password("password: ")));
+    // Each connection CONNECT makes asks for its own password; an
+    // import's jobs take the one typed.
+    let dialer = Dialer::new(options.clone(), Box::new(|| rpassword::prompt_password("password: "))).with_typed(typed_once);
     let mut agent = Agent::connected(dialer, connection);
     let mut editor =
         typed.then(|| turborel_cli::line::terminal::LineEditor::open(options.settings.environment.history.as_deref())).flatten();

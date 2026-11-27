@@ -68,7 +68,7 @@ fn a_read_through_the_copies_finds_what_a_descent_finds() {
 
 /// Verifies: [DESIGN] RULES.md D955, Lehman and Yao §5: a thread's copy
 /// of an inner node changed since by another, as a split posts a new
-/// child to it, is not followed: the walk gives no leaf below it, and the
+/// child to it, is not followed. The walk gives no leaf below it, and the
 /// read descends, finding every key. Reads made as leaves split find every
 /// key, and the walk never gives a leaf a descent would not reach. MC/DC
 /// of the copy's check: current, the leaf given, against changed, the

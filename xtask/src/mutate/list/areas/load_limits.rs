@@ -15,7 +15,7 @@
 use super::super::{Mutation, Package};
 
 /// Each mechanism of a load's limits broken alone, and the tests that fail.
-pub const LOAD_LIMITS: [Mutation; 24] = [
+pub const LOAD_LIMITS: [Mutation; 25] = [
     Mutation {
         name: "files-spent-retried",
         package: Package::Core,
@@ -41,9 +41,19 @@ pub const LOAD_LIMITS: [Mutation; 24] = [
         package: Package::Core,
         breaks: "CHECKPOINT.AFTER_BYTES counts the side file alone, so the log grows without a checkpoint",
         file: "src/db/checkpoint.rs",
-        original: "        let written = files.shadows.pending_bytes().max(current.tx.bytes_since_checkpoint());",
+        original: "        let written = files.shadows.pending_bytes().max(logged);",
         replacement: "        let written = files.shadows.pending_bytes();",
         integration: &["load_limits::a_log_grown_past_after_bytes_brings_a_checkpoint"],
+        unit: &[],
+    },
+    Mutation {
+        name: "log-bytes-by-marks",
+        package: Package::Core,
+        breaks: "a log whose positions number its records tells their count as its bytes, so CHECKPOINT.AFTER_BYTES never comes due of it",
+        file: "src/log.rs",
+        original: "        state.marks.between(marks::place(first, from.0), marks::place(first, to.0))",
+        replacement: "        to.0.saturating_sub(from.0)",
+        integration: &["load_limits::a_plugin_log_grown_past_after_bytes_brings_a_checkpoint", "log::the_memory_log_keeps_the_contract"],
         unit: &[],
     },
     Mutation {
