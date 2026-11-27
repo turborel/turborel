@@ -23,11 +23,17 @@
 //! cancellation first (RULES.md D44), and after one fails none past it is
 //! taken. A panic in a morsel is its failure, so the reader never waits
 //! for a morsel that will not end.
+//!
+//! A reader that drops its run waits for the morsels running to end,
+//! each looking at the statement's cancellation on its rows, then lets
+//! go of the work and of the results it did not read, so what they hold
+//! of the grant is given back before the statement returns, not when a
+//! worker next wakes (RULES.md D1245).
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
@@ -73,7 +79,9 @@ struct Led<T> {
 
 /// A run of morsels, shared by the workers taking them and its reader.
 struct Run<T> {
-    work: Work<T>,
+    /// The work of each morsel, read by each morsel running and let go
+    /// by the reader once none is.
+    work: RwLock<Option<Work<T>>>,
     count: usize,
     degree: usize,
     window: usize,
@@ -152,20 +160,25 @@ impl<T: Send + 'static> Run<T> {
         self.degree.saturating_sub(1)
     }
 
-    /// Runs morsel `m`, claimed, and keeps its result.
+    /// Runs morsel `m`, claimed, and keeps its result; nothing if its
+    /// reader has let go of the work.
     fn run(&self, m: usize) {
-        let checked = self.stop.as_ref().map_or(Ok(()), |s| s.check_now());
-        let result = checked.and_then(|()| {
-            catch_unwind(AssertUnwindSafe(|| (self.work)(m)))
-                .unwrap_or_else(|_| Err(SqlError::new(Code::Api, "[DESIGN] a morsel of a parallel query failed")))
-        });
-        if result.is_err() {
-            self.failed.fetch_min(m, Ordering::AcqRel);
+        let held = self.work.read().unwrap_or_else(PoisonError::into_inner);
+        if let Some(work) = held.as_ref() {
+            let checked = self.stop.as_ref().map_or(Ok(()), |s| s.check_now());
+            let result = checked.and_then(|()| {
+                catch_unwind(AssertUnwindSafe(|| work(m)))
+                    .unwrap_or_else(|_| Err(SqlError::new(Code::Api, "[DESIGN] a morsel of a parallel query failed")))
+            });
+            if result.is_err() {
+                self.failed.fetch_min(m, Ordering::AcqRel);
+            }
+            if let Some(led) = &self.led {
+                led.held.fetch_add(self.bytes_of(&result), Ordering::AcqRel);
+            }
+            done_of(self).insert(m, result);
         }
-        if let Some(led) = &self.led {
-            led.held.fetch_add(self.bytes_of(&result), Ordering::AcqRel);
-        }
-        done_of(self).insert(m, result);
+        drop(held);
         self.landed.notify_all();
     }
 
@@ -247,7 +260,7 @@ impl<T: Send + 'static> Morsels<T> {
             None => work,
         };
         let run = Arc::new(Run {
-            work,
+            work: RwLock::new(Some(work)),
             count,
             degree,
             window: window(degree),
@@ -284,169 +297,29 @@ impl<T: Send + 'static> Iterator for Morsels<T> {
 impl<T: Send + 'static> Drop for Morsels<T> {
     fn drop(&mut self) {
         self.run.ended.store(true, Ordering::Release);
-        // Woken, the workers let go of the run, and of what its work holds.
+        // Woken, the idle workers let go of the run.
         self.run.pool.nudge();
+        // Once the morsels running end, as a cancelled statement's do at
+        // their next row, the work and the results not read are let go
+        // here, what they hold given back before the statement goes on.
+        // The wait is for morsels running on workers alone. The reader's
+        // thread, which is the one dropping, runs a morsel only inside
+        // `next`, and the last slot the cap leaves it (RULES.md D1246) is
+        // a slot, not a morsel kept for it: a morsel is taken by the
+        // thread that runs it at once. A worker paced by the lead (RULES.md
+        // D1262) is in no morsel either, as it takes none and goes back to
+        // the pool, which lets go of a run that has ended.
+        let work = self.run.work.write().unwrap_or_else(PoisonError::into_inner).take();
+        drop(work);
+        let unread = std::mem::take(&mut *done_of(&self.run));
+        drop(unread);
+        if let Some(led) = &self.run.led {
+            led.held.store(0, Ordering::Release);
+        }
     }
 }
 
-// Unit tests: who takes a run's morsels (RULES.md R-TEST-1, R-TEST-8).
+// Unit tests: who takes a run's morsels, how far it leads its reader, and
+// what a run dropped lets go of (RULES.md R-TEST-1, R-TEST-8).
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::Database;
-    use crate::exec::Db;
-    use crate::txn::NO_TRANSACTION;
-
-    /// A gate morsels wait at: how many wait, and whether it is open.
-    #[derive(Default)]
-    struct Gate {
-        state: Mutex<(usize, bool)>,
-        moved: Condvar,
-    }
-
-    impl Gate {
-        /// Waits at the gate until it opens.
-        fn pass(&self) {
-            let mut state = self.state.lock().unwrap();
-            state.0 = state.0.saturating_add(1);
-            self.moved.notify_all();
-            while !state.1 {
-                state = self.moved.wait(state).unwrap();
-            }
-        }
-
-        /// Waits until `n` morsels wait at the gate.
-        fn waiting(&self, n: usize) {
-            let mut state = self.state.lock().unwrap();
-            while state.0 < n {
-                state = self.moved.wait(state).unwrap();
-            }
-        }
-
-        /// Opens the gate.
-        fn open(&self) {
-            self.state.lock().unwrap_or_else(PoisonError::into_inner).1 = true;
-            self.moved.notify_all();
-        }
-    }
-
-    /// Opens its gate as it is dropped, so a test that fails with morsels
-    /// waiting at the gate ends, and does not wait for them for ever.
-    struct Opening<'a>(&'a Gate);
-
-    impl Drop for Opening<'_> {
-        fn drop(&mut self) {
-            self.0.open();
-        }
-    }
-
-    /// A run of `count` morsels of `degree`, each waiting at `gate`, with
-    /// no worker of a pool offered it.
-    fn gated(count: usize, degree: usize, gate: &Arc<Gate>) -> Run<usize> {
-        let at = Arc::clone(gate);
-        Run {
-            work: Box::new(move |m| {
-                at.pass();
-                Ok(m)
-            }),
-            count,
-            degree,
-            window: window(degree),
-            stop: None,
-            taken: AtomicUsize::new(0),
-            running: AtomicUsize::new(0),
-            given: AtomicUsize::new(0),
-            failed: AtomicUsize::new(usize::MAX),
-            ended: AtomicBool::new(false),
-            done: Mutex::new(BTreeMap::new()),
-            landed: Condvar::new(),
-            pool: Arc::new(Pool::default()),
-            led: None,
-        }
-    }
-
-    /// Verifies: [DESIGN] RULES.md D1246 the workers of a pool run one
-    /// morsel fewer at once than a run's degree, and the reader's thread
-    /// the last. Of a run of degree 3 with two workers each in a morsel, a
-    /// third worker's step takes none and the run wants no worker, while
-    /// the reader still takes the next morsel; of degree 2, one worker in
-    /// a morsel is all it wants; and once a morsel ends a worker takes
-    /// another.
-    ///
-    /// Decision: fewer workers run than the degree less one, or as many;
-    /// the taker is a worker, or the reader.
-    #[test]
-    fn workers_take_one_morsel_fewer_than_the_degree() {
-        for degree in [3_usize, 2] {
-            let gate = Arc::new(Gate::default());
-            let run = gated(64, degree, &gate);
-            let workers = degree.saturating_sub(1);
-            std::thread::scope(|s| {
-                let _opening = Opening(&gate);
-                for inside in 1..=workers {
-                    assert!(run.wanted(), "a worker is wanted below the cap, degree {degree}");
-                    s.spawn(|| run.step());
-                    // Each waits in its morsel before the next is asked.
-                    gate.waiting(inside);
-                }
-                assert!(!run.wanted(), "no worker more is wanted, degree {degree}");
-                run.step();
-                assert_eq!(run.taken.load(Ordering::Acquire), workers, "a worker past the cap takes none, degree {degree}");
-                assert_eq!(run.claim(), Some(workers), "the reader takes the next, degree {degree}");
-            });
-            assert!(run.wanted(), "a worker is wanted again once the morsels ended");
-            run.step();
-            assert_eq!(run.taken.load(Ordering::Acquire), workers.saturating_add(2));
-        }
-    }
-
-    /// Verifies: [DESIGN] RULES.md D1262 a run whose reader asked a lead
-    /// takes morsels past its window, as many a thread as the lead says,
-    /// while the bytes of the results landed and not yet given are fewer
-    /// than there is room for, and no morsel past the window once they are
-    /// not; a result's bytes are held from its landing until the reader is
-    /// given it; and a run that asked none keeps to its window.
-    ///
-    /// Decision: a lead is asked, or not; the bytes held leave room, or
-    /// not.
-    #[test]
-    fn a_run_leads_its_reader_while_what_it_holds_has_room() {
-        let run_of = |room: usize| {
-            let lead = Lead { wide: 16, size: |m: &usize| m.saturating_add(100), room: Box::new(move || room) };
-            Run { led: Some(Led { lead, held: AtomicUsize::new(0) }), ..gated(200, 2, &Arc::new(Gate::default())) }
-        };
-        let taken = |run: &Run<usize>| std::iter::from_fn(|| run.claim()).count();
-        assert_eq!(taken(&gated(200, 2, &Arc::new(Gate::default()))), window(2), "no lead asked");
-        let roomy = run_of(1000);
-        assert_eq!(taken(&roomy), 32, "sixteen a thread while there is room");
-        let none = run_of(0);
-        assert_eq!(taken(&none), window(2), "no room, the window alone");
-        // Morsels 0 to 9 land, each of its number and a hundred bytes.
-        let filling = run_of(1000);
-        for m in 0..10_usize {
-            filling.taken.store(m.saturating_add(1), Ordering::Release);
-            done_of(&filling).insert(m, Ok(m));
-            filling.led.as_ref().unwrap().held.fetch_add(filling.bytes_of(&Ok(m)), Ordering::AcqRel);
-        }
-        assert_eq!(filling.led.as_ref().unwrap().held.load(Ordering::Acquire), 1045);
-        assert_eq!(filling.claim(), None, "ten are taken, past the window, and what landed leaves no room");
-        assert_eq!(filling.next().map(Result::unwrap), Some(0));
-        assert_eq!(filling.led.as_ref().unwrap().held.load(Ordering::Acquire), 945, "given, its bytes are held no longer");
-        assert_eq!(filling.claim(), Some(10), "room again");
-    }
-
-    /// Verifies: [DESIGN] RULES.md D1246, D290 a run of degree 1 wants no
-    /// worker and is offered to none: its reader takes every morsel on
-    /// its own thread, in order.
-    #[test]
-    fn a_run_of_one_thread_is_its_readers_alone() {
-        let db = Database::new();
-        let state = Db::from(db.snapshot().unwrap());
-        let reader = std::thread::current().id();
-        let work = Box::new(move |m: usize| Ok((m, std::thread::current().id() == reader)));
-        let run = Morsels::start(&state, NO_TRANSACTION, (40, 1), work);
-        assert!(!run.run.wanted(), "no worker is wanted");
-        let taken: Vec<(usize, bool)> = run.collect::<Result<_>>().unwrap();
-        assert_eq!(taken, (0..40).map(|m| (m, true)).collect::<Vec<_>>());
-    }
-}
+mod tests;

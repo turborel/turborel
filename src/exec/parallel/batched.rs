@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use super::passes::Placed;
 use super::pipeline::{Branch, Pipeline, Step};
 use crate::db::State;
 use crate::error::Result;
@@ -62,6 +63,24 @@ pub(super) fn by_batch(branches: &[Branch], db: &State) -> Option<ByBatch> {
     Some(ByBatch { steps, late, unresolved: false, layout, width })
 }
 
+impl ByBatch {
+    /// It, its branches' late columns and whether they are left so those
+    /// of `template`, the pipeline of a join's first pass, as a later
+    /// pass's steps read the columns the first pass's read (RULES.md
+    /// D1240).
+    pub(super) fn late_of_first(mut self, template: &ByBatch) -> ByBatch {
+        self.late.clone_from(&template.late);
+        self.unresolved = template.unresolved;
+        self
+    }
+
+    /// Of a test, its branches' late columns and whether they are left so.
+    #[cfg(test)]
+    pub(super) fn late_given(&self) -> (&[Vec<usize>], bool) {
+        (&self.late, self.unresolved)
+    }
+}
+
 /// The steps of `branch` over its batches, and the columns its batches
 /// hold at its end and their rows' width, if each step is read by batch.
 fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
@@ -93,6 +112,10 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
             }
             Step::Runtime(told) => shaped.push(runtime_step(told, &layout)),
             Step::Count(count) => shaped.push(Shaped::Count(Arc::clone(count))),
+            Step::Kept(keep) => {
+                let places = keep.left.iter().map(|c| layout.iter().position(|l| l == c)).collect::<Option<Vec<usize>>>()?;
+                shaped.push(Shaped::Kept(Arc::new(Placed { keep: Arc::clone(keep), places })));
+            }
         }
     }
     Some((shaped, layout, width))
@@ -116,7 +139,7 @@ fn deferred_of(branch: &Branch, above: Deferred) -> Deferred {
         wide = match step {
             Step::Project(exprs) => exprs.len(),
             Step::Probe(table) | Step::Outer(table) => table.shared.joined_layout((&[], wide)).1,
-            Step::Filter(_) | Step::Semi(..) | Step::Runtime(_) | Step::Count(_) => wide,
+            Step::Filter(_) | Step::Semi(..) | Step::Runtime(_) | Step::Count(_) | Step::Kept(_) => wide,
         };
     }
     let mut deferred = above;
@@ -128,6 +151,7 @@ fn deferred_of(branch: &Branch, above: Deferred) -> Deferred {
             Step::Outer(_) | Step::Semi(..) => Deferred::default(),
             Step::Runtime(told) => deferred.judged(&told.iter().map(|t| t.column).collect::<Vec<_>>()),
             Step::Count(_) => deferred,
+            Step::Kept(keep) => deferred.judged(&keep.left),
         };
     }
     deferred
@@ -177,6 +201,12 @@ impl Pipeline {
     /// As `morsel_kept`, the late columns of each batch as the steps left
     /// them, not decoded.
     fn morsel_late(&self, n: usize, (db, tx): (&Db, TxId)) -> Result<Batches> {
+        // A morsel of a pass past the first is of that pass's pipeline,
+        // whose late columns are this one's, so they are decoded here once
+        // or left to the sort (RULES.md D1240, D1241).
+        if let Some((pass, m)) = super::passes::passed(self, n)? {
+            return pass.morsel_late(m, (db, tx));
+        }
         let by = self.batched.as_ref().ok_or_else(|| broken("a pipeline not read by batch"))?;
         let mut at = n;
         for ((branch, steps), late) in self.branches.iter().zip(&by.steps).zip(&by.late) {

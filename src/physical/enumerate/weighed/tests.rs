@@ -1,5 +1,6 @@
-//! Tests of a hash join's cost in the enumeration: past its grant, at its
-//! part's degree, and after its runtime filter (RULES.md D651 to D653).
+//! Tests of a hash join's cost in the enumeration: past its grant, in passes,
+//! at its part's degree, and after its runtime filter (RULES.md D651 to D653,
+//! D1240).
 
 use super::super::bits::bit;
 use super::super::conflicts::{Kind, Shape};
@@ -56,12 +57,21 @@ fn hashed(cost: CostModel, kind: Kind) -> Linear {
 
 /// `hashed`, each thread past the first of a part gaining `gain`.
 fn hashed_gaining(cost: CostModel, kind: Kind, gain: f64) -> Linear {
+    hashed_of(cost, kind, (gain, false))
+}
+
+/// `hashed_gaining`, or of D the left and F the right if `flipped`.
+fn hashed_of(cost: CostModel, kind: Kind, (gain, flipped): (f64, bool)) -> Linear {
     let model = star(cost, gain);
-    let shapes = [Shape { kind, left: bit(0), right: bit(1), reads: 0, strong: true }];
+    let (l, r) = if flipped { (1, 0) } else { (0, 1) };
+    let shapes = [Shape { kind, left: bit(l), right: bit(r), reads: 0, strong: true }];
     let graph = Graph::new(2, &shapes, &[(0, bit(0) | bit(1))]);
     let space = Space::new(&graph, &model);
     let entry = |rows: f64| Entry { rows, upper: f64::INFINITY, cands: Vec::new() };
-    space.hash_linear((&entry(FACT), &entry(DIMENSION)), (bit(0), bit(1)), (kind, DIMENSION))
+    let (fact, dimension) = (entry(FACT), entry(DIMENSION));
+    let (left, right) = if flipped { (&dimension, &fact) } else { (&fact, &dimension) };
+    let (read, probe) = if flipped { (FACT, DIMENSION) } else { (DIMENSION, FACT) };
+    space.hash_linear((left, right), (bit(l), bit(r)), (kind, read, probe))
 }
 
 /// A cost model with no runtime filters, on one thread, of a grant of
@@ -106,4 +116,23 @@ fn a_selective_build_filters_its_probing_rows() {
     let outer = hashed(CostModel { grant_bytes: 1e9_f64, ..CostModel::default() }, Kind::Left);
     assert!(filtered.per_row < off.per_row / 4.0_f64, "{filtered:?} {off:?}");
     assert!((outer.per_row - off.per_row).abs() < f64::EPSILON);
+}
+
+/// Verifies: [DESIGN] (RULES.md D1240) Regression test (R-TEST-7): an
+/// antijoin built past its grant on eight threads was weighed probed in
+/// passes, which no pipeline runs it in, and chosen over its index's
+/// probes, then run partitioned. Only an inner join and a LEFT one its
+/// left probing cost passes, less than both operands spilled; a semi
+/// join, an antijoin and a LEFT join whose left is built cost the spill.
+/// MC/DC of `kind == Kind::Inner || (kind == Kind::Left && probes_left)`:
+/// the inner join, the LEFT one probing and the LEFT one built.
+#[test]
+fn only_a_join_a_pipeline_builds_in_parts_costs_passes() {
+    let degrees = Degrees { most: 8, morsel: 1_000, least: 0 };
+    let small = CostModel { degrees, ..plain(1_800.0_f64) };
+    let [inner, left, semi, anti] = [Kind::Inner, Kind::Left, Kind::Semi, Kind::Anti].map(|kind| hashed(small.clone(), kind).fixed);
+    let [inner_built, left_built] = [Kind::Inner, Kind::Left].map(|kind| hashed_of(small.clone(), kind, (1.0_f64, true)).fixed);
+    assert!(inner + FACT < anti, "{inner} {anti}");
+    assert!((left - inner).abs() < f64::EPSILON && (semi - anti).abs() < f64::EPSILON, "{left} {semi}");
+    assert!(inner_built + FACT < left_built, "{inner_built} {left_built}");
 }

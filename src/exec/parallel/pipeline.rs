@@ -31,7 +31,9 @@
 use std::sync::Arc;
 
 use super::indexed::{self, Scanned};
-use super::probe::{Table, built};
+use super::passes::Passes;
+use super::probe::spilled::{Keep, Passed};
+use super::probe::{Built, Table, built_within};
 use super::{Held, Limit};
 use crate::catalog::QualifiedName;
 use crate::db::State;
@@ -40,7 +42,8 @@ use crate::exec::Db;
 use crate::exec::batch::{Told, runtime_taken as taken, wanted};
 use crate::exec::{Runner, broken, eval};
 use crate::logical::{Cond, Expr, pushed_conjuncts};
-use crate::physical::{NodeCount, Plan};
+use crate::physical::cost::spill::passes_of;
+use crate::physical::{JoinKey, NodeCount, Plan};
 use crate::settings::EXECUTOR_MORSEL_ROWS;
 use crate::storage::{Conjunct, Conjunction, Row, Split};
 use crate::txn::TxId;
@@ -71,6 +74,10 @@ pub(super) enum Step {
     /// \[EXTENSION\] counted, as the rows of a counted operator, each
     /// morsel's added once (RULES.md D378).
     Count(Arc<NodeCount>),
+    /// \[DESIGN\] (RULES.md D1240) kept if its keys fall in the cells of
+    /// the pass of a hash join built in parts that the probe next to it
+    /// probes.
+    Kept(Arc<Keep>),
 }
 
 /// What a semi join that is a step asks beyond its keys: whether it is an
@@ -95,6 +102,9 @@ pub(super) struct Branch {
 pub(super) struct Pipeline {
     pub(super) branches: Vec<Branch>,
     pub(super) batched: Option<super::batched::ByBatch>,
+    /// Of a pipeline over a hash join built in parts, its passes past the
+    /// first, whose morsels are numbered on after its own (RULES.md D1240).
+    pub(super) passes: Option<Arc<Passes>>,
 }
 
 impl Pipeline {
@@ -124,17 +134,22 @@ impl Pipeline {
     /// As building an operand fails.
     pub(super) fn told(plan: &Plan, (db, tx): (&Db, TxId), limit: &Limit, told: &[Told]) -> Result<Held<Pipeline>> {
         let rows = db.settings.count(EXECUTOR_MORSEL_ROWS).max(1);
-        let mut branches = Vec::new();
-        if !branched(plan, (db, tx, rows), (limit, told), &mut branches)? {
+        let (mut branches, mut passed) = (Vec::new(), None);
+        if !branched(plan, (db, tx, rows), (limit, told, &mut passed), &mut branches)? {
             return Ok(Held::GaveWay);
         }
         let batched = super::batched::by_batch(&branches, db);
-        Ok(Held::Kept(Pipeline { branches, batched }))
+        let mut pipeline = Pipeline { branches, batched, passes: None };
+        if let Some(passed) = passed {
+            pipeline.passes = Some(Arc::new(Passes::of(*passed, (db, tx), pipeline.count())));
+        }
+        Ok(Held::Kept(pipeline))
     }
 
-    /// How many morsels it has.
+    /// How many morsels it has: of each pass, if it has passes.
     pub(super) fn count(&self) -> usize {
-        self.branches.iter().map(|b| b.split.morsels()).sum()
+        let one = self.branches.iter().map(|b| b.split.morsels()).sum::<usize>();
+        self.passes.as_ref().map_or(one, |p| one.saturating_mul(p.count()))
     }
 }
 
@@ -177,9 +192,10 @@ fn index_branch(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), told: &[Told], 
 /// Adds the branches of `plan` to `out`, each split into morsels of about
 /// `rows` rows, `told` the runtime filters of its rows' columns taken
 /// down it: whether each could be, and each built operand held.
-fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Limit, &[Told]), out: &mut Vec<Branch>) -> Result<bool> {
+fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told, passed): Taking<'_, '_>, out: &mut Vec<Branch>) -> Result<bool> {
     if let Plan::Append { left, right, .. } = plan {
-        return Ok(branched(left, (db, tx, rows), (limit, told), out)? && branched(right, (db, tx, rows), (limit, told), out)?);
+        return Ok(branched(left, (db, tx, rows), (limit, told, &mut *passed), out)?
+            && branched(right, (db, tx, rows), (limit, told, &mut *passed), out)?);
     }
     let (below, here) = taken(plan, told, db);
     let first = out.len();
@@ -201,49 +217,88 @@ fn branched(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), (limit, told): (&Li
         return Ok(split && counted_scan(input, out) && stepped(out, first, after));
     }
     let mut filters = below;
-    let Some((step, input)) = step_of(plan, (db, tx), limit, &mut filters)? else { return Ok(false) };
-    if !branched(input, (db, tx, rows), (limit, &filters), out)? {
+    let Some((steps, input)) = step_of(plan, (db, tx), (limit, &mut *passed), &mut filters)? else { return Ok(false) };
+    if !branched(input, (db, tx, rows), (limit, &filters, passed), out)? {
         return Ok(false);
     }
-    after.push(step);
+    after.extend(steps);
     after.extend(judged(here));
     Ok(stepped(out, first, after))
 }
 
-/// The step of `plan`, an operator of a pipeline, and its input; a hash
+/// What taking a plan's steps reads and adds to: the grant its built
+/// operands are held in, the runtime filters its scans are told, and the
+/// passes of a hash join built in parts, if one was.
+type Taking<'a, 't> = (&'a Limit, &'a [Told], &'t mut Option<Box<Passed>>);
+
+/// The steps of `plan`, an operator of a pipeline, and its input; a hash
 /// join's built operand held, its runtime filters added to `told` if
-/// they are wanted; none if the operand gave way.
-fn step_of<'a>(plan: &'a Plan, (db, tx): (&Db, TxId), limit: &Limit, told: &mut Vec<Told>) -> Result<Option<(Step, &'a Plan)>> {
-    let made: (Step, &Plan) = if let Plan::Filter { cond, input, .. } = plan {
-        (Step::Filter(settled(cond, (db, tx))?), input)
+/// they are wanted, or built in parts if it outgrows `limit` and no other
+/// was, `passed` then its passes, a step keeping a pass's rows before its
+/// probe (RULES.md D1240); none if the operand gave way.
+fn step_of<'a>(
+    plan: &'a Plan,
+    (db, tx): (&Db, TxId),
+    (limit, passed): (&Limit, &mut Option<Box<Passed>>),
+    told: &mut Vec<Told>,
+) -> Result<Option<(Vec<Step>, &'a Plan)>> {
+    let made: (Vec<Step>, &Plan) = if let Plan::Filter { cond, input, .. } = plan {
+        (vec![Step::Filter(settled(cond, (db, tx))?)], input)
     } else if let Plan::Project { exprs, input, .. } = plan {
-        (Step::Project(exprs.clone()), input)
+        (vec![Step::Project(exprs.clone())], input)
     } else if let Plan::Counted(c) = plan {
         c.count.opened();
-        (Step::Count(Arc::clone(&c.count)), &c.input)
+        (vec![Step::Count(Arc::clone(&c.count))], &c.input)
     } else if let Plan::HashJoin { left, right, keys, .. } = plan {
-        let Held::Kept(table) = built(right, keys, (db, tx), limit)? else { return Ok(None) };
+        let Some((mut steps, table)) = joined((right, keys, left), (db, tx), (limit, passed))? else { return Ok(None) };
         if wanted(db) {
             told.extend(table.shared.filters(keys)?);
         }
-        (Step::Probe(table), left)
+        steps.push(Step::Probe(table));
+        (steps, left)
     } else if let Plan::OuterJoin { left, right, keys, .. } = plan {
         // No filter of its keys goes to its left, every row of which it
         // gives (RULES.md D369).
-        let Held::Kept(table) = built(right, keys, (db, tx), limit)? else { return Ok(None) };
-        (Step::Outer(table), left)
+        let Some((mut steps, table)) = joined((right, keys, left), (db, tx), (limit, passed))? else { return Ok(None) };
+        steps.push(Step::Outer(table));
+        (steps, left)
     } else if let Plan::SemiJoin(s) = plan {
-        let Held::Kept(table) = built(&s.right, &s.keys, (db, tx), limit)? else { return Ok(None) };
+        let Some((mut steps, table)) = joined((&s.right, &s.keys, &s.left), (db, tx), (limit, passed))? else { return Ok(None) };
         // A semi join's left takes its keys' filters, an antijoin's none
         // (RULES.md D369).
         if wanted(db) && !s.anti {
             told.extend(table.shared.filters(&s.keys)?);
         }
-        (Step::Semi(table, Arc::new(SemiOf { anti: s.anti, cond: s.cond.clone(), widths: s.widths })), &s.left)
+        steps.push(Step::Semi(table, Arc::new(SemiOf { anti: s.anti, cond: s.cond.clone(), widths: s.widths })));
+        (steps, &s.left)
     } else {
         return Err(broken("a part run in parallel is not a pipeline"));
     };
     Ok(Some(made))
+}
+
+/// The built operand `right` of a hash join on `keys` probed by `left`,
+/// held: its table, or built in parts if it outgrows `limit`, no other
+/// join of the pipeline was, and `left` can be read again in as many
+/// passes as they take (`cost/spill.rs`), `passed` then its passes and the
+/// step keeping its first pass's rows before its probe; none if it gave
+/// way.
+fn joined(
+    (right, keys, left): (&Plan, &[JoinKey], &Plan),
+    (db, tx): (&Db, TxId),
+    (limit, passed): (&Limit, &mut Option<Box<Passed>>),
+) -> Result<Option<(Vec<Step>, Arc<Table>)>> {
+    let most = if passed.is_none() { passes_of(left) } else { None };
+    Ok(match built_within(right, keys, (db, tx), (limit, most))? {
+        Held::GaveWay => None,
+        Held::Kept(Built::Whole(table)) => Some((Vec::new(), table)),
+        Held::Kept(Built::Passed(made)) => {
+            let steps = vec![Step::Kept(Arc::clone(&made.keep))];
+            let table = Arc::clone(&made.table);
+            *passed = Some(made);
+            Some((steps, table))
+        }
+    })
 }
 
 /// \[DESIGN\] (RULES.md D1132) `cond`, a filter of the pipeline, with
@@ -309,7 +364,7 @@ fn stepped(out: &mut [Branch], first: usize, steps: Vec<Step>) -> bool {
 }
 
 /// A copy of `step`, for another operand of an append.
-fn copied(step: &Step) -> Step {
+pub(super) fn copied(step: &Step) -> Step {
     match step {
         Step::Filter(c) => Step::Filter(c.clone()),
         Step::Project(e) => Step::Project(e.clone()),
@@ -318,6 +373,7 @@ fn copied(step: &Step) -> Step {
         Step::Semi(t, semi) => Step::Semi(Arc::clone(t), Arc::clone(semi)),
         Step::Runtime(told) => Step::Runtime(told.clone()),
         Step::Count(c) => Step::Count(Arc::clone(c)),
+        Step::Kept(k) => Step::Kept(Arc::clone(k)),
     }
 }
 

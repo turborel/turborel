@@ -38,6 +38,7 @@ mod held;
 mod indexed;
 mod looped;
 mod partitioned;
+mod passes;
 mod pipeline;
 mod probe;
 mod rows;
@@ -185,14 +186,14 @@ pub(super) fn top_groups(
     db: &Db,
     tx: TxId,
 ) -> Option<RowIter> {
-    let (top, part) = grouped::Top::of((keys, most), input, (db, tx))?;
-    let Plan::Parallel(p) = part else { return None };
+    let (top, grouping, degree) = grouped::Top::of((keys, most), input, (db, tx))?;
     let top = Arc::new(top);
-    Some(match grouped::grouped_asked(&p.input, (db, tx, p.degree), &[], Some(&top)) {
+    // Under an analyzed plan's counts as under none (RULES.md D1254).
+    Some(grouped::Top::counted(&top, || match grouped::grouped_asked(grouping, (db, tx, degree), &[], Some(&top)) {
         Ok(Held::Kept(rows)) => rows,
-        Ok(Held::GaveWay) => top.of_rows(execute(p.input.clone(), db, tx)),
+        Ok(Held::GaveWay) => top.of_rows(execute(grouping.clone(), db, tx)),
         Err(e) => failed(e),
-    })
+    }))
 }
 
 /// The rows of the stream `plan`, its morsels taken by up to `degree`

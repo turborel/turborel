@@ -101,3 +101,28 @@ fn a_table_tells_whether_its_groups_are_in_first_row_order() {
     assert!(!table(&[4, 30, 9]).in_order());
     assert!(GroupTable::new(1, &[], &Seed::fixed(1), usize::MAX).in_order(), "no group is in order");
 }
+
+/// Verifies: [DESIGN] (RULES.md D1256) one set function's results given
+/// as a column hold what the groups' finished rows hold of it, a group's
+/// row made alone is its finished row, the first rows' numbers are told,
+/// and finishing the other set functions for their errors raises none
+/// where none fails; a set function the table does not compute is
+/// refused (SQLCODE -910).
+#[test]
+fn one_result_column_and_one_row_are_the_finished_rows() {
+    let table = table(&[4, 9, 30]);
+    let expected = table.finished().unwrap();
+    for agg in 0..2 {
+        let batch = crate::storage::Batch { columns: vec![table.results_of(agg).unwrap()], rows: 3 };
+        for (g, (_, row)) in expected.iter().enumerate() {
+            assert_eq!(format!("{:?}", batch.value(0, g).unwrap()), format!("{:?}", &row[agg + 7]), "group {g}, set function {agg}");
+        }
+    }
+    assert!(matches!(table.results_of(0).unwrap(), Column::Ints(_)), "counts stay integers");
+    for (g, (first, row)) in expected.iter().enumerate() {
+        assert_eq!(format!("{:?}", table.row(g).unwrap()), format!("{row:?}"));
+        assert_eq!(table.firsts().get(g), Some(first));
+    }
+    assert!(table.checked_but(&[0]).is_ok() && table.checked_but(&[]).is_ok());
+    assert_eq!(table.results_of(2).unwrap_err().sqlcode(), -910_i32);
+}

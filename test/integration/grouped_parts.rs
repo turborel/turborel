@@ -257,3 +257,70 @@ fn a_join_keyed_by_a_groupings_columns_gives_the_plans_rows() {
         assert_eq!(alone, together, "{sql}");
     }
 }
+
+/// Verifies: [EXTENSION] (RULES.md D1254, D378) EXPLAIN ANALYZE of a
+/// sort's first rows over a grouping run in parallel takes them from the
+/// partitions' tables as the statement does, under a projection that is
+/// counted and under none. The grouping is counted the groups it made,
+/// and the projection the rows the partitions kept for the sort, fewer
+/// than the groups. A sort that asks its last row's peers reads every
+/// group, and its projection is counted a row a group.
+#[test]
+fn an_analyzed_sort_takes_its_first_rows_from_the_tables() {
+    let (_db, a) = tables();
+    let counted = |sql: &str| -> (u64, Option<u64>, Option<u64>) {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(grouped_part(&shown), "{sql}\n{shown}");
+        assert_eq!(alone, together, "{sql}");
+        let analyzed = a.analyzed(sql, &Params::new()).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+        let of = |label: &str| analyzed.operators.iter().find(|o| o.label.starts_with(label)).map(|o| o.rows);
+        (analyzed.rows, of("Aggregate"), of("Project"))
+    };
+    let groups: u64 = rows(&a, "SELECT COUNT(*) FROM (SELECT G FROM C GROUP BY G) AS X").unwrap().concat().parse().unwrap();
+    let (given, made, projected) = counted("SELECT 1, G, COUNT(*) FROM C GROUP BY G ORDER BY 3 DESC FETCH FIRST 6 ROWS ONLY");
+    assert_eq!((given, made), (6, Some(groups)), "the groups its tables made");
+    assert!(projected.is_some_and(|kept| (6..groups).contains(&kept)), "the rows the partitions kept: {projected:?} of {groups}");
+    let (given, made, _) = counted("SELECT G, COUNT(*) FROM C GROUP BY G ORDER BY 2 DESC, 1 FETCH FIRST 6 ROWS ONLY");
+    assert_eq!((given, made), (6, Some(groups)), "under no projection that computes");
+    let (given, made, projected) = counted("SELECT 1, G, COUNT(*) FROM C GROUP BY G ORDER BY 3 DESC FETCH FIRST 6 ROWS WITH TIES");
+    assert!(given >= 6, "the peers of the last row too");
+    assert_eq!((made, projected), (Some(groups), Some(groups)), "every group read and projected");
+}
+
+/// Verifies: [X3.135-1986 §8.3 GR3b] [ISO/IEC 9075:1992 §6.5 GR2b iv]
+/// (RULES.md D1256) a sort by set functions alone, whose first rows are
+/// picked before their groups' rows are made, gives the rows and the
+/// order the plan run alone gives, with several functions between the
+/// keys and beside them; and a set function no key names still raises
+/// what it raises of a group that is not picked, here a sum past the
+/// precision of its type in a group outside the first rows.
+#[test]
+fn the_first_rows_by_set_functions_are_picked_before_they_are_made() {
+    // Two of these are past 38 digits and within the 128 bits a sum is
+    // kept in, so their sum is made and raises only as it is finished.
+    const HUGE: &str = "60000000000000000000000000000000000000";
+    let (db, a) = tables();
+    exec(&a, "CREATE TABLE E (K INTEGER PRIMARY KEY, G INTEGER, X NUMERIC(38, 0)) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)")
+        .unwrap();
+    let values: Vec<String> =
+        (0_i64..7000).map(|k| format!("({k}, {}, {})", k % 500, if k == 77 || k == 577 { HUGE } else { "1" })).collect();
+    a.run(&format!("INSERT INTO E VALUES {}", values.join(", "))).unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    for sql in [
+        "SELECT G, COUNT(*), SUM(N), MIN(K), AVG(N) FROM C GROUP BY G ORDER BY 2 DESC FETCH FIRST 7 ROWS ONLY",
+        "SELECT SUM(N), G, COUNT(N), 'x' FROM C GROUP BY G ORDER BY 3 DESC, 1 FETCH FIRST 9 ROWS ONLY",
+        "SELECT N, MAX(K), COUNT(*) FROM C GROUP BY N ORDER BY 2 OFFSET 3 ROWS FETCH FIRST 5 ROWS ONLY",
+        "SELECT G, COUNT(*), MAX(X) FROM E GROUP BY G ORDER BY 2 DESC FETCH FIRST 3 ROWS ONLY",
+    ] {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(grouped_part(&shown), "{sql}\n{shown}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+    let raising = "SELECT G, COUNT(*), SUM(X) FROM E GROUP BY G ORDER BY 2 DESC FETCH FIRST 3 ROWS ONLY";
+    let (alone, together, shown) = both(&a, raising);
+    assert!(grouped_part(&shown), "{raising}\n{shown}");
+    assert_eq!(alone, Err(turborel::error::Code::Data), "the sum of group 77 is past its type's precision");
+    assert_eq!(alone, together, "{raising}");
+}

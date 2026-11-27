@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 29] = [
+pub const GROUPED_PARTS: [Mutation; 32] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -303,5 +303,35 @@ pub const GROUPED_PARTS: [Mutation; 29] = [
         replacement: "(0..groups.len()).any(|column| keyed.contains(&column))",
         integration: &["grouped_parts::a_join_keyed_by_a_groupings_columns_gives_the_plans_rows"],
         unit: &["exec::batch::parted::tests::keys_holding_every_grouping_column_find_one_group"],
+    },
+    Mutation {
+        name: "top-groups-not-under-counts",
+        package: Package::Core,
+        breaks: "an analyzed sort of first rows reads every group back, the grouping's count hiding it from the tables' top (RULES.md D1254)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "let (grouping, grouped) = uncounted(&p.input);",
+        replacement: "let (grouping, grouped) = (&p.input, None::<Arc<NodeCount>>);",
+        integration: &["grouped_parts::an_analyzed_sort_takes_its_first_rows_from_the_tables"],
+        unit: &[],
+    },
+    Mutation {
+        name: "top-groups-picked-unchecked",
+        package: Package::Core,
+        breaks: "a set function no sort key names is not finished of the groups a top-N does not pick, so a result that raises is lost (RULES.md D1256)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "        table.checked_but(sorted_by)?;\n",
+        replacement: "",
+        integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
+        unit: &[],
+    },
+    Mutation {
+        name: "top-groups-picked-by-group-number",
+        package: Package::Core,
+        breaks: "groups picked before they are made tie by their numbers in their partition, not by their first rows (RULES.md D1256)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "keys.push(SortKey::ascending(sorted_by.len()));",
+        replacement: "keys.push(SortKey { descending: true, ..SortKey::ascending(sorted_by.len()) });",
+        integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
+        unit: &[],
     },
 ];

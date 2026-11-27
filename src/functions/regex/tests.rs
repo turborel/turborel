@@ -1,4 +1,5 @@
-//! Unit tests of LIKE_REGEX over a vector of values (RULES.md D1188).
+//! Unit tests of LIKE_REGEX over a vector of values (RULES.md D1188),
+//! and of a subject read where it lies (RULES.md D1189).
 
 use super::*;
 
@@ -54,4 +55,38 @@ fn a_vector_of_values_is_matched_as_each_row_is() {
     let bad = chars("(");
     let failed = function.eval_batch(&[Arg::Column(&column), Arg::Const(&bad), Arg::Const(&flag)], 2).unwrap().unwrap_err();
     assert_eq!(failed.sqlstate(), function.call(&[row(0), bad.clone(), flag.clone()]).unwrap_err().sqlstate());
+}
+
+/// Verifies: [DESIGN] RULES.md D1189 [ISO/IEC 9075-2:2023 §6.31 GR18b
+/// ii, §9.28 GR11b]: a subject not of ASCII is read where it lies, its
+/// positions the octets its characters begin at. A start position in
+/// characters names that character's position; one in octets the
+/// character the octet is of, or the next if it is within one, and the
+/// string's end within the last; one less than 1 or past the string
+/// names none. A position is counted back in the units asked, from 1,
+/// and what two positions span is the substring. A subject of ASCII
+/// counts the same in either units.
+#[test]
+fn a_subject_read_where_it_lies_counts_in_its_units() {
+    use super::subject::{Body, Subject};
+    let value = chars("aébé€");
+    let (characters, octets) = (chars(CHARACTERS), chars(OCTETS));
+    let by_characters = Subject::new(&value, &characters).unwrap().unwrap();
+    let by_octets = Subject::new(&value, &octets).unwrap().unwrap();
+    assert!(matches!(by_characters.body, Body::Utf8(_)) && by_characters.len() == 9);
+    let starts = |subject: &Subject<'_>, upto: i128| -> Vec<Option<usize>> { (0..=upto).map(|sp| subject.start(sp).unwrap()).collect() };
+    assert_eq!(starts(&by_characters, 6), [None, Some(0), Some(1), Some(3), Some(4), Some(6), None]);
+    let wanted = [None, Some(0), Some(1), Some(3), Some(3), Some(4), Some(6), Some(6), Some(9), Some(9), None];
+    assert_eq!(starts(&by_octets, 10), wanted);
+    assert_eq!((by_characters.position(0).unwrap(), by_characters.position(4).unwrap(), by_characters.position(9).unwrap()), (1, 4, 6));
+    assert_eq!((by_octets.position(0).unwrap(), by_octets.position(4).unwrap(), by_octets.position(9).unwrap()), (1, 5, 10));
+    assert_eq!(format!("{:?}", by_characters.substring(1, 4).unwrap()), format!("{:?}", chars("éb")));
+    let plain = chars("abc");
+    for units in [&characters, &octets] {
+        let subject = Subject::new(&plain, units).unwrap().unwrap();
+        assert!(matches!(subject.body, Body::Ascii(_)));
+        assert_eq!((starts(&subject, 4), subject.position(2).unwrap()), (vec![None, Some(0), Some(1), Some(2), None], 3));
+    }
+    let none = chars("");
+    assert_eq!(Subject::new(&none, &characters).unwrap().unwrap().start(1).unwrap(), None, "no first character");
 }
