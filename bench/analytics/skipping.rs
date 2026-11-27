@@ -1,5 +1,5 @@
 //! How much of a column store table its filters skip (RULES.md D510-D514,
-//! D525): of HITS, a table shaped as the ClickBench one, its rows frozen,
+//! D525): of HITS, a table of web page visits, its rows frozen,
 //! its URL sketched, counts and sums by selective ranges of a scattered
 //! integer, ranges of dates in the rows' order, prefixes of LIKE, equals,
 //! ranges and IN lists of texts, IN lists of numbers and the

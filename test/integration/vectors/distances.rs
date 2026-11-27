@@ -31,10 +31,10 @@ fn each_metric_matches_hand_values_in_both_orders() {
         ("COSINE", cosine),
         ("HAMMING", 3.0),
     ] {
-        let oracle = number(&a, &format!("SELECT VECTOR_DISTANCE(A, B, {metric}) FROM T"));
-        let server = number(&a, &format!("SELECT VECTOR_DISTANCE('{}', A, B) FROM T", metric.to_lowercase()));
+        let last = number(&a, &format!("SELECT VECTOR_DISTANCE(A, B, {metric}) FROM T"));
+        let first = number(&a, &format!("SELECT VECTOR_DISTANCE('{}', A, B) FROM T", metric.to_lowercase()));
         let named = number(&a, &format!("SELECT VECTOR_DISTANCE(B, A, '{metric}') FROM T"));
-        assert!(near(oracle, want) && near(server, want) && near(named, want), "{metric}: {oracle} {server} {named}");
+        assert!(near(last, want) && near(first, want) && near(named, want), "{metric}: {last} {first} {named}");
     }
     assert!(near(number(&a, "SELECT VECTOR_DISTANCE(A, B) FROM T"), cosine));
 }

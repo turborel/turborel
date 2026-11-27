@@ -21,7 +21,7 @@ fn a_plan_reads_whole_first_under_a_grouping_a_distinct_or_a_sort() {
     };
     let aggregate = |streamed: bool| {
         let (groups, collations, aggs, seeds) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        Plan::Aggregate { groups, collations, aggs, seeds, detail: String::new(), input: values(), est: 0.0_f64, streamed }
+        Plan::Aggregate { groups, collations, aggs, seeds, detail: String::new(), input: values(), est: 0.0_f64, streamed, first: None }
     };
     assert!(whole_first(&distinct(false), 0));
     assert!(!whole_first(&distinct(true), 0), "streamed, it gives rows as it reads them");
@@ -54,7 +54,7 @@ fn an_estimate_past_a_u32_is_counted_as_itself() {
 /// `seeds`, streamed or not.
 fn grouping(groups: Vec<usize>, (aggs, seeds): (Vec<AggCall>, Vec<Vec<Value>>), input: Plan, streamed: bool) -> Plan {
     let (collations, detail, input, est) = (Vec::new(), String::new(), Box::new(input), 0.0_f64);
-    Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed }
+    Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed, first: None }
 }
 
 /// COUNT of column 0, DISTINCT or not.

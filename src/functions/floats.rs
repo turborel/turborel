@@ -61,6 +61,16 @@ impl Wide {
     /// so a sum of -0s is -0.
     pub(crate) const EMPTY: Wide = Wide { big: -0.0_f64, small: -0.0_f64 };
 
+    /// Its parts, as a spill writes them (RULES.md D1226).
+    pub(crate) fn parts(self) -> (f64, f64) {
+        (self.big, self.small)
+    }
+
+    /// The sum of parts `parts` gave.
+    pub(crate) fn of_parts((big, small): (f64, f64)) -> Wide {
+        Wide { big, small }
+    }
+
     /// The sum with `f` added.
     #[must_use]
     pub(crate) fn with(self, f: f64) -> Wide {

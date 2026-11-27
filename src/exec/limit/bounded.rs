@@ -4,14 +4,22 @@
 //! than those of a source it sorts (`TableStorage::scan_ordered`), each
 //! through projections that keep each row and raise no exception, so no
 //! row they would compute is left out. A scan is not told of WITH TIES,
-//! whose peers are of ORDER BY's keys, perhaps fewer than the scan's.
+//! whose peers are of ORDER BY's keys, perhaps fewer than the scan's. A
+//! grouping right under them, with no sort between, is asked for that
+//! many of its groups, any of them, if it may make no more
+//! (`batch/first.rs`, RULES.md D1215).
 
+use crate::db::State;
+use crate::exec::batch::fewer_groups;
 use crate::logical::{Expr, Most};
 use crate::physical::Plan;
 
 /// `plan`, its first `most` rows alone asked for, told so where it can be.
-pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
+pub(super) fn bounded(plan: Plan, most: Most, db: &State) -> Plan {
     match plan {
+        // [ISO/IEC 9075-2:2023 §7.17 GR5a] any of its groups (RULES.md
+        // D1215); of WITH TIES, whose peers are of an order, none.
+        grouping @ Plan::Aggregate { .. } => asked(grouping, most, db),
         Plan::Sort { keys, detail, input, .. } => Plan::Sort { keys, detail, input, most: Some(most) },
         Plan::SeqScan { table, columns, rows, cost, order, backward, most: before, located } => {
             let most = if order.is_empty() || most.ties { before } else { Some(most.rows) };
@@ -19,19 +27,19 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         }
         // Each partition gives no more rows than the merge may.
         Plan::MergeAppend { inputs, keys, detail } => {
-            Plan::MergeAppend { inputs: inputs.into_iter().map(|p| bounded(p, most)).collect(), keys, detail }
+            Plan::MergeAppend { inputs: inputs.into_iter().map(|p| bounded(p, most, db)).collect(), keys, detail }
         }
         Plan::Parallel(mut p) => {
-            p.input = bounded(p.input, most);
+            p.input = bounded(p.input, most, db);
             Plan::Parallel(p)
         }
         // [EXTENSION] a counted operator, as its input (RULES.md D378).
         Plan::Counted(mut c) => {
-            c.input = bounded(c.input, most);
+            c.input = bounded(c.input, most, db);
             Plan::Counted(c)
         }
         Plan::Project { exprs, detail, input } => {
-            let input = if exprs.iter().any(Expr::can_raise) { input } else { Box::new(bounded(*input, most)) };
+            let input = if exprs.iter().any(Expr::can_raise) { input } else { Box::new(bounded(*input, most, db)) };
             Plan::Project { exprs, detail, input }
         }
         plan @ (Plan::IndexScan { .. }
@@ -45,7 +53,6 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         | Plan::SemiJoin(_)
         | Plan::MarkJoin(_)
         | Plan::OuterJoin { .. }
-        | Plan::Aggregate { .. }
         | Plan::Distinct { .. }
         | Plan::SetOp { .. }
         | Plan::System { .. }
@@ -62,4 +69,15 @@ pub(super) fn bounded(plan: Plan, most: Most) -> Plan {
         | Plan::Recognize { .. }
         | Plan::Transfer(_)) => plan,
     }
+}
+
+/// The grouping `grouping` asked for the first `most` of its groups, any
+/// of them, if it may make no more (`batch/first.rs`) and no peers are
+/// asked, which are of an order.
+fn asked(grouping: Plan, most: Most, db: &State) -> Plan {
+    if most.ties || !fewer_groups(&grouping, db) {
+        return grouping;
+    }
+    let Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed, .. } = grouping else { return grouping };
+    Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed, first: Some(most.rows) }
 }

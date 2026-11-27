@@ -41,7 +41,17 @@ fn above(n: i128) -> Cond {
 /// A grouping by hash of `input` by its first column, estimated `est`.
 fn grouping(input: Plan, est: f64) -> Plan {
     let (collations, aggs, seeds) = (vec![None], Vec::new(), Vec::new());
-    Plan::Aggregate { groups: vec![0], collations, aggs, seeds, detail: "shown".into(), input: Box::new(input), est, streamed: false }
+    Plan::Aggregate {
+        groups: vec![0],
+        collations,
+        aggs,
+        seeds,
+        detail: "shown".into(),
+        input: Box::new(input),
+        est,
+        streamed: false,
+        first: None,
+    }
 }
 
 fn part(input: Plan) -> Plan {
@@ -79,7 +89,7 @@ fn groupings_are_written_alike_only_of_the_same_plan() {
         assert_ne!(written, key, "{other:?}");
     }
     let Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, .. } = base() else { panic!("a grouping") };
-    let streamed = Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed: true };
+    let streamed = Plan::Aggregate { groups, collations, aggs, seeds, detail, input, est, streamed: true, first: None };
     assert_eq!(written::grouping(&streamed), None, "streamed, it is no grouping by hash");
     assert_eq!(written::grouping(&filter(above(5), scan("T", &[0]))), None, "a filter is no grouping");
     let located = Plan::SeqScan {

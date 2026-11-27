@@ -82,6 +82,7 @@ mod txn_layer;
 mod undo_memory;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
+mod first_groups;
 mod grouped_parts;
 mod kernels;
 mod like_pieces;
@@ -310,7 +311,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// kernels', compiled procedures', rows in demand's, the routine
 /// debugger's, a morsel's memory's and a copy by column's last, as `last`
 /// holds no more.
-fn closing() -> [&'static [Mutation]; 31] {
+fn closing() -> [&'static [Mutation]; 32] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -329,6 +330,7 @@ fn closing() -> [&'static [Mutation]; 31] {
         &xxhash::XXHASH,
         &semi_joins::SEMI_JOINS,
         &grouped_parts::GROUPED_PARTS,
+        &first_groups::FIRST_GROUPS,
         &like_pieces::LIKE_PIECES,
         &outer_steps::OUTER_STEPS,
         &mark_joins::MARK_JOINS,

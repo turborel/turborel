@@ -761,10 +761,14 @@ verification approach DO-178C expects (§8).
 | D1170 | A morsel of set functions of no grouping feeds one set of states by vectors, no row hashed |
 | D1171 | A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time |
 | D1172 | COUNT of a column known not null, or of a literal not null, counts rows and reads no value |
+| D1173 | A group's header is read for the columns its reader asks for, the others passed over undecoded |
+| D1175 | A column's texts are judged UTF-8 by the database's kernels, on AVX2 32 bytes a step |
 | D1180 | A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree |
 | D1181 | MIN and MAX of a table that holds groups take each group no entry shadows from its summary |
 | D1183 | A collation of NO PAD that orders strings as their octets do is compared in place, no sort key made |
 | D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
+| D1185 | A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets |
+| D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -772,7 +776,9 @@ verification approach DO-178C expects (§8).
 | D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
 | D1205 | The unique index of a deferrable constraint is no key to the estimates |
 | D1206 | An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all |
+| D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
+| D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
 ### The project
@@ -20724,6 +20730,64 @@ batches each batch adds its rows. The column, read by nothing else,
 drops out of the scan (D1167). A column that may hold a null is left, as
 its nulls are not counted and their taking out warns.
 
+#### D1173. A group's header is read for the columns its reader asks for, the others passed over undecoded
+
+A group's header holds each column's chunks, each chunk with its count
+of nulls, its least and greatest values, and the same of each of its
+parts of 1,024 rows. A header was read whole: every column's bounds
+decoded as values, its texts made strings, whatever the query read. A
+table of a hundred columns and wide strings takes about 1.6 MB a group
+so decoded, and of a table of a hundred million rows its headers take
+more than the cache holds by default (D1090). Each scan then read and
+decoded every header again, about a seventh of a grouping of two of its
+columns, and a header read for one query was given up before the next.
+
+A header is now read for the columns its reader asks for (`group::read`,
+`group/wanted.rs`). A scan asks for the columns it reads and those its
+condition reads, a fetch by row id for the columns it fetches, and a
+count for none. Every other column's chunks are passed over by their
+lengths, none of their bounds decoded, and the group holds none of
+them. A header held that lacks a column asked for is read again for it
+and the columns it held, and held in its place, so the cache counts
+what each holds as it is. A group asked for a column its header was not
+read for fails with SQLCODE -910, never taking it for a column with no
+chunks, which is one added after the group was written and reads as
+nulls. The pages of a group, its summary and its rewriting read every
+column, and ask for all. The format is unchanged, so no table is loaded
+again.
+
+#### D1175. A column's texts are judged UTF-8 by the database's kernels, on AVX2 32 bytes a step
+
+A batch holds a column's strings as text (D361), and text read of the
+store is judged UTF-8 before it is given as a `str`: the varying fields
+read, once for their range (D1131), and the texts an FSST chunk decodes,
+once for the run of them. The core forbids `unsafe` (R-SAFE-1), so it
+cannot take octets for text without judging them, though only text was
+written. The standard library judges a byte at a time past the first
+octet above 127, so text of other scripts than Latin, as of the titles
+and phrases of a web log, took the judging longer than the reading.
+
+The judging is now a kernel (`Kernels::utf8`, D354), its portable body
+`str::from_utf8`. `turborel-simd` judges 32 bytes a step on AVX2 and on
+AVX-512's level, as Keiser and Lemire, "Validating UTF-8 In Less Than
+One Instruction Per Byte" (2021), §5, judge them: each byte's high
+nibble and the byte before's high and low nibbles each look up the
+errors their pair may make, the errors all three allow are the pair's,
+and the bytes two and three back say where a continuation must be. A
+step of no octet above 127 looks nothing up. A step whose last bytes
+begin a character the next must end, and the text's end must end every
+character (`simd/src/x86/utf8.rs`). The text so judged is given as a
+`str` only where `str::from_utf8` gives one: the contract tests
+(`turborel-test-support`, `kernels.rs`) hold every set to it, of every
+pair of octets and every lead of three and four with every second octet
+at each place on and across a lane's and a step's edges, of text cut
+within its characters, and of octets of no structure. A column's texts
+read by the varying fields, an FSST chunk, a constant or a dictionary
+are judged by the set the table opened with (D570). A dictionary's
+entries, made text as its chunk is opened, are judged once from the
+first entry's start to the last's end, each entry then a slice of them,
+as the varying fields are (D1131).
+
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
 A table that froze rows or held groups was counted by its scan. A count
@@ -20830,7 +20894,8 @@ where `CollationRef::is_octets` holds.
 - MAX and MIN compare the strings' octets (`CollatedAcc`).
 - ORDER BY, a join's keys and COUNT(DISTINCT) still take a key, made of a
   vector of texts in one pass as the text's octets (`calls::octets`), which
-  sort, join and compare as binary strings do.
+  sort, join and compare as binary strings do. A sort by a column reads
+  the column in place since D1185.
 - LIKE never pads [§8.5 SR3d], so under UCS_BASIC or SQL_TEXT of either
   pad characteristic its operands are no longer folded
   (`binder::collation::like_under`), and a constant pattern stays one.
@@ -20884,6 +20949,109 @@ partitions were split by.
 
 Nothing a query answers changes. `'a'` and `'a '` under such a collation
 were two groups before and are two groups now, counted by more threads.
+#### D1185. A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets
+
+ORDER BY under a collation sorts by a column the projection under the
+sort makes, each row's sort key [ISO/IEC 9075-2:2023 §10.10]. D1183 left
+that key in place where the collation's key is the text itself
+(`CollationRef::is_octets`), made of a vector of texts in one pass. It
+was still a binary string made of every row, held as a value beside its
+row, and a projection that computes reads every column of its input, so
+none was read late and each row's other columns were decoded before the
+sort chose its first rows.
+
+A sort key now says whether it orders its column's character strings by
+their octets (`SortKey::octets`, `logical/sort_key.rs`). Only the
+physical plan's pruning sets it (`physical/blind/pruned/octets.rs`), so
+no rule of the optimizer and no choice of the planner sees a key that
+has it. Walking the plan from the top (D1167), a sort over a projection
+whose key column is the sort key of a column under such a collation,
+read by none above the sort, is keyed by the column instead, by octets.
+The key reads the first column of the projection that moves the column,
+and the place the key was made in, now read by none, is given null. With
+no such column the key's own place moves it. The projection is then one
+of columns, so it makes no value, the columns the keys do not read are
+read late, and EXPLAIN shows NULL where the key was.
+
+Every way a sort runs honours the mark, as all compare through the same
+two functions and one layout.
+
+- The normal key (D364) of a string of such a key is a binary string's
+  field, its first octets padded with zeros and then its length
+  (`normal::seen_as`, `encode::value`), so the bytes order as the octets
+  do, a prefix the less.
+- Strings alike in the octets a field holds are compared whole by their
+  octets, where they lie in their vectors (`vectors::compare_cells`) or
+  as values (`SortKey::cmp`, which `compare_rows` calls). A sort of
+  batches held or spilled, the merge of its runs, a top-N of batches or
+  of rows, a sort run in parallel and its splitters, a merge of ordered
+  inputs and a SCROLL cursor's sort of its rows' keys order through
+  these.
+- A string's 8-byte prefix (`sort/prefix.rs`) is of the padded order, so
+  a key by octets has none. Where the keys have no normal form, a key of
+  a DECFLOAT beside it, the rows are compared whole.
+- The bound a top-N tells its scan (D379) holds exact numbers and
+  datetimes alone, so none is told of a key by octets
+  (`sort::topped_of`).
+
+A key stays made, and the sort as it was, where the mark would be
+wrong or is not known to be right. A key column read above the sort is
+kept, as its rows would hold strings where binary strings are read.
+FETCH FIRST WITH TIES reads its sort's keys of the rows it is given to
+find the last row's peers [§7.17 GR7d i], so the pruning now counts
+those columns as read above the sort, and its key stays made. A key of
+an expression that is no column, a collation that pads or orders by
+anything but scalar values, and a sort whose input is no projection are
+left alone. Each refusal is tested
+(`pruned::octets::tests::a_key_read_above_or_not_of_octets_stays_made`,
+`octets_sorts::ties_and_expressions_sort_by_octets_7_17`).
+#### D1186. A part of a built-in set function is kept in that function's column of states, and gives its part of each group
+
+A query with a DISTINCT set function is computed by two groupings
+(D340), and its set functions without DISTINCT are computed in parts
+(D341). The first grouping computes PARTIAL of each, whose value of a
+group is the function's state as bytes, and the second merges them. The
+first grouping has a group for every distinct value of every group of
+the second, by far the more groups of the two. D356 keeps COUNT, SUM,
+AVG, MAX and MIN in columns of states, a slot a group, fed a batch's
+rows in one loop. PARTIAL told the table nothing of what it is a part
+of (`AggregateFunction::columnar` gives none of it), so each group of
+the first grouping held an accumulator of each part on the heap, and a
+batch's rows were sorted by group and fed to each group's accumulator in
+turn.
+
+A part now tells the built-in function it is a part of and that
+function's result type (`AggregateFunction::part_of`, none by default),
+and the table keeps its states in that function's column
+(`States::Part`, `exec/table/states/parts.rs`). A part's accumulator
+forwards everything it is fed, merged and asked to write to its
+function's, so the column is fed, grown, merged with another table's,
+written past a work area and sent to another thread as the function's
+own column is, by the same code. Two things differ.
+
+- What a group gives is its part, the function's state after the tag of
+  a state, or its result after the tag of a result where the function
+  writes no state, as a sum of approximate numbers does. The part's
+  accumulator and the column both make it by `functions::part_value`, so
+  the bytes are the same whichever held the group.
+- A column fed values it does not hold, integers of another scale, turns
+  into the part's accumulators, each holding the function's accumulator
+  the group would have had (`functions::part_acc`). A column that comes
+  back from another thread is a part's again (`States::thawed`). One read
+  back from a spill (D1226) is read as the column of the function the
+  part is of (`Typed::read`).
+
+A group's state was written by making the accumulator the group would
+have had and asking it. A grouping of parts writes every group's state
+as it gives its groups, so that made an accumulator of each on the heap
+after all. A count's, a sum's and a mean's state are now written by the
+accumulator's own code of the slot the column holds, with none made on
+the heap (`typed/stated.rs`, `functions::count_written`,
+`sum_written`, `avg_written`). An extreme's still goes through its
+accumulator.
+
+The second grouping is as it was. It reads each part as a binary string
+and merges it into its own accumulator, of which there are few.
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 
@@ -21261,6 +21429,94 @@ needs no change. It prices each row hashed once whatever its keys
 (`HASH_ROW`), and counts a join's runtime filter once a class of
 equalities (D653), which is now what runs.
 
+#### D1215. A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more
+
+Without ORDER BY the order of a query expression's rows is
+implementation-dependent [ISO/IEC 9075-2:2023 §7.17 GR5a] (US036), and
+OFFSET and FETCH FIRST remove and keep rows by that order [GR6, GR7d
+ii]. So of a grouping under them any of its rows answer, as long as each
+is a row of the grouped table, a whole group with its set functions of
+every row of it [§7.13 GR2b]. A grouping by hash made every group of
+its input all the same, and the limit over it took the first few and
+dropped the rest, so a statement asking ten groups of a table of many
+millions of them built and merged a table of them all.
+
+The limit already tells a sort or an ordered scan how many of its first
+rows are asked for, through projections that raise nothing and through
+a part run in parallel (`exec/limit/bounded.rs`). It now asks a
+grouping it reaches the same way for that many groups, OFFSET's count
+added to FETCH FIRST's (`Plan::Aggregate`'s `first`). A sort between
+them is told instead, and a filter, as a HAVING condition is, stops the
+count, since the condition is judged of whole groups and the first
+groups met may not be the ones it keeps. The count is a permission. A
+grouping that ignores it gives every group and the limit keeps the
+first, so each path that is not taught it stays right.
+
+A row passed over is one no General Rule judges of the answer given,
+yet evaluating it could have raised an exception or a warning, which
+D15 does not let a plan lose. So a grouping is asked only if it is read
+by batch, groups by some column, makes no group before its rows as
+grouping sets do, is not streamed, and each set function counts rows or
+takes a column and raises nothing whatever rows it is given, as D1063
+asks of a grouping a join's runtime filter is told
+(`exec/batch/first.rs`). A set function of a column that may hold a null
+is refused too, as a null eliminated is a warning [§10.9 GR7a]. A
+DISTINCT or filtered set function is not read by batch, and an
+expression as argument is evaluated of every row, so neither is asked.
+
+What a physical plan says it can raise (`Plan::can_raise`, D552) is left
+as it is, every SUM and AVG taken as raising, since it reads no declared
+type. The test above reads them (`exec/batch/typed.rs`, D1060), so a
+grouping whose SUM is of exact values that cannot pass its range is
+asked all the same, and the limit over it, which reads on for an
+exception, finds no group more to read.
+
+Run alone (`exec/batch/groups.rs`), the grouping makes groups until it
+holds as many as asked for, then finds each row's group among them or
+passes the row over. Every row of a group it holds reaches it, so each
+group is whole. If a group is written past the work area before that
+many are held, nothing is passed over from then on, as a row passed over
+could be of a group already written.
+
+Run in parallel (`exec/parallel/grouped/first.rs`), no morsel may keep
+the first keys it meets, as another morsel would keep others and a
+group would lack the rows of the morsels that dropped it. The
+statement's thread first groups the first morsel by its keys alone and
+keeps the first groups made, as many as asked for. Of each grouping
+column it makes a runtime filter of the kept groups' values, as a hash
+join makes of its built keys (D369), a null among them matching a null,
+and the grouping's input is told them as D1063 tells a join's. The
+scans skip what the filters' ranges exclude, and each morsel drops the
+rows a filter excludes before the grouping reads them. A filter drops
+no row whose value it was made of, so every row of a kept group is
+grouped. A row every column of which passes, though no kept group has
+its key, makes one group more, whole as well, which the limit drops.
+
+The kept groups are the ones the part gives first when nothing is
+fixed. A group is numbered by its first row, morsel then place, and
+groups are given in that order (D293). The kept groups' first rows are
+in the first morsel, before the first row of any other group there and
+before every row of a later morsel. The first morsel is the first
+morsel of the first scan the pipeline reads, whatever filter is over
+it. That these are also the groups the plan run alone gives is true
+where the scan run alone reads its rows in the morsels' order, which
+this decision does not rely on. Any groups are an answer.
+
+Nothing is fixed, and the part runs as before, when the first morsel
+makes fewer groups than asked for, when the input is not scans under
+filters and projections, whose pipeline is made twice at no cost, or
+when EXECUTOR.RUNTIME_FILTERS is off. The first morsel is read twice.
+Telling a part over a join, and choosing the groups from later morsels
+when a filter empties the first, are left out.
+
+Tests in `test/integration/first_groups.rs`: the groups given are whole
+groups of the grouping, of each count, alone and in parallel, of both
+stores; a part gives the groups of its first rows, the null group whole;
+HAVING, grouping sets, a DISTINCT set function and a sort give whole
+groups; a null eliminated, a sum past its range and a division by zero
+in a later group are raised still; and groups past the work area are
+whole. Mutations in `xtask/src/mutate/list/areas/first_groups.rs`.
+
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 
 A node stops before its database closes (D57). Its transport ends, its
@@ -21288,6 +21544,81 @@ wait for its own thread.
 A stop that returns an error, or a close refused after it, is therefore
 a defect and never the node's ordinary end, and a caller has no reason
 to pass over either.
+
+#### D1226. A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time
+
+A grouping run in parallel by batch merges its morsels in waves into 64
+partitions, each partition's table frozen between waves and held of the
+statement's grant (D355, D356). Once the tables held passed the grant,
+the grouping gave way: the threads' work was dropped and the plan run
+again on the statement's thread alone, as a grouping a row at a time
+that spills its rows (D38). Of a grouping of tens of millions of groups
+at a grant of a few GiB, that rerun was most of the statement's time.
+
+A partition's groups frozen already hold every state in a form that
+goes to another thread: columns of states, and the states of other
+accumulators written (D293). They now go to the spill as well
+(`exec/table/made/written.rs`, `keys/written.rs`,
+`states/written.rs`): a lane's or a column's values by their bits, a
+null's place and the unpadded flag of D1183 too, so groups read back are
+the groups written. A partition is written in pieces of at most `PIECE`
+groups, one record a piece, so neither writing nor reading it holds its
+groups twice.
+
+Once the partitions' tables after a wave pass the grant, or a morsel's
+groups or the statement thread's table (D355) do not fit beside them,
+each partition's thread writes the table it holds to a run of the
+grouping's spill area (`exec/parallel/grouped/waves/spilled.rs`), and
+the grant gives back what they held. Each wave after merges each
+partition's morsels into a table of that wave alone, which its thread
+writes to a run of its own. A morsel's groups, or the statement
+thread's table, that do not fit the grant even with nothing else held
+are written to the partitions' runs as they are, after the waves before
+them. The area is reserved of the budget as any
+operator's, of the grouping's own grant (`Work::of_grant`), and nothing
+of a partition in the spill is held of the grant.
+
+At the end the last wave goes to the spill too, and each partition's
+runs are read back a piece at a time and merged, in the order of the
+waves, into one table, which is finished as a partition held in memory
+is. A partition is weighed by what its groups held as they were
+written, and the partitions are merged on as many threads at once as
+half the grant holds the largest of. A partition that holds more than
+half the grant is split, a piece at a time, into 64 parts again by the
+next six bits of the hash it was found by (of a pair, the hash of the
+second grouping's columns, D1113), each part to a run of its own and
+finished alone, up to SPILL.PARTITION_DEPTH levels.
+
+The rows come in the order a grouping held in memory gives them. Waves
+take the morsels in order, so a group new to a later wave has a later
+first row than every group of the waves before. A group of several
+waves keeps the earliest first row of its pieces, as any merge of two
+tables keeps the earlier, so its first wave's. A partition read back in
+the order of its runs therefore holds its groups in the order of their
+first rows, and a part split from it holds its share in that order too.
+
+What still gives way: a value no run holds by its bytes alone, a large
+object, an XML value, a value of a type beyond the standard, or one
+that holds others, as a key or a value carried (D1201); a partition
+still past half the grant at
+SPILL.PARTITION_DEPTH levels; and the spill area refused (SQLCODE
+-918). A grouping of a set function that writes no state is not run
+in parallel by batch, as before. SELECT DISTINCT and the first grouping
+of a pair (D1113), as DISTINCT set functions are run (D340, D342), wave
+and are held in the spill the same way. A pair's second grouping that
+crosses the first's partitions still merges its groups on the
+statement's thread, all in memory (D1133). DISTINCT set functions and
+that second grouping are the next to be held in the spill, as
+COUNT(DISTINCT) groupings of many groups meet them at a small grant.
+
+The groups a part finishes go to a run of the same area, each numbered
+by its first row, and the statement's thread reads the runs back as it
+merges them in that order. No more groups are held at once than the
+threads finish together, so a grouping of nearly as many groups as rows
+holds no more than the grant at the end, where holding its finished rows
+until the statement read them outgrew the memory the server was given.
+Of a grouping that keeps the first rows a sort asks of its tables
+(D1124), a part's run holds those rows alone.
 
 #### D1230. A structure's tally counts a miss only when the pool evicted a page for it
 

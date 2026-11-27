@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::functions::Registry;
+use crate::functions::{AggregateFunction, Registry};
 use crate::storage::{Column, Floats, Ints, Mask};
 use crate::txn::NO_TRANSACTION;
 use crate::value::{Decimal, Spelled, Value};
@@ -194,4 +194,82 @@ fn a_column_of_values_kept_is_its_accumulator() {
         assert!(matches!(thawed, States::Boxed(_)), "accumulators, of what is no column read in place");
         assert_eq!(format!("{:?}", thawed.finish(0)), format!("{:?}", Ok::<_, crate::error::SqlError>(both.cell(c, 0).to_value())));
     }
+}
+
+/// The part of the call `of` (RULES.md D341), as the first of two
+/// groupings computes it.
+fn part(of: &AggCall) -> AggCall {
+    let func = crate::functions::AggregateRef(Arc::new(crate::functions::Partial { func: of.func.clone(), result: of.result.clone() }));
+    AggCall { func, result: crate::functions::PART_TYPE, label: format!("PARTIAL {}", of.label), ..of.clone() }
+}
+
+/// Verifies: [DESIGN] (RULES.md D1186, D341) a part of COUNT(*), COUNT,
+/// SUM, AVG, MIN and MAX of integers, and of SUM and AVG of approximate
+/// numbers, is kept in its function's column, and each group gives the
+/// bytes the part's accumulator gives of the same rows in order: its state
+/// after its tag, or its result where it writes none; its written state
+/// is the function's, and merged it gives the accumulator's merged part;
+/// the function's merge of the parts gives the function's result; sent to
+/// another thread and gathered in another order it is a part's column
+/// still.
+#[test]
+fn a_part_kept_in_a_column_is_its_accumulators_part() {
+    let db = Arc::new(crate::db::State::with_builtins(Box::new(crate::catalog::MemoryCatalog::default())));
+    let runner = Runner::new(&db, NO_TRANSACTION);
+    let shown = |v: Result<Value>| format!("{v:?}");
+    let cases =
+        [("COUNT", None, None), ("COUNT", Some(INTEGER), Some(0)), ("SUM", Some(INTEGER), Some(0)), ("AVG", Some(INTEGER), Some(0))];
+    let more =
+        [("MIN", Some(INTEGER), Some(0)), ("MAX", Some(INTEGER), Some(0)), ("SUM", Some(DOUBLE), Some(1)), ("AVG", Some(DOUBLE), Some(1))];
+    for (name, arg, c) in cases.into_iter().chain(more) {
+        let whole = call(name, arg);
+        let agg = part(&whole);
+        let mut states = States::of(&agg);
+        (0..2_u32).for_each(|_| states.grow());
+        let take = c.map_or(Taken::Count, Taken::Column);
+        states.feed((&pending(), &agg), (&batch(), &take, &None), (&mut Vec::new(), &runner)).unwrap();
+        assert!(matches!(states, States::Part(_)), "PARTIAL {name} kept in a column");
+        let mut merged =
+            crate::functions::Merged { func: whole.func.clone(), result: whole.result.clone() }.accumulator(whole.result.clone());
+        for g in 0..2_usize {
+            let alone = fed_alone(&agg, (c, u32::try_from(g).unwrap()));
+            assert_eq!(shown(states.finish(g)), shown(alone.finish()), "PARTIAL {name} of group {g}");
+            merged.update(&states.finish(g).unwrap()).unwrap();
+            let (mut written, mut expected) = (Vec::new(), Vec::new());
+            assert_eq!(states.write(g, &mut written), alone.write_state(&mut expected));
+            assert_eq!(written, expected, "PARTIAL {name} written");
+        }
+        let mut all = fed_alone(&whole, (c, 0));
+        let rest = fed_alone(&whole, (c, 1));
+        let mut state = Vec::new();
+        if rest.write_state(&mut state) {
+            all.merge(&state).unwrap();
+            assert_eq!(shown(merged.finish()), shown(all.finish()), "MERGED {name}");
+        }
+        let before = [shown(states.finish(1)), shown(states.finish(0))];
+        let thawed = States::thawed(states.sent().unwrap().gathered(&[1, 0]), &agg, 2).unwrap();
+        assert!(matches!(thawed, States::Part(_)), "PARTIAL {name} sent");
+        assert_eq!([shown(thawed.finish(0)), shown(thawed.finish(1))], before, "PARTIAL {name} gathered");
+    }
+}
+
+/// Verifies: [DESIGN] (RULES.md D1186) a part's column fed integers of
+/// another scale turns into the part's accumulators, each holding the
+/// function's as the column held it, which give the parts accumulators
+/// fed the same rows give.
+#[test]
+fn a_parts_column_widens_into_the_parts_accumulators() {
+    let db = Arc::new(crate::db::State::with_builtins(Box::new(crate::catalog::MemoryCatalog::default())));
+    let runner = Runner::new(&db, NO_TRANSACTION);
+    let shown = |v: Result<Value>| format!("{v:?}");
+    let agg = part(&call("SUM", Some(INTEGER)));
+    let mut widened = States::of(&agg);
+    (0..2_u32).for_each(|_| widened.grow());
+    widened.feed((&pending(), &agg), (&batch(), &Taken::Column(0), &None), (&mut Vec::new(), &runner)).unwrap();
+    let other = Batch { columns: vec![Column::Ints(Ints::new(vec![1; 6], 0, None))], rows: 6 };
+    widened.feed((&pending(), &agg), (&other, &Taken::Column(0), &None), (&mut Vec::new(), &runner)).unwrap();
+    assert!(matches!(widened, States::Boxed(_)), "accumulators, of integers of another scale");
+    let mut alone = fed_alone(&agg, (Some(0), 1));
+    alone.update_ints(&Ints::new(vec![1; 2], 0, None), None, &crate::kernels::Portable).unwrap();
+    assert_eq!(shown(widened.finish(1)), shown(alone.finish()));
 }
