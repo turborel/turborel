@@ -32,7 +32,7 @@ use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::Runner;
 use crate::logical::{Cond, Window, pushed_conjuncts};
-use crate::physical::Plan;
+use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Conjunct, Conjunction, Sel};
 use crate::txn::{TxId, counted};
 
@@ -317,6 +317,20 @@ pub(super) fn whole_told(plan: Plan, (db, tx): (&Db, TxId), told: Vec<Told>) -> 
     Ok(resolved(batches_with(plan, (db, tx), &Deferred::all(width).with_told(told))?, crate::db::kernels::chosen(db)))
 }
 
+/// \[DESIGN\] (RULES.md D1221) As `whole_batches`, for a join that builds
+/// of `plan` and finds the rows it built by `keys` alone. A grouping run
+/// in parallel whose every grouping column is a key is asked for its
+/// groups in any order (`parted::keyed_whole`).
+///
+/// # Errors
+///
+/// As `open`.
+pub(in crate::exec) fn whole_keyed(plan: Plan, keys: &[JoinKey], db: &Db, tx: TxId) -> Result<Batches> {
+    let width = layout(&plan, db).map_or(0, |(_, width)| width);
+    let asked = Deferred::all(width).in_any_order(super::parted::keyed_whole(&plan, keys));
+    Ok(resolved(batches_with(plan, (db, tx), &asked)?, crate::db::kernels::chosen(db)))
+}
+
 /// A function giving the batches of a plan of one kind, its columns the
 /// operators above leave unread as the `Deferred` says.
 type Batched = fn(Plan, (&Db, TxId), &Deferred) -> Result<Batches>;
@@ -520,7 +534,7 @@ fn projected_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> 
     let Plan::Project { exprs, input, .. } = plan else { return Err(crate::exec::broken("a projection is not one")) };
     let input = *input;
     let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
-    let below = if deferred.any() { deferred.projected(&exprs) } else { Deferred::default() };
+    let below = if deferred.any() || deferred.any_order() { deferred.projected(&exprs) } else { Deferred::default() };
     let below = below.with_told(runtime::projected(&exprs, deferred.filters()));
     let inner = batches_with(input, (db, tx), &below)?;
     if let Some(picks) = picked(&exprs, &columns) {

@@ -76,7 +76,7 @@ pub(super) fn probed(
         Vec::new()
     };
     // The right operand first, held as vectors if it fits the work area.
-    let rest = match held::read(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
+    let rest = match held::read_keyed(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
         Read::Held(held) => {
             let out = Out::over(left_columns.len(), Arc::clone(&held.batch), crate::db::kernels::chosen(db));
             let joined = Joined { left_columns, right_columns, kind, scratch, runner: Runner::new(db, tx) };

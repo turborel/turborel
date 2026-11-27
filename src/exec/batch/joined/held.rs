@@ -159,7 +159,8 @@ impl HeldRight {
 /// The right operand `right`, keyed by the right columns of `keys`, read
 /// and held while its vectors and its table hold no more than `limit`
 /// bytes, a runtime filter made of each of its keys at `filtered`; its
-/// rows those the runtime filters `told` it keep (RULES.md D600).
+/// rows those the runtime filters `told` it keep (RULES.md D600), in the
+/// order the operand gives them.
 ///
 /// # Errors
 ///
@@ -170,15 +171,40 @@ pub(super) fn read(
     limit: usize,
     (db, tx): (&Db, TxId),
 ) -> Result<Read> {
+    read_asked(right, (keys, filtered, Deferred::default().with_told(told)), limit, (db, tx))
+}
+
+/// \[DESIGN\] (RULES.md D1221) As `read`, for a join that finds the rows
+/// it built by their keys alone, as an inner join, a LEFT join that
+/// probes and a semi join do. A grouping run in parallel whose every
+/// grouping column is a key (`parted::keyed_whole`) is asked for its
+/// groups in any order, since such a join finds at most one of them of a
+/// key and gives none it did not find.
+///
+/// # Errors
+///
+/// As `read`.
+pub(super) fn read_keyed(
+    right: Plan,
+    (keys, filtered, told): (&[JoinKey], &[usize], Vec<Told>),
+    limit: usize,
+    (db, tx): (&Db, TxId),
+) -> Result<Read> {
+    let keyed = super::super::parted::keyed_whole(&right, keys);
+    read_asked(right, (keys, filtered, Deferred::default().with_told(told).in_any_order(keyed)), limit, (db, tx))
+}
+
+/// `read`'s work, the operand asked for its rows as `asked` says.
+fn read_asked(right: Plan, (keys, filtered, asked): (&[JoinKey], &[usize], Deferred), limit: usize, (db, tx): (&Db, TxId)) -> Result<Read> {
     let (columns, width) = stream::layout(&right, db).unwrap_or_default();
     let places: Vec<usize> = keys
         .iter()
         .map(|k| columns.iter().position(|&c| c == k.right).ok_or_else(|| broken("a join key the right operand's batch lacks")))
         .collect::<Result<_>>()?;
-    let mut batches: Batches = if stream::reads_by_batch(&right, db) {
-        stream::batches_with(right, (db, tx), &Deferred::default().with_told(told))?
+    let mut batches: Batches = if super::super::parted::built_by_batch(&right, db) {
+        stream::batches_with(right, (db, tx), &asked)?
     } else {
-        runtime::applied(gathered(execute(right, db, tx), &columns), told, &columns, (db, false))
+        runtime::applied(gathered(execute(right, db, tx), &columns), asked.filters().to_vec(), &columns, (db, false))
     };
     let (mut parts, mut bytes) = (Vec::new(), 0_usize);
     for kept in batches.by_ref() {
