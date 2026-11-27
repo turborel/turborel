@@ -44,6 +44,7 @@ fn star(cost: CostModel, gain: f64) -> Model {
         want_class: None,
         injected: Vec::new(),
         implied: Vec::new(),
+        stars: Vec::new(),
         ranged: super::super::ranged::Ranges::default(),
     }
 }

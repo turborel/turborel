@@ -769,10 +769,14 @@ verification approach DO-178C expects (§8).
 | D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
 | D1185 | A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets |
 | D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
+| D1188 | A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
+| D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
+| D1205 | The unique index of a deferrable constraint is no key to the estimates |
+| D1206 | An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all |
 | D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
 | D1216 | SUM of a value and a constant is computed from the value's sum and count, shared among such sums |
 | D1218 | A sort that reads its input whole passes it no row goal |
@@ -782,6 +786,7 @@ verification approach DO-178C expects (§8).
 | D1228 | A second grouping crossing the first's partitions holds its groups of a grant of its own and spills them by key past it |
 | D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
+| D1231 | The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends |
 | D1240 | A hash join run in parallel whose built operand outgrows its grant is built in parts and probed in passes |
 
 ### The project
@@ -11477,9 +11482,11 @@ enumeration make, judges the equality of one column of each of every
 class with a column on each side (`Model::implied_keys`), and that
 equality is a key of its hash, merge or index join. The plan is then
 never a product of the two whose rows the estimate counts as joined.
-The classes are made once with the model, and the join graph takes no
-edge of its own for such a pair, since an edge of each pair of a large
-class makes a clique the enumeration's search grows past.
+The classes are made once with the model. The join graph takes no
+edge for each pair of a class, since an edge of each pair of a large
+class makes a clique the enumeration's search grows past. It takes
+those from a relation the class's column is a key of, within a budget
+(D1204).
 An equality implied is true of every row the stated ones keep, so the
 rows are those of the query as written [X3.135-1986 §5.20 GR2b]. A
 chain with an outer join takes no implied key, since its keys hold only
@@ -19991,13 +19998,13 @@ make each change many bytes, so the log grew by tens of gigabytes, its
 segments all kept, before the changes came due. Recovery after a crash
 then replayed all of it.
 
-The log's bytes now count as well (`Transactions::bytes_since_checkpoint`,
-`txn/pending.rs`), and a checkpoint is due once either the side file or the
-log has grown by CHECKPOINT.AFTER_BYTES since the last. The bytes the
-log holds are noted as a checkpoint captures what it holds, as the row
-changes are, so a checkpoint that fails counts them still. The log a
-checkpoint lets go of, and the recovery after it, are then bounded by
-the setting whatever the shape of the rows.
+The log's bytes now count as well (`Transactions::bytes_since_checkpoint`),
+and a checkpoint is due once either the side file or the log has grown by
+CHECKPOINT.AFTER_BYTES since the last. The log's position is noted as a
+checkpoint captures what it holds, as the row changes are, so a checkpoint
+that fails counts them still. The log tells its bytes from that position
+on (D1231). The log a checkpoint lets go of, and the recovery after it,
+are then bounded by the setting whatever the shape of the rows.
 
 #### D1138. The rows an execution of a load is given are held, never spilled
 
@@ -21080,6 +21087,141 @@ accumulator.
 The second grouping is as it was. It reads each part as a binary string
 and merges it into its own accumulator, of which there are few.
 
+#### D1188. A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured
+
+D61's matcher of a program with no back-reference keeps a list of
+threads at each position, each with a copy of what it has captured, and
+follows every thread at every character (`regex/pike.rs`). A copy of the
+captures was made on the heap for each thread at each position, a string
+was turned into a vector of characters before it was searched, and a
+function called for each row began all of it again. TRANSLATE_REGEX of a
+column spent nearly all its time there.
+
+Three things replace that path. None changes what matches. Each is held
+to the matcher of threads by tests over patterns of every instruction
+and texts from every starting position, with captures and without.
+
+- `regex/bounded.rs` follows one way at a time, going back to the last
+  fork on failing, with one set of captures put back as it goes back. It
+  marks each instruction at each position it meets and gives up a way
+  that meets a mark. That is right because whether a match is found from
+  an instruction at a position depends on those two alone, on nothing
+  captured and not on where the search began. The way that met them
+  first is preferred to every later one and found no match from there,
+  or the search would have ended. So the marks are kept from one
+  starting position to the next, and a search of every start takes time
+  within the product of the text's length and the program's. A
+  back-reference breaks this, as what it matches depends on what was
+  captured, so a program with one never runs here
+  (`Regex::matcher`, tested by
+  `it_is_given_programs_of_no_back_reference_and_texts_within_its_marks`).
+  The marks are a bit each, `MARKS_MOST` of them at most. A sweep of
+  `bench/regex.rs` at five budgets found no length of text at which the
+  matcher of threads ran a text faster, to the largest budget swept, so
+  the budget is of what a search holds and is derived from that. It is
+  the octets the matcher of threads takes for its two lists of threads
+  of the longest program, what they captured not counted, so a search
+  here never holds more than a search there may. Past it the matcher of
+  threads runs. A program whose first instruction is `^` of the whole
+  string is tried from the string's start alone, as a way from any
+  later start fails at that instruction.
+- `regex/dfa.rs` is an automaton made as texts are read (Thompson, 1968).
+  A state is the ordered list of threads at a position, cut after the
+  first that matches, and whether a match was found before it. The state
+  a character leads to is kept once found. It gives where the preferred
+  match ends, not where it begins nor what it captured. `^` and `$` of
+  the whole string are judged at the first state and after the last. The
+  wildcard of the flag `s`, any character but a CR before an LF [ISO/IEC
+  9075-2:2023 §9.28 GR9a i], reads a CR before an LF as a character of
+  its own. A program with `^` or `$` of each line, or a back-reference,
+  has no automaton. Its states' steps, keys and threads are counted in
+  octets, and past `OCTETS_MOST`, as many as a search's marks may take,
+  it gives up and the search goes on without it. An automaton that still
+  meets new states there follows its texts no faster than the matchers.
+- `regex/searcher.rs` puts them together for text after text. A search
+  that asks only whether there is a match asks the automaton. A search
+  for captures runs the matcher that marks, which reads no further than
+  the end the automaton gave if it was asked. The automaton before such a
+  search is a pass more over a text that matches and the whole search of
+  one that does not. On the bench those balance where about half the
+  texts have no match, so the searcher counts what a window of its
+  searches found and asks the automaton first only while at least half
+  found none. The window is 64 searches. A share is known from n
+  searches to within 1/(2√n) near one half, one sixteenth of 64, so a
+  share two such errors from the half is taken for the other side about
+  once in forty windows, and nearer the half the two ways cost nearly
+  the same. It is one thirty-second of a vector's rows, so the first
+  window of a vector, which asks unasked, is a few hundredths of its
+  searches.
+
+The automaton's states are worth keeping only across texts, and a scalar
+function's call is given one row and nothing to keep them in. So they
+live in a searcher, which a call over a vector makes for the vector
+(D363), with the marks, the captures and the forks left to try of the
+matcher that marks, which a search clears and uses again. TRANSLATE_REGEX
+has such a call, taken when its subject is a vector of texts and its
+other operands are constants, and LIKE_REGEX has one, taken when its
+value is a vector of texts and its pattern and flag are constants. Each
+compiles the pattern and makes the searcher once for the vector, and
+TRANSLATE_REGEX reads the replacement once. No state is kept in the
+function, in the thread or in the session. A search of one text alone
+makes no automaton, which would be made only to be dropped. A call over
+a vector that fails gives way to the calls of each row, which raise what
+a row raises (D363).
+
+TRANSLATE_REGEX replaces a match as fn:replace replaces the match as a
+string of its own [ISO/IEC 9075-2:2023 §9.29], which was a second search
+of every match. That search finds the same groups where the match is the
+whole subject, which is that string, and where no instruction of the
+program reads beside the character it matches, no `^`, no `$`, no
+wildcard that looks for an LF after a CR and no back-reference. The way
+that matched then reads the same characters in both, and every way
+preferred to it failed on characters the string has too. So
+`Regex::matches_alone` says which matches are replaced from their own
+groups, and only the others are searched again. `(^a)|(a)` after a `b`
+is one of the others. It matches `a` by its second group and that `a`
+alone by its first.
+
+Once a match of a subject is replaced the pattern is known to match no
+zero-length string, which `Regex::replacement` refuses, so no match
+begins at the subject's end and TRANSLATE_REGEX searches for none there.
+That search of each subject found nothing every time, which told the
+searcher that half its searches find nothing and kept it asking its
+automaton before every search of subjects that all match.
+
+A subject whose characters are all ASCII's is matched where it lies, its
+octets its characters (`regex::Ascii`), so no vector of characters is
+made of it.
+
+A pattern that ends `.*$` under the flag `s` takes the rest of any text.
+Its program ends with a greedy loop of the wildcard that matches every
+character, CRLF as one, and then asks only that the string ends
+(`regex/compile/rest.rs`). From the loop's first instruction the way
+preferred takes every character to the string's end, where `$` holds,
+whatever the characters are, and no way preferred to it matches, since
+the loop's fork takes its other branch only where the first fails. So
+the matcher that marks goes from that instruction to the string's end
+and walks no character between. The loop is found in the instructions,
+by its shape, and only where nothing but closing groups and the match
+follows `$`. A reluctant loop, a loop of a class, `$` of each line and a
+loop in a branch are walked as before, and so is every loop on the first
+matchers, which the corpus holds this one to.
+
+OCCURRENCES_REGEX, POSITION_REGEX and SUBSTRING_REGEX take the matcher
+that marks and the text in place through the same `Regex` methods, each
+call of a row a search of one text alone.
+
+The first matchers stay, and a search falls to them where the new ones
+do not hold. A program with a back-reference runs on the matcher that
+counts its steps and has no automaton. One with `^` or `$` of each line
+has no automaton. A text whose marks would pass `MARKS_MOST` runs on the
+matcher of threads. A corpus of several hundred patterns made of atoms,
+quantifiers, alternation, groups, anchors and back-references under the
+flags, in every text of at most three characters of two letters, CR, LF
+and a letter of two octets, from every position, holds a searcher kept
+across the texts to the first matchers
+(`over_a_corpus_a_searcher_finds_what_the_first_matchers_find`).
+
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 
 The groups n rows fall into by columns of D distinct combinations are
@@ -21289,6 +21431,172 @@ its word and no wrong result. An index join weighed at the margin's
 times the estimate is exposed past it. Of rows a hundred times the
 estimate it makes a hundred times the probes, where the margin weighed
 eight.
+
+#### D1204. A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget
+
+The enumeration joins two sets only where an edge of the graph joins
+them, and the graph had an edge only for a conjunct or an operator. So
+of `p.k = l.k AND ps.k = l.k` it never joined `p` to `ps` alone, though
+the class of the three columns (D302) makes `p.k = ps.k` true of every
+row the query keeps and D387 joins two such sets by that key. Where `p`
+is filtered and `l` is the largest table, joining `p` to `ps` first and
+`l` to their few rows is the cheaper plan, and no order of the stated
+conjuncts gives it.
+
+A relation whose column of a class is a key of it now has an edge to
+each other relation of the class (`enumerate/graph/implied.rs`). A key
+is what the estimates take for one (`cardinality/keys.rs`, D384). That
+is a PRIMARY KEY or UNIQUE constraint of the one column, not deferrable
+and of no period, a grouping by the column alone, or DISTINCT of it
+alone. A key matches at most one row of its relation to a row of the
+other, so the join gives no more rows than the other relation has, and
+fewer where the keyed one is filtered. A column that is no key gets no
+edge, as its join may multiply rows and its edges are what made D387's
+clique. A UNIQUE column that may be null is a key here. A null equals
+nothing [X3.135-1986 §5.11 GR2], so its rows of a null join no row, by
+the implied key as by the stated ones, and its other rows are each of a
+value of their own. A deferrable constraint is none, as it may be
+broken until it is checked [ISO/IEC 9075-2:2023 §4.25.2].
+
+The edge is of no operator and no conjunct. A join made over it alone
+judges the equality the class implies of a column of each side
+(`Model::implied_keys`), by a hash, merge or index join as cost
+chooses, and is an inner join like any other. The rows are those of the
+query as written [X3.135-1986 §5.20 GR2b]. The implied equality holds of
+every row the stated ones keep, since the stated ones are equalities of
+bare columns under one comparison, which is transitive, numbers of
+exact and approximate types comparing by algebraic value [§5.11 GR4].
+An equality by a collation is no bare column's and enters no class.
+Each stated conjunct is still judged where its relations first meet,
+so the join of `p` and `ps` to `l` judges both stated equalities. The
+rows do not rest on the key. Were it broken, the join would only give
+more rows than estimated, the same ones any other order gives. A chain
+with an outer join, a semi join or an antijoin has no class (D387), so
+no such edge.
+
+The edges of a relation are a star, and a class each relation of which
+is keyed, as tables split one to one on a shared key are, would have a
+star from each, a clique. Twelve such relations chained by their keys
+have 286 pairs of sets to join as written and 261,625 as a clique. So a
+star is taken only while the work exact dynamic programming does of the
+graph with it stays within PLANNER.DP_BUDGET (`Graph::work`). The work
+is the connected subgraphs the enumeration meets and the pairs it
+joins, counted by its own traversal with no table and stopped past the
+budget. The connected subgraphs alone would not do, as a clique of
+twelve has 4,095 of them and passes no budget of 10,000. The stars are
+offered from the relation of fewest estimated rows, whose join reduces
+most, and one that passes the budget is undone and the next offered. A
+graph past the budget with no star takes none. So a chain with stars
+does at most the budget's work, the adaptive switch (D304) never leaves
+exact dynamic programming for a star, and a chain no star fits is
+planned as it was. A rule taking a star only from a filtered relation
+was not taken. It bounds nothing, as twelve filtered relations are a
+clique still, and a relation with no filter of its own may be reduced
+by a join below, as a nation is by its region.
+
+#### D1205. The unique index of a deferrable constraint is no key to the estimates
+
+The estimates take a table's keys from the catalog (D384): the columns
+of each UNIQUE or PRIMARY KEY constraint not deferrable, and of each
+unique index. But every such constraint has a unique index, a
+deferrable one too, and that index holds two rows of one key from the
+statement that breaks the constraint until its check [ISO/IEC
+9075-2:2023 §4.25.2]. So a deferrable key was taken for a key through
+its index, against D384's own words. A column of it was counted as of
+one row a value, and its join as giving no more rows than its other
+side.
+
+The index of a deferrable constraint is now left out of a table's keys
+(`cardinality/keys.rs`), told by its columns, which are the
+constraint's, with its period's if it has one. Only estimates read
+these keys, a row bound, a class's distinct values, the choice of a
+hash or an index join, and the implied edges (D1204), so no query gave
+wrong rows. The rules that rewrite a query by a key read the
+constraints themselves and pass a deferrable one by (D1117, D1201,
+D1202).
+
+#### D1206. An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all
+
+A hash join took every equality of a column of each operand for a key.
+Of `l.a = s.x AND l.a = ps.y`, as a join over an implied edge judges
+(D1204), both were keys, though they are of one column of `l`. Each row
+of either operand then hashed and compared `a` twice, and the scan of
+`l` was told two runtime filters of the one column (D369).
+
+An inner hash join now hashes at most one key of each left column and
+one of each right column (`physical/join/single.rs`). The equalities are
+taken in the order of the distinct values of their more distinct column,
+most first, which is how the estimates count the pairs an equality
+keeps (D302), so the key kept is the one that leaves the fewest pairs to
+judge. Equalities of equal counts are taken in the order stated, so a
+plan does not change with nothing. One is a key unless a key already
+taken is of its left column or of its right column. So an equality that
+shares no column with a key is always a key, and of
+`l.a = r.x AND l.b = r.y AND l.a = r.y` the first two are hashed where
+they rank first. The keys keep the order stated.
+
+An equality that is not a key is judged of the matched rows, in the
+filter over the join, which of an inner join is its condition and is
+judged a batch at a time. Nothing is dropped by this, so the rows are
+those of the query as written [X3.135-1986 §5.20 GR2b]. An equality is
+true of no null [§5.11 GR2], the same as a key, which matches no null.
+A key on which a null matches a null is judged as NOT (a IS DISTINCT
+FROM b) [ISO/IEC 9075-2:2023 §8.15 SR6].
+
+Such an equality is not judged at all where it is implied. Take the key
+`l.a = s.x` and the equality `l.a = ps.y`, the right operand a join that
+judged `ps.y = s.x`. That equality is true of every row of the right
+operand, and the key is true of every matched pair, so `l.a = ps.y` is
+true of every matched pair too. Both are true, so no value of the three
+is null, and equality of bare columns is transitive, numbers of exact
+and approximate types comparing by algebraic value [§5.11 GR4], as D1204
+relies on. The mirror holds of two left columns and one right. The
+planner knows what an operand's joins judged by construction. Each
+realized subtree carries the equalities of columns its inner joins
+judged (`Realized::equated`, `enumerate/realize.rs`), a LEFT join, a
+semi join and an antijoin passing their left's and a FULL join none,
+and an equality is implied only by a chain of those. An equality still
+to be judged above, or one a relation's own filter holds, implies
+nothing here, and the equality stays in the filter.
+
+The join planned without the enumeration (`physical/join.rs`) has no
+such record, and reads the same from the logical plans of its operands
+(`equated_in`). A conjunct of a filter is true of every row the filter
+gives, whatever plan runs it, so the equalities of columns in the
+filters over an operand, and through each product in those over its
+left operand, whose columns are the product's first, hold of each of
+its rows. An equality these do not imply goes to the filter over the
+join. One they imply stays a hash key of this join, and is not dropped
+as the enumerated join drops it. A chain of tables each joined to the
+first by one value shows why. Predicate transitivity (D404) adds the
+equality of each pair, so join `i` of the chain has `i` equalities of
+one column of its right operand, each implied by the filters below.
+Filtered, they would put each join under a filter that keeps every row,
+a pass over its rows and two more calls a level as the chain is read.
+Dropped, they would leave each key column unread above its join, and
+the join's operand would be put under a projection that gives it null
+(D1167), two more calls a level too. Either way the deepest chain the
+parser accepts took more than the stack it is read within, measured by
+its test (`pruned_columns.rs`). Kept as keys they cost a hash and a
+comparison of a column a level and no call, as before this decision.
+
+Outer joins, semi joins, antijoins and mark joins keep every equality
+as a key. They judge a condition beyond their keys of each pair inside
+the match, a row at a time, and a semi join with such a condition no
+longer keeps only the first row of each key (D540), so a key moved
+there would trade a hashed column for a condition judged pair by pair.
+A filter above an outer join would be wrong besides, as it would drop
+the rows the join preserves. Index and merge joins hash nothing and are
+as they were.
+
+A runtime filter is made of each key, from the values of its built
+column, and told of its left column (D369). Fewer keys make fewer
+filters, each still holding every built value of its column, so each
+keeps every row that matches. Predicate transfer steps along the same
+keys (D665) and takes fewer steps, each sound alone. The cost model
+needs no change. It prices each row hashed once whatever its keys
+(`HASH_ROW`), and counts a join's runtime filter once a class of
+equalities (D653), which is now what runs.
 
 #### D1215. A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more
 
@@ -21689,6 +21997,36 @@ tables' pages, which does not fit beside what the pool holds. The
 lookups are counted as before, so LEAST_LOOKUPS and the window are
 unchanged. A hit costs nothing more, and a miss only notes which way the
 pool found its frame (`disk/buffer/tally.rs`).
+
+#### D1231. The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends
+
+D1137 counted the log's bytes in a counter that every append of every
+session added to, beside the count of row changes. Each commit that
+wrote paid a second write to a line all the committing threads share,
+for a figure the log already holds in its positions.
+
+Each log now tells the bytes between two positions as its own layout
+says (`Log::bytes_between`). The file log's positions are its segment and
+the offset in it, so it answers from them alone, each segment between
+taken as the segment size (`log/file/segments.rs`). A segment ends a
+record past that size, or further when the next could not be begun, so
+the count is near, not exact, which a threshold allows. A log whose
+positions number its records, the memory log, a log a plug-in keeps
+(the hosted log and any given through `LogStorage`) and the replicated
+logs, keeps the bytes appended before each record it holds, set under
+the lock its append already takes (`log/marks.rs`), and answers by the
+difference of two of them. A log that wraps another asks the one it
+wraps. The method has no default, so every log answers it.
+
+The checkpoint notes the position it holds through, not a count of bytes
+(`Transactions::captured`). A commit that wrote asks for the log's bytes
+up to its own commit record, whose position its session already holds
+(`Served::last_committed`), so the log's end is not read and the file
+log takes no lock. Before the first checkpoint the count runs from the
+first position asked, as it ran from the open before. A rollback, a
+replica's replay and the checkpoint job ask up to the log's end. The
+appends write nothing for the count, and the commit reads only the
+position of the last checkpoint.
 
 #### D1240. A hash join run in parallel whose built operand outgrows its grant is built in parts and probed in passes
 

@@ -38,6 +38,12 @@ impl Served {
         self.committed.store(position, Ordering::Release);
     }
 
+    /// The log position of the last commit's record, if one was made since
+    /// one was last taken (`take_committed`), left as it is.
+    pub(crate) fn last_committed(&self) -> Option<crate::log::Lsn> {
+        Some(self.committed.load(Ordering::Acquire)).filter(|&p| p > 0).map(crate::log::Lsn)
+    }
+
     /// The log position of the last commit since this was last asked, if
     /// one was made.
     pub fn take_committed(&self) -> Option<u64> {

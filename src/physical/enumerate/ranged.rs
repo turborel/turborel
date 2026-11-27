@@ -95,7 +95,7 @@ impl PhysicalPlanner<'_> {
         let plan = range_plan(found, (l.plan.clone(), r.plan.clone()), made);
         let shape = if l.shape.is_empty() { String::new() } else { format!("({} {})", l.shape, r.shape) };
         // Its rows keep no order, as `physical/range/planned.rs` says.
-        Some(Realized { plan, layout, order: Order::None, shape })
+        Some(Realized { plan, layout, order: Order::None, shape, equated: Vec::new() })
     }
 }
 
