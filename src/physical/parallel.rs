@@ -11,7 +11,8 @@
 //! filter that cannot raise over such a grouping, its HAVING condition,
 //! judged of each group by the part's threads (RULES.md D1073); or a
 //! grouping over such a grouping by some of its grouping columns, both
-//! made by the part's threads (RULES.md D1113). A
+//! made by the part's threads (RULES.md D1113), or one counting across
+//! its partitions (RULES.md D1133, D1219). A
 //! grouping or DISTINCT streamed over rows in its keys' order is no such
 //! part, as its order would be lost among the threads (RULES.md D550).
 //!
@@ -22,7 +23,9 @@
 //! as a point query does, its plan unchanged, so it costs nothing more
 //! than the walk that finds it. So does one a serial scan by batch of a
 //! table kept by column serves better, with no hash join's probe nor
-//! window functions, while EXECUTOR.BATCHES is on, and a bare COUNT(*) its
+//! window functions, while EXECUTOR.BATCHES is on, but a sort asked for
+//! its first rows alone, which is a part of either store (RULES.md
+//! D1241); and so does a bare COUNT(*) its
 //! table's storage counts (RULES.md D351); the operand a part's hash join
 //! builds is a part by its rows alone, of either store, as its morsels
 //! are gathered by batch (RULES.md D1051). So does a grouping or DISTINCT
