@@ -322,7 +322,7 @@ impl PhysicalPlanner<'_> {
         let decided = read.above.and_then(|above| spatial::decision(&c, on.conds, above));
         let entries = decided.as_ref().is_some_and(|d| d.unread && read.needed.iter().all(|&column| column == d.column));
         let whole = !predicate::named(&c.probes) && !ix.is_collated() && covers(kind, (&ix.columns, on.types), read.needed);
-        let visible = (whole || entries).then(|| storage.visible_share()).flatten();
+        let visible = (whole || entries).then(|| storage.settled_share()).flatten();
         let row = storage.scan_cost(read.needed) / all.max(1.0_f64);
         let fetch = storage.fetch_cost(read.needed.len());
         let saved = |share: f64| est * share * (fetch - ENTRY_SCAN_ROWS * row).max(0.0_f64);
@@ -439,7 +439,7 @@ impl PhysicalPlanner<'_> {
             let pages = found.probe_pages(&probe).map_or(descent, |pages| cost.index_descent * pages);
             let total = pages + found.probe_missed().unwrap_or(0.0_f64) * storage.miss_cost() + storage.fetch_cost(read.needed.len());
             let (index, method, columns) = (ix.name.clone(), ix.method.clone(), ix.columns.clone());
-            let covering = covers(&**kind, (&ix.columns, &types), read.needed) && storage.visible_share().is_some();
+            let covering = covers(&**kind, (&ix.columns, &types), read.needed) && storage.settled_share().is_some();
             let chosen = Probed { index, method, columns, probes: vec![probe], slots, used, loose: false, covering, decided: None };
             Some(Path {
                 total,

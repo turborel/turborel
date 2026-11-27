@@ -799,6 +799,7 @@ verification approach DO-178C expects (§8).
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 | D1231 | The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends |
 | D1232 | A merge join is priced by the pairs its key matches |
+| D1233 | An index-only read is priced by the share of rows every reader sees once the writes made are settled |
 | D1235 | A load by column into a table of keys and indexes adds each group's entries at once, a leaf's run at a time |
 | D1236 | A key of a row in another transaction's open load is pending to a UNIQUE check |
 | D1240 | A hash join run in parallel whose built operand outgrows its grant is built in parts and probed in passes |
@@ -16103,7 +16104,7 @@ visible to every reader (D34): an index-only scan reads the row, which
 is always right. No zone is narrower than its rows, as none is there.
 
 The first scan told a condition of a column kept, the first plan that
-weighs an index-only read of the table (`visible_share`), the first read
+weighs an index-only read of the table (`settled_share`), the first read
 that asks whether a row is visible to all, and the first count of its
 rows warm the table. Warming makes a zone not known for every block of row ids
 given so far, and the maintenance thread sums them up as it does those
@@ -22553,6 +22554,35 @@ only pairs of every equality's value, and an index nested-loop join pays,
 for each probe, the rows the probe finds (D35). A nested loop pays the
 product of its operands. None of them changes. The statistics pass and
 its window are unchanged, and nothing waits for them.
+
+#### D1233. An index-only read is priced by the share of rows every reader sees once the writes made are settled
+
+An index-only read of the row store saves the fetch of each row whose
+zone is settled visible to every reader (D34). The planner priced the
+saving by the share of the table's zones settled so now. A write makes
+its zone not visible until the maintenance thread settles it again,
+after the zones' rest, longer for a zone written without pause (D771). A
+table of one zone, as a district's or a warehouse's, was priced as
+fetching every row for that while after any write, and a table of more zones
+lost the share of those written. A plan made then was kept by its
+prepared statement or routine, as zones settling learns no plan again.
+A read of the table's key for columns of the key alone was planned as a
+scan of the table just after a write, and as an index-only read once the
+zones were settled. One statement was planned two ways by when it was
+first run.
+
+The share is now the one the zones reach once collection and the horizon
+pass every write made so far (`TableStorage::settled_share`), all of the
+row store's rows. Nothing of a zone's state tells a lasting hold from a
+passing one. A zone written is not visible until it is summed up, then
+not while the versions the write superseded wait for collection, and a
+commit after the horizon waits for the horizon, all on every update. So
+no share read of the zones prices a plan made just after a write as one
+made once they are settled. The executor still asks each row's zone
+(`TableStorage::visible_to_all`) and fetches a row not settled, so a read
+under a reader that holds the horizon back is right, and only its price
+is the settled one. The plan asks the table's zones as before, which
+warms a cold table (D868). Other engines say none, as before.
 
 #### D1235. A load by column into a table of keys and indexes adds each group's entries at once, a leaf's run at a time
 

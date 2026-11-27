@@ -391,11 +391,12 @@ pub trait TableStorage: Send + Sync {
     fn visible_to_all(&self, _id: RowId) -> bool {
         false
     }
-    /// \[DESIGN\] (RULES.md D34, D35) The share of its rows
-    /// `visible_to_all` would say true of now, near enough: the planner's,
-    /// pricing the reads an index-only scan saves. Default: none, for an
-    /// engine that says it of none.
-    fn visible_share(&self) -> Option<f64> {
+    /// \[DESIGN\] (RULES.md D34, D35, D1233) The share of its rows
+    /// `visible_to_all` says true of once collection and the horizon have
+    /// passed every write made so far: the planner's, pricing the reads an
+    /// index-only scan saves, the same just after a write as once it is
+    /// settled. Default: none, for an engine that says it of none.
+    fn settled_share(&self) -> Option<f64> {
         None
     }
     /// \[DESIGN\] (RULES.md D34) An entry of a version of row `id` that
