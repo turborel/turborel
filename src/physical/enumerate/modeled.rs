@@ -113,10 +113,12 @@ impl PhysicalPlanner<'_> {
             want_class,
             injected,
             implied: Vec::new(),
+            stars: Vec::new(),
             ranged: self.ranges(q),
         };
         model.rels = (0..q.leaves.len()).map(|r| self.rel(q, r, (&model, want))).collect::<Option<_>>()?;
         model.implied = model.implied_classes();
+        model.stars = model.stars_of(&|col| self.chain_keyed(q, col));
         Some(model)
     }
 
@@ -160,9 +162,17 @@ impl PhysicalPlanner<'_> {
         self.column_type(&leaf.plan, col.checked_sub(leaf.start)?)
     }
 
+    /// Whether the chain's column `col` alone is a key of its relation
+    /// (`cardinality/keys.rs`, RULES.md D384).
+    fn chain_keyed(&self, q: &Query, col: usize) -> bool {
+        let leaf = q.rel_of(col).and_then(|r| q.leaves.get(r));
+        let local = leaf.and_then(|l| Some((l, col.checked_sub(l.start)?)));
+        local.is_some_and(|(l, at)| self.estimating(|e| e.key_of(&l.plan, &[at]).is_some()))
+    }
+
     /// The distinct values of the chain's column `col`, else its
     /// relation's rows, as if a key.
-    fn chain_distinct(&self, q: &Query, col: usize) -> Option<f64> {
+    pub(super) fn chain_distinct(&self, q: &Query, col: usize) -> Option<f64> {
         let leaf = q.leaves.get(q.rel_of(col)?)?;
         Some(self.distinct_of(&leaf.plan, col.checked_sub(leaf.start)?))
     }
