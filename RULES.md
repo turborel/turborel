@@ -801,6 +801,7 @@ verification approach DO-178C expects (§8).
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
+| D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
 
 ### The project
 
@@ -22586,6 +22587,26 @@ and forgets it, or the write finds the transaction over and notes none.
 Recovery is unchanged. Nothing in the log tells a transaction rolled
 back in memory from one a crash stopped, so the rule is kept where
 records are written.
+
+#### D1254. The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none
+
+EXPLAIN ANALYZE runs the statement's plan with a count over each
+operator (D376, D378). The top-N that takes its rows from a grouping's
+partitions (D1124) looked for the projection, the part and the grouping
+by their own shapes, and a count over the projection or the grouping hid
+them from it. So the statement analyzed read every group back as a row,
+projected it and sorted it, where the statement itself kept a few rows a
+partition. The times and the rows it showed were of another plan than
+the one that runs.
+
+The top-N now passes those counts and keeps them
+(`exec/parallel/grouped/top.rs`, `Counts`), so an analyzed statement
+runs as the statement does. The grouping's count takes the groups its
+tables made, which is what its estimate is read against. The count of
+the projection over the part takes the rows the partitions kept for the
+sort, as those are the rows that leave the part. Both take the time of
+the part's run and of each row pulled. A part that gives way, and a sort
+whose rows are not taken from the tables, count every group in both.
 
 ## 2. Project layout
 

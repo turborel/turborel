@@ -257,3 +257,32 @@ fn a_join_keyed_by_a_groupings_columns_gives_the_plans_rows() {
         assert_eq!(alone, together, "{sql}");
     }
 }
+
+/// Verifies: [EXTENSION] (RULES.md D1254, D378) EXPLAIN ANALYZE of a
+/// sort's first rows over a grouping run in parallel takes them from the
+/// partitions' tables as the statement does, under a projection that is
+/// counted and under none. The grouping is counted the groups it made,
+/// and the projection the rows the partitions kept for the sort, fewer
+/// than the groups. A sort that asks its last row's peers reads every
+/// group, and its projection is counted a row a group.
+#[test]
+fn an_analyzed_sort_takes_its_first_rows_from_the_tables() {
+    let (_db, a) = tables();
+    let counted = |sql: &str| -> (u64, Option<u64>, Option<u64>) {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(grouped_part(&shown), "{sql}\n{shown}");
+        assert_eq!(alone, together, "{sql}");
+        let analyzed = a.analyzed(sql, &Params::new()).unwrap_or_else(|e| panic!("{sql}: {e:?}"));
+        let of = |label: &str| analyzed.operators.iter().find(|o| o.label.starts_with(label)).map(|o| o.rows);
+        (analyzed.rows, of("Aggregate"), of("Project"))
+    };
+    let groups: u64 = rows(&a, "SELECT COUNT(*) FROM (SELECT G FROM C GROUP BY G) AS X").unwrap().concat().parse().unwrap();
+    let (given, made, projected) = counted("SELECT 1, G, COUNT(*) FROM C GROUP BY G ORDER BY 3 DESC FETCH FIRST 6 ROWS ONLY");
+    assert_eq!((given, made), (6, Some(groups)), "the groups its tables made");
+    assert!(projected.is_some_and(|kept| (6..groups).contains(&kept)), "the rows the partitions kept: {projected:?} of {groups}");
+    let (given, made, _) = counted("SELECT G, COUNT(*) FROM C GROUP BY G ORDER BY 2 DESC, 1 FETCH FIRST 6 ROWS ONLY");
+    assert_eq!((given, made), (6, Some(groups)), "under no projection that computes");
+    let (given, made, projected) = counted("SELECT 1, G, COUNT(*) FROM C GROUP BY G ORDER BY 3 DESC FETCH FIRST 6 ROWS WITH TIES");
+    assert!(given >= 6, "the peers of the last row too");
+    assert_eq!((made, projected), (Some(groups), Some(groups)), "every group read and projected");
+}
