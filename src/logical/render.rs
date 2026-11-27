@@ -5,6 +5,7 @@ use std::fmt::Write;
 
 use super::{Cond, Expr, LogicalPlan, Quantifier, SortKey};
 use crate::catalog::MatchType;
+use crate::value::collation::CollationRef;
 
 /// The display name of column `i`, or `#i` if `names` has none for it.
 pub fn column_name(names: &[String], i: usize) -> String {
@@ -116,6 +117,18 @@ pub fn render_keys(keys: &[SortKey], names: &[String]) -> String {
         .join(", ")
 }
 
+/// [ISO/IEC 9075:1992 §8.2 GR3d] The grouping columns `groups` as text,
+/// each named from `names` and followed by the collation it is grouped
+/// under, of `collations`, if that is not its default, as a `<collate
+/// clause>` names it, so a plan shows what its groups are told apart by.
+pub fn render_groups(groups: &[usize], collations: &[Option<CollationRef>], names: &[String]) -> String {
+    let grouped = |(at, &g): (usize, &usize)| match collations.get(at).and_then(Option::as_ref) {
+        Some(by) => format!("{} COLLATE {}", column_name(names, g), by.collation.name()),
+        None => column_name(names, g),
+    };
+    groups.iter().enumerate().map(grouped).collect::<Vec<_>>().join(", ")
+}
+
 impl LogicalPlan {
     /// The plan as indented text, one node per line.
     pub fn explain(&self) -> String {
@@ -145,11 +158,9 @@ impl LogicalPlan {
                 let rendered: Vec<String> = m.conds().map(|c| render_cond(c, &both)).collect();
                 writeln!(out, "{pad}Mark join on {}", rendered.join(" marking "))
             }
-            LogicalPlan::Aggregate { groups, aggs, input, .. } => {
-                let n = inner(input);
-                let g: Vec<String> = groups.iter().map(|&i| column_name(&n, i)).collect();
+            LogicalPlan::Aggregate { groups, collations, aggs, input, .. } => {
                 let a: Vec<&str> = aggs.iter().map(|a| a.label.as_str()).collect();
-                writeln!(out, "{pad}Aggregate group by [{}] computing [{}]", g.join(", "), a.join(", "))
+                writeln!(out, "{pad}Aggregate group by [{}] computing [{}]", render_groups(groups, collations, &inner(input)), a.join(", "))
             }
             LogicalPlan::Project { exprs, input } => {
                 let n = inner(input);
