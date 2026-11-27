@@ -788,9 +788,9 @@ verification approach DO-178C expects (§8).
 | D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 | D1231 | The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends |
-| D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1235 | A load by column into a table of keys and indexes adds each group's entries at once, a leaf's run at a time |
 | D1236 | A key of a row in another transaction's open load is pending to a UNIQUE check |
+| D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 
 ### The project
 
@@ -22075,6 +22075,63 @@ first position asked, as it ran from the open before. A rollback, a
 replica's replay and the checkpoint job ask up to the log's end. The
 appends write nothing for the count, and the commit reads only the
 position of the last checkpoint.
+#### D1235. A load by column into a table of keys and indexes adds each group's entries at once, a leaf's run at a time
+
+A load by column (D1148) went only into a table of no index and no key,
+so a table of a primary key or a foreign key, which most are, loaded
+row by row. Such a table now loads by column too, where its UNIQUE
+constraints have no period and each foreign key references another
+table, of no subtable, through an index of exactly its referenced
+columns, with no period. Its group is written and logged as its extent,
+as a table of no index's is, and then each index takes the group's
+entries at once through `Index::insert_sorted`. A B-link tree sorts
+them and writes them a leaf's run at a time: each leaf a run falls in is
+reached and locked once for the keys it covers, each key searched,
+written and found alone or not under the leaf's latch as one key's
+insert does, and a leaf that fills splits as it would for one key, the
+keys after it going down again. A reader sees each entry as it is
+written, as it does one written alone. Any other method keeps the
+default, `insert_from` of each entry in turn. The checkpoint gate is
+held from the group to its last entry, so a checkpoint holds both or
+neither. An entry's undo is logged even when its insert fails, as an
+entry absent is removed as nothing.
+
+A row whose key was not alone in a unique index is noted for the
+statement's end, which checks it as a row inserted alone is checked.
+A key of a row in a group of a load still open in another transaction
+is that transaction's change pending (D1236), so the check fails the
+whole statement as another transaction's row of the key does (SQLCODE
+-911, SQLSTATE TB911), exactly as it fails a multi-row INSERT of the
+row path today, whether the other row is a version in the tree or a row
+of an open load's group; it never rests on a row that may yet be rolled
+back. A foreign key's distinct
+keys among the group's rows are each looked up once in its referenced
+table before the group is written, and a key that matches no row sends
+the rows to the row path, which names it; nothing of the group is
+written before that. A load into a table of foreign keys holds back no
+index (D532), as a write to a table it references reads its rows by
+them.
+
+Recovery mends the entries of an index reopened as its checkpoint left
+it a group at a time: the entries of the rows the group's extent holds
+are taken back, as a row's are under its images, and then the entries
+of the rows it holds now that an index lacks are added at once.
+
+#### D1236. A key of a row in another transaction's open load is pending to a UNIQUE check
+
+A UNIQUE check at a statement's end reads the newest state of each other
+row its key's entries name. A row a load wrote straight into a frozen
+group (D533) has no version in the tree, and its state was read from its
+group as if it stood, whoever made the group. So a row of another
+transaction's open load was taken as a committed holder of its key, and
+an insert of that key failed as a duplicate (SQLSTATE 23000) though the
+load might yet roll back. The newest state of a frozen row now tells
+the group's maker: a row of a group of another transaction still open
+is that transaction's change pending, as a version in the tree made by
+it is, so the check fails the statement as a key another transaction is
+changing does (SQLCODE -911), and an insert of the key after the load
+rolls back goes in.
+
 #### D1241. A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound
 
 A sort under FETCH FIRST tells the scan under it the bound of its first
@@ -22158,63 +22215,6 @@ keeps few of them, so such a run now leaves its late columns late
 The rows given, their order and the errors are as before. EXPLAIN shows
 `Parallel` over such a sort, and EXPLAIN ANALYZE counts fewer rows of
 its scan.
-#### D1235. A load by column into a table of keys and indexes adds each group's entries at once, a leaf's run at a time
-
-A load by column (D1148) went only into a table of no index and no key,
-so a table of a primary key or a foreign key, which most are, loaded
-row by row. Such a table now loads by column too, where its UNIQUE
-constraints have no period and each foreign key references another
-table, of no subtable, through an index of exactly its referenced
-columns, with no period. Its group is written and logged as its extent,
-as a table of no index's is, and then each index takes the group's
-entries at once through `Index::insert_sorted`. A B-link tree sorts
-them and writes them a leaf's run at a time: each leaf a run falls in is
-reached and locked once for the keys it covers, each key searched,
-written and found alone or not under the leaf's latch as one key's
-insert does, and a leaf that fills splits as it would for one key, the
-keys after it going down again. A reader sees each entry as it is
-written, as it does one written alone. Any other method keeps the
-default, `insert_from` of each entry in turn. The checkpoint gate is
-held from the group to its last entry, so a checkpoint holds both or
-neither. An entry's undo is logged even when its insert fails, as an
-entry absent is removed as nothing.
-
-A row whose key was not alone in a unique index is noted for the
-statement's end, which checks it as a row inserted alone is checked.
-A key of a row in a group of a load still open in another transaction
-is that transaction's change pending (D1236), so the check fails the
-whole statement as another transaction's row of the key does (SQLCODE
--911, SQLSTATE TB911), exactly as it fails a multi-row INSERT of the
-row path today, whether the other row is a version in the tree or a row
-of an open load's group; it never rests on a row that may yet be rolled
-back. A foreign key's distinct
-keys among the group's rows are each looked up once in its referenced
-table before the group is written, and a key that matches no row sends
-the rows to the row path, which names it; nothing of the group is
-written before that. A load into a table of foreign keys holds back no
-index (D532), as a write to a table it references reads its rows by
-them.
-
-Recovery mends the entries of an index reopened as its checkpoint left
-it a group at a time: the entries of the rows the group's extent holds
-are taken back, as a row's are under its images, and then the entries
-of the rows it holds now that an index lacks are added at once.
-
-#### D1236. A key of a row in another transaction's open load is pending to a UNIQUE check
-
-A UNIQUE check at a statement's end reads the newest state of each other
-row its key's entries name. A row a load wrote straight into a frozen
-group (D533) has no version in the tree, and its state was read from its
-group as if it stood, whoever made the group. So a row of another
-transaction's open load was taken as a committed holder of its key, and
-an insert of that key failed as a duplicate (SQLSTATE 23000) though the
-load might yet roll back. The newest state of a frozen row now tells
-the group's maker: a row of a group of another transaction still open
-is that transaction's change pending, as a version in the tree made by
-it is, so the check fails the statement as a key another transaction is
-changing does (SQLCODE -911), and an insert of the key after the load
-rolls back goes in.
-
 ## 2. Project layout
 
 ```
