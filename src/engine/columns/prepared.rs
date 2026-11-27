@@ -7,6 +7,14 @@
 //! dictionary, its entries made integers or text, so the runs after read
 //! it by parsing its few header bytes alone.
 //!
+//! \[DESIGN\] (RULES.md D1298) A dictionary's entries are made text the
+//! first time a run asks for the chunk's rows as text, not as the chunk
+//! is opened. A conjunct judged of the chunk where its octets lie, a
+//! value read alone and a length taken of its ends open the chunk and
+//! ask for no text, so they pay for no UTF-8 check and no copy of
+//! entries nobody reads. The text is made once a chunk opened, of the
+//! chunk's own octets, checked UTF-8 before any of it is given.
+//!
 //! The bytes of a chunk whose page passed through no encoding are not
 //! kept (RULES.md D1094): each run reads them in the pool, its page held
 //! while the run is decoded of it and no longer, so a chunk is never
@@ -27,6 +35,7 @@
 //! too, with what each code says of each conjunct, until the next group.
 
 use std::collections::VecDeque;
+use std::sync::OnceLock;
 
 use super::encoded::Entries;
 use super::fsst::Symbols;
@@ -60,7 +69,31 @@ struct Held {
 #[derive(Default)]
 pub struct Made {
     pub(super) words: Option<Vec<i64>>,
-    pub(super) entries: Option<Entries>,
+    /// \[DESIGN\] (RULES.md D1298) Its entries as text, made the first
+    /// time they are asked for (`texts_of`), and none if the chunk is no
+    /// dictionary of texts.
+    entries: OnceLock<Option<Entries>>,
+    /// How many times its entries were made text, as a test counts them.
+    #[cfg(test)]
+    pub(super) text_count: std::sync::atomic::AtomicUsize,
+}
+
+impl Made {
+    /// \[DESIGN\] (RULES.md D1298) The entries of `chunk`, the chunk it
+    /// is of, as text of type `t`, judged UTF-8 by `kernels`
+    /// (`Body::entry_texts`). They are made the first time they are
+    /// asked for and kept for the chunk's other runs. There are none if
+    /// `t` is no character string type, the chunk is no dictionary or
+    /// an entry is not UTF-8. A cell set once holds them, so two readers
+    /// of one chunk make them once and neither reads them half made.
+    fn texts_of(&self, chunk: &Chunk<'_>, (t, kernels): (&DataType, &dyn crate::kernels::Kernels)) -> Option<&Entries> {
+        let made = self.entries.get_or_init(|| {
+            #[cfg(test)]
+            self.text_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            padding(t).and_then(|pad| chunk.body.entry_texts(pad, kernels))
+        });
+        made.as_ref()
+    }
 }
 
 /// \[DESIGN\] The chunks opened of the group being read.
@@ -82,6 +115,14 @@ pub struct Prepared {
 }
 
 impl Prepared {
+    /// How many times the chunks held had their entries made text, as a
+    /// test counts them.
+    #[cfg(test)]
+    pub(super) fn texts_made(&self) -> usize {
+        let made = |h: &Held| h.made.text_count.load(std::sync::atomic::Ordering::Relaxed);
+        self.columns.iter().flatten().map(made).sum()
+    }
+
     /// Lets every chunk go, as the next group is taken up.
     pub fn clear(&mut self) {
         let Prepared { columns, spare, sketches, .. } = self;
@@ -151,11 +192,10 @@ fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t): (&Zone, &DataType), mut bytes:
             bytes.extend_from_slice(read);
         }
         let chunk = Chunk::parse(read)?;
-        // Entries as text of a character string type, else as integers.
-        let made = match padding(t) {
-            Some(pad) => Made { words: None, entries: chunk.body.entry_texts(pad, pages.kernels) },
-            None => Made { words: chunk.body.entry_words(), entries: None },
-        };
+        // Entries as integers of a type not of character strings; as
+        // text they are made when first asked for (RULES.md D1298).
+        let words = if padding(t).is_some() { None } else { chunk.body.entry_words() };
+        let made = Made { words, ..Made::default() };
         Ok((chunk.table(), made, in_place))
     })?;
     Ok(Held { first: zone.run.first, end: zone.run.first.saturating_add(zone.run.rows), bytes, in_place, table, made })
@@ -182,15 +222,16 @@ impl Chunk<'_> {
         self.body.int_at(n, made.words.as_deref())
     }
 
-    /// As `coded`, of what is made of it once, `made`: none if it is not
-    /// a dictionary of texts.
+    /// As `coded`, of what is made of it once, `made`, its entries made
+    /// text of type `t` by `kernels` if no run asked for them before
+    /// (RULES.md D1298): none if it is not a dictionary of texts.
     pub(super) fn coded_made(
         &self,
         positions: &[usize],
         outs: (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Mask),
-        made: &Made,
+        (made, t, kernels): (&Made, &DataType, &dyn crate::kernels::Kernels),
     ) -> Option<()> {
-        self.coded_with(positions, outs, made.entries.as_ref()?)
+        self.coded_with(positions, outs, made.texts_of(self, (t, kernels))?)
     }
 }
 

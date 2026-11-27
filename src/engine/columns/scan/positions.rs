@@ -244,7 +244,7 @@ pub(super) fn coded_at<S: Seal>(
         }
         let at: Vec<usize> = these.iter().map(|&p| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX)).collect();
         let held = prepared.with(pages, (column, zone, t), |chunk, made| {
-            Ok(chunk.coded_made(&at, (&mut text, &mut ends, &mut codes, &mut nulls), made))
+            Ok(chunk.coded_made(&at, (&mut text, &mut ends, &mut codes, &mut nulls), (made, t, pages.kernels)))
         })?;
         if held.is_none() {
             return Ok(None);

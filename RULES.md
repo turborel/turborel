@@ -818,6 +818,7 @@ verification approach DO-178C expects (§8).
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
+| D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 
 ### The project
 
@@ -23464,6 +23465,35 @@ order, gave the row store's results too
 (`test/integration/window_nulls.rs`, which stays as the requirement's
 test). Which step kept the store's numbers from the lane there was not
 found. The lane's own test shows the place it now clears.
+
+#### D1298. A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened
+
+A scan opens each chunk it reads once for all the runs that read it
+(D352). Opening a dictionary chunk of a character string column made
+its entries text at once. The octets of every entry were judged UTF-8
+and copied, and the text was kept for the runs that give the chunk's
+rows as codes of those entries. Many readers of such a chunk ask for no
+text. A conjunct
+judged of the chunk where its octets lie (D360, D512, D1251, D1253), a
+value read alone, and a row group passed over after its first chunks
+all open the chunk and read its codes or its octets as written. Each
+still paid for the check and the copy of entries nobody read.
+
+The entries are now made text the first time a run asks for the chunk's
+rows as text (`engine/columns/prepared.rs`, `Made::texts_of`), and kept
+from then for the chunk's other runs as before. A chunk never asked for
+text makes none.
+
+Nothing a reader of the text is given changes. The text is made of the
+same octets by the same function, and those octets are judged UTF-8 as
+the text is made, before any of it is given, so a chunk with an entry
+that is no text still gives none and its rows are read the way that
+raises what is malformed. The text is held in a cell that is set once.
+Two runs that ask for the text of one opened chunk make it once, and a
+chunk whose entries were judged not to be text is not judged again. The
+chunks opened belong to the one scan that reads them, or to one decoding
+of a late column at a time (D361), so no two threads ask one cell at
+once, and the cell would still make the text once if they did.
 
 ## 2. Project layout
 

@@ -81,6 +81,7 @@ mod transfer;
 mod tree_path;
 mod txn_layer;
 mod undo_memory;
+mod unread_texts;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
 mod first_groups;
@@ -319,7 +320,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
 /// window narrowed's and a join built in passes' last, as `last` holds no
 /// more.
-fn closing() -> [&'static [Mutation]; 37] {
+fn closing() -> [&'static [Mutation]; 38] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -342,6 +343,7 @@ fn closing() -> [&'static [Mutation]; 37] {
         &like_pieces::LIKE_PIECES,
         &like_coded::LIKE_CODED,
         &like_entries::LIKE_ENTRIES,
+        &unread_texts::UNREAD_TEXTS,
         &outer_steps::OUTER_STEPS,
         &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
