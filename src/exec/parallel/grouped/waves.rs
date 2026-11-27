@@ -46,7 +46,7 @@ use crate::exec::{Runner, broken};
 use crate::txn::TxId;
 use spilled::Spilled;
 pub(super) use spilled::given_of;
-use wide::{Kept, WIDE, Widen, thawed_and_merged};
+use wide::{Kept, WIDE, Widen, kept_of, thawed_and_merged};
 
 /// \[DESIGN\] The rows of a morsel each of its groups stands for, on each
 /// thread, at least, for the statement's thread to merge the morsel's
@@ -456,8 +456,8 @@ fn finished_wave(
 ) -> Result<Vec<Run>> {
     let (grouping, kept, wave, db_for) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), db.clone());
     let finish = Box::new(move |p: usize| {
-        let table = thawed_and_merged(&grouping, (&kept, p), &wave, &widen)?.into_table()?;
-        grouping.kept_of(table, &Runner::new(&db_for, tx))
+        let merged = thawed_and_merged(&grouping, (&kept, p), &wave, &widen)?;
+        kept_of(&grouping, merged, &Runner::new(&db_for, tx))
     });
     Morsels::start(db, tx, (PARTS, degree), finish).collect()
 }

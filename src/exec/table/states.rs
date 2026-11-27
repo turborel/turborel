@@ -22,6 +22,7 @@ mod boxed;
 mod carried;
 mod columns;
 mod parts;
+mod placed;
 mod typed;
 mod written;
 

@@ -18,10 +18,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, PoisonError};
 
 use super::super::Grouping;
+use super::super::runs::Run;
 use super::Frozen;
 use crate::error::Result;
-use crate::exec::broken;
 use crate::exec::table::{Adopted, GroupTable, Made, Wide};
+use crate::exec::{Runner, broken};
 
 /// \[DESIGN\] (RULES.md D1300) The groups a partition's table holds at
 /// most before the partition goes wide. A merge into a table costs the
@@ -125,6 +126,25 @@ impl Merging {
             Merging::Table(table) => Ok(*table),
             Merging::Wide(wide) => wide.into_table(),
         }
+    }
+}
+
+/// The groups a partition of `grouping` gives of `merged`, finished, as
+/// `Grouping::kept_of` gives a table's. Of a wide partition asked the
+/// first rows of a sort they are picked where the groups lie
+/// (`top.rs`). For every other reader it is gathered into a table.
+///
+/// # Errors
+///
+/// As finishing a group fails.
+pub(super) fn kept_of(grouping: &Grouping, merged: Merging, runner: &Runner) -> Result<Run> {
+    let wide = match merged {
+        Merging::Table(table) => return grouping.kept_of(*table, runner),
+        Merging::Wide(wide) => *wide,
+    };
+    match &grouping.top {
+        Some(top) => Ok(Run::Rows(top.of_wide(wide, &grouping.spec.aggs)?.into_iter().map(|row| (0, row)).collect())),
+        None => grouping.kept_of(wide.into_table()?, runner),
     }
 }
 

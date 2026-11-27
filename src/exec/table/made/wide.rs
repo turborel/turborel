@@ -33,6 +33,7 @@ use crate::error::Result;
 use crate::exec::broken;
 use crate::logical::AggCall;
 use crate::storage::mask::index;
+use crate::storage::{Column, Row};
 
 /// The segment of a group that lies in the table of the partition's own.
 const OWN: u32 = u32::MAX;
@@ -117,7 +118,6 @@ impl Wide {
     }
 
     /// How many groups.
-    #[cfg(test)]
     pub(in crate::exec) fn len(&self) -> usize {
         self.hashes.len()
     }
@@ -398,6 +398,86 @@ impl GroupTable {
             states.merge_all(agg, groups, (sent, places))?;
         }
         Ok(())
+    }
+}
+
+impl Made {
+    /// \[DESIGN\] (RULES.md D1300) The results of its set function at `at`,
+    /// `agg`, of the groups at `places`, as a column, each the result a
+    /// table gives of a group merged of that one alone
+    /// (`states/placed.rs`).
+    ///
+    /// # Errors
+    ///
+    /// As a set function's `finish`; SQLCODE -910 of no such function.
+    pub(in crate::exec) fn results_at(&self, (at, agg): (usize, &AggCall), places: &[u32]) -> Result<Column> {
+        self.states.get(at).ok_or_else(|| broken("a set function a Made does not hold"))?.results_at(agg, places)
+    }
+
+    /// Finishes every group's result at `places` of each set function of
+    /// `aggs` but those at `made`, keeping none, so a result that raises
+    /// raises as it does when every group is given.
+    ///
+    /// # Errors
+    ///
+    /// As a set function's `finish`.
+    pub(in crate::exec) fn checked_but_at(&self, made: &[usize], aggs: &[AggCall], places: &[u32]) -> Result<()> {
+        let mut rest = self.states.iter().zip(aggs).enumerate().filter(|(at, _)| !made.contains(at));
+        rest.try_for_each(|(_, (sent, agg))| sent.checked_at(agg, places))
+    }
+
+    /// The first rows' numbers of the groups at `places`, as the integers
+    /// a sort takes.
+    pub(in crate::exec) fn firsts_at(&self, places: &[u32]) -> Vec<i64> {
+        let first = |i: u32| self.firsts.get(index(i)).copied().unwrap_or(u64::MAX);
+        places.iter().map(|&i| i64::try_from(first(i)).unwrap_or(i64::MAX)).collect()
+    }
+
+    /// The row of the group at `place`, its grouping values then each set
+    /// function's result, of the set functions `aggs`, as a table gives
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// As a set function's `finish`.
+    pub(in crate::exec) fn row_at(&self, place: u32, aggs: &[AggCall]) -> Result<Row> {
+        let mut row = self.keys.values(index(place));
+        for (sent, agg) in self.states.iter().zip(aggs) {
+            row.push(sent.finished_at(agg, place)?);
+        }
+        Ok(row)
+    }
+}
+
+impl Wide {
+    /// How many columns its keys have.
+    pub(in crate::exec) fn width(&self) -> usize {
+        self.own.keys.width()
+    }
+
+    /// The table of its own, of the groups that took more than one row.
+    pub(in crate::exec) fn own(&self) -> &GroupTable {
+        &self.own
+    }
+
+    /// Its groups of one row, where they lie: each Made that holds any,
+    /// in the order handed, with the places of those groups in it, in the
+    /// order of their first rows.
+    pub(in crate::exec) fn lying(&self) -> Vec<(Arc<Made>, Vec<u32>)> {
+        let mut lying: Vec<(Arc<Made>, Vec<u32>)> = Vec::new();
+        let mut among: Vec<Option<usize>> = vec![None; self.segments.len()];
+        for &(segment, place) in &self.lies {
+            let (Some(at), Some(held)) = (among.get_mut(index(segment)), self.segments.get(index(segment))) else { continue };
+            let Some(made) = &held.made else { continue };
+            let k = *at.get_or_insert_with(|| {
+                lying.push((Arc::clone(made), Vec::with_capacity(held.lying)));
+                lying.len().saturating_sub(1)
+            });
+            if let Some((_, places)) = lying.get_mut(k) {
+                places.push(place);
+            }
+        }
+        lying
     }
 }
 

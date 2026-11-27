@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering;
 use super::super::super::pipeline::Pipeline;
 use super::super::super::probe::PARTS;
 use super::super::super::{Held, Limit};
+use super::super::top::Top;
 use super::super::{Ordered, grouping_of, read_of};
 use super::wide::Widen;
 use super::{Forced, How, few, waved_as};
@@ -292,4 +293,54 @@ fn the_groups_are_the_same_whether_partitions_go_wide() {
         }
     }
     assert!(kept_wide, "no wide partition was kept between waves and taken up again with no spill: {seen:?}");
+}
+
+/// The first `most` rows each partition keeps of the groups of `sql`, a
+/// grouping of T by one column, under a sort by its set function at
+/// `by`, the greatest first, its waves run as `how` says on three
+/// threads: every partition's rows, in the order of their text.
+fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> Vec<String> {
+    let (st, optimized) = a.optimized(sql).unwrap();
+    let planned = PhysicalPlanner::new(&st).plan(&optimized);
+    let aggregate = if let Plan::Project { input, .. } = planned { *input } else { planned };
+    let db = Db::of(&st);
+    let (mut grouping, read) = grouping_of(&aggregate, (None, None), st.functions.seed().clone()).unwrap();
+    let limit = Limit::of(&db);
+    let Held::Kept(pipeline) = Pipeline::told(read, (&db, NO_TRANSACTION), &limit, &[]).unwrap() else { panic!("the pipeline gave way") };
+    grouping.read = pipeline.batched.as_ref().and_then(|by_batch| read_of(&grouping, by_batch));
+    let unpadded = grouping.read.as_ref().map(|by_batch| by_batch.unpadded.clone());
+    grouping.seed = grouping.seed.unpadded(&unpadded.expect("grouped by batch"));
+    grouping.top = Some(Arc::new(Top::by_function((1, grouping.spec.aggs.len()), (by, most), (&db, NO_TRANSACTION))));
+    let Held::Kept((runs, given)) = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, how).unwrap() else {
+        panic!("the grouping gave way")
+    };
+    let mut rows: Vec<String> = Ordered::of(runs, given).unwrap().map(|row| format!("{:?}", row.unwrap())).collect();
+    rows.sort();
+    rows
+}
+
+/// Verifies: [DESIGN] RULES.md D1300, D1256 the first rows a partition
+/// keeps for a sort by a set function are the same rows, each with the
+/// same values and first row's number, whether the partition is wide,
+/// and its groups read where they lie, or a table: by a count, a sum and
+/// a greatest value, of groupings whose groups took one row each, whose
+/// groups took rows of several morsels, of one where some did and some
+/// did not, so the rows are picked of both, and of few groups, with ties
+/// cut by the first rows' numbers.
+#[test]
+fn the_first_rows_by_a_set_function_are_the_same_of_wide_partitions() {
+    let (_db, a) = table();
+    let sorts = [("K", 1_usize), ("K - MOD(K, 10)", 1), ("K - MOD(K, 7)", 1), ("MOD(K, 6000)", 0), ("MOD(K, 6000)", 2), ("MOD(K, 40)", 1)];
+    for (keyed, by) in sorts {
+        let sql = format!("SELECT G, COUNT(*), SUM(V), MAX(K) FROM (SELECT {keyed} AS G, K, V FROM T) AS Q GROUP BY G");
+        let never = How { forced: NONE, widen: Widen::past(usize::MAX), ..How::default() };
+        let expected = first_rows(&a, &sql, &never, (by, 7));
+        assert!(expected.len() > 30 && expected.len() <= PARTS.saturating_mul(7), "{} rows: {sql}", expected.len());
+        for past in [0_usize, 5] {
+            let how = How { forced: NONE, widen: Widen::past(past), ..How::default() };
+            assert_eq!(first_rows(&a, &sql, &how, (by, 7)), expected, "wide past {past} groups, by {by}: {sql}");
+            let wide = how.widen.merged.load(Ordering::Relaxed);
+            assert!(past > 0 || wide > 0, "no partition went wide: {sql}");
+        }
+    }
 }

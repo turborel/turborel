@@ -23965,10 +23965,16 @@ statement returns depends on it.
 
 Between waves a wide partition is kept as it is and charged its share
 of each Made it adopted, the hashes and places of its groups and its own
-table. What reads a partition's groups reads a table, so a wide
-partition is gathered into one at its end, each group taken up from
-where it lies in the order of the first rows, and before it is written
-to the spill, whose form is unchanged. A wide partition whose probe
+table. A sort's first rows by set functions alone (D1256) are picked
+where the groups lie: the sort keys' results are made a Made at a time,
+each as a table makes a new group's, the Made's state merged into one
+fed nothing, so no value differs from a table's; one top-N takes them
+with the partition's own table's, so as many rows are kept as of a
+table; and only the groups picked are made rows, no key copied. Every
+other reader reads a table, so a wide partition is gathered into one
+for it, each group taken up from where it lies in the order of the
+first rows, as it is before it is written to the spill, whose form is
+unchanged. A wide partition whose probe
 grows long places its groups by keyed hashes, each key read where its
 group lies (D357).
 
@@ -23977,7 +23983,8 @@ goes wide before its first Made, after its first and after its second,
 frozen between two Mades or not, and compare every group, first row and
 state, and run groupings with their partitions forced wide against the
 same not wide, held by the grant, through several waves and through the
-spill.
+spill, and compare the first rows a sort by a count, a sum and a
+greatest value keeps of wide partitions with those it keeps of tables.
 
 #### D447. A unique constraint added in a transaction fills its index with every version
 

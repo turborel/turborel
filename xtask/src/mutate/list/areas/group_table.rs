@@ -52,8 +52,11 @@ const WIDE_KEYED: &str = "exec::table::made::wide::tests::colliding_groups_turn_
 /// Groupings with their partitions forced wide against the same not wide.
 const WIDE_WAVES: &str = "exec::parallel::grouped::waves::tests::the_groups_are_the_same_whether_partitions_go_wide";
 
+/// A sort's first rows of wide partitions against those of tables.
+const WIDE_FIRST: &str = "exec::parallel::grouped::waves::tests::the_first_rows_by_a_set_function_are_the_same_of_wide_partitions";
+
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 33] = [
+pub const GROUP_TABLE: [Mutation; 37] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -383,5 +386,45 @@ pub const GROUP_TABLE: [Mutation; 33] = [
         replacement: "if table.len() > widen.max(usize::MAX) {",
         integration: &[],
         unit: &[WIDE_WAVES],
+    },
+    Mutation {
+        name: "wide-first-rows-of-its-own-table-alone",
+        package: Package::Core,
+        breaks: "a sort's first rows of a wide partition are picked of the groups of several rows alone, those of one row where they lie never read (RULES.md D1300)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "let batches = held.into_iter().chain(rest);",
+        replacement: "let batches = held.into_iter().chain(rest.take(0));",
+        integration: &[],
+        unit: &[WIDE_FIRST],
+    },
+    Mutation {
+        name: "wide-first-rows-of-its-mades-alone",
+        package: Package::Core,
+        breaks: "a sort's first rows of a wide partition are picked of the groups of one row alone, the partition's own table never read (RULES.md D1300)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "(table.len() > 0).then(",
+        replacement: "(table.len() > table.len()).then(",
+        integration: &[],
+        unit: &[WIDE_FIRST],
+    },
+    Mutation {
+        name: "wide-picked-row-of-another-made",
+        package: Package::Core,
+        breaks: "a group picked where it lies in a wide partition is made a row of the Made before its own (RULES.md D1300)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "let k = bases.partition_point(|&base| base <= group).saturating_sub(1);",
+        replacement: "let k = bases.partition_point(|&base| base <= group).saturating_sub(2);",
+        integration: &[],
+        unit: &[WIDE_FIRST],
+    },
+    Mutation {
+        name: "group-read-where-it-lies-fed-nothing",
+        package: Package::Core,
+        breaks: "the results of groups read where they lie are those of states fed nothing, the Made's states not merged into them (RULES.md D1300)",
+        file: "src/exec/table/states/placed.rs",
+        original: "states.merge_all(agg, &groups, (self, places))?;",
+        replacement: "states.merge_all(agg, &[], (self, &[]))?;",
+        integration: &[],
+        unit: &[WIDE_FIRST],
     },
 ];
