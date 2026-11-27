@@ -4,6 +4,8 @@
 //! and `.` keeping the line boundaries of UTS #18 RL1.6 [ISO/IEC
 //! 9075-2:2023 §9.28 GR9a i] that `regex/text.rs` finds.
 
+mod rest;
+
 use super::class::{CharSet, fixed_escape, not_newline};
 use super::flags::{Flag, Flags};
 use super::parse::{MAX_NESTING, Node, Parsed, Quantity};
@@ -59,6 +61,9 @@ pub(super) struct Program {
     pub(super) slots: usize,
     /// How many loops keep a position.
     pub(super) loops: usize,
+    /// The loop that takes the rest of any text, if it has one
+    /// (`compile/rest.rs`): its first instruction and the one after it.
+    pub(super) rest: Option<(usize, usize)>,
 }
 
 /// Compiles `parsed` under `flags`, `.` matching newlines under `s`, `^`
@@ -80,7 +85,7 @@ pub(super) fn compile(parsed: &Parsed, flags: Flags) -> Result<Program> {
     c.emit(Inst::Save(1))?;
     c.emit(Inst::Match)?;
     let slots = parsed.groups.saturating_add(1).saturating_mul(SLOTS_PER_GROUP);
-    Ok(Program { insts: c.insts, slots, loops: c.loops })
+    Ok(Program { rest: rest::rest(&c.insts), insts: c.insts, slots, loops: c.loops })
 }
 
 struct Compiler {
