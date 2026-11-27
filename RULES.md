@@ -821,6 +821,7 @@ verification approach DO-178C expects (§8).
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
+| D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 
 ### The project
 
@@ -23922,6 +23923,61 @@ was fixed that week, and lint baselines and over-long files were paid down.
   M. E. Kounavis and F. L. Berry, *A Systematic Approach to Building High
   Performance Software-based CRC Generators* (2005); D. V. Sarwate,
   *Computation of Cyclic Redundancy Checks via Table Look-Up* (1988).
+
+#### D1300. A partition of a grouping that holds many groups adopts them where its morsels put them
+
+A grouping run in parallel merges each partition's groups into a table
+of the partition's own (D356, D1110). Every new group is copied there
+out of the groups its morsel handed over (`exec/table/made.rs`), key,
+first row's number and states, and found again through the table's
+slots. For a partition of many groups, most of them new, that copy and
+those slots are most of what a group costs to merge, and while a wave is
+merged its groups are held twice, in the Mades and in the tables.
+
+A partition whose table holds more groups than a cache keeps close goes
+wide (`exec/table/made/wide.rs`, `exec/parallel/grouped/waves/wide.rs`).
+A wide partition copies nothing of a new group. It keeps the Mades it
+was handed, shared as they were, and of each group its hash and where
+the group lies, the Made and the place of its first row. A Made is never
+written once its morsel's thread has made it, so any thread may read it,
+and a group that takes a second row cannot merge it there. The first
+time a row meets a group held already, the group is taken up into a
+table of the partition's own, and that row and every later one merge
+there. A group of one row has no state but the Made's.
+
+The groups, their order and each set function's result are those of the
+table the partition would have merged. A wave holds its Mades in the
+morsels' order and a Made holds a partition's rows in the morsel's, so
+the first row of a group to be looked up is its first row, and the
+groups listed are in the order of their first rows. A group taken up is
+given the states of its first row and then those of its later rows in
+the order they come, which is the order a table merges them in, so a
+state that depends on that order is the same: the least of strings
+equal as padded, the value of a group's first row. A sum of approximate
+numbers writes no state and is not merged at all (D53).
+
+A partition goes wide by its table's own count of groups after a Made
+is merged, never by a count handed nor an estimate, and stays wide for
+the rest of the statement. A grouping whose partitions hold few groups,
+though many are handed them, is merged as before. Which morsels a wave
+holds may differ from one run to the next, as before, and nothing a
+statement returns depends on it.
+
+Between waves a wide partition is kept as it is and charged its share
+of each Made it adopted, the hashes and places of its groups and its own
+table. What reads a partition's groups reads a table, so a wide
+partition is gathered into one at its end, each group taken up from
+where it lies in the order of the first rows, and before it is written
+to the spill, whose form is unchanged. A wide partition whose probe
+grows long places its groups by keyed hashes, each key read where its
+group lies (D357).
+
+Unit tests merge the same Mades into a table and into a partition that
+goes wide before its first Made, after its first and after its second,
+frozen between two Mades or not, and compare every group, first row and
+state, and run groupings with their partitions forced wide against the
+same not wide, held by the grant, through several waves and through the
+spill.
 
 #### D447. A unique constraint added in a transaction fills its index with every version
 

@@ -6,8 +6,9 @@
 //! groups' first rows, its morsels of few groups merged on the statement's
 //! thread, of the column store too, grouped by runs, its exchange weighed
 //! by the optimizer's groups; and EXCEPT and INTERSECT counted in a table
-//! (D358, D359); and a grouping's partitions held in the spill past its
-//! grant, written and read back as they were (D1226).
+//! (D358, D359); a grouping's partitions held in the spill past its
+//! grant, written and read back as they were (D1226); and a partition's
+//! groups adopted where they lie (D1300).
 
 use super::super::{Mutation, Package};
 
@@ -42,8 +43,17 @@ const SPILLED_MERGE: &str = "exec::table::made::written::tests::groups_read_back
 /// Columns of states of every kind read back from the spill bit for bit.
 const SPILLED_STATES: &str = "exec::table::states::typed::written::tests::every_column_of_states_is_read_back_as_written";
 
+/// A wide partition against the table merged of the same Mades.
+const WIDE: &str = "exec::table::made::wide::tests::a_wide_partition_holds_the_groups_a_table_holds_in_its_order";
+
+/// A wide partition of keys that collide.
+const WIDE_KEYED: &str = "exec::table::made::wide::tests::colliding_groups_turn_a_wide_partition_keyed";
+
+/// Groupings with their partitions forced wide against the same not wide.
+const WIDE_WAVES: &str = "exec::parallel::grouped::waves::tests::the_groups_are_the_same_whether_partitions_go_wide";
+
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 28] = [
+pub const GROUP_TABLE: [Mutation; 33] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -323,5 +333,55 @@ pub const GROUP_TABLE: [Mutation; 28] = [
         replacement: "let p = part_of(&first.to_le_bytes(), seed);",
         integration: &[],
         unit: &[CROSSING],
+    },
+    Mutation {
+        name: "wide-group-met-again-left-where-it-lay",
+        package: Package::Core,
+        breaks: "a group of a wide partition that a second row meets is taken up into the partition's own table but still listed where it lay, so it is taken up again by every later row and read with its first row's states alone (RULES.md D1300)",
+        file: "src/exec/table/made/wide.rs",
+        original: "        *lies = (OWN, number);",
+        replacement: "        *lies = (segment, place);",
+        integration: &[],
+        unit: &[WIDE],
+    },
+    Mutation {
+        name: "wide-held-rows-not-merged",
+        package: Package::Core,
+        breaks: "the rows of a Made that met a group a wide partition holds are not merged into it (RULES.md D1300)",
+        file: "src/exec/table/made/wide.rs",
+        original: "        self.own.merge_into(&groups, made, &rows)?;",
+        replacement: "        self.own.merge_into(&[], made, &[])?;",
+        integration: &[],
+        unit: &[WIDE],
+    },
+    Mutation {
+        name: "wide-gathered-out-of-order",
+        package: Package::Core,
+        breaks: "a wide partition gathered into a table takes a Made's groups up last first, so its groups are not in the order of their first rows (RULES.md D1300)",
+        file: "src/exec/table/made/wide.rs",
+        original: "            run.push(place);",
+        replacement: "            run.insert(0, place);",
+        integration: &[],
+        unit: &[WIDE],
+    },
+    Mutation {
+        name: "wide-rekeyed-forgotten",
+        package: Package::Core,
+        breaks: "a wide partition whose probe grew long places its groups by keyed hashes but looks keys up by the hashes they came with, so no group is found again (RULES.md D1300, D357)",
+        file: "src/exec/table/made/wide.rs",
+        original: "        self.keyed = Some(keyed);",
+        replacement: "        drop(keyed);",
+        integration: &[],
+        unit: &[WIDE_KEYED],
+    },
+    Mutation {
+        name: "partition-never-wide",
+        package: Package::Core,
+        breaks: "a partition's table never goes wide, however many groups it holds (RULES.md D1300)",
+        file: "src/exec/parallel/grouped/waves/wide.rs",
+        original: "if table.len() > widen {",
+        replacement: "if table.len() > widen.max(usize::MAX) {",
+        integration: &[],
+        unit: &[WIDE_WAVES],
     },
 ];

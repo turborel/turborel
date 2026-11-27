@@ -9,6 +9,7 @@ use super::super::super::pipeline::Pipeline;
 use super::super::super::probe::PARTS;
 use super::super::super::{Held, Limit};
 use super::super::{Ordered, grouping_of, read_of};
+use super::wide::Widen;
 use super::{Forced, How, few, waved_as};
 use crate::db::{Database, Session};
 use crate::exec::Db;
@@ -242,4 +243,53 @@ fn a_wide_lead_merges_and_spills_as_a_narrow_one() {
             assert_eq!(led(&a, sql, lead, 3), narrow, "a lead of {lead}, a grant of {grant}");
         }
     }
+}
+
+/// A grant under which the groupings of T of 6,000 groups merge several
+/// waves and hold their partitions in memory.
+const WAVED: i128 = 4_194_304;
+
+/// Verifies: [DESIGN] RULES.md D1300, D356 a grouping gives the same
+/// groups, in the same order, each set function the same value, whether
+/// its partitions go wide or not: at their first group, past five, past
+/// forty, and never; of few groups a partition and of many, of counts,
+/// sums, means and the least and greatest of texts equal as padded;
+/// whichever morsels are handed whole; under a grant that holds every
+/// group, one under which several waves are merged, so a wide partition
+/// is kept and taken up again, and one the groups pass, so a wide
+/// partition is gathered and written to the spill.
+#[test]
+fn the_groups_are_the_same_whether_partitions_go_wide() {
+    let (db, a) = table();
+    let statements = [
+        ("MOD(K, 40)", "COUNT(*), SUM(V), MIN(V), MAX(K)"),
+        ("K - MOD(K, 10)", "COUNT(*), SUM(V), MIN(P), MAX(K)"),
+        ("MOD(K, 6000)", "COUNT(*), SUM(V), AVG(V), MIN(P), MAX(P)"),
+        ("K", "COUNT(*), SUM(V), AVG(V), MAX(P)"),
+    ];
+    let (mut kept_wide, mut seen) = (false, Vec::new());
+    for (keyed, set_functions) in statements {
+        let sql = format!("SELECT G, {set_functions} FROM (SELECT {keyed} AS G, K, V, P FROM T) AS Q GROUP BY G");
+        for grant in [HELD, WAVED, PASSED] {
+            set(&db, "MEMORY.WORK_BYTES", grant);
+            let never = How { forced: NONE, widen: Widen::past(usize::MAX), ..How::default() };
+            let expected = waved(&a, &sql, &never, 3);
+            assert_eq!(never.widen.merged.load(Ordering::Relaxed), 0, "no partition wide");
+            let ways: [(usize, Forced); 4] = [(0, NONE), (5, NONE), (5, None), (40, Some(|m| m.is_multiple_of(2)))];
+            for (past, forced) in ways {
+                let how = How { forced, widen: Widen::past(past), ..How::default() };
+                let made = waved(&a, &sql, &how, 3);
+                assert_eq!(differing(&made, &expected), None, "wide past {past} groups, grant {grant}: {sql}");
+                let wide = how.widen.merged.load(Ordering::Relaxed);
+                // Twice as many groups a partition as a table holds before
+                // it goes wide, unless each wave's go to the spill alone.
+                if made.spills == 0 && expected.rows.len() > past.saturating_mul(PARTS).saturating_mul(2) {
+                    assert!(wide > 0, "no partition went wide past {past} groups, grant {grant}: {sql}");
+                }
+                kept_wide |= made.waves > 0 && made.spills == 0 && wide > PARTS;
+                seen.push((expected.rows.len(), grant, past, made.waves, made.spills, wide));
+            }
+        }
+    }
+    assert!(kept_wide, "no wide partition was kept between waves and taken up again with no spill: {seen:?}");
 }

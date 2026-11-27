@@ -15,7 +15,9 @@ use super::slots::MAX_PROBE;
 use super::states::{Sent, States};
 use super::{GroupTable, Key, Keys, Seed, narrow};
 
+mod wide;
 mod written;
+pub(in crate::exec) use wide::{Adopted, Wide};
 pub(in crate::exec) use written::PIECE;
 
 /// \[DESIGN\] The bits of a hash below those a partition is found by, as
