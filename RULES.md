@@ -800,8 +800,8 @@ verification approach DO-178C expects (§8).
 | D1236 | A key of a row in another transaction's open load is pending to a UNIQUE check |
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
-| D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1245 | A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked |
+| D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 
 ### The project
 
@@ -22542,52 +22542,6 @@ pass that keeps it, never twice. A probe told nothing to keep makes its
 hashes once and drops no row, its loop over the rows unchanged, at the
 cost of one test of the batch.
 
-#### D1250. A record of a transaction reaches the log only while it may still commit, or with its abort record after it
-
-A transaction holds its records until its commit, and a checkpoint, its
-gate shut, writes what every open transaction holds, finding each by its
-buffer noted among the database's (D470). A rollback undid its changes
-under the gate and wrote its abort record there, if a record of it had
-reached the log. It left the records it still held in its buffer, which
-stayed noted until the transaction was dropped, after the gate was left.
-A checkpoint taking the gate in between wrote them. They then stood in
-the log, before the checkpoint's position, with no commit record and no
-abort record after them. Recovery reads such records as those of a
-transaction a crash interrupted and puts each row back as its record
-found it (D25). When another transaction had since updated the row and
-committed before the position of the image recovered from, its change
-was in the image and not redone, and the row was put back over it. The
-commit lost that row and kept its others.
-
-Recovery read that far back when a transaction open at the image's
-checkpoint had written its first record before them. It also did
-through a second fault. The write of held records noted the
-transaction's first record, from which the log is kept and recovery
-reads, once it had let the buffer's lock go. A transaction dropped
-meanwhile had already looked for a first to forget and found none. That
-first then stayed noted while the database ran, every later image
-started at it, and the log was never truncated past it.
-
-A record of a transaction now reaches the log only while the
-transaction may still commit, or with its abort record after it. A
-rollback drops the records it holds under the gate, in the step that
-decides its abort record (`Txn::log_abort`, `Txn::drop_held`), so a
-checkpoint finds none of a transaction rolled back, however long the
-transaction is kept after. A statement, mark or savepoint undone drops
-its held records, or logs those written as undone, under the gate too
-(D470). A database deposed writes no abort record, its log being its
-replica's, and writes no held record either. The primary promoted
-aborts each transaction that log leaves open (D57).
-
-A write notes a first record with the buffer locked. A transaction's end
-marks the buffer over and reads whether a first was noted, under that
-lock (`TxLog::write`, `Txn::forget_held`). So the end finds the first
-and forgets it, or the write finds the transaction over and notes none.
-
-Recovery is unchanged. Nothing in the log tells a transaction rolled
-back in memory from one a crash stopped, so the rule is kept where
-records are written.
-
 #### D1245. A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked
 
 The pruning of the columns no one reads (D1167) left a window as it
@@ -22646,6 +22600,52 @@ work and of the unread results on the reader's thread before it
 returns (`exec/parallel/run.rs`). A statement that ends early with no
 cancel, as a FETCH FIRST met does, waits for at most a morsel's work on
 each thread, which no stop bounds, as the statement has not stopped.
+
+#### D1250. A record of a transaction reaches the log only while it may still commit, or with its abort record after it
+
+A transaction holds its records until its commit, and a checkpoint, its
+gate shut, writes what every open transaction holds, finding each by its
+buffer noted among the database's (D470). A rollback undid its changes
+under the gate and wrote its abort record there, if a record of it had
+reached the log. It left the records it still held in its buffer, which
+stayed noted until the transaction was dropped, after the gate was left.
+A checkpoint taking the gate in between wrote them. They then stood in
+the log, before the checkpoint's position, with no commit record and no
+abort record after them. Recovery reads such records as those of a
+transaction a crash interrupted and puts each row back as its record
+found it (D25). When another transaction had since updated the row and
+committed before the position of the image recovered from, its change
+was in the image and not redone, and the row was put back over it. The
+commit lost that row and kept its others.
+
+Recovery read that far back when a transaction open at the image's
+checkpoint had written its first record before them. It also did
+through a second fault. The write of held records noted the
+transaction's first record, from which the log is kept and recovery
+reads, once it had let the buffer's lock go. A transaction dropped
+meanwhile had already looked for a first to forget and found none. That
+first then stayed noted while the database ran, every later image
+started at it, and the log was never truncated past it.
+
+A record of a transaction now reaches the log only while the
+transaction may still commit, or with its abort record after it. A
+rollback drops the records it holds under the gate, in the step that
+decides its abort record (`Txn::log_abort`, `Txn::drop_held`), so a
+checkpoint finds none of a transaction rolled back, however long the
+transaction is kept after. A statement, mark or savepoint undone drops
+its held records, or logs those written as undone, under the gate too
+(D470). A database deposed writes no abort record, its log being its
+replica's, and writes no held record either. The primary promoted
+aborts each transaction that log leaves open (D57).
+
+A write notes a first record with the buffer locked. A transaction's end
+marks the buffer over and reads whether a first was noted, under that
+lock (`TxLog::write`, `Txn::forget_held`). So the end finds the first
+and forgets it, or the write finds the transaction over and notes none.
+
+Recovery is unchanged. Nothing in the log tells a transaction rolled
+back in memory from one a crash stopped, so the rule is kept where
+records are written.
 
 ## 2. Project layout
 
