@@ -234,17 +234,21 @@ merged on the statement's thread at once. A query of DISTINCT set
 functions, computed by two groupings, runs both in one part: the first
 grouping's groups are split among the threads by the query's grouping
 columns alone, so each thread makes the second grouping's groups of its
-own, and EXPLAIN shows both groupings under one `Parallel`. An index
+own, and EXPLAIN shows both groupings under one `Parallel`. COUNT(DISTINCT)
+with no GROUP BY runs so too, each thread counting the distinct values
+of its own share and the statement's thread adding the counts. An index
 nested-loop join over a part, as of a correlated EXISTS, probes its
 index on the part's threads, each taking a sixteenth of a morsel's rows
 of its left operand at a time. A semi join or an antijoin that holds
 its left operand, shown as `HashRightSemiJoin` or `HashRightAntiJoin`,
 holds a left run in parallel by the part's threads, each gathering the
-rows it read and putting them in the join's table. A scan or sort of a column
+rows it read and putting them in the join's table. A scan or a whole sort of a column
 store table stays on it too while EXECUTOR.BATCHES is on, since its
 scan by batch is faster alone; a join, window functions, a grouping or
 DISTINCT over one still run in parallel, a grouping a batch at a time
-on each thread, and so does the scan of the operand a hash join run in
+on each thread, and so does a sort under FETCH FIRST of a count of rows,
+ONLY, whose threads share the greatest key any of them still keeps, so
+each reads past rows no thread would keep, and so does the scan of the operand a hash join run in
 parallel builds, shown as a `Parallel` part of its own under the join.
 Such an operand of more rows than a morsel is put together by those
 threads as well, its rows, its hash table and its filters. A bare

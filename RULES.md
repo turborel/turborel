@@ -774,9 +774,11 @@ verification approach DO-178C expects (§8).
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
+| D1219 | COUNT(DISTINCT) of no GROUP BY runs as one part, a string argument under a collation of octets grouped as it is |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
+| D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 
 ### The project
 
@@ -21345,6 +21347,51 @@ HAVING, grouping sets, a DISTINCT set function and a sort give whole
 groups; a null eliminated, a sum past its range and a division by zero
 in a later group are raised still; and groups past the work area are
 whole. Mutations in `xtask/src/mutate/list/areas/first_groups.rs`.
+
+#### D1219. COUNT(DISTINCT) of no GROUP BY runs as one part, a string argument under a collation of octets grouped as it is
+
+A DISTINCT set function is computed by two groupings (D340), and a part
+runs the pair whole where the second groups by some of the first's
+columns (D1113) or counts across its partitions (D1133). A second
+grouping by no column was left above the part. So of COUNT(DISTINCT x)
+with no GROUP BY, every group of the first, one a distinct value, was
+made a row by its partition's thread, the partitions' rows were merged
+in the order of their first rows, and the statement's thread counted
+them one at a time while the workers waited.
+
+Such a second grouping whose set functions are COUNT alone now crosses
+the partitions as D1133's does (`physical::crosses`). Its one group
+takes groups of every partition. Each partition's thread counts its
+own, and the statement's thread merges the counts
+(`exec/parallel/grouped/regrouped.rs`). A count is the same whatever
+order its values are taken in. Of no rows the merge still gives one
+group, COUNT of it 0. A HAVING condition is judged of the merged group.
+Another set function there, as SUM(DISTINCT), takes its values in the
+order of their first rows, so its second grouping stays above the part,
+as does one with groups of empty grouping sets.
+
+A second grouping that crosses the partitions with no projection
+between the two now reads each partition's groups of the first as a
+batch from their table (D1123, `grouped/second.rs`) and writes each of
+its groups' states for the merge. No row is made of a group of the
+first. One over a projection makes rows as before, as the projection is
+evaluated of each.
+
+The binder gives a DISTINCT function of a string under a collation the
+string's sort key for its argument, so the rewrite's projection made a
+binary string of every row and the first grouping keyed its groups by
+those values. Where the collation's key is the text itself (D1183), the
+rewrite now groups by the string under that collation
+(`optimizer/distinct_aggregates.rs`, `Slot::of`), which a table hashes
+and compares in place. Two strings are in one group exactly when their
+keys are equal, so the groups are the same. COUNT then counts the
+strings, as a key is null exactly when its string is. Any other
+function takes the key, made of each group in the second grouping, as
+it took it before. An argument under any other collation is grouped by
+its key as before.
+
+Results, their warnings and the row of no rows are as before. EXPLAIN
+shows both groupings under one `Parallel`.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 

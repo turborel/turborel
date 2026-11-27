@@ -372,3 +372,45 @@ fn a_distinct_set_function_s_pair_groups_unpadded_10_9() {
         assert_eq!(padded, ["5"], "degree {degree}");
     }
 }
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2, §10.9 GR7b i]
+/// (RULES.md D1219) COUNT(DISTINCT) of no GROUP BY: its two groupings run
+/// as one part in parallel, the second's one group counted of every
+/// partition, of strings under a collation of NO PAD by octets, grouped
+/// as they are, `'a'` and `'a '` apart; of nearly unique strings; of a
+/// padded column, whose keys are grouped by; of an integer; of no rows,
+/// one row of 0; under HAVING. Beside SUM(DISTINCT), whose values the
+/// second grouping takes in their order, the second stays above the part.
+/// Each gives what the plan run alone gives, of both stores.
+#[test]
+fn a_count_of_distinct_values_of_no_grouping_is_one_part_10_9() {
+    let (_db, a) = tables();
+    let strings = (0..ROWS).map(u_of).collect::<std::collections::HashSet<_>>().len();
+    let numbers = (0..ROWS).map(|k| k - k % 21).collect::<std::collections::HashSet<_>>();
+    let summed: usize = numbers.iter().sum();
+    for degree in [1, 4] {
+        for set in [
+            format!("SET EXECUTOR.DEGREE = {degree}"),
+            "SET EXECUTOR.MORSEL_ROWS = 256".into(),
+            "SET EXECUTOR.PARALLEL_MIN_ROWS = 0".into(),
+        ] {
+            exec(&a, &set).unwrap();
+        }
+        for (sql, expected) in [
+            ("SELECT COUNT(DISTINCT S) FROM {t}", "7".to_owned()),
+            ("SELECT COUNT(DISTINCT U) FROM {t}", strings.to_string()),
+            ("SELECT COUNT(DISTINCT P) FROM {t}", "5".to_owned()),
+            ("SELECT COUNT(DISTINCT K - MOD(K, 21)) FROM {t}", numbers.len().to_string()),
+            ("SELECT COUNT(DISTINCT S) FROM {t} WHERE K < 0", "0".to_owned()),
+        ] {
+            assert_eq!(of_both(&a, sql), [expected], "{sql}, degree {degree}");
+            let shown = physical(&a, &sql.replace("{t}", "C"));
+            assert_eq!(pair_in_a_part(&shown), degree > 1, "{sql}, degree {degree}\n{shown}");
+        }
+        assert_eq!(of_both(&a, "SELECT COUNT(DISTINCT S) FROM {t} HAVING COUNT(DISTINCT S) > 7"), Vec::<String>::new());
+        assert_eq!(of_both(&a, "SELECT COUNT(DISTINCT S) FROM {t} HAVING COUNT(DISTINCT S) > 6"), ["7"]);
+        let beside = "SELECT COUNT(DISTINCT S), SUM(DISTINCT K - MOD(K, 21)) FROM {t}";
+        assert_eq!(of_both(&a, beside), [format!("7,{summed}")], "degree {degree}");
+        assert!(!pair_in_a_part(&physical(&a, &beside.replace("{t}", "C"))), "SUM in the second keeps it above the part");
+    }
+}

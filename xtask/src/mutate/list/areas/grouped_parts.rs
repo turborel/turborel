@@ -5,12 +5,14 @@
 //! another that a part makes whole, and one that crosses its partitions,
 //! merged by the statement's thread (D1133), and the second grouping of
 //! a pair made in a table of the first's groups given as a batch (D1123),
-//! and the first rows of a sort taken from a grouping's tables (D1124).
+//! and the first rows of a sort taken from a grouping's tables (D1124);
+//! and COUNT(DISTINCT) of no GROUP BY run as one part, its string
+//! argument grouped as it is (D1219).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 22] = [
+pub const GROUPED_PARTS: [Mutation; 25] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -230,5 +232,35 @@ pub const GROUPED_PARTS: [Mutation; 22] = [
         replacement: "    if table.len() > 1 {",
         integration: &["ungrouped_parts::set_functions_of_no_grouping_are_fed_by_vectors_in_parallel"],
         unit: &[],
+    },
+    Mutation {
+        name: "count-of-no-grouping-above-the-part",
+        package: Package::Core,
+        breaks: "a second grouping by no column that counts alone does not cross the first's partitions (RULES.md D1219)",
+        file: "src/physical/parallel.rs",
+        original: "    counts && (groups.is_empty() || !within)",
+        replacement: "    counts && !groups.is_empty() && !within",
+        integration: &[],
+        unit: &["physical::parallel::tests::a_count_over_a_set_function_s_column_crosses_the_partitions"],
+    },
+    Mutation {
+        name: "crossing-of-no-rows-gives-no-group",
+        package: Package::Core,
+        breaks: "a second grouping by no column that crosses the partitions gives no row of no rows (RULES.md D1219)",
+        file: "src/exec/parallel/grouped/regrouped.rs",
+        original: "        if made.is_empty() && self.spec.groups.is_empty() {",
+        replacement: "        if false {",
+        integration: &["unpadded_collations::a_count_of_distinct_values_of_no_grouping_is_one_part_10_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-key-of-octets-made-a-row",
+        package: Package::Core,
+        breaks: "a DISTINCT argument, a sort key under a collation of octets, is grouped by the key made of each row (RULES.md D1219)",
+        file: "src/optimizer/distinct_aggregates.rs",
+        original: "            && collation.is_octets()",
+        replacement: "            && false",
+        integration: &[],
+        unit: &["optimizer::distinct_aggregates::tests::a_key_of_octets_is_grouped_as_its_string"],
     },
 ];

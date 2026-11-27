@@ -79,3 +79,46 @@ fn slots_are_shared_and_copied() {
     let LogicalPlan::Aggregate { groups, aggs: parts, .. } = *input else { panic!("no first grouping") };
     assert_eq!((groups.len(), parts.len()), (4, 1));
 }
+
+/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §4.3.2] RULES.md D1219: a
+/// DISTINCT function whose argument is the sort key of a string under a
+/// collation whose key is the text itself has its first grouping group
+/// by the string under that collation, no key made of a row; COUNT then
+/// counts the strings, and another function takes each group's key, made
+/// of the group. Under another collation the key is grouped by as before,
+/// under no collation.
+///
+/// Decisions: a sort key or not; a collation by octets or another; COUNT
+/// or another function, each changing the outcome alone.
+#[test]
+fn a_key_of_octets_is_grouped_as_its_string() {
+    use crate::value::collation::{CASE_INSENSITIVE, CollationRef, builtin, default_pad, unpadded_scalar};
+    let db = state();
+    let folded = CollationRef {
+        collation: builtin().into_iter().find(|c| c.name() == CASE_INSENSITIVE).unwrap(),
+        pad: default_pad(CASE_INSENSITIVE),
+    };
+    let keyed = |name: &str, collation: &CollationRef| AggCall {
+        arg: Some(Expr::SortKey(Box::new(Expr::Column(1)), collation.clone())),
+        ..call(&db, name, 1, true)
+    };
+    let levels = |agg: AggCall| {
+        let Some(LogicalPlan::Aggregate { aggs, input, .. }) = applied(&aggregation(vec![agg])) else { panic!("no aggregation") };
+        let LogicalPlan::Aggregate { groups, collations, input: projected, .. } = *input else { panic!("no first grouping") };
+        let LogicalPlan::Project { exprs, .. } = *projected else { panic!("no projection") };
+        let value = groups.last().and_then(|&g| exprs.get(g)).cloned().unwrap();
+        (aggs[0].arg.clone().unwrap(), collations.iter().map(Option::is_some).collect::<Vec<_>>(), value)
+    };
+    let (arg, by, value) = levels(keyed("COUNT", &unpadded_scalar()));
+    assert!(matches!(value, Expr::Column(1)), "the string, not its key: {value:?}");
+    assert_eq!(by, [false, true], "under its collation, the grouping column under none");
+    assert!(matches!(arg, Expr::Column(1)), "COUNT counts the strings: {arg:?}");
+    let (arg, by, value) = levels(keyed("SUM", &unpadded_scalar()));
+    assert!(matches!(value, Expr::Column(1)) && by == [false, true]);
+    assert!(matches!(arg, Expr::SortKey(..)), "another function takes the key of each group: {arg:?}");
+    let (arg, by, value) = levels(keyed("COUNT", &folded));
+    assert!(matches!(value, Expr::SortKey(..)) && by.is_empty(), "another collation's key is grouped by as made");
+    assert!(matches!(arg, Expr::Column(1)));
+    let (_, by, value) = levels(call(&db, "COUNT", 1, true));
+    assert!(matches!(value, Expr::Column(1)) && by.is_empty(), "no sort key, no collation");
+}

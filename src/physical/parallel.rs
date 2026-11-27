@@ -314,10 +314,11 @@ fn keyed_alike(groups: &[usize], collations: &[Option<CollationRef>], by: &[Opti
     each && groups.iter().enumerate().all(|(at, &g)| unpadded(collations.get(at)) == unpadded(by.get(g)))
 }
 
-/// \[DESIGN\] (RULES.md D1133) Whether `plan`, a grouping over another,
-/// crosses the first's partitions: it groups by some columns, its set
-/// functions are COUNT alone, and a projection lies between them or it
-/// groups by a column other than the first's grouping columns. Its
+/// \[DESIGN\] (RULES.md D1133, D1219) Whether `plan`, a grouping over
+/// another, crosses the first's partitions: its set functions are COUNT
+/// alone, and it groups by no column, its one group taking groups of
+/// every partition, or a projection lies between them or it groups by a
+/// column other than the first's grouping columns. Its
 /// partitions are then the first's, by its whole key, each partition's
 /// thread groups its own groups of the first again, and the statement's
 /// thread merges each group's counts of the partitions, of no more groups
@@ -330,7 +331,7 @@ pub(crate) fn crosses(plan: &Plan) -> bool {
     let Plan::Aggregate { groups: keys, .. } = first else { return false };
     let counts = aggs.iter().all(|a| a.func.0.columnar().is_some_and(|c| c.0 == crate::functions::ColumnarKind::Count));
     let within = steps.is_empty() && groups.iter().all(|g| *g < keys.len());
-    !groups.is_empty() && counts && !within
+    counts && (groups.is_empty() || !within)
 }
 
 /// The projections of `plan`'s rows down from it, the nearest first, an
