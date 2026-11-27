@@ -202,3 +202,80 @@ fn a_chunk_stored_as_it_is_is_read_in_the_pool() {
         assert!(!kept(&opened).is_empty() && kept(&opened).iter().all(|&held| held == (false, false)), "opened once and kept");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D1298, a dictionary's entries made text
+/// on first use: a dictionary of texts whose values are read alone is
+/// opened and makes no text; read as text it gives its rows' texts as
+/// the rows hold them, its entries made text once a chunk; a second
+/// reader of the chunks still held, the same run and positions among
+/// it, opens none and makes none again. MC/DC of the text made: a chunk
+/// never asked for text (none) against one asked (made), and one asked
+/// once against one asked again (still once).
+#[test]
+fn a_dictionarys_entries_are_made_text_when_first_asked_for() {
+    let (pool, file) = file();
+    let (pages, group) = group(&pool, file, &Plain);
+    let whole = rows(&group, &pages, &TYPES, &[0, 1, 2, 3, 4, 5], (0, ROWS)).unwrap();
+    // Rows of the column's first chunk, so a second reader finds it held.
+    let run = (0, 600);
+    let mut prepared = Prepared::default();
+    let alone = values(&group, (&pages, &mut prepared), (2, &TEXT), run).unwrap();
+    assert_eq!(of_values(&alone), shown(2, between(&whole, run)));
+    let opened = prepared.opened;
+    assert!(opened > 0, "the chunks are opened");
+    assert_eq!(prepared.texts_made(), 0, "values read alone ask for no text");
+    let first = texts(&group, (&pages, &mut prepared), (2, &TEXT), run).unwrap().unwrap();
+    assert!(first.coded.is_some(), "a run of dictionaries is read as codes");
+    assert_eq!(of_texts(&first), shown(2, between(&whole, run)));
+    assert_eq!((prepared.opened, prepared.texts_made()), (opened, opened), "each chunk held made text once, none opened again");
+    let again = texts(&group, (&pages, &mut prepared), (2, &TEXT), run).unwrap().unwrap();
+    assert_eq!(of_texts(&again), of_texts(&first));
+    let some = texts_at(&group, (&pages, &mut prepared), (2, &TEXT), &[3, 4, 300, 599]).unwrap().unwrap();
+    assert_eq!(of_texts(&some), [3_usize, 4, 300, 599].map(|n| whole[n][2].to_string()));
+    assert_eq!((prepared.opened, prepared.texts_made()), (opened, opened), "a second reader makes none again");
+}
+
+/// A dictionary chunk of 40 values of the three `entries`, and its bytes.
+fn dictionary_of(entries: [&[u8]; 3]) -> Vec<u8> {
+    let written: Vec<Option<Vec<u8>>> = (0..40).map(|n| Some(entries[n % 3].to_vec())).collect();
+    let records = crate::engine::columns::tests::records_of(&written);
+    let fields = crate::engine::columns::Fields::from_records(&TEXT, Cow::Owned(records));
+    let bytes = fields.chunk(&TEXT, 0, (40, true)).unwrap();
+    assert_eq!(bytes.first(), Some(&super::super::encoded::DICTIONARY));
+    bytes
+}
+
+/// Verifies: [DESIGN] RULES.md D1298, a dictionary's entries made text
+/// on first use: the entries are judged UTF-8 as they are made, before
+/// any text is given, so a chunk with an entry that is not UTF-8 gives
+/// no codes and no text, the first time and again, judged once; one of
+/// UTF-8 entries gives each row's text; and of a type that is no
+/// character string no text is made. Robustness: octets no text holds.
+#[test]
+fn entries_not_text_give_none_however_late_they_are_made() {
+    let kernels = &crate::kernels::Portable;
+    let coded = |bytes: &[u8], made: &Made, t: &DataType| {
+        let chunk = Chunk::parse(bytes).unwrap();
+        let (mut text, mut ends, mut codes, mut nulls) = (String::new(), Vec::new(), Vec::new(), Mask::default());
+        let held = chunk.coded_made(&[0, 1, 2, 39], (&mut text, &mut ends, &mut codes, &mut nulls), (made, t, kernels));
+        held.map(|()| {
+            codes
+                .iter()
+                .map(|&c| Texts::new(text.clone(), ends.clone(), None).get(usize::try_from(c).unwrap()).unwrap().to_owned())
+                .collect::<Vec<_>>()
+        })
+    };
+    let count = |made: &Made| made.text_count.load(std::sync::atomic::Ordering::Relaxed);
+    let (good, bad) = (
+        dictionary_of([b"alpha entry", b"beta entry", b"gamma entry"]),
+        dictionary_of([b"alpha entry", b"\xffbeta entry", b"gamma entry"]),
+    );
+    let made = Made::default();
+    assert_eq!(coded(&good, &made, &TEXT).unwrap(), ["alpha entry", "beta entry", "gamma entry", "alpha entry"]);
+    assert_eq!(coded(&good, &made, &TEXT).unwrap().len(), 4);
+    assert_eq!(count(&made), 1, "made once for both readers");
+    let of_bad = Made::default();
+    assert_eq!((coded(&bad, &of_bad, &TEXT), coded(&bad, &of_bad, &TEXT)), (None, None), "octets not UTF-8 are no text");
+    assert_eq!(count(&of_bad), 1, "judged once");
+    assert_eq!(coded(&good, &Made::default(), &INTEGER), None, "no text of a type not of character strings");
+}
