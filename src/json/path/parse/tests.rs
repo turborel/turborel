@@ -99,7 +99,7 @@ fn regex_of(text: &str) -> crate::regex::Regex {
     let path = parse_path(text, Clocked::default()).unwrap();
     let Expr::Access(_, Accessor::Filter(filter)) = path.expr else { panic!("a filter") };
     let Predicate::LikeRegex(Expr::Current, regex) = *filter else { panic!("like_regex of @") };
-    regex
+    *regex
 }
 
 fn refused(text: &str) -> SqlError {

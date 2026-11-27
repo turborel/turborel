@@ -179,7 +179,7 @@ impl Parser<'_> {
         // Without `flag`, the `<XQuery option flag>` is none: no letters.
         let flags = if self.accept_word(FLAG) { self.string_literal("<JSON like_regex flags>, a string literal")? } else { String::new() };
         let regex = Regex::new(&pattern, &flags)?;
-        built(Predicate::LikeRegex(wff.node, regex), wff.height)
+        built(Predicate::LikeRegex(wff.node, Box::new(regex)), wff.height)
     }
 
     /// The `<JSON path string literal>` next, taken; else the error that
