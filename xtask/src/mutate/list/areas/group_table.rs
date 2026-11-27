@@ -118,7 +118,7 @@ pub const GROUP_TABLE: [Mutation; 28] = [
         name: "group-table-partitions-merged-unordered",
         package: Package::Core,
         breaks: "the partitions' groups are merged by their first rows",
-        file: "src/exec/parallel/grouped.rs",
+        file: "src/exec/parallel/grouped/runs.rs",
         original: "            self.order.push(Reverse((first, at)));\n            next",
         replacement: "            self.order.push(Reverse((0, at)));\n            next",
         integration: &[SAME_ROWS],

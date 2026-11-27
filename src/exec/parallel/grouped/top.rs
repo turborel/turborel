@@ -19,7 +19,8 @@
 //! the last row under the sort's own keys, which the number would part,
 //! so such a sort reads the grouping's rows as before.
 
-use super::{Given, Grouping, Ordered};
+use super::runs::{Ordered, Run};
+use super::{Given, Grouping};
 use crate::error::Result;
 use crate::exec::sort::first_of_morsel;
 use crate::exec::table::GroupTable;
@@ -28,12 +29,45 @@ use crate::logical::{Expr, Most, SortKey};
 use crate::physical::Plan;
 use crate::storage::{Batch, Column, Ints, Row};
 use crate::txn::TxId;
+use crate::value::Value;
 
-/// The first rows asked of a grouping's groups: the columns of a group's
-/// row the projection over it gives, in its order; the sort's keys, of
-/// those, then the first row's number after them; and how many rows.
+/// What a projection over a grouping gives of a group's row at one
+/// place: the row's column at this place, or a constant.
+#[derive(Clone)]
+enum Pick {
+    Column(usize),
+    Const(Value),
+}
+
+impl Pick {
+    /// What `e`, an expression of a projection, picks, if it is a column
+    /// or a constant.
+    fn of(e: &Expr) -> Option<Pick> {
+        if let Expr::Column(c) = e {
+            return Some(Pick::Column(*c));
+        }
+        if let Expr::Const(v) = e { Some(Pick::Const(v.clone())) } else { None }
+    }
+
+    /// Whether it is the row's column at `c`.
+    fn is_column(&self, c: usize) -> bool {
+        if let Pick::Column(own) = self { *own == c } else { false }
+    }
+
+    /// Its value of `row`, a group's.
+    fn value(&self, row: &Row) -> Result<Value> {
+        match self {
+            Pick::Column(c) => row.get(*c).cloned().ok_or_else(|| broken("a projected column past its group's row")),
+            Pick::Const(v) => Ok(v.clone()),
+        }
+    }
+}
+
+/// The first rows asked of a grouping's groups: what the projection over
+/// it gives of a group's row, in its order; the sort's keys, of those,
+/// then the first row's number after them; and how many rows.
 pub(in crate::exec::parallel) struct Top {
-    columns: Vec<usize>,
+    columns: Vec<Pick>,
     keys: Vec<SortKey>,
     most: usize,
     run: (Db, TxId),
@@ -42,22 +76,22 @@ pub(in crate::exec::parallel) struct Top {
 impl Top {
     /// The first rows a sort by `keys` asks, `most` of them, of `input`,
     /// and the part under it, if `input` is a grouping by hash run in
-    /// parallel, or a projection of columns alone over one, and the sort
-    /// asks no peers.
+    /// parallel, or a projection of columns and constants alone over one,
+    /// and the sort asks no peers.
     pub(in crate::exec::parallel) fn of<'p>(
         (keys, most): (&[SortKey], Most),
         input: &'p Plan,
         (db, tx): (&Db, TxId),
     ) -> Option<(Top, &'p Plan)> {
         let (asked, part) = if let Plan::Project { exprs, input: part, .. } = input {
-            (Some(exprs.iter().map(|e| if let Expr::Column(c) = e { Some(*c) } else { None }).collect::<Option<Vec<_>>>()?), &**part)
+            (Some(exprs.iter().map(Pick::of).collect::<Option<Vec<_>>>()?), &**part)
         } else {
             (None, input)
         };
         let Plan::Parallel(p) = part else { return None };
         let Plan::Aggregate { groups, aggs, streamed: false, .. } = &p.input else { return None };
         // Of no projection, every column of a group's row.
-        let columns = asked.unwrap_or_else(|| (0..groups.len().saturating_add(aggs.len())).collect());
+        let columns = asked.unwrap_or_else(|| (0..groups.len().saturating_add(aggs.len())).map(Pick::Column).collect());
         let mut keys = keys.to_vec();
         keys.push(SortKey::ascending(columns.len()));
         (!most.ties).then(|| (Top { columns, keys, most: most.rows, run: (db.clone(), tx) }, part))
@@ -85,10 +119,17 @@ impl Top {
         let rows = batch.rows;
         let mut held: Vec<Option<Column>> = batch.columns.into_iter().map(Some).collect();
         let mut columns = Vec::with_capacity(self.columns.len().saturating_add(1));
-        for (at, &c) in self.columns.iter().enumerate() {
+        for (at, pick) in self.columns.iter().enumerate() {
+            let c = match pick {
+                Pick::Column(c) => *c,
+                Pick::Const(v) => {
+                    columns.push(Column::Values(vec![v.clone(); rows]));
+                    continue;
+                }
+            };
             // A column the projection gives again later is copied, the
             // last time moved.
-            let again = self.columns.iter().skip(at.saturating_add(1)).any(|later| *later == c);
+            let again = self.columns.iter().skip(at.saturating_add(1)).any(|later| later.is_column(c));
             let slot = held.get_mut(c).ok_or_else(|| broken("a projected column past its group's row"))?;
             let column = if again { slot.clone() } else { slot.take() };
             columns.push(column.ok_or_else(|| broken("a projected column given twice"))?);
@@ -132,9 +173,9 @@ impl Top {
     /// # Errors
     ///
     /// As reading back the runs `given` from the spill fails.
-    pub(super) fn given(&self, from_tables: bool, (runs, given): (Vec<Vec<(u64, Row)>>, Vec<Given>)) -> Result<RowIter> {
+    pub(super) fn given(&self, from_tables: bool, (runs, given): (Vec<Run>, Vec<Given>)) -> Result<RowIter> {
         if from_tables {
-            let mut rows: Vec<Row> = runs.into_iter().flatten().map(|group| group.1).collect();
+            let mut rows: Vec<Row> = runs.into_iter().flat_map(Run::into_rows).map(|group| group.1).collect();
             for group in given.into_iter().flatten() {
                 rows.push(group?.1);
             }
@@ -148,9 +189,7 @@ impl Top {
     /// sorted by the sort's keys, stably.
     pub(in crate::exec::parallel) fn of_rows(&self, rows: RowIter) -> RowIter {
         let asked = self.columns.clone();
-        let picked = move |row: Row| {
-            asked.iter().map(|&c| row.get(c).cloned().ok_or_else(|| broken("a projected column past its group's row"))).collect()
-        };
+        let picked = move |row: Row| asked.iter().map(|pick| pick.value(&row)).collect();
         let (db, tx) = &self.run;
         crate::exec::sort::first(self.own(), Box::new(rows.map(move |row| row.and_then(&picked))), self.most(), db, *tx)
     }

@@ -168,7 +168,7 @@ fn told_first(pipeline: Pipeline, (keys, most): (&[SortKey], Option<usize>), est
     let Some(rows) = most.filter(|&n| n <= FEW_FIRST && whole_of(&pipeline).is_some()) else { return (pipeline, None) };
     let (late, threshold) = topped_of(keys, Most { rows, ties: false }, est);
     // One bound, which counts the first keys every morsel's sort offers.
-    let threshold = threshold.map(|t| Arc::new(Threshold::shared(t.descending(), rows)));
+    let threshold = threshold.map(|t| Arc::new(t.among(rows)));
     let columns: Vec<usize> = keys.iter().map(|k| k.column).collect();
     let told = threshold.clone().zip(keys.first()).map(|(t, k)| (k.column, t));
     (pipeline.topped((&columns, late), &told), threshold)

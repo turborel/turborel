@@ -24,6 +24,12 @@
 //! them. The sort would drop each such row, so leaving it out changes
 //! nothing it gives.
 //!
+//! \[DESIGN\] (RULES.md D1187) Of a key that orders character strings
+//! by their octets the bound holds a string, and its test is a
+//! comparison of octets (`Conjunct::Unpadded`), judged as any such
+//! comparison is, of a dictionary's entries, of texts coded by symbols in
+//! place and of plain texts.
+//!
 //! A scan is told only conjuncts every row its filter keeps satisfies, of a
 //! condition that cannot raise an error (`logical/pushed.rs`), and the
 //! filter still judges every row the scan gives (RULES.md D15). So a row

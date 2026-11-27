@@ -112,7 +112,7 @@ impl PhysicalPlanner<'_> {
         if b.ordered {
             return Built { plan: make(b.plan, every), ordered: true };
         }
-        if !self.sorts_first(g) {
+        if !self.sorts_first(g, &b.plan) {
             return Built::unordered(make(b.plan, false));
         }
         let mut keys = inner.to_vec();
@@ -122,11 +122,14 @@ impl PhysicalPlanner<'_> {
         Built { plan: make(sorted, true), ordered: true }
     }
 
-    /// Whether sorting the input of `g` and streaming it costs less than
-    /// hashing it and sorting its groups.
-    fn sorts_first(&self, g: Grouping<'_>) -> bool {
+    /// Whether sorting the input of `g`, built as `input`, and streaming
+    /// it costs less than hashing it and sorting its groups. The rows
+    /// weighed are those the plan built is estimated to give (RULES.md
+    /// D1208), the count its joins were chosen by, and the logical
+    /// input's count only of a plan that carries none.
+    fn sorts_first(&self, g: Grouping<'_>, input: &Plan) -> bool {
         let w = self.weights();
-        let n = self.card(g.input).rows;
+        let n = input.est().unwrap_or_else(|| self.card(g.input).rows);
         w.sort(n) + n * w.sort_compare < self.hashed_cost(n, g) + w.sort(g.groups)
     }
 
@@ -235,5 +238,29 @@ mod tests {
         assert!(!streamable(&collated, 0, std::slice::from_ref(&count)));
         assert!(!streamable(&[None], 1, std::slice::from_ref(&count)));
         assert!(!streamable(&[None], 0, &[distinct]));
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1208, D550: sorting a grouping's input
+    /// first is weighed by the rows the plan built is estimated to give.
+    /// Of an input of three rows as written, each a group, a plan of three
+    /// rows is sorted first; a plan of thirty thousand rows over the same
+    /// logical input is hashed and its groups sorted, as the logical
+    /// count alone would not have it.
+    ///
+    /// Regression test: the choice once read the count of the logical
+    /// input, and a grouping over joins enumerated by another count was
+    /// streamed over a sort of every joined row.
+    #[test]
+    fn a_sort_first_is_weighed_by_the_rows_of_the_plan_built() {
+        let db = crate::db::State::with_builtins(Box::new(crate::catalog::MemoryCatalog::default()));
+        let planner = PhysicalPlanner::new(&db);
+        let row = || vec![Expr::Const(crate::value::Value::Null)];
+        let input = LogicalPlan::Values { rows: vec![row(), row(), row()], types: vec![crate::value::DataType::Boolean] };
+        let g = Grouping { input: &input, keys: &[0], reads: None, groups: 3.0_f64, width: 2, streamable: true };
+        let few = Plan::Values { rows: vec![Vec::new(), Vec::new(), Vec::new()], detail: String::new() };
+        let cond = crate::logical::Cond::Const(crate::logical::Truth::True);
+        let many = Plan::Filter { cond, detail: String::new(), est: 30_000.0_f64, of_read: false, input: Box::new(few.clone()) };
+        assert!(planner.sorts_first(g, &few));
+        assert!(!planner.sorts_first(g, &many));
     }
 }

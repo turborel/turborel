@@ -223,7 +223,7 @@ impl RuntimeFilter {
                 hashes.of_batch(
                     (batch, Some(&ranged)),
                     (&[at], &[self.nulls]),
-                    Hashing { seed: &self.seed, keyed: self.keyed, direct: false },
+                    Hashing { seed: &self.seed, keyed: self.keyed, direct: false, kernels: None },
                 )?;
                 let mut held = Vec::with_capacity(ranged.len());
                 kernels.bloom_probe(words, &hashes.hashes, &mut held);
@@ -376,7 +376,7 @@ mod tests {
     /// match.
     fn filter(keys: &[i64]) -> RuntimeFilter {
         let seed = Seed::fixed(0x5EED);
-        let how = Hashing { seed: &seed, keyed: false, direct: false };
+        let how = Hashing { seed: &seed, keyed: false, direct: false, kernels: None };
         let built = Batch { columns: vec![Column::Ints(Ints::new(keys.to_vec(), 0, None))], rows: keys.len() };
         let mut hashes = KeyHashes::default();
         hashes.of_batch((&built, None), (&[0], &[false]), how).unwrap();

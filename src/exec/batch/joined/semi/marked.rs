@@ -196,7 +196,7 @@ impl HeldLeft {
             table
         } else {
             let mut built = KeyHashes::default();
-            built.of_batch((&batch, None), (&places, &nulls), Hashing { seed: &seed, keyed, direct: false })?;
+            built.of_batch((&batch, None), (&places, &nulls), Hashing { seed: &seed, keyed, direct: false, kernels: None })?;
             JoinTable::of(&built.hashes, &built.misses)
         };
         let marks = (0..batch.rows).map(|_| AtomicBool::new(false)).collect();
@@ -225,7 +225,7 @@ impl HeldLeft {
         if !runtime::wanted(db) || in_order(read) {
             return Ok(told);
         }
-        let how = Hashing { seed: &self.seed, keyed: self.keyed, direct: false };
+        let how = Hashing { seed: &self.seed, keyed: self.keyed, direct: false, kernels: None };
         for ((key, &at), &nulls) in keys.iter().zip(&self.places).zip(&self.nulls) {
             if !runtime::reaches(read, key.right, db) {
                 continue;
@@ -251,7 +251,7 @@ impl Marking {
     fn all(&self, batches: Batches, (db, tx): (&Db, TxId)) -> Result<()> {
         let (runner, mut scratch, mut hashes) = (Runner::new(db, tx), Row::new(), KeyHashes::default());
         let held = &*self.held;
-        let how = Hashing { seed: &held.seed, keyed: held.keyed, direct: held.table.is_direct() };
+        let how = Hashing { seed: &held.seed, keyed: held.keyed, direct: held.table.is_direct(), kernels: None };
         for kept in batches {
             let (batch, rows) = kept?;
             let rows = crate::storage::sel::places_of(rows, batch.rows);

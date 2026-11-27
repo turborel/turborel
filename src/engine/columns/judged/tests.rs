@@ -302,3 +302,47 @@ fn a_sorts_bound_is_judged_of_each_row() {
     let plain = Pred { at: 0, column: 0, conjunct: Conjunct::Null { column: 0, not: true }, of_null: false };
     assert!(matches!(plain.now().as_deref().map(|p| &p.conjunct), Some(Conjunct::Null { .. })), "any other conjunct is itself");
 }
+
+/// Verifies: [DESIGN] RULES.md D1187, D1241: a sort's bound of a key by
+/// octets is judged of each row of a column of character strings, over
+/// texts and over a dictionary's entries. Holding no string it is not
+/// judged; raised, each row is kept whose string is at most the bound by
+/// octets, of an ascending key, or at least it, of a descending one, a
+/// string before the same with a tab after it and that before the same
+/// with a space, a row equal to the bound kept and no null; raised again
+/// it keeps fewer.
+#[test]
+fn a_sorts_bound_by_octets_is_judged_of_each_text() {
+    use crate::storage::Threshold;
+    let words = ["b", "a", "a ", "a\t", "", "c"];
+    let values: Vec<Value> = (0..42).map(|n| if n % 7 == 6 { Value::Null } else { Value::Char(words[n % words.len()].into()) }).collect();
+    let nulls = Mask::from_bools(&(0_usize..42).map(|n| n % 7 == 6).collect::<Vec<_>>());
+    let text: String = values.iter().filter_map(|v| if let Value::Char(s) = v { Some(s.as_str()) } else { None }).collect();
+    let plain = Column::Texts(Texts::new(text, text_ends(&values), Some(nulls.clone())));
+    let entries = Arc::new(Texts::new(words.concat(), text_ends(&words.map(|w| Value::Char(w.into()))), None));
+    let coded = Coded { codes: (0..42).map(|n| u32::try_from(n % words.len()).unwrap()).collect(), entries };
+    let dictionary = Column::Texts(Texts::coded(coded, Some(nulls)));
+    let rows_where = |keeps: &dyn Fn(&[u8]) -> bool| -> Vec<u32> {
+        (0..42_u32).filter(|&r| if let Value::Char(s) = &values[index(r)] { keeps(s.as_bytes()) } else { false }).collect()
+    };
+    for descending in [false, true] {
+        let threshold = Arc::new(Threshold::new(descending).by_octets());
+        let conjunct = Conjunct::Dynamic { column: 0, threshold: Arc::clone(&threshold) };
+        let told = Conjunction(vec![conjunct.clone()]);
+        assert_eq!(Judgment::of(Some(&told), &[TEXT]).preds.len(), 1, "a bound of a column of texts is judged");
+        let pred = Pred { at: 0, column: 0, conjunct, of_null: true };
+        assert!(pred.now().is_none(), "no string yet");
+        let mut last = usize::MAX;
+        for bound in if descending { ["a", "a\t", "a "] } else { ["b", "a ", "a\t"] } {
+            threshold.raise(&Value::Char(bound.into()));
+            let wanted = rows_where(&|s| if descending { s >= bound.as_bytes() } else { s <= bound.as_bytes() });
+            let equal = rows_where(&|s| s == bound.as_bytes());
+            assert!(wanted.len() < last && !equal.is_empty() && equal.iter().all(|r| wanted.contains(r)), "narrower: {bound:?}");
+            last = wanted.len();
+            for (what, column) in [("texts", &plain), ("a dictionary", &dictionary)] {
+                let kept = pred.now().unwrap().kept(column, None, &crate::kernels::Portable);
+                assert_eq!(kept, Some(wanted.clone()), "{what}, {bound:?}, descending {descending}");
+            }
+        }
+    }
+}

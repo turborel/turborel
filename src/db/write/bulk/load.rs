@@ -12,12 +12,14 @@
 //! A unique index is never held back, so a UNIQUE constraint is checked as
 //! each row goes in, as before; and a table whose rows a trigger, a
 //! foreign key or an assertion reads loads none, as `rows_checked` finds
-//! (`integrity/inserted.rs`), so nothing reads an index held back before
+//! (`integrity/inserted.rs`), nor a table of foreign keys loaded by
+//! column (RULES.md D1235), so nothing reads an index held back before
 //! the load ends.
 
 use std::sync::Arc;
 
 use super::{Indexed, Together};
+use crate::catalog::ConstraintKind::ForeignKey;
 use crate::db::State;
 use crate::error::Result;
 use crate::params::Load;
@@ -48,7 +50,10 @@ pub(in crate::db::write) fn hold_back(st: &State, tx: &Txn, together: &mut Toget
         return Ok(());
     }
     let grouping = grouped(tx, together)?;
-    if !together.indexes.iter().any(Indexed::loads) {
+    // [DESIGN] RULES.md D1235: none of a table of foreign keys, whose rows
+    // a write to a table they reference reads by them.
+    let referencing = st.catalog.table(together.table).is_some_and(|d| d.constraints.iter().any(|c| matches!(c.kind, ForeignKey(_))));
+    if referencing || !together.indexes.iter().any(Indexed::loads) {
         // [DESIGN] RULES.md D1142: groups alone take no lock of their own,
         // so loads at once each write theirs; else nothing is held back.
         together.grouped = grouping;

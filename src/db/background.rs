@@ -191,6 +191,8 @@ impl Database {
     pub(super) fn serve_read_ahead(&self) {
         if let Ok(st) = self.snapshot() {
             st.ahead.use_job(JobAsker::new(self.downgrade(), JobHandle(self.background().read_ahead)));
+            // A read that makes maintenance wanted asks for its job so too (RULES.md D1212).
+            st.work.maintenance().use_job(JobAsker::new(self.downgrade(), JobHandle(self.background().maintenance)));
         }
         // What answers the statistics plug-ins ask is served as the
         // database opens, as read-ahead is (RULES.md D279).
@@ -221,7 +223,8 @@ impl Database {
     }
 
     /// What is due as the database opens: the maintenance its tables have
-    /// due, as of zones to settle (`rows/zones.rs`), and the queue of
+    /// due, as of rows to freeze, their zones' once one is asked for
+    /// (`rows/zones/cold.rs`, RULES.md D1212), and the queue of
     /// embeddings after commit, if a column waits for it.
     ///
     /// # Errors

@@ -99,6 +99,12 @@ impl Seed {
         self.seeded.words().hash(w)
     }
 
+    /// XXH3's seed of its words' hashes, as the kernels take it
+    /// (`Kernels::hash_i64`).
+    pub(super) fn word_seed(&self) -> u64 {
+        self.seeded.seed()
+    }
+
     /// The hash of a null.
     pub(super) fn null(&self) -> u64 {
         self.word(NULL_WORD)

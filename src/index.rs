@@ -18,7 +18,9 @@ pub mod adjacency;
 mod blink;
 pub mod diskann;
 mod key;
+mod names;
 pub use key::Key;
+pub use names::{BTREE_METHOD, HASH_METHOD, RTREE_METHOD};
 mod counted;
 mod entries;
 #[cfg(test)]
@@ -254,14 +256,11 @@ pub trait IndexMethod: Send + Sync {
 /// the statement fails, and an undo that fails marks the table damaged
 /// (RULES.md D19).
 ///
-/// \[DESIGN\] An index holds entries, (key, id) pairs, counted: the same
-/// pair may be inserted more than once, and each insert is taken back by
-/// one remove. A table whose engine keeps versions of its rows (RULES.md
-/// D29) has an entry for each run of consecutive versions of a row with one key (RULES.md D443), so two
-/// versions apart with the same key give one pair twice; when the last version of a run is removed, its
-/// entry is removed, and the pair stays while another run has it. A search may
-/// then find an entry of a version a reader does not see: the reader keeps
-/// a row only if the version it sees has the entry's key.
+/// \[DESIGN\] An index holds entries, (key, id) pairs, counted: the same pair may be inserted more than once, and each insert is taken
+/// back by one remove. A table whose engine keeps versions of its rows (RULES.md D29) has an entry for each run of consecutive versions
+/// of a row with one key (RULES.md D443), so two versions apart with the same key give one pair twice; when the last version of a run
+/// is removed, its entry is removed, and the pair stays while another run has it. A search may then find an entry of a version a reader
+/// does not see: the reader keeps a row only if the version it sees has the entry's key.
 ///
 /// Contract (RULES.md R-SAFE-3; checked by `test/integration/index_contracts.rs`):
 /// * Callers insert a key containing a null only into the index of a
@@ -436,6 +435,15 @@ pub trait Index: Send + Sync {
     fn insert_from(&self, key: &Key, row: RowId, alone: bool) -> Result<bool> {
         if alone { self.insert_alone(key.clone(), row) } else { self.insert(key.clone(), row).map(|()| false) }
     }
+    /// \[DESIGN\] RULES.md D1235: `insert_from` of each of `entries`, a group's, in the order the method takes them best; whether
+    /// each, in the order given, was alone. Default: `insert_from` of each in turn, which every method may keep.
+    ///
+    /// # Errors
+    ///
+    /// As `insert_from`.
+    fn insert_sorted(&self, entries: &[(Key, RowId)], alone: bool) -> Result<Vec<bool>> {
+        entries.iter().map(|(key, row)| self.insert_from(key, *row, alone)).collect()
+    }
     /// \[DESIGN\] Adds every entry of `entries`, in any order, to the index,
     /// empty, which nothing else reads or writes meanwhile: as `insert`
     /// would, one by one, as the default does; a method may build it whole
@@ -589,11 +597,3 @@ pub trait Index: Send + Sync {
         None
     }
 }
-
-/// The name of `BTreeMethod`, which also enforces UNIQUE constraints unless told otherwise.
-pub const BTREE_METHOD: &str = "btree";
-/// The name of `HashMethod`.
-pub const HASH_METHOD: &str = "hash";
-
-/// The name of `RTreeMethod`, for finite Cartesian point and rectangle keys.
-pub const RTREE_METHOD: &str = "rtree";
