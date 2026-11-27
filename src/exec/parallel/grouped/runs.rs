@@ -192,7 +192,7 @@ impl Iterator for Merged {
             };
             made.push(Key::Row(batch, &self.columns, *next));
             *next = next.saturating_add(1);
-            self.order.extend(firsts.get(*next).map(|_| Reverse((0, at))));
+            self.order.extend(firsts.get(*next).map(|&first| Reverse((first, at))));
             rows = rows.saturating_add(1);
         }
         (rows > 0).then(|| Ok((Batch { columns: made.into_columns(), rows }, None)))
