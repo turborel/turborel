@@ -23143,12 +23143,12 @@ its morsels again within sixteen of them.
 Two things follow from rows of one key arriving as several groups. A
 partition's table finds a key the morsel holds twice in the group its
 first made, as its merge gives a new group its slot before the next is
-looked up (D1275, `exec/table/made.rs`), and the spill's form of a
-morsel's groups tells which they are. And a morsel that must go to the
-spill as it is, the grant holding nothing more, is grouped first
+looked up (D1275, `exec/table/made.rs`). And a morsel that must go to
+the spill as it is, the grant holding nothing more, is grouped first
 (`waves.rs`, `regrouped`). A partition read back is split by its groups'
 hashes where it outgrows the grant, and rows of one key share a hash, so
-a key held many times must be one group there.
+a key held many times must be one group there. Nothing written to the
+spill holds a key twice, then, and its form needs no word for it.
 
 #### D1262. A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold
 

@@ -132,6 +132,44 @@ const HELD: i128 = 67_108_864;
 /// A grant the groups of T pass, so its partitions go to the spill.
 const PASSED: i128 = 131_072;
 
+/// Verifies: [DESIGN] RULES.md D1260, D356 a grouping gives the same
+/// groups, in the same order, each set function the same value, whichever
+/// of its morsels hand their rows on ungrouped: those the tables tell of,
+/// every one, none, every other and the second half alone. Of a grouping
+/// whose morsels reduce their rows to 40 groups, of one whose morsels
+/// reduce nothing though the table holds each key four times, and of one
+/// of a group a row; its morsels split among the partitions, handed as
+/// the executor hands them, or each handed whole to the statement's
+/// thread; held by the grant, and through the spill of a grant its groups
+/// pass. MIN of strings equal as they compare padded and different in
+/// their octets is the string of a group's first row only if the rows
+/// handed on ungrouped are merged in the order they came.
+#[test]
+fn the_groups_are_the_same_whichever_morsels_hand_their_rows_on_ungrouped() {
+    let (db, a) = table();
+    let named: [Named; 5] = [
+        ("as the tables tell", None),
+        ("every morsel", EVERY),
+        ("no morsel", NONE),
+        ("every other", Some(|m| m.is_multiple_of(2))),
+        ("the second half", Some(|m| m >= 12)),
+    ];
+    for (keyed, groups) in [("MOD(K, 40)", 40_usize), ("MOD(K, 6000)", 6000), ("K", 24_000)] {
+        let sql = format!("SELECT G, COUNT(*), SUM(V), MIN(V), MAX(K), MIN(P) FROM (SELECT {keyed} AS G, K, V, P FROM T) AS Q GROUP BY G");
+        set(&db, "MEMORY.WORK_BYTES", HELD);
+        let expected = waved(&a, &sql, &How { forced: NONE, apart: NONE, ..How::default() }, 3);
+        assert_eq!((expected.rows.len(), expected.spills), (groups, 0), "{sql}");
+        for (grant, (which, apart), (forced, parted)) in ways(&named) {
+            set(&db, "MEMORY.WORK_BYTES", grant);
+            let made = waved(&a, &sql, &How { forced, apart, ..How::default() }, 3);
+            assert_eq!(differing(&made, &expected), None, "{which}, a grant of {grant}, {} spills: {sql}", made.spills);
+            let spills = grant == PASSED && groups > 40 && parted;
+            assert!(made.spills > 0 || !spills, "{which}: {} spills of a grant of {grant}: {sql}", made.spills);
+            assert!(made.spills == 0 || grant == PASSED, "{which}: {} spills of a grant of {grant}: {sql}", made.spills);
+        }
+    }
+}
+
 /// Where the rows of `made` first differ from those of `expected`, told
 /// shortly: how many each holds, and the first row of `made` that is not
 /// the row `expected` holds there. None if they are the same rows.
@@ -159,6 +197,22 @@ fn a_table_of_the_statements_thread_past_the_grant_loses_no_group() {
     assert_eq!((held.rows.len(), held.spills), (6000, 0));
     assert!(spilled.spills > 0, "a grant its table passes");
     assert_eq!(differing(&spilled, &held), None);
+}
+
+/// A way to name the morsels that hand their rows on ungrouped.
+type Named = (&'static str, Forced);
+
+/// Each grant with each way of `named` and each way morsels are handed
+/// whole: none, which is told as every morsel going to the partitions, as
+/// the executor hands them, and every one.
+fn ways(named: &[Named]) -> Vec<(i128, Named, (Forced, bool))> {
+    let mut all = Vec::new();
+    for grant in [HELD, PASSED] {
+        for way in named {
+            all.extend([(NONE, true), (None, false), (EVERY, false)].map(|whole| (grant, *way, whole)));
+        }
+    }
+    all
 }
 
 /// Verifies: [DESIGN] RULES.md D1247 morsels are handed whole only while

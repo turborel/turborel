@@ -147,9 +147,10 @@ impl Handed {
 /// it, so 16, the least that is level, as a longer lead only holds more.
 const LEAD_PER_THREAD: usize = 16;
 
-/// \[DESIGN\] (RULES.md D1247) Which morsels a test hands whole, by their
-/// numbers, whatever their groups and the grouping's: none named in a
-/// statement, whose morsels are handed as `waved_as` says.
+/// \[DESIGN\] (RULES.md D1247, D1260) Morsels a test names by their
+/// numbers, to be handed whole or to hand their rows on ungrouped,
+/// whatever their groups and the grouping's: none named in a statement,
+/// whose morsels are handed as `waved_as` and `Reduction` say.
 pub(super) type Forced = Option<fn(usize) -> bool>;
 
 /// How a grouping's waves are run: as a statement runs them, the default,
@@ -157,6 +158,9 @@ pub(super) type Forced = Option<fn(usize) -> bool>;
 pub(super) struct How {
     /// The morsels handed whole, if a test names them.
     pub(super) forced: Forced,
+    /// \[DESIGN\] (RULES.md D1260) The morsels that hand their rows on
+    /// ungrouped, if a test names them, whatever the tables told.
+    pub(super) apart: Forced,
     /// \[DESIGN\] (RULES.md D1262) The morsels a thread the run leads its
     /// reader by.
     pub(super) lead: usize,
@@ -167,7 +171,7 @@ pub(super) struct How {
 
 impl Default for How {
     fn default() -> How {
-        How { forced: None, lead: LEAD_PER_THREAD, counted: (AtomicUsize::new(0), AtomicUsize::new(0)) }
+        How { forced: None, apart: None, lead: LEAD_PER_THREAD, counted: (AtomicUsize::new(0), AtomicUsize::new(0)) }
     }
 }
 
@@ -231,7 +235,7 @@ pub(super) fn waved_as(
 ) -> Result<Waved> {
     let count = pipeline.count();
     let whole = Arc::new(AtomicBool::new(true));
-    let work = grouped(pipeline, grouping, (db, tx, degree), (Arc::clone(&whole), how.forced));
+    let work = grouped(pipeline, grouping, (db, tx, degree), (Arc::clone(&whole), how.forced, how.apart));
     let mut waves = Waves::of(grouping, (db, tx, degree), limit, (whole, how));
     // [DESIGN] (RULES.md D1262) The threads lead the statement's thread
     // while what they hold ahead of it fits what the grant has left.
@@ -253,12 +257,14 @@ pub(super) fn waved_as(
 /// The work of a morsel of `pipeline` under `grouping` on one of `degree`
 /// threads: its rows grouped in a table of its own, handed whole if its
 /// groups are few (`few`) while morsels are `still` handed so, or if
-/// `forced` names it, else split among the partitions.
+/// `forced` names it, else split among the partitions. Its rows are
+/// handed on ungrouped if `ungrouped` names it, or, of none named, as
+/// the tables made before it tell (`Reduction`).
 fn grouped(
     pipeline: Pipeline,
     grouping: &Arc<Grouping>,
     (db, tx, degree): (&Db, TxId, usize),
-    (still, forced): (Arc<AtomicBool>, Forced),
+    (still, forced, ungrouped): (Arc<AtomicBool>, Forced, Forced),
 ) -> Work<Handed> {
     let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
     // The groups the morsel last grouped made, the room the next is given.
@@ -267,7 +273,8 @@ fn grouped(
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
         let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
-        let (expected, apart) = (room.load(Ordering::Relaxed), reduction.apart(m));
+        let apart = ungrouped.map_or_else(|| reduction.apart(m), |names| names(m));
+        let expected = room.load(Ordering::Relaxed);
         let asked = (&runner, first_of(&making, m), &making.seed);
         let table = morsel_groups(read, &making.spec.aggs, batches, asked, (expected, apart))?;
         room.store(table.len(), Ordering::Relaxed);
