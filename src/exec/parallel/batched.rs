@@ -15,6 +15,7 @@
 
 use std::sync::Arc;
 
+use super::passes::Placed;
 use super::pipeline::{Branch, Pipeline, Step};
 use crate::db::State;
 use crate::error::Result;
@@ -88,6 +89,10 @@ fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
             }
             Step::Runtime(told) => shaped.push(runtime_step(told, &layout)),
             Step::Count(count) => shaped.push(Shaped::Count(Arc::clone(count))),
+            Step::Kept(keep) => {
+                let places = keep.left.iter().map(|c| layout.iter().position(|l| l == c)).collect::<Option<Vec<usize>>>()?;
+                shaped.push(Shaped::Kept(Arc::new(Placed { keep: Arc::clone(keep), places })));
+            }
         }
     }
     Some((shaped, layout, width))
@@ -110,7 +115,7 @@ fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
         wide = match step {
             Step::Project(exprs) => exprs.len(),
             Step::Probe(table) | Step::Outer(table) => table.shared.joined_layout((&[], wide)).1,
-            Step::Filter(_) | Step::Semi(..) | Step::Runtime(_) | Step::Count(_) => wide,
+            Step::Filter(_) | Step::Semi(..) | Step::Runtime(_) | Step::Count(_) | Step::Kept(_) => wide,
         };
     }
     let mut deferred = Deferred::all(width);
@@ -122,6 +127,7 @@ fn late_of(branch: &Branch, width: usize) -> Vec<usize> {
             Step::Outer(_) | Step::Semi(..) => Deferred::default(),
             Step::Runtime(told) => deferred.judged(&told.iter().map(|t| t.column).collect::<Vec<_>>()),
             Step::Count(_) => deferred,
+            Step::Kept(keep) => deferred.judged(&keep.left),
         };
     }
     deferred.late_of(scanned)
@@ -137,6 +143,11 @@ impl Pipeline {
     /// SQLCODE -910 if the pipeline is not read by batch, or `n` is past its
     /// last morsel.
     pub(super) fn morsel_kept(&self, n: usize, (db, tx): (&Db, TxId)) -> Result<Batches> {
+        // A morsel of a pass past the first is of that pass's pipeline
+        // (RULES.md D1240).
+        if let Some((pass, m)) = super::passes::passed(self, n)? {
+            return pass.morsel_kept(m, (db, tx));
+        }
         let by = self.batched.as_ref().ok_or_else(|| broken("a pipeline not read by batch"))?;
         let mut at = n;
         for ((branch, steps), late) in self.branches.iter().zip(&by.steps).zip(&by.late) {

@@ -20,7 +20,7 @@ use crate::physical::PhysicalPlanner;
 use crate::physical::cost::HASH_ROW;
 use crate::physical::cost::parallel::{PART_START, gain_of};
 use crate::physical::cost::runtime::{kept, probed};
-use crate::physical::cost::spill::hash_spilled;
+use crate::physical::cost::spill::{hash_spilled, passed_spilled};
 use crate::physical::robust::Linear;
 use crate::storage::cost_of;
 
@@ -94,8 +94,11 @@ impl Space<'_> {
     /// left's rows: the right read, its part's threads sharing the read if
     /// it is one relation; each row of both hashed, shared by its part's
     /// threads, those of the probing operand, the larger, after its runtime
-    /// filter; past the grant both operands spilled; and a part's start.
-    pub(super) fn hash_linear(&self, (left, right): (&Entry, &Entry), (l, r): (Set, Set), (kind, read): (Kind, f64)) -> Linear {
+    /// filter; past the grant both operands spilled, or of a part run on
+    /// threads the probing side, the left's plan costing `probe` if it
+    /// probes, read again in passes where that costs less (RULES.md
+    /// D1240); and a part's start.
+    pub(super) fn hash_linear(&self, (left, right): (&Entry, &Entry), (l, r): (Set, Set), (kind, read, probe): (Kind, f64, f64)) -> Linear {
         let (m, w) = (self.model, &self.model.cost);
         let probes_left = left.rows >= right.rows;
         let (built, probing) = if probes_left { ((r, right.rows), l) } else { ((l, left.rows), r) };
@@ -105,7 +108,11 @@ impl Space<'_> {
         let right_read = if Space::single(r).is_some() { read / on_right } else { read };
         let threads = w.degrees.degree_of(m.held(l)).max(w.degrees.degree_of(m.held(r)));
         let start = if threads > 1.0_f64 { PART_START } else { 0.0_f64 };
-        let spill = hash_spilled((built.1, m.bytes(built.0)), left.rows.max(right.rows), w.grant_bytes);
+        let mut spill = hash_spilled((built.1, m.bytes(built.0)), left.rows.max(right.rows), w.grant_bytes);
+        if threads > 1.0_f64 {
+            let (cost, rows) = if probes_left { (probe, left.rows) } else { (read, right.rows) };
+            spill = spill.min(passed_spilled((built.1, m.bytes(built.0)), (cost, rows, m.bytes(probing)), w.grant_bytes));
+        }
         Linear {
             fixed: right_read + per_row(!probes_left) * right.rows / on_right + start + spill,
             per_row: per_row(probes_left) / on_left,

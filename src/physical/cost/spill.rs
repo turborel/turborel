@@ -20,7 +20,7 @@
 
 use crate::catalog::QualifiedName;
 use crate::db::State;
-use crate::physical::PhysicalPlanner;
+use crate::physical::{PhysicalPlanner, Plan};
 use crate::settings::MEMORY_WORK_BYTES;
 use crate::storage::cost_of;
 
@@ -78,6 +78,105 @@ fn moved_past((held, bytes): (f64, f64), (moved, per_row): (f64, f64), grant: f6
 /// operands partitioned, each row written and read once more.
 pub(in crate::physical) fn hash_spilled((built, bytes): (f64, f64), probing: f64, grant: f64) -> f64 {
     moved_past((built, bytes), (built + probing, PARTITIONED_ROW), grant)
+}
+
+/// \[DESIGN\] (RULES.md D1240) The share of a grant a pass of a hash
+/// join built in parts past it holds: a third, as the first pass's table
+/// is held to the end beside the pass being probed and the next, made
+/// while the last morsels of that one end (`exec/parallel/passes.rs`).
+pub(crate) const PASS_SHARE: f64 = 3.0;
+
+/// \[DESIGN\] (RULES.md D1240) The most passes a hash join run in
+/// parallel and built past its grant probes in, each probing row costing
+/// `probe_row` in rows of a scan to make again and holding `bytes` bytes:
+/// as many as cost no more than its rows partitioned once. A pass past the
+/// first reads the probing side again, where the join partitioned writes
+/// and reads each of its rows once more (`PARTITIONED_ROW` and its bytes);
+/// the built rows are written once either way, so they weigh nothing in
+/// the choice. Passes win while (P - 1) x `probe_row` is at most that.
+pub(crate) fn pass_limit(probe_row: f64, bytes: f64) -> f64 {
+    1.0_f64 + ((PARTITIONED_ROW + SPILLED_BYTE * bytes) / probe_row.max(1.0_f64)).floor()
+}
+
+/// \[DESIGN\] (RULES.md D1240) The cost more of a hash join run in
+/// parallel building `built` rows of `bytes` bytes past a grant of
+/// `grant` bytes in passes, its probing side costing `probing` to read
+/// and giving `rows` rows of `wide` bytes: the built rows written and read
+/// back once, and the probing side read again for each pass past the
+/// first; none if they fit, without bound past the passes `pass_limit`
+/// allows, as the join then gives way.
+pub(in crate::physical) fn passed_spilled((built, bytes): (f64, f64), (probing, rows, wide): (f64, f64, f64), grant: f64) -> f64 {
+    if built * bytes <= grant {
+        return 0.0_f64;
+    }
+    let passes = (built * bytes / (grant / PASS_SHARE)).ceil();
+    if passes > pass_limit(probing / rows.max(1.0_f64), wide) {
+        return f64::INFINITY;
+    }
+    built * (SPILLED_ROW + SPILLED_BYTE * bytes) + (passes - 1.0_f64) * probing
+}
+
+/// \[DESIGN\] (RULES.md D1240) What reading `plan`, the probing side of
+/// a hash join run in parallel, once more costs, in rows of a scan, and
+/// the rows it gives, as the planner costed them: its scans' costs, each
+/// probe of a join below a row hashed (`HASH_ROW`), and the rows its top
+/// estimates. None if it is not a pipeline of scans in no order, filters,
+/// projections and hash joins' probes, as an index scan's or an ordered
+/// scan's rows come in an order a plan above may rely on, which passes
+/// would lose.
+pub(crate) fn rescanned(plan: &Plan) -> Option<(f64, f64)> {
+    match plan {
+        Plan::SeqScan { cost, rows, order, .. } => order.is_empty().then(|| (*cost, cost_of(*rows))),
+        Plan::Filter { input, est, .. } => rescanned(input).map(|(cost, _)| (cost, *est)),
+        Plan::Project { input, .. } => rescanned(input),
+        Plan::Counted(c) => rescanned(&c.input),
+        Plan::HashJoin { left, est, .. } | Plan::OuterJoin { left, est, .. } => probed(left, *est),
+        Plan::SemiJoin(s) => probed(&s.left, s.est),
+        Plan::Append { left, right, .. } => {
+            let ((a, m), (b, n)) = (rescanned(left)?, rescanned(right)?);
+            Some((a + b, m + n))
+        }
+        Plan::IndexScan { .. }
+        | Plan::Transfer(_)
+        | Plan::Nearest(_)
+        | Plan::IndexJoin { .. }
+        | Plan::MergeJoin(_)
+        | Plan::RangeJoin(_)
+        | Plan::MarkJoin(_)
+        | Plan::Product { .. }
+        | Plan::Aggregate { .. }
+        | Plan::MergeAppend { .. }
+        | Plan::SetOp { .. }
+        | Plan::Values { .. }
+        | Plan::System { .. }
+        | Plan::Sort { .. }
+        | Plan::Limit { .. }
+        | Plan::Distinct { .. }
+        | Plan::Recursive { .. }
+        | Plan::Unnest(..)
+        | Plan::Window { .. }
+        | Plan::Polymorphic(..)
+        | Plan::Recognize { .. }
+        | Plan::WorkTable { .. }
+        | Plan::Transition { .. }
+        | Plan::Shared(_)
+        | Plan::Parallel(..) => None,
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1240) The most passes a hash join run in
+/// parallel whose probing side is `plan` may probe in (`pass_limit`), as
+/// the planner costed that side; none if it cannot be read again
+/// (`rescanned`). A probing row's bytes are taken at the least, an
+/// entry's, as a plan does not carry its rows' width, which allows fewer
+/// passes, not more.
+pub(crate) fn passes_of(plan: &Plan) -> Option<f64> {
+    rescanned(plan).map(|(cost, rows)| pass_limit(cost / rows.max(1.0_f64), ENTRY_BYTES))
+}
+
+/// `rescanned` of a join's probing side `left`, giving `est` rows.
+fn probed(left: &Plan, est: f64) -> Option<(f64, f64)> {
+    rescanned(left).map(|(cost, rows)| (cost + super::HASH_ROW * rows, est))
 }
 
 /// The cost more of a hashed grouping holding `groups` groups of `bytes`

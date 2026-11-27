@@ -777,6 +777,7 @@ verification approach DO-178C expects (§8).
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
+| D1240 | A hash join run in parallel whose built operand outgrows its grant is built in parts and probed in passes |
 
 ### The project
 
@@ -21476,6 +21477,69 @@ tables' pages, which does not fit beside what the pool holds. The
 lookups are counted as before, so LEAST_LOOKUPS and the window are
 unchanged. A hit costs nothing more, and a miss only notes which way the
 pool found its frame (`disk/buffer/tally.rs`).
+
+#### D1240. A hash join run in parallel whose built operand outgrows its grant is built in parts and probed in passes
+
+A hash join's operand read by its morsels was held whole in its grant,
+and once its rows passed it the join gave way. The part was dropped and
+the plan run again on the statement's thread alone, as the serial join
+that partitions both operands (D38). At a grant of a few GiB a build of
+tens of millions of rows was that rerun, on one thread.
+
+The build now goes on in parts (`exec/parallel/probe/spilled.rs`). Each
+built row goes to one of 64 parts by the low six bits of its key's hash,
+seeded and not direct (D601). A pass's table places its rows by the high
+bits of the hash, so a table made of a few parts still spreads them over
+all its slots and its own parts (D1080). A part's rows are held in a list
+of its share of a pass and written to the join's spill area past it, in
+the order the operand gave them, so a probing row meets its matches in
+the order one table gives them. A row whose key matches nothing is left
+out, as the table leaves it out. The key columns of every row are kept
+beside the parts, and the runtime filters the probing side's scans are
+told are made of them once the operand is read, the filters of the
+whole operand (D369).
+
+The parts are then put in passes, in order, each of no more than a third
+of what the grant has free once the keys are let go, as the first pass's
+table is held to the end beside the pass probed and the next. A part
+past a pass is split into its 64 cells by the hash's next six bits. The
+first pass's table is made at once and its join is a step of the
+pipeline, with a step before its probe that keeps the rows whose keys
+fall in its cells. The pipeline's morsels are those of each pass in
+turn (`exec/parallel/passes.rs`), each pass's numbered on after the
+pass before, so a grouping or a gathering over it reads the passes as
+more morsels. A pass past the first reads the pipeline's scans again,
+with the same conditions, zones and runtime filters. Its table is made
+of its parts by the operand's threads when its first morsel is asked
+for, and let go once its last is. A probing row's key falls in one pass
+alone. A row of a key that matches nothing is kept by the first pass
+alone, so a LEFT join pads it once and an antijoin keeps it once.
+
+Rescanning the probing side costs a pass. The most passes a join may
+take come from the planner's constants (`cost/spill.rs`, `pass_limit`).
+Partitioning instead writes and reads each probing row once more,
+PARTITIONED_ROW and SPILLED_BYTE a byte in rows of a scan, and the built
+rows are written once either way. So passes win while the passes past
+the first, times what making a probing row again costs, stay within
+that. The cost of a probing row is the probing side's plan cost over its
+estimated rows (`rescanned`), at least a scanned row's, and its bytes
+are taken at an entry's, the least a row holds, so the limit errs low.
+The planner costs a join run in parallel past its grant the least of
+both operands partitioned and the build written once and the probing
+side read again for each pass (`passed_spilled`). The same limit is
+checked as the operand is read, of its passes as its morsels so far
+project them, and a build past it gives way at once, its lists dropped
+with the spill areas they hold.
+
+These still give way. A probing side that is not scans in no order,
+filters, projections and the probes of hash joins, as an index scan's or
+an ordered scan's rows come in an order a plan above may rely on and
+passes would lose; a second join of the same pipeline built past its
+grant, as passes would multiply; a cell past a pass; keys that do not
+fit the grant beside what it held before; and more passes than the
+limit. A pass drops a probing row once it has hashed its keys itself, a
+second hash of the probe's own; the probe hands its hash to such a step
+once the shared table exposes it (D1242).
 
 ## 2. Project layout
 

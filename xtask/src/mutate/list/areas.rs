@@ -89,6 +89,7 @@ mod mark_joins;
 mod morsel_memory;
 mod outer_steps;
 mod semi_joins;
+mod spilled_joins;
 mod steady;
 mod unnesting;
 mod uuid;
@@ -307,9 +308,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
-/// debugger's, a morsel's memory's and a copy by column's last, as `last`
-/// holds no more.
-fn closing() -> [&'static [Mutation]; 32] {
+/// debugger's, a morsel's memory's, a copy by column's and a join built in
+/// passes' last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 33] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -343,6 +344,7 @@ fn closing() -> [&'static [Mutation]; 32] {
         &debugger::DEBUGGER,
         &morsel_memory::MORSEL_MEMORY,
         &copy_columns::COPY_COLUMNS,
+        &spilled_joins::SPILLED_JOINS,
     ]
 }
 

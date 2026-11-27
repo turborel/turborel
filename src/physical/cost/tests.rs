@@ -3,7 +3,9 @@
 
 use super::parallel::Degrees;
 use super::runtime::{FILTER_ROW, kept, probed};
-use super::spill::{ENTRY_BYTES, PARTITIONED_ROW, SPILLED_BYTE, SPILLED_ROW, hash_spilled, row_bytes, sort_spilled};
+use super::spill::{
+    ENTRY_BYTES, PARTITIONED_ROW, PASS_SHARE, SPILLED_BYTE, SPILLED_ROW, hash_spilled, pass_limit, passed_spilled, row_bytes, sort_spilled,
+};
 use super::{CostModel, HASH_ROW};
 
 /// Whether `a` and `b` are the same cost, to rounding.
@@ -63,4 +65,26 @@ fn a_runtime_filter_leaves_the_built_keys_share_of_the_probe() {
     assert!(same(kept(&[], 10.0_f64), 1.0_f64));
     assert!(same(probed(1_000.0_f64, HASH_ROW, 0.01_f64), 1_000.0_f64 * (FILTER_ROW + HASH_ROW * 0.01_f64)));
     assert!(same(probed(1_000.0_f64, HASH_ROW, 0.95_f64), 1_000.0_f64 * HASH_ROW));
+}
+
+/// Verifies: [DESIGN] (RULES.md D1240) the most passes a join probes in
+/// are one more than a probing row partitioned once costs over what
+/// making it again costs, at least a scanned row's; and a join built in
+/// passes costs its built rows written once and its probing side read
+/// again for each pass past the first, nothing within the grant, without
+/// bound past the most. The boundary of `passes > pass_limit`: at the
+/// most, costed; one pass past it, not.
+#[test]
+fn passes_cost_the_probing_side_read_again_up_to_the_most() {
+    assert!(same(pass_limit(1.0_f64, 0.0_f64), 1.0_f64 + PARTITIONED_ROW.floor()));
+    assert!(same(pass_limit(0.1_f64, 0.0_f64), pass_limit(1.0_f64, 0.0_f64)));
+    assert!(same(pass_limit(5.0_f64, 20.0_f64), 1.0_f64 + ((PARTITIONED_ROW + SPILLED_BYTE * 20.0_f64) / 5.0_f64).floor()));
+    let (bytes, grant) = (100.0_f64, 300_000.0_f64);
+    assert!(same(passed_spilled((3_000.0_f64, bytes), (1e6_f64, 1e6_f64, 16.0_f64), grant), 0.0_f64));
+    let most = pass_limit(1.0_f64, 16.0_f64);
+    let at_most = (most - 0.5_f64) * grant / PASS_SHARE / bytes;
+    let cost = passed_spilled((at_most, bytes), (1e6_f64, 1e6_f64, 16.0_f64), grant);
+    assert!(same(cost, at_most * (SPILLED_ROW + SPILLED_BYTE * bytes) + (most - 1.0_f64) * 1e6_f64), "{cost}");
+    let past = passed_spilled(((most + 0.5_f64) * grant / PASS_SHARE / bytes, bytes), (1e6_f64, 1e6_f64, 16.0_f64), grant);
+    assert!(past.is_infinite());
 }

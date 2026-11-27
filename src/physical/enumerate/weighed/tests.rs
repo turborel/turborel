@@ -60,7 +60,7 @@ fn hashed_gaining(cost: CostModel, kind: Kind, gain: f64) -> Linear {
     let graph = Graph::new(2, &shapes, &[(0, bit(0) | bit(1))]);
     let space = Space::new(&graph, &model);
     let entry = |rows: f64| Entry { rows, upper: f64::INFINITY, cands: Vec::new() };
-    space.hash_linear((&entry(FACT), &entry(DIMENSION)), (bit(0), bit(1)), (kind, DIMENSION))
+    space.hash_linear((&entry(FACT), &entry(DIMENSION)), (bit(0), bit(1)), (kind, DIMENSION, FACT))
 }
 
 /// A cost model with no runtime filters, on one thread, of a grant of

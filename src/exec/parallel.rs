@@ -38,6 +38,7 @@ mod held;
 mod indexed;
 mod looped;
 mod partitioned;
+mod passes;
 mod pipeline;
 mod probe;
 mod rows;

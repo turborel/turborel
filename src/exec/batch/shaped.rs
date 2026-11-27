@@ -16,12 +16,13 @@ use super::picks::{pick, picked};
 use super::project::{Place, computed, place_of};
 use super::runtime::{Told, applied};
 use super::stream::{Batches, filtered};
+use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::Runner;
 use crate::logical::{Cond, Expr};
 use crate::noted::Noted;
 use crate::physical::NodeCount;
-use crate::storage::Sel;
+use crate::storage::{Batch, Sel};
 use crate::txn::TxId;
 
 /// A step of a pipeline over its batches.
@@ -50,6 +51,21 @@ pub(in crate::exec) enum Shaped {
     /// \[EXTENSION\] the rows kept counted, a batch at a time, as a
     /// counted operator's (RULES.md D378).
     Count(Arc<NodeCount>),
+    /// \[DESIGN\] (RULES.md D1240) the rows a pass of a hash join built
+    /// in parts keeps, those whose keys fall in its parts.
+    Kept(Arc<dyn Keeps>),
+}
+
+/// \[DESIGN\] (RULES.md D1240) What keeps some of a batch's rows by
+/// their values, as a pass of a hash join built in parts keeps the rows
+/// whose keys fall in its parts (`parallel/passes.rs`).
+pub(in crate::exec) trait Keeps: Send + Sync {
+    /// Of `batch`'s rows `rows`, or all, those it keeps, in order.
+    ///
+    /// # Errors
+    ///
+    /// As judging a row fails.
+    fn keeps(&self, batch: &Batch, rows: Option<Sel>) -> Result<Sel>;
 }
 
 /// The step of `told`, runtime filters, over batches of `layout`.
@@ -140,6 +156,14 @@ pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&D
                     count.stepped(u64::try_from(rows.as_ref().map_or(batch.rows, Sel::len)).unwrap_or(u64::MAX));
                     count.notes().add(Noted::Batches, 1);
                 }
+            }))
+        }
+        Shaped::Kept(keeps) => {
+            let keeps = Arc::clone(keeps);
+            Box::new(inner.map(move |kept| {
+                let (batch, rows) = kept?;
+                let rows = keeps.keeps(&batch, rows)?;
+                Ok((batch, Some(rows)))
             }))
         }
     })

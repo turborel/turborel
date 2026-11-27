@@ -33,6 +33,9 @@ use crate::exec::{Runner, Seed, execute};
 use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Row};
 use crate::txn::TxId;
+use spilled::Passed;
+
+pub(super) mod spilled;
 
 /// \[DESIGN\] The partitions of a parallel grouping's and window's rows:
 /// enough that each thread of any degree takes several, a power of two.
@@ -84,26 +87,54 @@ fn held_bytes(batch: &Batch) -> usize {
     batch.bytes().saturating_add(batch.rows.saturating_mul(TABLE_ROW_BYTES))
 }
 
+/// A hash join's built operand: one table, or of one read by its morsels
+/// past the grant, its passes (RULES.md D1240).
+pub(super) enum Built {
+    Whole(Arc<Table>),
+    Passed(Box<Passed>),
+}
+
 /// The operand `right` of a hash join on `keys`, built: by its morsels on
 /// up to `degree` threads if it is a part run in parallel, else read by
 /// the statement's thread; none if its rows outgrow `limit`, the join then
-/// giving way to the serial one, which partitions them (RULES.md D38).
+/// giving way to the serial one, which partitions them (RULES.md D38); or
+/// of one read by its morsels, its passes, if `passes`, the most it may
+/// take, is given (RULES.md D1240).
 ///
 /// # Errors
 ///
 /// As reading the operand fails.
-pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Arc<Table>>> {
+pub(super) fn built_within(
+    right: &Plan,
+    keys: &[JoinKey],
+    (db, tx): (&Db, TxId),
+    (limit, passes): (&Limit, Option<f64>),
+) -> Result<Held<Built>> {
     if let Plan::Parallel(p) = right
         && pipelined(&p.input)
         && let Held::Kept(pipeline) = Pipeline::of(&p.input, (db, tx), limit)?
     {
-        return parallel_built(pipeline, keys, (db, tx), (p.degree, limit));
+        return parallel_built(pipeline, keys, (db, tx), (p.degree, limit, passes));
     }
+    let whole = |held: Held<Arc<Table>>| match held {
+        Held::Kept(table) => Held::Kept(Built::Whole(table)),
+        Held::GaveWay => Held::GaveWay,
+    };
     // An operand that gives batches is read by batch, as the serial join
     // reads it (RULES.md D1050).
     if let Some(shape) = layout(right, db).filter(|_| crate::exec::batched(db) && reads_by_batch(right, db)) {
-        return batch_built(right, shape, keys, (db, tx), limit);
+        return batch_built(right, shape, keys, (db, tx), limit).map(whole);
     }
+    rows_built(right, keys, (db, tx), limit).map(whole)
+}
+
+/// The operand `right` of a hash join on `keys`, read row by row by the
+/// statement's thread; given way if its rows outgrow `limit`.
+///
+/// # Errors
+///
+/// As reading the operand fails.
+fn rows_built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit: &Limit) -> Result<Held<Arc<Table>>> {
     let mut rows = Vec::new();
     for read in execute(right.clone(), db, tx) {
         let row = read?;
@@ -211,36 +242,47 @@ fn width_of(rows: &[Row], keys: &[JoinKey]) -> usize {
 /// batches, kept rows alone, if it is read by batch, else of its rows.
 /// Each morsel's rows are charged to `limit` as they are gathered
 /// (RULES.md D1150), so the join gives way once they outgrow it, not
-/// after a morsel whose rows a join below made many more than its table's.
+/// after a morsel whose rows a join below made many more than its table's;
+/// or, if `passes` is given, the most it may take, built in passes from
+/// then on (RULES.md D1240).
 fn parallel_built(
     pipeline: Pipeline,
     keys: &[JoinKey],
     (db, tx): (&Db, TxId),
-    (degree, limit): (usize, &Limit),
-) -> Result<Held<Arc<Table>>> {
+    (degree, limit, passes): (usize, &Limit, Option<f64>),
+) -> Result<Held<Built>> {
     let pipeline = Arc::new(pipeline);
     let shape = pipeline.batched.as_ref().map(|b| (b.layout.clone(), b.width));
     let (count, db_for, read, within) = (pipeline.count(), db.clone(), Arc::clone(&pipeline), limit.clone());
     let batched_width = shape.as_ref().map(|s| s.1);
     let work = Box::new(move |m: usize| morsel_built(&read, m, (&db_for, tx), (batched_width, &within)));
     let (mut parts, from, mut taken) = (Vec::new(), limit.held(), 0_usize);
-    for (done, batch) in (1_usize..).zip(Morsels::start(db, tx, (count, degree), work)) {
+    let mut morsels = (1_usize..).zip(Morsels::start(db, tx, (count, degree), work));
+    for (done, batch) in morsels.by_ref() {
         let Taken::Whole(batch, bytes) = batch? else { return Ok(Held::GaveWay) };
         taken = taken.saturating_add(bytes);
+        parts.push((batch, bytes));
         if !limit.on_course((from, taken), (done, count)) {
-            return Ok(Held::GaveWay);
+            let Some(most) = passes else { return Ok(Held::GaveWay) };
+            let shape = shape_of(shape, &parts, keys);
+            return spilled::spilled((parts, morsels), (keys, shape), (db, tx, degree), (limit, from, most, count));
         }
-        parts.push(batch);
     }
-    let (columns, width) = shape.unwrap_or_else(|| {
-        let widest = parts.iter().map(|b| b.columns.len()).max().unwrap_or_else(|| width_of(&[], keys));
-        ((0..widest).collect(), widest)
-    });
+    let shape = shape_of(shape, &parts, keys);
     // A morsel of no rows may hold no vectors.
-    parts.retain(|b| b.rows > 0);
+    let parts = parts.into_iter().map(|(b, _)| b).filter(|b| b.rows > 0).collect();
     // Put together by the threads that read it (RULES.md D1080).
-    let shared = super::build::shared(parts, (columns, width), keys, super::build::Crew { db, tx, degree })?;
-    Ok(Held::Kept(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared.on(crate::db::kernels::chosen(db))) })))
+    let shared = super::build::shared(parts, shape, keys, super::build::Crew { db, tx, degree })?;
+    Ok(Held::Kept(Built::Whole(Arc::new(Table { keys: keys.to_vec(), shared: Arc::new(shared.on(crate::db::kernels::chosen(db))) }))))
+}
+
+/// The columns of an operand's batches `parts` and their rows' width:
+/// `shape`, of one read by batch, else every column of the widest.
+fn shape_of(shape: Option<(Vec<usize>, usize)>, parts: &[(Batch, usize)], keys: &[JoinKey]) -> (Vec<usize>, usize) {
+    shape.unwrap_or_else(|| {
+        let widest = parts.iter().map(|(b, _)| b.columns.len()).max().unwrap_or_else(|| width_of(&[], keys));
+        ((0..widest).collect(), widest)
+    })
 }
 
 /// Morsel `m` of `pipeline`, a hash join's operand, gathered into a batch
@@ -285,7 +327,7 @@ fn morsel_built(
 // R-TEST-1, R-TEST-8).
 #[cfg(test)]
 mod tests {
-    use super::{Held, Limit, PARTS, built, part_of};
+    use super::{Built, Held, Limit, PARTS, built_within, part_of};
     use crate::db::Database;
     use crate::exec::{Db, Seed};
     use crate::logical::{Cond, Expr};
@@ -319,9 +361,9 @@ mod tests {
     fn built_of(db: &Database, plan: &Plan) -> Option<(usize, bool)> {
         let state = Db::from(db.snapshot().unwrap());
         let keys = [JoinKey { left: 0, right: 0, nulls: false }];
-        match built(plan, &keys, (&state, crate::txn::NO_TRANSACTION), &Limit::of(&state)).unwrap() {
-            Held::Kept(table) => Some((table.shared.rows(), table.shared.is_direct())),
-            Held::GaveWay => None,
+        match built_within(plan, &keys, (&state, crate::txn::NO_TRANSACTION), (&Limit::of(&state), None)).unwrap() {
+            Held::Kept(Built::Whole(table)) => Some((table.shared.rows(), table.shared.is_direct())),
+            Held::Kept(Built::Passed(_)) | Held::GaveWay => None,
         }
     }
 
