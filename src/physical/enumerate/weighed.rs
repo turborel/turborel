@@ -94,10 +94,11 @@ impl Space<'_> {
     /// left's rows: the right read, its part's threads sharing the read if
     /// it is one relation; each row of both hashed, shared by its part's
     /// threads, those of the probing operand, the larger, after its runtime
-    /// filter; past the grant both operands spilled, or of a part run on
-    /// threads the probing side, the left's plan costing `probe` if it
-    /// probes, read again in passes where that costs less (RULES.md
-    /// D1240); and a part's start.
+    /// filter; past the grant both operands spilled, or of an inner join
+    /// or a LEFT one its left probing, of a part run on threads, the
+    /// probing side, the left's plan costing `probe` if it probes, read
+    /// again in passes where that costs less (RULES.md D1240); and a
+    /// part's start.
     pub(super) fn hash_linear(&self, (left, right): (&Entry, &Entry), (l, r): (Set, Set), (kind, read, probe): (Kind, f64, f64)) -> Linear {
         let (m, w) = (self.model, &self.model.cost);
         let probes_left = left.rows >= right.rows;
@@ -109,7 +110,11 @@ impl Space<'_> {
         let threads = w.degrees.degree_of(m.held(l)).max(w.degrees.degree_of(m.held(r)));
         let start = if threads > 1.0_f64 { PART_START } else { 0.0_f64 };
         let mut spill = hash_spilled((built.1, m.bytes(built.0)), left.rows.max(right.rows), w.grant_bytes);
-        if threads > 1.0_f64 {
+        // Passes are of an inner join or a LEFT one its left probing, the
+        // joins a pipeline builds in parts; a semi join, an antijoin or
+        // one whose preserved rows are built is never probed in passes.
+        let passes = kind == Kind::Inner || (kind == Kind::Left && probes_left);
+        if threads > 1.0_f64 && passes {
             let (cost, rows) = if probes_left { (probe, left.rows) } else { (read, right.rows) };
             spill = spill.min(passed_spilled((built.1, m.bytes(built.0)), (cost, rows), w.grant_bytes));
         }

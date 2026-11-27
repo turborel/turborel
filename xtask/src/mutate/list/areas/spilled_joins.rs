@@ -23,12 +23,18 @@ const FILTERS: &str = "exec::parallel::passes::tests::the_first_pass_carries_the
 /// The test of a build stopped as its morsels project too many passes.
 const STOPPED: &str = "exec::parallel::probe::spilled::tests::a_build_stops_once_its_morsels_project_too_many_passes";
 
+/// The file of a hash join's weight in the enumeration.
+const WEIGHED: &str = "src/physical/enumerate/weighed.rs";
+
+/// The test of the joins weighed probed in passes.
+const WEIGHED_PASSES: &str = "physical::enumerate::weighed::tests::only_a_join_a_pipeline_builds_in_parts_costs_passes";
+
 /// The test of joins of each kind built past the grant.
 const JOINS: &str = "spilled_joins::joins_built_past_the_grant_give_their_rows";
 
 /// Mechanisms whose removal must fail the requirements of a hash join
 /// built in parts and probed in passes.
-pub const SPILLED_JOINS: [Mutation; 5] = [
+pub const SPILLED_JOINS: [Mutation; 6] = [
     Mutation {
         name: "passes-cells-ignored",
         package: Package::Core,
@@ -78,5 +84,15 @@ pub const SPILLED_JOINS: [Mutation; 5] = [
         replacement: "Arc::clone(if Arc::ptr_eq(t, table) { table } else { t })",
         integration: &[JOINS],
         unit: &[PASSED],
+    },
+    Mutation {
+        name: "passes-weighed-of-any-join",
+        package: Package::Core,
+        breaks: "only an inner join and a LEFT one whose left probes are weighed probed in passes (D1240)",
+        file: WEIGHED,
+        original: "let passes = kind == Kind::Inner || (kind == Kind::Left && probes_left);",
+        replacement: "let passes = kind != Kind::Full;",
+        integration: &[],
+        unit: &[WEIGHED_PASSES],
     },
 ];

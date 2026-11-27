@@ -21743,7 +21743,12 @@ are taken at an entry's, the least a row holds, so the limit errs low,
 in the plan as at the run, which knows no estimate of its width.
 The planner costs a join run in parallel past its grant the least of
 both operands partitioned and the build written once and the probing
-side read again for each pass (`passed_spilled`). The same limit is
+side read again for each pass (`passed_spilled`). Only an inner join
+and a LEFT one whose left probes are weighed so, as only those are steps
+of a pipeline that builds its operand in parts. A semi join, an antijoin
+or a join whose preserved rows are built is weighed partitioned, which
+is how it runs, so it is not chosen over the probes of an index for
+passes it never takes. The same limit is
 checked as the operand is read, of its passes as its morsels so far
 project them, and a build past it gives way at once, its lists dropped
 with the spill areas they hold.
