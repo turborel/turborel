@@ -1,8 +1,10 @@
 //! Estimates from the statistics of RULES.md D381 and D382: a column's
 //! most common values, a table's sample of rows for a conjunction whose
 //! columns go together, a LIKE's prefix, an index's range by its share of
-//! the tree, and bounds after rows are written past them. These are `[DESIGN]`
-//! requirements on the plan; the rows are the same whatever it estimates.
+//! the tree, and bounds after rows are written past them; and of D1279,
+//! a grouping by an expression counted as the sample shows it. These are
+//! `[DESIGN]` requirements on the plan; the rows are the same whatever it
+//! estimates.
 
 use turborel::db::{Database, Session};
 use turborel::params::Params;
@@ -227,4 +229,92 @@ fn a_prefix_the_sample_holds_enough_of_is_estimated_by_its_share() {
         let (forest, plan) = estimated(&s, "SELECT * FROM P WHERE NAME LIKE 'forest%'");
         assert!(within(forest, f64::from(u32::try_from(truth).unwrap()), 2.0), "{using}: {forest} for {truth}\n{plan}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D1279: of either engine, a grouping by a
+/// time less its seconds is estimated at the minutes it gives, where its
+/// column, a value a row, allowed a group a row; and a grouping by the
+/// first two characters of a string, a value a row too, at their 25
+/// pairs. The groups given are those of the rows whatever was estimated.
+#[test]
+fn a_grouping_by_an_expression_is_estimated_as_the_sample_shows_it() {
+    let row = |k: u32| {
+        let at = k * 7;
+        let (hour, minute) = (at.div_euclid(3_600), at.div_euclid(60) % 60);
+        format!("({k}, TIMESTAMP '2001-02-03 {hour:02}:{minute:02}:{:02}', '{}-{k:07}')", at % 60, 10 + k % 25)
+    };
+    let rows: Vec<String> = (0..5_000_u32).map(row).collect();
+    for using in ["", " USING columnstore"] {
+        let schema = format!("CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER, TS TIMESTAMP, P CHAR(15)){using}");
+        let db = database(&schema, &[("T", rows.clone())]);
+        db.maintain().unwrap();
+        let s = db.session("APP");
+        let grouped = |e: &str| {
+            let sql = format!("SELECT M, COUNT(*) FROM (SELECT {e} AS M FROM T) AS D GROUP BY M");
+            let found = s.analyzed(&sql, &Params::new()).unwrap();
+            let grouping = found.operators.iter().find(|o| o.label.starts_with("Aggregate")).unwrap();
+            (grouping.estimate.unwrap(), grouping.rows, found.text.clone())
+        };
+        let (minutes, given, plan) = grouped("TS - EXTRACT(SECOND FROM TS) * INTERVAL '1' SECOND");
+        assert!(given == 584 && within(minutes, 584.0, 1.05), "{using}: {minutes} for {given}\n{plan}");
+        let (pairs, given, plan) = grouped("SUBSTRING(P FROM 1 FOR 2)");
+        assert!(given == 25 && within(pairs, 25.0, 1.05), "{using}: {pairs} for {given}\n{plan}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1299, D382: two conditions that differ
+/// only in what a function of one name holds are each estimated by its
+/// own share of the sample, whichever is asked first. Of rows all of
+/// February, a day each of its 28, EXTRACT of the month is 2 of every
+/// row and of the day 2 of one in 28, and so are a CAST by the template
+/// of the month and of the day; of a row of A, 2 in every row, and B, 2
+/// in one of 28, the field A and the field B; of two times two hours
+/// apart, their difference in hours and in days; and of a document of
+/// one element, the query of that element and of another.
+///
+/// Regression test: the sample once remembered a function by its name
+/// alone, and the second of each pair was estimated at the first's rows.
+#[test]
+fn conditions_that_differ_in_what_a_function_holds_have_their_own_estimates() {
+    let row = |k: u32| {
+        let day = 1 + k % 28;
+        format!(
+            "({k}, DATE '2001-02-{day:02}', ROW(2, {day}), TIMESTAMP '2001-02-03 01:00:00', TIMESTAMP '2001-02-03 03:00:00', \
+             XMLPARSE(DOCUMENT '<a>{k}</a>' PRESERVE WHITESPACE))"
+        )
+    };
+    let rows: Vec<String> = (0..2_800_u32).map(row).collect();
+    let schema = "CREATE SCHEMA AUTHORIZATION APP CREATE TABLE T (K INTEGER, D DATE, R ROW(A INTEGER, B INTEGER), \
+                  T1 TIMESTAMP, T2 TIMESTAMP, X XML)";
+    let pairs = [
+        ("EXTRACT(MONTH FROM D) = 2", "EXTRACT(DAY FROM D) = 2", 100.0),
+        ("CAST(D AS VARCHAR(2) FORMAT 'MM') = '02'", "CAST(D AS VARCHAR(2) FORMAT 'DD') = '02'", 100.0),
+        ("R.A = 2", "R.B = 2", 100.0),
+        ("(T2 - T1) HOUR = INTERVAL '2' HOUR", "(T2 - T1) DAY = INTERVAL '2' HOUR", 0.0),
+        ("XMLEXISTS('/a' PASSING BY REF X)", "XMLEXISTS('/b' PASSING BY REF X)", 0.0),
+    ];
+    // Every pair is asked in both orders before any is judged, so a pair
+    // that shares an answer is named whichever others do.
+    let mut wrong = Vec::new();
+    for all_first in [true, false] {
+        let db = database(schema, &[("T", rows.clone())]);
+        db.maintain().unwrap();
+        let s = db.session("APP");
+        for (all, few, kept) in pairs {
+            let ask = |c: &str| estimated(&s, &format!("SELECT K FROM T WHERE {c}")).0;
+            let (of_all, of_few) = if all_first {
+                (ask(all), ask(few))
+            } else {
+                let asked_first = ask(few);
+                (ask(all), asked_first)
+            };
+            if !within(of_all, 2_800.0, 1.1) {
+                wrong.push(format!("{all}, asked first {all_first}: {of_all}"));
+            }
+            if of_few > kept * 1.5 + 10.0 || of_few < kept / 1.5 {
+                wrong.push(format!("{few}, asked first {}: {of_few}", !all_first));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
