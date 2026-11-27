@@ -393,8 +393,8 @@ fn a_count_of_distinct_values_of_no_grouping_is_one_part_10_9() {
     // How many sizes the groups of S have, and how many sizes share a count.
     let size_of = |g: &&str| of(g).count();
     let sizes = STRINGS.iter().map(size_of).collect::<std::collections::HashSet<_>>();
-    let shared = |n: &usize| STRINGS.iter().filter(|g| size_of(*g) == *n).count();
-    let (sizes, shares) = (sizes.len(), sizes.iter().map(shared).collect::<std::collections::HashSet<_>>().len());
+    let of_size = |n: &usize| STRINGS.iter().filter(|g| size_of(g) == *n).count();
+    let (sizes, tallies) = (sizes.len(), sizes.iter().map(of_size).collect::<std::collections::HashSet<_>>().len());
     for degree in [1, 4] {
         for set in [
             format!("SET EXECUTOR.DEGREE = {degree}"),
@@ -421,7 +421,7 @@ fn a_count_of_distinct_values_of_no_grouping_is_one_part_10_9() {
         let three = "SELECT COUNT(*) FROM (SELECT N, COUNT(*) AS M FROM (SELECT S, COUNT(*) AS N FROM {t} WHERE S IS NOT NULL GROUP BY S) AS Q GROUP BY N) AS W";
         assert_eq!(of_both(&a, three), [sizes.to_string()], "degree {degree}");
         let grouped = "SELECT COUNT(*) FROM (SELECT M, COUNT(*) AS L FROM (SELECT N, COUNT(*) AS M FROM (SELECT S, COUNT(*) AS N FROM {t} WHERE S IS NOT NULL GROUP BY S) AS Q GROUP BY N) AS W GROUP BY M) AS V";
-        assert_eq!(of_both(&a, grouped), [shares.to_string()], "degree {degree}");
+        assert_eq!(of_both(&a, grouped), [tallies.to_string()], "degree {degree}");
         let beside = "SELECT COUNT(DISTINCT S), SUM(DISTINCT K - MOD(K, 21)) FROM {t}";
         assert_eq!(of_both(&a, beside), [format!("7,{summed}")], "degree {degree}");
         assert!(!pair_in_a_part(&physical(&a, &beside.replace("{t}", "C"))), "SUM in the second keeps it above the part");
