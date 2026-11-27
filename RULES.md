@@ -23740,6 +23740,7 @@ cross chunks, and a header with a chunk missing
 (`judged/proved/tests.rs`). An integration test changes, deletes and
 adds rows in parts whose stored bounds prove a comparison and compares
 every answer with the row store's (`test/integration/proved_bounds.rs`).
+
 #### D1298. A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened
 
 A scan opens each chunk it reads once for all the runs that read it
