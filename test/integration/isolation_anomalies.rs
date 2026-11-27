@@ -61,6 +61,10 @@ impl Log for Slow {
     fn end(&self) -> Lsn {
         self.log.end()
     }
+
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        self.log.bytes_between(from, to)
+    }
 }
 
 /// The levels, weakest first.

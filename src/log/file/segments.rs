@@ -4,7 +4,7 @@
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, PoisonError};
 
-use super::{FileLog, Segment, add, lsn, segment_file, segment_name};
+use super::{FileLog, Segment, add, lsn, segment_file, segment_name, split};
 use crate::diagnostics::Event;
 use crate::disk::block::{BlockFile, BlockId};
 use crate::disk::io::Durability;
@@ -292,5 +292,40 @@ impl FileLog {
         *lock_builtin(&self.syncing) = false;
         self.synced.notify_all();
         synced.map(|()| reached())
+    }
+}
+
+/// \[DESIGN\] The bytes from position `from` to position `to` of a log
+/// whose segments are begun past `size` bytes (RULES.md D1231): the rest
+/// of `from`'s segment, every segment between, and `to`'s part of its own,
+/// each segment taken as `size` long. A segment ends a record past its
+/// size, or further when its successor could not be begun, so this is a
+/// near count, never a lock taken: none if `to` comes first.
+pub(super) fn distance(from: Lsn, to: Lsn, size: u64) -> u64 {
+    if to <= from {
+        return 0;
+    }
+    let ((first, start), (last, end)) = (split(from), split(to));
+    last.saturating_sub(first).saturating_mul(size).saturating_add(end.0).saturating_sub(start.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::distance;
+    use crate::disk::block::BlockId;
+    use crate::log::file::lsn;
+
+    /// Verifies: [DESIGN] RULES.md D1231: the bytes between two places of
+    /// the file log are their offsets' difference within a segment, and
+    /// across segments each segment between them counts as the segment
+    /// size.
+    #[test]
+    fn a_distance_across_segments_takes_each_as_the_segment_size() {
+        let size = 4096;
+        assert_eq!(distance(lsn(3, BlockId(100)), lsn(3, BlockId(900)), size), 800, "within a segment");
+        assert_eq!(distance(lsn(3, BlockId(4000)), lsn(4, BlockId(64)), size), 160, "over one boundary");
+        assert_eq!(distance(lsn(3, BlockId(100)), lsn(6, BlockId(50)), size), 3 * 4096 - 50, "over three");
+        assert_eq!(distance(lsn(6, BlockId(50)), lsn(3, BlockId(100)), size), 0, "none backwards");
+        assert_eq!(distance(lsn(3, BlockId(900)), lsn(4, BlockId(950)), size), 4096 + 50, "a later offset in a later segment");
     }
 }
