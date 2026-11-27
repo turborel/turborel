@@ -67,10 +67,20 @@ command-line client.
 ## Quick start
 
 ```
-cargo run -p turboreld -- --dir DB     # serve the database in DB on 127.0.0.1:7422
-cargo run -p turborel-cli -- --help    # the command-line client
-cargo test --workspace                 # the tests
-cargo xtask verify                     # every check a change must pass
+cargo build --release -p turboreld -p turborel-cli
+target/release/turboreld --dir DB user add ann --owner               # make the database DB and its owner ANN, asking a password
+target/release/turboreld --dir DB --set SERVER.SOCKET=turborel.sock  # serve it
+target/release/turborel --socket turborel.sock -U ann -W             # from another terminal, connect and type SQL
+```
+
+A password is proved over a Unix socket, a named pipe or TLS, never over
+plain TCP, so a server of this machine is reached at its socket.
+[Getting Started](doc/user/02-getting-started.md) goes on from here, and
+[Running the Server](doc/operator/02-turboreld.md) covers TCP and TLS.
+
+```
+cargo test --workspace   # the tests
+cargo xtask verify       # every check a change must pass
 ```
 
 ## Documents
