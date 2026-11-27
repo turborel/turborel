@@ -769,6 +769,7 @@ verification approach DO-178C expects (§8).
 | D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
 | D1185 | A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets |
 | D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
+| D1187 | A top-N by a key that orders strings by their octets tells its scan a bound that holds a string, judged of each row by octets |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -21024,9 +21025,9 @@ two functions and one layout.
 - A string's 8-byte prefix (`sort/prefix.rs`) is of the padded order, so
   a key by octets has none. Where the keys have no normal form, a key of
   a DECFLOAT beside it, the rows are compared whole.
-- The bound a top-N tells its scan (D379) holds exact numbers and
-  datetimes alone, so none is told of a key by octets
-  (`sort::topped_of`).
+- The bound a top-N tells its scan (D379) held exact numbers and
+  datetimes alone, so none was told of a key by octets. D1187 tells one
+  that holds a string.
 
 A key stays made, and the sort as it was, where the mark would be
 wrong or is not known to be right. A key column read above the sort is
@@ -21086,6 +21087,41 @@ accumulator.
 
 The second grouping is as it was. It reads each part as a binary string
 and merges it into its own accumulator, of which there are few.
+
+#### D1187. A top-N by a key that orders strings by their octets tells its scan a bound that holds a string, judged of each row by octets
+
+D379's bound holds the first key of the last row a sort of its first
+rows keeps, and D1241 has the scan judge it of each row. It held exact
+numbers and datetimes. A sort by a column under a collation of NO PAD
+by octets (D1185) was told none, so a FETCH FIRST by such a column
+gave its sort every row its filter kept, and the sort made a key of
+each to drop nearly all of them.
+
+- A bound of a key marked `octets` holds a character string
+  (`Threshold::by_octets`, made by `sort::topped_of`). It narrows by
+  the strings' octets, a prefix the less, as the sort compares them
+  (`SortKey::cmp`), and a bound shared by the morsels of a sort run in
+  parallel counts the first keys offered in that order
+  (`Threshold::among`, `Threshold::offer`). A value that is no string
+  neither sets nor counts.
+- The test it is of a row (`Threshold::row_test`) is a comparison of
+  octets with the string it holds (`Conjunct::Unpadded`), at most it of
+  an ascending key and at least it of a descending one. The scan judges
+  it as it judges any such comparison (D1183), once an entry of a
+  dictionary and then by the rows' codes, of texts coded by symbols in
+  place with no text decoded, and of plain texts where they lie. A null
+  is left out, as D1241 says of every bound.
+- It passes over no group and no part (`Threshold::may_match`). Their
+  least and greatest are kept in the padded order, where a string and
+  the same with spaces after it are one value and a tab after a letter
+  is below the letter alone, so a range whose ends look past the bound
+  may hold a row at or before it by octets.
+
+What D1241 says of when a bound is read holds here unchanged. The
+bound only narrows, a run judged by a bound read before the sort last
+narrowed it keeps more rows and never fewer, and the sort judges every
+row it is given. So the rows given, their order and the errors are as
+before, and EXPLAIN ANALYZE counts fewer rows of the scan.
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 
