@@ -76,12 +76,12 @@ pub(super) fn streamed() -> [Definition; 1] {
     )]
 }
 
-/// PLANNER.ESTIMATE_MARGIN (RULES.md D386, D839).
+/// PLANNER.ESTIMATE_MARGIN (RULES.md D386, D839, D1278).
 pub(super) fn margin() -> Definition {
     defined(
         ("PLANNER.ESTIMATE_MARGIN", Kind::Number { min: 1.0_f64, max: MOST_ESTIMATE_MARGIN }, Value::Approx(DEFAULT_ESTIMATE_MARGIN)),
         SESSION,
-        "How many times its estimated rows the planner takes a join's operand to give at worst, at most the bound its statistics prove, as it weighs probing an index for each of them against hashing: it takes the method whose cost is nearest the cheapest at both. A key's range priced as a scan is read for it where it is estimated at fewer rows than the scan and than the table's rows over this. 1 trusts the estimate alone.",
+        "How many times its estimated rows the planner takes a join's operand to give at worst, at most the bound its statistics prove, as it weighs probing an index for each of them against hashing: it takes the method whose cost is nearest the cheapest at both. A key's range priced as a scan is read for it where it is estimated at fewer rows than the scan and than the table's rows over this. A grouping under an ORDER BY of its keys is sorted first or hashed as costs nearest the cheaper both at its estimated groups and at those over this. 1 trusts the estimate alone.",
     )
 }
 
