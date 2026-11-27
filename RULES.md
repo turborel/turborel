@@ -21123,6 +21123,7 @@ bound only narrows, a run judged by a bound read before the sort last
 narrowed it keeps more rows and never fewer, and the sort judges every
 row it is given. So the rows given, their order and the errors are as
 before, and EXPLAIN ANALYZE counts fewer rows of the scan.
+
 #### D1188. A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured
 
 D61's matcher of a program with no back-reference keeps a list of
