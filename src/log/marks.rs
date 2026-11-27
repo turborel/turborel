@@ -78,6 +78,9 @@ pub fn place(first: u64, at: u64) -> usize {
 mod tests {
     use super::*;
 
+    /// Verifies: [DESIGN] RULES.md D1231: a log that numbers its records
+    /// keeps a mark of bytes a record, so the bytes between two places are
+    /// told after appends, a truncation and a drain alike.
     #[test]
     fn marks_tell_the_bytes_between_places_through_appends_truncations_and_drains() {
         let mut marks = ByteMarks::of([&b"abc"[..], b"de", b"f"]);

@@ -315,6 +315,10 @@ mod tests {
     use crate::disk::block::BlockId;
     use crate::log::file::lsn;
 
+    /// Verifies: [DESIGN] RULES.md D1231: the bytes between two places of
+    /// the file log are their offsets' difference within a segment, and
+    /// across segments each segment between them counts as the segment
+    /// size.
     #[test]
     fn a_distance_across_segments_takes_each_as_the_segment_size() {
         let size = 4096;
