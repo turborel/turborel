@@ -17,6 +17,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use crate::bytes::Put;
 use crate::db::{CatalogStorage, CatalogStore, LogStorage, OpenedLog, StorePlace};
 use crate::error::{Result, SqlError};
+use crate::log::marks::{ByteMarks, place};
 use crate::log::{Log, LogCapabilities, Lsn, Records};
 use crate::plugin::bridge::{answer, byte, leaked};
 use crate::plugin::errors::violation;
@@ -60,7 +61,15 @@ impl PluginLogStorage {
 
     /// The log of `place` the program keeps, its end `end`.
     fn log(&self, place: &StorePlace<'_>, end: u64) -> Arc<PluginLog> {
-        let held = Held { next: end.max(1), sent: Vec::new(), durable: end.saturating_sub(1), sending: false, failed: None };
+        let next = end.max(1);
+        let held = Held {
+            next,
+            sent: Vec::new(),
+            durable: end.saturating_sub(1),
+            sending: false,
+            failed: None,
+            marked: (next, ByteMarks::default()),
+        };
         let dir = place.dir.to_string_lossy().into_owned();
         Arc::new(PluginLog {
             link: self.link.clone(),
@@ -94,13 +103,16 @@ impl LogStorage for PluginLogStorage {
 
 /// What a host log holds of its own: the next position, the records not
 /// yet sent, the position durable through, whether a sync is sending,
-/// and how one failed, if one did: every later sync fails so too.
+/// and how one failed, if one did: every later sync fails so too; and
+/// the bytes of the records appended since it was opened, from the
+/// position of the first marked (RULES.md D1231).
 struct Held {
     next: u64,
     sent: Vec<(u64, Vec<u8>)>,
     durable: u64,
     sending: bool,
     failed: Option<SqlError>,
+    marked: (u64, ByteMarks),
 }
 
 /// A log a host plug-in keeps.
@@ -138,6 +150,7 @@ impl Log for PluginLog {
         let at = held.next;
         held.next = at.checked_add(1).ok_or_else(|| violation("a host log's positions ran out"))?;
         held.sent.push((at, record.to_vec()));
+        held.marked.1.push(record.len());
         Ok(Lsn(at))
     }
     fn sync(&self, through: Lsn) -> Result<()> {
@@ -178,10 +191,19 @@ impl Log for PluginLog {
         let mut payload = Vec::new();
         payload.put_str(&self.dir);
         payload.put_u64(before.0);
-        self.link.call(LOG_TRUNCATE, payload).map(drop)
+        self.link.call(LOG_TRUNCATE, payload)?;
+        let (first, marks) = &mut self.held().marked;
+        marks.drain_front(place(*first, before.0));
+        *first = (*first).max(before.0);
+        Ok(())
     }
     fn end(&self) -> Lsn {
         Lsn(self.held().next)
+    }
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        let held = self.held();
+        let (first, marks) = &held.marked;
+        marks.between(place(*first, from.0), place(*first, to.0))
     }
 }
 

@@ -232,7 +232,7 @@ impl Standby for Database {
         }
         self.replay_now(sorted.now, sorted.ended)?;
         drop(turn);
-        self.checkpoint_if_due();
+        self.checkpoint_if_due(None);
         Ok(last)
     }
 

@@ -62,6 +62,34 @@ fn a_log_grown_past_after_bytes_brings_a_checkpoint() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1137, D1231: a log a plug-in keeps, whose
+/// positions number its records, not its bytes, counts its records' bytes
+/// toward CHECKPOINT.AFTER_BYTES as the built-in log does: about 4 MB of
+/// records in 8,000 positions bring a checkpoint after 256 KB, and none
+/// when the bytes never come due.
+#[test]
+fn a_plugin_log_grown_past_after_bytes_brings_a_checkpoint() {
+    let scratch = Scratch::new("load-limits-held-log");
+    for (bytes, due) in [(256 * 1024, true), (i64::MAX, false)] {
+        let db = Database::new();
+        db.set_log_storage(Box::new(crate::contracts::HeldLogs::default())).unwrap();
+        db.open_files(&os(), &scratch.path(&format!("db-{due}")), &OpenOptions::default()).unwrap();
+        db.set_setting("CHECKPOINT.AFTER_CHANGES", &number(i64::MAX)).unwrap();
+        db.set_setting("CHECKPOINT.AFTER_BYTES", &number(bytes)).unwrap();
+        db.schema("CREATE SCHEMA AUTHORIZATION W CREATE TABLE W (S CHAR(240))").unwrap();
+        let s = db.session("W");
+        for n in 0..8_000 {
+            s.run(&format!("INSERT INTO W VALUES ('{n:x>240}')")).unwrap();
+            if n % 200 == 199 {
+                s.commit().unwrap();
+            }
+        }
+        assert_eq!(checkpointed(&db, 1), due, "after bytes {bytes}");
+        drop(s);
+        db.close().unwrap();
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D1138: an execution of a load given rows
 /// of more bytes than any work area holds, MEMORY.WORK_BYTES set low,
 /// inserts them all and opens no spill file, of each store.

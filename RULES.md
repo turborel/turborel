@@ -772,6 +772,7 @@ verification approach DO-178C expects (§8).
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
+| D1231 | The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends |
 
 ### The project
 
@@ -19973,13 +19974,13 @@ make each change many bytes, so the log grew by tens of gigabytes, its
 segments all kept, before the changes came due. Recovery after a crash
 then replayed all of it.
 
-The log's bytes now count as well (`Transactions::bytes_since_checkpoint`,
-`txn/pending.rs`), and a checkpoint is due once either the side file or the
-log has grown by CHECKPOINT.AFTER_BYTES since the last. The bytes the
-log holds are noted as a checkpoint captures what it holds, as the row
-changes are, so a checkpoint that fails counts them still. The log a
-checkpoint lets go of, and the recovery after it, are then bounded by
-the setting whatever the shape of the rows.
+The log's bytes now count as well (`Transactions::bytes_since_checkpoint`),
+and a checkpoint is due once either the side file or the log has grown by
+CHECKPOINT.AFTER_BYTES since the last. The log's position is noted as a
+checkpoint captures what it holds, as the row changes are, so a checkpoint
+that fails counts them still. The log tells its bytes from that position
+on (D1231). The log a checkpoint lets go of, and the recovery after it,
+are then bounded by the setting whatever the shape of the rows.
 
 #### D1138. The rows an execution of a load is given are held, never spilled
 
@@ -21221,6 +21222,36 @@ tables' pages, which does not fit beside what the pool holds. The
 lookups are counted as before, so LEAST_LOOKUPS and the window are
 unchanged. A hit costs nothing more, and a miss only notes which way the
 pool found its frame (`disk/buffer/tally.rs`).
+
+#### D1231. The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends
+
+D1137 counted the log's bytes in a counter that every append of every
+session added to, beside the count of row changes. Each commit that
+wrote paid a second write to a line all the committing threads share,
+for a figure the log already holds in its positions.
+
+Each log now tells the bytes between two positions as its own layout
+says (`Log::bytes_between`). The file log's positions are its segment and
+the offset in it, so it answers from them alone, each segment between
+taken as the segment size (`log/file/segments.rs`). A segment ends a
+record past that size, or further when the next could not be begun, so
+the count is near, not exact, which a threshold allows. A log whose
+positions number its records, the memory log, a log a plug-in keeps
+(the hosted log and any given through `LogStorage`) and the replicated
+logs, keeps the bytes appended before each record it holds, set under
+the lock its append already takes (`log/marks.rs`), and answers by the
+difference of two of them. A log that wraps another asks the one it
+wraps. The method has no default, so every log answers it.
+
+The checkpoint notes the position it holds through, not a count of bytes
+(`Transactions::captured`). A commit that wrote asks for the log's bytes
+up to its own commit record, whose position its session already holds
+(`Served::last_committed`), so the log's end is not read and the file
+log takes no lock. Before the first checkpoint the count runs from the
+first position asked, as it ran from the open before. A rollback, a
+replica's replay and the checkpoint job ask up to the log's end. The
+appends write nothing for the count, and the commit reads only the
+position of the last checkpoint.
 
 ## 2. Project layout
 

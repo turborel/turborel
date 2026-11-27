@@ -81,6 +81,10 @@ impl Log for SeededLog {
     fn end(&self) -> Lsn {
         self.log.end()
     }
+
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        self.log.bytes_between(from, to)
+    }
 }
 
 /// \[EXTENSION\] The kind of log a restore opens its database with: the
