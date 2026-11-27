@@ -127,6 +127,40 @@ fn the_groups_are_the_same_whichever_morsels_are_handed_whole() {
     }
 }
 
+/// A grant that holds every grouping of T, and one its groups pass.
+const HELD: i128 = 67_108_864;
+/// A grant the groups of T pass, so its partitions go to the spill.
+const PASSED: i128 = 131_072;
+
+/// Where the rows of `made` first differ from those of `expected`, told
+/// shortly: how many each holds, and the first row of `made` that is not
+/// the row `expected` holds there. None if they are the same rows.
+fn differing(made: &Waved, expected: &Waved) -> Option<(usize, usize, Option<String>)> {
+    let first = made.rows.iter().zip(&expected.rows).find(|(row, same)| row != same).map(|(row, _)| row.clone());
+    (first.is_some() || made.rows.len() != expected.rows.len()).then_some((made.rows.len(), expected.rows.len(), first))
+}
+
+/// Verifies: [DESIGN] RULES.md D1276, D1247, D1226 a grouping whose morsels
+/// are all handed whole to the statement's thread, and whose table there
+/// outgrows the grant and goes to the spill as it is, gives every group,
+/// in the order and with the values a grant that holds them gives. A
+/// regression test: with no wave merged the spill was forgotten at the
+/// end, and the groups of the statement thread's last table alone were
+/// given.
+#[test]
+fn a_table_of_the_statements_thread_past_the_grant_loses_no_group() {
+    let (db, a) = table();
+    let sql = "SELECT G, COUNT(*), SUM(V), MIN(V), MAX(K), MIN(P) FROM (SELECT MOD(K, 6000) AS G, K, V, P FROM T) AS Q GROUP BY G";
+    let whole = |grant: i128| {
+        set(&db, "MEMORY.WORK_BYTES", grant);
+        waved(&a, sql, &How { forced: EVERY, ..How::default() }, 3)
+    };
+    let (held, spilled) = (whole(HELD), whole(PASSED));
+    assert_eq!((held.rows.len(), held.spills), (6000, 0));
+    assert!(spilled.spills > 0, "a grant its table passes");
+    assert_eq!(differing(&spilled, &held), None);
+}
+
 /// Verifies: [DESIGN] RULES.md D1247 morsels are handed whole only while
 /// the statement thread's table holds no more groups than a morsel has
 /// rows, a thousand here. Of a grouping of 40 groups every morsel handed

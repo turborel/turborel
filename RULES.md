@@ -817,6 +817,7 @@ verification approach DO-178C expects (§8).
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
@@ -23434,6 +23435,29 @@ took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
 
+#### D1276. A grouping whose statement thread's table went to the spill reads the spill at its end
+
+A grouping run in parallel merges the morsels of few groups on the
+statement's thread, in a table of its own (D356, D1247). At its end, if
+no wave was merged and none waits, it took every group to be in that
+table and gave the table's groups alone
+(`exec/parallel/grouped/waves.rs`, `finished`). That was so while a
+grouping past its grant gave way. Since the partitions are held in the
+spill (D1226) it is not. A table of the statement's thread that outgrows
+the grant is handed to the partitions, and where the grant cannot hold
+it even with every partition spilled, it is written to the spill as it
+is, with no wave merged. The end then still took the early path. It
+gave the groups of the statement thread's last table and never read the
+spill, so the statement returned some of its groups and no error.
+
+A statement reached this with few groups a morsel and a table of them,
+no more than EXECUTOR.MORSEL_ROWS groups, whose keys and states pass
+MEMORY.WORK_BYTES. That takes a small grant, or states of long strings.
+
+The end now takes the early path only if nothing was spilled. With a
+spill it hands the table over as it does any other and reads each
+partition back. A unit test hands every morsel whole under a grant the
+table passes.
 #### D1278. Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret
 
 A grouping under an ORDER BY of its keys is streamed over a sort of its
