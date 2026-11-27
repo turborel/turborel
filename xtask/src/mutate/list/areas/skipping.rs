@@ -2,7 +2,7 @@
 //! D510-D512): the shadow bits a write and a group published set, the
 //! zones of the tree's rows a scan reads the delta by, and imprints, their
 //! masks and the order conjuncts are judged in, dictionaries in order,
-//! and column sketches (D525).
+//! column sketches (D525), and a comparison a run's parts prove (D1293).
 
 use super::super::{Mutation, Package};
 
@@ -22,8 +22,15 @@ const VERDICTS: &str = "engine::columns::judged::sketched::tests::codes_say_what
 const SCANS: &str = "engine::columns::judged::sketched::tests::scans_by_sketches_keep_what_values_keep";
 const SPARSE: &str = "engine::columns::judged::sketched::tests::few_rows_asked_for_are_compared_without_the_sketch";
 
+/// A comparison a run's parts prove.
+const PROVED: &str = "src/engine/columns/judged/proved.rs";
+const BOUNDS: &str = "engine::columns::judged::proved::tests::a_comparison_is_proved_at_the_bounds_its_parts_reach_and_not_past_them";
+const NULLS: &str = "engine::columns::judged::proved::tests::a_part_that_holds_a_null_proves_nothing";
+const EACH_ROW: &str = "engine::columns::judged::proved::tests::what_is_proved_of_a_run_is_true_of_each_of_its_rows";
+const HELD: &str = "engine::columns::judged::proved::tests::rows_no_chunk_holds_prove_nothing";
+
 /// Mechanisms whose removal must fail the skipping's requirements.
-pub const SKIPPING: [Mutation; 21] = [
+pub const SKIPPING: [Mutation; 25] = [
     Mutation {
         name: "shadow-bits-writer",
         package: Package::Core,
@@ -233,5 +240,45 @@ pub const SKIPPING: [Mutation; 21] = [
         replacement: "if symbols {",
         integration: &[],
         unit: &[SPARSE],
+    },
+    Mutation {
+        name: "proved-with-a-null",
+        package: Package::Core,
+        breaks: "a part that holds a null proves a comparison, so the null's row is given unjudged by the scan",
+        file: PROVED,
+        original: ".filter(|_| part.nulls == 0)",
+        replacement: ".filter(|_| part.nulls < u32::MAX)",
+        integration: &[],
+        unit: &[NULLS],
+    },
+    Mutation {
+        name: "proved-strict-at-its-bound",
+        package: Package::Core,
+        breaks: "a part whose least value is the constant proves the column greater than it",
+        file: PROVED,
+        original: "        CompOp::Gt => low() == Some(Ordering::Greater),",
+        replacement: "        CompOp::Gt => low().is_some_and(Ordering::is_ge),",
+        integration: &[],
+        unit: &[BOUNDS, EACH_ROW],
+    },
+    Mutation {
+        name: "proved-by-its-first-part",
+        package: Package::Core,
+        breaks: "a run is proved by the first part it lies in alone, whatever the parts after it hold",
+        file: PROVED,
+        original: "zone.parts.get(low..=high)",
+        replacement: "zone.parts.get(low..=low)",
+        integration: &[],
+        unit: &[BOUNDS],
+    },
+    Mutation {
+        name: "proved-past-its-chunks",
+        package: Package::Core,
+        breaks: "a run is proved by the chunk its first row is in alone, whatever the chunks after it hold",
+        file: PROVED,
+        original: "    Ok(at >= to)\n}",
+        replacement: "    Ok(at > from)\n}",
+        integration: &[],
+        unit: &[HELD],
     },
 ];
