@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 35] = [
+pub const OLTP: [Mutation; 41] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -365,5 +365,68 @@ pub const OLTP: [Mutation; 35] = [
         replacement: "(!ends && !held.pinned)",
         integration: &[],
         unit: &["txn::tests::a_transaction_dropped_as_its_records_are_written_holds_no_log"],
+    },
+    Mutation {
+        name: "oltp-abort-refused-ignored",
+        package: Package::Core,
+        breaks: "an abort record that cannot be appended after its transaction's records is ignored, so the next writer of its rows commits after them and recovery puts the rows back over that commit (D1258)",
+        file: "src/txn/logging.rs",
+        original: "            shared.stop_changes(&SqlError::new(e.code, why));",
+        replacement: "            drop(SqlError::new(e.code, why));",
+        integration: &["held_records::a_refused_abort_record_stops_the_database"],
+        unit: &[],
+    },
+    Mutation {
+        name: "oltp-dropped-open-kept",
+        package: Package::Core,
+        breaks: "a transaction dropped still open only releases its locks, its versions left in the engines with no end (D1259)",
+        file: "src/txn/release.rs",
+        original: "        if self.open.load(Ordering::Acquire) {\n            self.end_dropped();",
+        replacement: "        if false {\n            self.end_dropped();",
+        integration: &[],
+        unit: &[
+            "txn::tests::a_transaction_dropped_open_is_rolled_back",
+            "db::rollback::tests::a_session_dropped_with_no_call_to_enter_ends_its_transaction",
+        ],
+    },
+    Mutation {
+        name: "oltp-dropped-unwinding-undone",
+        package: Package::Core,
+        breaks: "a transaction dropped while a panic unwinds is rolled back there, where a second panic ends the process, and the database is not stopped (D1259)",
+        file: "src/txn/release.rs",
+        original: "        if std::thread::panicking() || self.state.is_poisoned() {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["txn::tests::a_transaction_that_cannot_be_ended_stops_the_database"],
+    },
+    Mutation {
+        name: "oltp-dropped-committing-left",
+        package: Package::Core,
+        breaks: "a transaction dropped with its commit under way is left as one that changed nothing, the database taking changes still (D1259)",
+        file: "src/txn/release.rs",
+        original: "            (true, false) => Left::Committing,",
+        replacement: "            (true, false) => Left::Nothing,",
+        integration: &[],
+        unit: &["txn::tests::a_transaction_that_cannot_be_ended_stops_the_database"],
+    },
+    Mutation {
+        name: "oltp-dropped-failure-ignored",
+        package: Package::Core,
+        breaks: "a transaction dropped still open whose rollback leaves a change not undone, or whose engine refuses its end, leaves the database taking changes and a checkpoint free to follow (D1259)",
+        file: "src/txn/release.rs",
+        original: "failures.first().map_or(Ok(()), |f| Err(unended(&f.error.described())))",
+        replacement: "failures.first().map_or(Ok(()), |_| Ok(()))",
+        integration: &[],
+        unit: &["txn::tests::a_rollback_failing_in_a_drop_stops_the_database"],
+    },
+    Mutation {
+        name: "oltp-dropped-panic-ignored",
+        package: Package::Core,
+        breaks: "a transaction dropped still open whose rollback panics is left half ended, the panic caught and the database taking changes (D1259)",
+        file: "src/txn/release.rs",
+        original: "            Err(_) => Err(unended(\"its rollback panicked\")),",
+        replacement: "            Err(_) => Ok(()),",
+        integration: &[],
+        unit: &["txn::tests::a_rollback_failing_in_a_drop_stops_the_database"],
     },
 ];

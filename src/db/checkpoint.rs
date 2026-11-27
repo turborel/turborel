@@ -126,9 +126,10 @@ impl Database {
         self.files().ok().flatten().map_or(0, |files| files.checkpointer.taken.load(Ordering::Relaxed))
     }
 
-    /// \[DESIGN\] The failed sync of the log that stopped the database
-    /// taking changes, if one did: it then takes none until it is opened
-    /// again, and recovered from what its log holds (RULES.md D25).
+    /// \[DESIGN\] The failure of the log that stopped the database taking
+    /// changes, if one did, a sync's or that of an abort record's append
+    /// (RULES.md D1258): it then takes none until it is opened again, and
+    /// recovered from what its log holds (RULES.md D25).
     pub fn log_failure(&self) -> Option<SqlError> {
         self.snapshot().ok()?.tx.stopped_by()
     }

@@ -810,6 +810,8 @@ verification approach DO-178C expects (§8).
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
 | D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
+| D1258 | An abort record that cannot be appended stops the database |
+| D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
 
 ### The project
 
@@ -2423,7 +2425,9 @@ clearing or reading anything, so a database is open in one place at a
 time.
 
 A failed sync stops changes, because it may have lost logged data and a
-later sync could succeed without it. The file log never retries. Row
+later sync could succeed without it. The file log never retries. An abort
+record that cannot be appended after its transaction's records stops them
+too (D1258). Row
 changes, writing commits, definitions and checkpoints are refused
 (SQLCODE -915), reads and rollbacks go on, and reopening recovers from the
 log.
@@ -23029,6 +23033,120 @@ numbers, so a set function whose state depends on the order of its
 values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
+#### D1258. An abort record that cannot be appended stops the database
+
+A rollback appends its abort record after the records of its transaction
+already in the log, and ignored a failure of that append, on the ground
+that recovery undoes a transaction with no commit record either way.
+D1250 shows where that ground gives way. The records then stand in the
+log with no end, the transaction is rolled back in memory and its locks
+released, and if the log takes records again the next writer of its rows
+commits after them. Recovery that reads so far back puts the rows back
+over that commit.
+
+Whether a log takes records after it refused one is the log's own
+matter. The file log mostly does not. A write that fails, of the records
+its buffer held or of the zeros written ahead, leaves the segment
+refusing appends until the log is opened again (`BlockFile::publish`),
+and a segment is begun only after an append that succeeded. Yet a change
+of the log's formats begins one before the next append
+(`rotate_for_formats`), and a record's own encoding can fail with
+nothing written. A log is a plug-in, and `Log::append` promises nothing
+of the appends after one that failed.
+
+So the rule is kept above the log. A rollback whose abort record cannot
+be appended, a record of its transaction having reached the log, stops
+the database as a failed sync does (`Txn::log_abort`,
+`Transactions::stop_changes`, D25). It takes no row change, no commit
+that wrote, no definition and no checkpoint (SQLCODE -915, naming the
+abort record) until it is opened again and recovered. Recovery then
+undoes the transaction as one a crash interrupted, and rightly, nothing
+having been committed over its rows since. Reads and rollbacks go on. A
+transaction that would write those rows makes that write after the locks
+on them are released, which follows the stop, and every row change,
+load and commit record asks first whether the database takes changes. A
+commit written and not yet synced as the database stops is in doubt, as
+after a failed sync. The stop is told to the sink with the first change
+refused.
+
+The abort record is still not synced. The sync of a later commit makes
+it durable first, being before it in the log, and a crash that loses it
+loses every commit after it.
+
+A commit record that cannot be appended needs no rule of its own. Its
+transaction is rolled back, the run that failed having noted that a
+record of it may have reached the log (`TxLog::write`), so its abort
+record is appended after whatever was, or the database stops by this
+rule. It stops so even where the log refused the whole run, as how
+much of a run reached a log that failed is not known above it. With
+the file log nothing is lost by that, a segment that refused a write
+taking no append until the log is opened again.
+
+#### D1259. A transaction dropped without its end is rolled back by its drop, or stops the database
+
+A transaction ends by its commit or its rollback. One dropped with
+neither released its table locks, its row waits and its snapshot, and
+did nothing more. No change was undone, no engine was told, no end
+record was written, and the records it held were discarded. Its versions
+stayed in the row store as those of an open transaction. Readers went on
+reading the versions before them. The next writer of one of its rows was
+refused as by a writer still at work (SQLCODE -911) for the life of the
+process, or with LOCKS.WAIT ON waited for an end already given. A
+checkpoint captured the versions, the log holding no record of them, and
+after a crash recovery had nothing to undo them by. The versions before
+them were in the undo store, which does not outlive the process, so
+every read of the table then failed (SQLCODE -916), its committed rows
+with it.
+
+A session's drop left its transaction so when no call could be entered:
+the session left busy by a panic in a call's entry, its database
+retired (D57) or opened again in place since. A client's disconnection,
+a server's stop and a panic within a statement do not come to this. The
+call's own guard is dropped first, and the session then rolls back. The
+same state was reached where a commit or a rollback returned before it
+undid anything, on a poisoned lock or a snapshot refused.
+
+The drop now ends it (`txn/release.rs`). A transaction dropped still
+open, its `open` mark not yet cleared by the release every commit and
+every rollback makes, that joined an engine is rolled back by the steps
+a session's rollback takes (`Txn::undo_whole`). Under the gate its
+changes are undone, each engine it joined is told, the records it holds
+are dropped and its abort record is written (D1250, D1258). One that
+joined nothing, as the transactions that only hold a table's lock for a
+definition, is left as it was. A session dropped with no call to enter
+ends its transaction itself, its cursors closed first
+(`Session::end_unentered`).
+
+A rollback in a drop runs where nobody chose, so it may wait for nothing
+its thread holds. It takes the gate, the transaction's own state, its
+engines' latches and the log. A transaction is held by its session
+alone, as its own, as the one its running call notes and in a routine's
+host, and by the database's list of commits in doubt, which are not
+open. No executor, cursor or plan holds one. So the last reference to an
+open transaction that joined an engine is dropped in one of three
+places. The first is the start of a session's drop, where a session
+rolled back before too. The second is the end of a call that ends a
+transaction, when the end returned early (`Session::rollback_in`,
+`Session::commit_in`). The third is the return of a function that began
+a transaction of its own, which ends it on every path but a failure of
+the end itself (`db/assertions.rs`). The thread is in no engine at any
+of them, and the gate taken again by its holder does not wait
+(`sync::Gate`).
+
+Where the rollback cannot be trusted, or fails, the database stops
+taking changes as after a failed sync (`Transactions::stop_changes`,
+D1258) and the tables whose locks the transaction holds are marked
+damaged (D19). That is so while a panic unwinds, when a second panic
+would end the process, with the lock of the transaction's state
+poisoned, its bookkeeping left half changed, with its commit under way,
+its participants already taken, when a change cannot be undone or an
+engine refuses, and when the rollback itself panics, which the drop
+catches. A database stopped takes no checkpoint, so no image holds a
+version left so, and commits nothing, so nothing is committed over one.
+Opening it again recovers it from its last checkpoint and its log.
+
+For this a commit pays one load of the `open` mark, in its
+transaction's drop, and takes no lock.
 
 ## 2. Project layout
 
