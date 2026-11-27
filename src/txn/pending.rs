@@ -27,6 +27,16 @@
 //! nothing is logged; undoing to one written logs the records from it
 //! cancelled, as before (`Change::StatementUndone`), for which a write
 //! notes the places of the records the transaction marked (`wanted`).
+//!
+//! A record of a transaction reaches the log only while the transaction
+//! may still commit, or with its abort record after it (RULES.md D1250).
+//! So a rollback drops what it holds under the gate it undid its changes
+//! under (`Txn::drop_held`), and a checkpoint, which writes with the gate
+//! shut, finds none of a transaction rolled back, however long the
+//! transaction is kept after. A record with no end after it is read by
+//! recovery as of a transaction a crash interrupted, whose rows are put
+//! back as its records found them, over whatever was committed there
+//! since.
 
 use std::cell::RefCell;
 use std::mem;
@@ -98,6 +108,10 @@ struct Held {
     /// Why a write of its records failed, if one did: it can then only
     /// roll back, what it changed being partly logged.
     lost: Option<SqlError>,
+    /// Whether its transaction is over, forgotten among the database's
+    /// (`Txn::forget_held`). A write of its records still in flight then
+    /// notes no first, which nothing would forget.
+    over: bool,
 }
 
 impl Held {
@@ -182,12 +196,16 @@ impl TxLog {
                 held.found.push((n, *at));
             }
         }
-        let first = (!ends && !held.pinned).then(|| lsns.first().copied()).flatten();
+        let first = (!ends && !held.pinned && !held.over).then(|| lsns.first().copied()).flatten();
         held.pinned |= first.is_some();
-        drop(held);
+        // [DESIGN] RULES.md D1250: noted with the buffer locked, under
+        // which its transaction's end reads `pinned` and sets `over`. So
+        // the end finds the first noted, and forgets it, or this write
+        // finds the transaction over, and notes none.
         if let Some(first) = first {
             shared.first_logged(tx, first);
         }
+        drop(held);
         shared.logged.fetch_add(u64::try_from(count).unwrap_or(u64::MAX), Ordering::Relaxed);
         Ok(lsns.last().copied())
     }
@@ -391,10 +409,17 @@ impl Txn {
         self.pending.get().is_some_and(|tx_log| lock_builtin(&tx_log.held).reached)
     }
 
-    /// Whether its first record was noted as its first, so it is to be
-    /// forgotten as it ends.
-    pub(super) fn pinned_log(&self) -> bool {
-        self.pending.get().is_some_and(|tx_log| lock_builtin(&tx_log.held).pinned)
+    /// \[DESIGN\] RULES.md D1250: drops every record it holds, as it
+    /// rolls back, under the gate its changes were undone under. A
+    /// checkpoint writes what open transactions hold with the gate shut,
+    /// and the transaction is found among them until it is dropped, so
+    /// records left here would be written after its rollback, with no
+    /// abort record after them.
+    pub(super) fn drop_held(&self) {
+        let Some(tx_log) = self.pending.get() else { return };
+        let mut held = lock_builtin(&tx_log.held);
+        let base = held.base;
+        held.truncate_from(base);
     }
 
     /// Drops what it holds from `from`, a place undone to: what is then to
@@ -445,21 +470,26 @@ impl Txn {
 
     /// Forgets its held records' buffer among the database's, as it ends:
     /// its buffers, emptied, are its thread's for the next transaction
-    /// (RULES.md D882), unless they grew past what one holds.
-    pub(super) fn forget_held(&self) {
-        let Some(tx_log) = self.pending.get() else { return };
+    /// (RULES.md D882), unless they grew past what one holds. Whether its
+    /// first record was noted as its first, which is then to be forgotten.
+    /// It is read as the buffer is marked over, under one lock, so a write
+    /// in flight notes a first before this, or none (RULES.md D1250).
+    pub(super) fn forget_held(&self) -> bool {
+        let Some(tx_log) = self.pending.get() else { return false };
         if let Some(shard) = self.origin.shared.pending.shard(self.id) {
             lock_builtin(shard).remove(&self.id);
         }
-        let (mut bytes, mut ends) = {
+        let (mut bytes, mut ends, pinned) = {
             let mut held = lock_builtin(&tx_log.held);
-            (mem::take(&mut held.bytes), mem::take(&mut held.ends))
+            held.over = true;
+            (mem::take(&mut held.bytes), mem::take(&mut held.ends), held.pinned)
         };
         if bytes.capacity() <= HELD_BYTES.saturating_mul(2) {
             bytes.clear();
             ends.clear();
             SPARE.set((bytes, ends));
         }
+        pinned
     }
 }
 

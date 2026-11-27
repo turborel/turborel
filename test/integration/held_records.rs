@@ -5,6 +5,9 @@
 //! and recovers the same.
 
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
 
 use turborel::db::{Database, OpenOptions, Opened};
 
@@ -152,4 +155,58 @@ fn a_change_spanning_a_checkpoint_is_written_again_after_recovery() {
         assert_eq!(rows(&t, "SELECT COUNT(*) FROM T WHERE V = 'again'"), Ok(vec!["6".into()]), "seed {seed}");
         drop((db, t, s, spans, open_tx, crashed));
     }
+}
+
+/// Verifies: [X3.135-1986 §8.2, §8.9]; [DESIGN] RULES.md D25, D470, D1250,
+/// transactions updating rows and rolling back as checkpoints are taken,
+/// beside a transaction open since before them, from whose first record
+/// the log is kept; then every row updated and committed, a checkpoint,
+/// a crash: recovery reads the log from the open transaction's first
+/// record and finds no record of a transaction rolled back without its
+/// abort record, so each row reads as committed last. Regression test
+/// (R-TEST-7): a checkpoint taking the gate as a rollback left it wrote
+/// the records the transaction still held, and recovery put those rows
+/// back as the records found them, over the commit.
+#[test]
+fn rollbacks_beside_checkpoints_leave_what_is_committed_after() {
+    let scratch = Scratch::new("held-rollbacks");
+    let dir = scratch.path("db");
+    let (crashed, _) = open(&dir);
+    define(&crashed);
+    let open_tx = crashed.session("APP");
+    open_tx.run("INSERT INTO T VALUES (5000, 'open')").unwrap();
+    crashed.checkpoint().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let rolling: Vec<_> = (0..4_u32)
+        .map(|r| {
+            let (db, stop) = (crashed.clone(), Arc::clone(&stop));
+            thread::spawn(move || {
+                let s = db.session("APP");
+                let mut n = 0_u32;
+                while !stop.load(Ordering::Acquire) {
+                    s.run(&format!("UPDATE T SET V = 'rolled' WHERE K = {}", r * 25 + n % 25)).unwrap();
+                    s.rollback().unwrap();
+                    n += 1;
+                }
+            })
+        })
+        .collect();
+    for _ in 0..40 {
+        crashed.checkpoint().unwrap();
+    }
+    stop.store(true, Ordering::Release);
+    for r in rolling {
+        r.join().unwrap();
+    }
+    let s = crashed.session("APP");
+    s.run("UPDATE T SET V = 'kept' WHERE K < 100").unwrap();
+    s.commit().unwrap();
+    crashed.checkpoint().unwrap();
+    let expected = sorted(&s, "SELECT K, V FROM T");
+
+    let (db, opened) = open(&dir);
+    assert!(matches!(opened, Opened::Recovered(_)), "{opened:?}");
+    assert_eq!(sorted(&db.session("APP"), "SELECT K, V FROM T"), expected);
+    assert_eq!(rows(&db.session("APP"), "SELECT COUNT(*) FROM T WHERE V = 'kept'"), Ok(vec!["100".into()]));
+    drop((db, s, open_tx, crashed));
 }
