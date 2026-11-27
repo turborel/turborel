@@ -23457,7 +23457,9 @@ MEMORY.WORK_BYTES. That takes a small grant, or states of long strings.
 The end now takes the early path only if nothing was spilled. With a
 spill it hands the table over as it does any other and reads each
 partition back. A unit test hands every morsel whole under a grant the
-table passes.
+table passes, and a statement whose groups of one morsel pass the
+grant, by the states of many set functions, is compared with itself
+run alone.
 
 #### D1278. Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret
 

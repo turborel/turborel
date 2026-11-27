@@ -192,6 +192,37 @@ fn a_grouping_spilled_holds_its_partitions_in_one_area() {
     }
 }
 
+/// Verifies: [DESIGN] (RULES.md D1276, D1247, D1226) a grouping of few
+/// groups a morsel, its morsels merged on the statement's thread, where
+/// the groups of one morsel alone pass the smallest MEMORY.WORK_BYTES by
+/// the states of a hundred and eighty set functions, writes that thread's
+/// table to the spill each time and gives every group, with the rows the
+/// statement gives alone at degree 1. A regression test: with no wave
+/// merged the spill was forgotten at the end, and the groups of the
+/// statement thread's last table alone were given.
+#[test]
+fn a_table_of_few_groups_past_the_grant_gives_every_group() {
+    let (db, a, threads) = table();
+    let made: Vec<String> = (0..60).map(|n| format!("N + {n} AS N{n}")).collect();
+    let asked: Vec<String> = (0..60).map(|n| format!("SUM(N{n}), MIN(N{n}), MAX(N{n})")).collect();
+    let sql =
+        format!("SELECT B, COUNT(*), {} FROM (SELECT K - MOD(K, 8) AS B, {} FROM C) AS Q GROUP BY B", asked.join(", "), made.join(", "));
+    let in_memory = alone(&a, &sql);
+    assert_eq!(in_memory.len(), 12_000);
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    threads.taken();
+    for set in
+        ["SET EXECUTOR.BATCHES = 'ON'", "SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 1024", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"]
+    {
+        exec(&a, set).unwrap();
+    }
+    let spilled = rows(&a, &sql).unwrap();
+    let shown = in_parallel(&a, &sql);
+    assert!(threads.taken().written > 0, "its table went to the spill\n{shown}");
+    let differs = spilled.iter().zip(&in_memory).position(|(row, same)| row != same);
+    assert_eq!((spilled.len(), differs), (12_000, None), "{shown}");
+}
+
 /// Verifies: [DESIGN] (RULES.md D1226, D1113) the first grouping of a
 /// pair, as a DISTINCT set function is run, and SELECT DISTINCT, at the
 /// smallest MEMORY.WORK_BYTES, give the rows they give run alone, in
