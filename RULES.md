@@ -813,6 +813,7 @@ verification approach DO-178C expects (§8).
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
 | D1260 | Morsels whose tables reduce nothing hand their rows to the partitions ungrouped |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
+| D1275 | A partition merges a morsel's groups in one pass, a new group given its slot as it is met |
 
 ### The project
 
@@ -23144,9 +23145,9 @@ what the others save, and data that turns to few groups is grouped in
 its morsels again within sixteen of them.
 
 Two things follow from rows of one key arriving as several groups. A
-partition's table merges such groups one at a time, each made before the
-next is looked for, where a morsel's groups, no two of a key, are made
-together (`exec/table/made.rs`, `repeats`), and the spill's form of a
+partition's table finds a key the morsel holds twice in the group its
+first made, as its merge gives a new group its slot before the next is
+looked up (D1275, `exec/table/made.rs`), and the spill's form of a
 morsel's groups tells which they are. And a morsel that must go to the
 spill as it is, the grant holding nothing more, is grouped first
 (`waves.rs`, `regrouped`). A partition read back is split by its groups'
@@ -23199,6 +23200,36 @@ numbers, so a set function whose state depends on the order of its
 values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
+
+#### D1275. A partition merges a morsel's groups in one pass, a new group given its slot as it is met
+
+A partition's table merged a morsel's groups in two passes over its
+slots (D1110). It looked every group up, then appended those that were
+new and went over them again to give each its slot. That holds only
+while no two of the morsel's groups share a key, since a group not yet
+placed cannot be found by the one after it. Rows handed on ungrouped
+(D1260) do share keys, so they were found or made one at a time, each
+group's key, first row and states appended through its cells before the
+next was looked up. Where every row is a new group that cost more than
+the morsels' tables had saved.
+
+The merge is now one pass for every morsel (`exec/table/made.rs`,
+`looked_up`). Each group is looked up by its key and hash. One that is
+new takes the next number, and its hash and slot are written at once,
+so the slots stand as they would had it been made. Its key, first row
+and states are not appended yet. A key looked up later that meets its
+slot is compared with the key the morsel holds at that group's place,
+so a key the morsel holds twice finds the group its first made. After
+the pass the new groups' keys, first rows and states are appended a
+column at a time, and each set function's states are merged in one
+loop, as before.
+
+The groups, their numbers and their slots are those that finding or
+making each group in turn gives. A probe that grows past the longest a
+table takes (D357) ends the pass after its group. What is new so far is
+appended, the table hashes its keys anew, and the rest are found or made
+one at a time by their keyed hashes, as a table placed so always merged
+them.
 
 ## 2. Project layout
 

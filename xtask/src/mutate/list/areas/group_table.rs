@@ -43,7 +43,7 @@ const SPILLED_MERGE: &str = "exec::table::made::written::tests::groups_read_back
 const SPILLED_STATES: &str = "exec::table::states::typed::written::tests::every_column_of_states_is_read_back_as_written";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 28] = [
+pub const GROUP_TABLE: [Mutation; 30] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -185,14 +185,34 @@ pub const GROUP_TABLE: [Mutation; 28] = [
         unit: &[],
     },
     Mutation {
-        name: "merged-groups-made-when-found",
+        name: "merged-groups-new-not-noted",
         package: Package::Core,
-        breaks: "a group a partition holds is made again of a morsel that holds it too (RULES.md D1110)",
+        breaks: "a group new to a partition is given its number and slot but its key is never appended (RULES.md D1110)",
         file: "src/exec/table/made.rs",
-        original: "            if found.is_none() {\n                fresh.push(i);",
-        replacement: "            if found.is_some() {\n                fresh.push(i);",
+        original: "                fresh.push(i);\n",
+        replacement: "",
         integration: &[],
         unit: &["exec::table::made::tests::partitions_merged_by_columns_hold_what_the_morsels_hold"],
+    },
+    Mutation {
+        name: "merged-group-not-appended-read-by-its-number",
+        package: Package::Core,
+        breaks: "a key that meets the slot of a group not yet appended is compared with the key at that group's number, not at its place (RULES.md D1275)",
+        file: "src/exec/table/made.rs",
+        original: "Some(&j) => made.keys.equal(crate::storage::mask::index(j), key, scratch),",
+        replacement: "Some(_) => made.keys.equal(held.saturating_sub(base), key, scratch),",
+        integration: &[],
+        unit: &["exec::table::made::tests::groups_merged_in_one_pass_are_those_found_or_made_in_turn"],
+    },
+    Mutation {
+        name: "merged-groups-dropped-past-a-long-probe",
+        package: Package::Core,
+        breaks: "the groups after the one whose probe grew past the longest are taken for looked up, so none of them is merged (RULES.md D1275)",
+        file: "src/exec/table/made.rs",
+        original: "return (n.saturating_add(1), true);",
+        replacement: "return (places.len(), true);",
+        integration: &[],
+        unit: &["exec::table::made::tests::groups_merged_in_one_pass_are_those_found_or_made_in_turn"],
     },
     Mutation {
         name: "merged-counts-not-added",
