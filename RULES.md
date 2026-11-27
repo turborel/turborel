@@ -777,6 +777,7 @@ verification approach DO-178C expects (§8).
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
+| D1232 | A merge join is priced by the pairs its key matches |
 
 ### The project
 
@@ -9351,7 +9352,8 @@ compares by, and only where one operand already has a plan in the key's
 order, from an index or a table kept in order, as an interesting order
 pays (D309). Where both operands would be sorted the hash join is taken.
 A nested loop pairs every row where no equality joins the sets. Each
-join adds the rows it gives to the cost, as Cout does. The merge join
+join adds the rows it gives to the cost, as Cout does, and a merge join
+the pairs its key matches beyond them (D1232). The merge join
 (`exec/join/merge.rs`) pairs each left row with the run of right rows of
 its key. The run is read once and held while left rows of that key come,
 in memory until it outgrows the work area and then in a run of the spill
@@ -21476,6 +21478,36 @@ tables' pages, which does not fit beside what the pool holds. The
 lookups are counted as before, so LEAST_LOOKUPS and the window are
 unchanged. A hit costs nothing more, and a miss only notes which way the
 pool found its frame (`disk/buffer/tally.rs`).
+
+#### D1232. A merge join is priced by the pairs its key matches
+
+A join added to its cost the rows it gives (D303). A merge join pairs
+each left row with the run of right rows of its key, and judges the rest
+of its condition of each pair. Where its key holds few values, the pairs
+are many more than the rows it gives, and none of them was priced. A
+stock level procedure joining a district to its order lines on the
+warehouse, a key of one value on both sides, was merged on it while the
+statistics of the order lines were still being gathered. It paired a
+thousand rows with each of thirty thousand, and read the right run back
+from the spill area for every left row, for a few hundred rows.
+
+A merge join now adds the pairs its key matches, the product of its
+operands' rows over the larger count of distinct values of its key
+(`Space::merge_pairs`), where that is more than the rows it gives. The
+distinct values are those the class of the key's equality counts of each
+operand's relation, bounded by the operand's rows (`Model::key_distinct`).
+A key of one value on both sides is priced as the whole product. The
+merge join matches on one key and judges the other equalities of its
+condition of each pair (`exec/join/merge.rs`), so it is priced as it
+runs. Matching on several key columns at once would let it judge fewer
+pairs, by comparing the keys as one tuple and holding runs of the whole
+tuple; it is not built.
+
+A hash join hashes every equality of its condition, so its keys match
+only pairs of every equality's value, and an index nested-loop join pays,
+for each probe, the rows the probe finds (D35). A nested loop pays the
+product of its operands. None of them changes. The statistics pass and
+its window are unchanged, and nothing waits for them.
 
 ## 2. Project layout
 

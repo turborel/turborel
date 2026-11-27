@@ -145,10 +145,21 @@ impl Space<'_> {
                 continue;
             }
             let compared = self.model.cost.sort_compare * (sides.left.rows + sides.right.rows);
-            let cost = left.0 + right.0 + compared + rows;
+            let cost = left.0 + right.0 + compared + self.merge_pairs(sides, (a, b)).max(rows);
             out.push((Cand { cost, order: Order::Class(ka), tree: 0 }, ka, (left.1, right.1)));
         }
         out
+    }
+
+    /// \[DESIGN\] (RULES.md D1232) The pairs a merge join on the key `a`
+    /// of the left and `b` of the right judges, each left row with every
+    /// right row of its key's value, as many as the product over the more
+    /// distinct key's values. A key one value holds on both sides, its
+    /// every row paired with every other, judges the whole product.
+    fn merge_pairs(&self, sides: &Sides<'_>, (a, b): (usize, usize)) -> f64 {
+        let (lr, rr) = (sides.left.rows, sides.right.rows);
+        let distinct = |c: usize, rows: f64| self.model.key_distinct(c).map_or(rows, |d| d.min(rows)).max(1.0_f64);
+        lr * rr / distinct(a, lr).max(distinct(b, rr))
     }
 
     /// The cheapest way to have the rows of `entry` in the order of class
