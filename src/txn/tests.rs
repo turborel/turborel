@@ -302,12 +302,15 @@ fn a_transaction_dropped_as_its_records_are_written_holds_no_log() {
     assert_eq!(shared.oldest_logged(), None, "over: no first is noted for it");
 }
 
-/// A table that records how the transactions that joined it ended, and
-/// refuses their rollbacks if told to.
+/// A table that records the undoing of the transactions that joined it,
+/// each deletion asked and how each ended, and that refuses their
+/// rollbacks, panics at them, or refuses to delete one row, if told to.
 #[derive(Default)]
 struct Ends {
-    ends: Mutex<Vec<&'static str>>,
+    calls: Mutex<Vec<&'static str>>,
     refuses: bool,
+    panics: bool,
+    keeps: Option<crate::storage::RowId>,
 }
 
 impl crate::storage::TableStorage for Ends {
@@ -317,8 +320,9 @@ impl crate::storage::TableStorage for Ends {
     fn update(&self, _tx: TxId, _id: crate::storage::RowId, _row: crate::storage::Row) -> Result<()> {
         Ok(())
     }
-    fn delete(&self, _tx: TxId, _id: crate::storage::RowId) -> Result<()> {
-        Ok(())
+    fn delete(&self, _tx: TxId, id: crate::storage::RowId) -> Result<()> {
+        lock_builtin(&self.calls).push("delete");
+        if self.keeps == Some(id) { Err(SqlError::new(crate::error::Code::Io, "kept")) } else { Ok(()) }
     }
     fn restore(&self, _tx: TxId, _id: crate::storage::RowId, _row: crate::storage::Row) -> Result<()> {
         Ok(())
@@ -333,10 +337,13 @@ impl crate::storage::TableStorage for Ends {
         0
     }
     fn commit(&self, _tx: TxId, _at: Timestamp) {
-        lock_builtin(&self.ends).push("commit");
+        lock_builtin(&self.calls).push("commit");
     }
     fn rollback(&self, _tx: TxId) -> Result<()> {
-        lock_builtin(&self.ends).push("rollback");
+        lock_builtin(&self.calls).push("rollback");
+        if self.panics {
+            std::panic::resume_unwind(Box::new("the engine's rollback panics"));
+        }
         if self.refuses { Err(SqlError::new(crate::error::Code::Io, "refused")) } else { Ok(()) }
     }
 }
@@ -380,7 +387,7 @@ fn a_transaction_dropped_open_is_rolled_back() {
     let (st, log, lock, tx) = joined(&table, true);
     let id = tx.id;
     drop(tx);
-    assert_eq!(*lock_builtin(&table.ends), ["rollback"]);
+    assert_eq!(*lock_builtin(&table.calls), ["rollback"]);
     assert_eq!(logged(&*log), [(id, false), (id, true)], "its abort record after its record");
     assert_eq!(st.tx.oldest_logged(), None);
     assert!(st.tx.taking_changes().is_ok() && lock.damage().is_none());
@@ -389,25 +396,26 @@ fn a_transaction_dropped_open_is_rolled_back() {
     let storage: Arc<dyn crate::storage::TableStorage> = Arc::<Ends>::clone(&table);
     lock_builtin(&reader.state).joined.push(Joined { table: name, storage });
     drop(reader);
-    assert_eq!(*lock_builtin(&table.ends), ["rollback", "rollback"], "one that only read");
+    assert_eq!(*lock_builtin(&table.calls), ["rollback", "rollback"], "one that only read");
     assert_eq!(logged(&*log).len(), 2, "which logs nothing");
     let (again, _, _, ended) = joined(&table, false);
     again.rollback(&ended).unwrap();
     drop(ended);
-    assert_eq!(lock_builtin(&table.ends).len(), 3, "ended once");
+    assert_eq!(lock_builtin(&table.calls).len(), 3, "ended once");
     assert_eq!(again.tx.active(), 0);
 }
 
 /// Drops, as `dropped` drops it, a transaction that joined `table`, and
 /// asserts that its database then takes no change, naming the
 /// transaction dropped (SQLCODE -915), and that the table it holds is
-/// marked damaged.
-fn stops(table: &Arc<Ends>, dropped: impl FnOnce(Txn)) {
+/// marked damaged. What the next change is refused with.
+fn stops(table: &Arc<Ends>, dropped: impl FnOnce(Txn)) -> SqlError {
     let (st, _, lock, tx) = joined(table, false);
     dropped(tx);
     let refused = st.tx.taking_changes().unwrap_err();
     assert!(refused.code == crate::error::Code::Io && refused.msg.contains("dropped before its end"), "{refused}");
     assert!(lock.damage().is_some());
+    refused
 }
 
 /// Verifies: [DESIGN] RULES.md D19, D1258, D1259, a transaction dropped
@@ -442,7 +450,32 @@ fn a_transaction_that_cannot_be_ended_stops_the_database() {
         let (name, storage) = (QualifiedName::clone(&first.table), Arc::clone(&first.storage));
         state.undo.push(UndoEntry::Inserted { table: name, storage, id: 1 }).unwrap();
     });
-    assert!(lock_builtin(&table.ends).is_empty(), "no engine asked where the rollback could not be trusted");
+    assert!(lock_builtin(&table.calls).is_empty(), "no engine asked where the rollback could not be trusted");
+}
+
+/// Verifies: [DESIGN] RULES.md D19, D1259, a transaction dropped still
+/// open whose rollback fails within the drop: an engine refusing to undo
+/// one of its three changes, the others undone all the same and the
+/// engine told its end; or an engine's rollback panicking, the panic
+/// caught by the drop: the database stops taking changes (SQLCODE -915,
+/// naming the transaction dropped, and the panic) and the table it holds
+/// is marked damaged, so no checkpoint follows a transaction half ended.
+#[test]
+fn a_rollback_failing_in_a_drop_stops_the_database() {
+    let keeping = Arc::new(Ends { keeps: Some(2), ..Ends::default() });
+    stops(&keeping, |tx| {
+        let mut state = lock_builtin(&tx.state);
+        let first = state.joined.first().unwrap();
+        let (name, storage) = (QualifiedName::clone(&first.table), Arc::clone(&first.storage));
+        for id in 1_u64..=3_u64 {
+            state.undo.push(UndoEntry::Inserted { table: name.clone(), storage: Arc::clone(&storage), id }).unwrap();
+        }
+    });
+    assert_eq!(*lock_builtin(&keeping.calls), ["delete", "delete", "delete", "rollback"], "the rest undone, the engine told");
+    let panicking = Arc::new(Ends { panics: true, ..Ends::default() });
+    let refused = stops(&panicking, drop);
+    assert!(refused.msg.contains("its rollback panicked"), "{refused}");
+    assert_eq!(*lock_builtin(&panicking.calls), ["rollback"]);
 }
 
 /// Verifies: [DESIGN] RULES.md D29: maintenance is due from a table's note,

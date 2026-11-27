@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 39] = [
+pub const OLTP: [Mutation; 41] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -408,5 +408,25 @@ pub const OLTP: [Mutation; 39] = [
         replacement: "            (true, false) => Left::Nothing,",
         integration: &[],
         unit: &["txn::tests::a_transaction_that_cannot_be_ended_stops_the_database"],
+    },
+    Mutation {
+        name: "oltp-dropped-failure-ignored",
+        package: Package::Core,
+        breaks: "a transaction dropped still open whose rollback leaves a change not undone, or whose engine refuses its end, leaves the database taking changes and a checkpoint free to follow (D1259)",
+        file: "src/txn/release.rs",
+        original: "failures.first().map_or(Ok(()), |f| Err(unended(&f.error.described())))",
+        replacement: "failures.first().map_or(Ok(()), |_| Ok(()))",
+        integration: &[],
+        unit: &["txn::tests::a_rollback_failing_in_a_drop_stops_the_database"],
+    },
+    Mutation {
+        name: "oltp-dropped-panic-ignored",
+        package: Package::Core,
+        breaks: "a transaction dropped still open whose rollback panics is left half ended, the panic caught and the database taking changes (D1259)",
+        file: "src/txn/release.rs",
+        original: "            Err(_) => Err(unended(\"its rollback panicked\")),",
+        replacement: "            Err(_) => Ok(()),",
+        integration: &[],
+        unit: &["txn::tests::a_rollback_failing_in_a_drop_stops_the_database"],
     },
 ];
