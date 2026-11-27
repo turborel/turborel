@@ -823,7 +823,6 @@ verification approach DO-178C expects (§8).
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1279 | A grouping by an expression counts no more groups than its table's sample shows the expression to take values |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
-| D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1281 | A sort's first rows over a pair of groupings are taken from the second's table of each partition |
 | D1282 | The runs that merge and finish a grouping's partitions lead their reader by every partition |
 | D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
