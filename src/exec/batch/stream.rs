@@ -208,8 +208,7 @@ pub(super) fn untold(plan: &Plan) -> bool {
     }
 }
 
-/// Whether every table `plan` scans reads by batch
-/// (`TableStorage::reads_by_batch`).
+/// Whether every table `plan` scans reads by batch (`TableStorage::reads_by_batch`).
 pub(in crate::exec) fn reads_by_batch(plan: &Plan, db: &State) -> bool {
     reads(plan, db, false)
 }
