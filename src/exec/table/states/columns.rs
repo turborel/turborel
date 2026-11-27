@@ -21,6 +21,26 @@ impl States {
             let units = (0..len).map(|g| counts.get(g).copied().unwrap_or(0)).collect();
             return Ok(Column::Ints(Ints::new(units, 0, None)));
         }
-        (0..len).map(|g| self.finish(g)).collect::<Result<Vec<Value>>>().map(Column::Values)
+        // Made at its length, so no value moves as the vector fills.
+        let mut values: Vec<Value> = Vec::with_capacity(len);
+        for g in 0..len {
+            values.push(self.finish(g)?);
+        }
+        Ok(Column::Values(values))
+    }
+
+    /// \[DESIGN\] (RULES.md D1256) Finishes each of the first `len`
+    /// groups' results and keeps none, so a group whose result raises
+    /// raises it where no column of the results is wanted. A count and a
+    /// value carried raise nothing, and are not finished.
+    ///
+    /// # Errors
+    ///
+    /// As `Accumulator::finish`, of the first group that fails.
+    pub(in crate::exec::table) fn checked(&self, len: usize) -> Result<()> {
+        if matches!(self, States::Typed(Typed::Count(_))) || matches!(self, States::Carried(_)) {
+            return Ok(());
+        }
+        (0..len).try_for_each(|g| self.finish(g).map(drop))
     }
 }
