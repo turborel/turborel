@@ -821,7 +821,7 @@ verification approach DO-178C expects (§8).
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
-| D1290 | MAX and MIN compare a vector of character strings where it lies, and make a value of the one that wins it alone |
+| D1290 | MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states |
 
 ### The project
 
@@ -23622,7 +23622,7 @@ order, gave the row store's results too
 test). Which step kept the store's numbers from the lane there was not
 found. The lane's own test shows the place it now clears.
 
-#### D1290. MAX and MIN compare a vector of character strings where it lies, and make a value of the one that wins it alone
+#### D1290. MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states
 
 A set function fed by batches is given a vector at a time. A vector of
 character strings is one text with where each string ends, or the codes
@@ -23648,6 +23648,48 @@ it alone, and only if it betters the best so far.
 
 The rows asked of the vector are read in the order asked, and a null is
 passed over. What an accumulator writes, merges and gives is unchanged.
+
+A grouping by batch keeps COUNT, SUM, AVG, and MAX and MIN of exact
+numbers in columns of states, a slot a group (D356). MAX and MIN of
+character strings had no column, so each group held an accumulator on
+the heap, and in it a value of the group's best string. Every batch's
+rows were sorted by group to hand each accumulator its rows. Where the
+grouping ran in parallel, every group of every morsel wrote its string
+as a state for the partition's accumulator to read back as a value
+(D1110), and each accumulator was made and dropped by itself.
+
+They now keep a column (`Typed::Best`,
+`exec/table/states/typed/best.rs`). It holds every group's best string
+in one text, and where each group's lies in it. A row's string is
+compared with its group's best where both lie, by the order of
+`TextOrder`, and copied to the end of the text only when it wins.
+
+- Which set function has the column is asked of its accumulator
+  (`Accumulator::text_order`), as D1201 asks whether one keeps its first
+  value. MAX and MIN with no collation answer for a result that is a
+  character string held whole, and those under a collation whose key is
+  the text itself answer by octets. Under a collation that makes sort
+  keys they give none, as the keys would have to be kept beside the
+  strings. Of a character large object they give none, as comparing two
+  reads their chunks and may fail. No plug-in's function answers. A part
+  of MAX or MIN (D341, D1280) gives none either, so the first of two
+  groupings keeps accumulators of it and the second merges their
+  written states, as before.
+- A string bettered stays in the text, dead. Once the dead octets pass
+  what the column holds beside them, its live octets and its groups'
+  places, the live strings are copied to a text of their own
+  (`Best::compact`). A copy moves the live octets and rewrites the
+  places, and more than that many octets died since the last one, so
+  copying costs less than one octet moved for each octet that died, and
+  the column holds less than twice what it needs and one string more.
+- Two tables' columns are merged in one loop, each group's best
+  compared with the other's where they lie (D1110), with no state
+  written. A column is gathered in another order, and written to a
+  spill and read back (D1226) as each group's string and whether it has
+  one. A state an accumulator wrote is merged as the accumulator merges
+  it, and a group's result and written state are its accumulator's.
+- A column fed anything but character strings and nulls turns into
+  accumulators, each given its group's best, and is fed as they are.
 
 ## 2. Project layout
 

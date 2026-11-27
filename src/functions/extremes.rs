@@ -23,7 +23,7 @@ use crate::value::{DataType, Value, compare, compare_strings};
 /// padded with spaces, as a comparison with no collation does
 /// [X3.135-1986 §5.11 GR5].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TextOrder {
+pub struct TextOrder {
     max: bool,
     unpadded: bool,
 }
@@ -32,7 +32,7 @@ impl TextOrder {
     /// Whether `candidate` takes the place of `best`: only if it is the
     /// greater, or the less, so of two that compare equal the one met
     /// first is kept, as `ExtremeAcc::update` keeps it.
-    fn better(self, candidate: &str, best: &str) -> bool {
+    pub(crate) fn better(self, candidate: &str, best: &str) -> bool {
         let order = if self.unpadded { candidate.as_bytes().cmp(best.as_bytes()) } else { compare_strings(candidate, best) };
         order == if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }
     }
@@ -76,20 +76,24 @@ impl AggregateFunction for Extreme {
     }
 }
 
-/// The best value so far; whether it keeps the greatest; and whether its
+/// The best value so far; whether it keeps the greatest; whether its
 /// state is written (`Accumulator::write_state`): not of a plug-in's type,
-/// whose values are read back only through the types registered.
+/// whose values are read back only through the types registered; and
+/// whether its values are character strings held whole, not large
+/// objects.
 pub(super) struct ExtremeAcc {
     best: Value,
     max: bool,
     written: bool,
+    strings: bool,
 }
 
 impl ExtremeAcc {
     /// MAX's accumulator, if `max`, or MIN's, of result type `result`, the
     /// best value so far `best`, null of none.
     pub(super) fn of(max: bool, best: Value, result: &DataType) -> Box<dyn Accumulator> {
-        Box::new(ExtremeAcc { best, max, written: !matches!(result, DataType::Extension(_)) })
+        let strings = result.is_character() && !result.is_lob();
+        Box::new(ExtremeAcc { best, max, written: !matches!(result, DataType::Extension(_)), strings })
     }
 }
 
@@ -157,6 +161,10 @@ impl Accumulator for ExtremeAcc {
     }
     fn finish(&self) -> Result<Value> {
         Ok(self.best.clone())
+    }
+    /// Padded, of a result that is a character string held whole.
+    fn text_order(&self) -> Option<TextOrder> {
+        self.strings.then_some(TextOrder { max: self.max, unpadded: false })
     }
 }
 
@@ -260,6 +268,11 @@ impl Accumulator for CollatedAcc {
     }
     fn finish(&self) -> Result<Value> {
         Ok(self.best.as_ref().map_or(Value::Null, |(_, v)| v.clone()))
+    }
+    /// By octets, under a collation whose key is the text itself; none
+    /// under one that makes sort keys.
+    fn text_order(&self) -> Option<TextOrder> {
+        self.octets.then_some(TextOrder { max: self.max, unpadded: true })
     }
 }
 

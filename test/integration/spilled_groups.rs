@@ -250,3 +250,46 @@ fn a_crossing_second_grouping_past_the_grant_gives_its_rows() {
         in_parallel(&a, q);
     }
 }
+
+/// Verifies: [DESIGN] (RULES.md D1290, D1226) the strings a grouping's
+/// states hold count against its grant. MIN and MAX of texts of some 500
+/// characters, of 240 groups, hold several times the smallest
+/// MEMORY.WORK_BYTES in their strings alone, though their groups are few:
+/// run in parallel the grouping writes its partitions to the spill, and
+/// gives the rows it gives run alone a row at a time, by octets under a
+/// collation of NO PAD and padded with none. Under a collation that makes
+/// sort keys, kept by an accumulator a group, it gives those rows too.
+#[test]
+fn the_strings_of_best_states_count_against_the_grant() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
+    let threads = Threads::default();
+    db.set_spill(Box::new(threads.clone())).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE COLLATION BYTES FOR SQL_TEXT FROM UCS_BASIC NO PAD
+           CREATE TABLE L (K INTEGER PRIMARY KEY, G INTEGER, T VARCHAR(600), U VARCHAR(600) COLLATE A.BYTES)
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    let values: Vec<String> = (0_i64..4800).map(|k| format!("({k}, {}, '{t:0>505}', '{t:0>505}')", k % 240, t = k * 7919 % 4800)).collect();
+    a.run(&format!("INSERT INTO L VALUES {}", values.join(", "))).unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    let queries = ["SELECT G, MIN(T), MAX(T) FROM L GROUP BY G", "SELECT G, MIN(U), MAX(U), COUNT(*) FROM L GROUP BY G"];
+    let in_memory: Vec<Vec<String>> = queries.iter().map(|q| alone(&a, q)).collect();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    threads.taken();
+    for (q, expected) in queries.iter().zip(&in_memory) {
+        assert_eq!(expected.len(), 240, "{q}");
+        assert_eq!(&parallel(&a, q), expected, "{q}");
+        let written = threads.taken().written;
+        let shown = in_parallel(&a, q);
+        assert!(written > usize::try_from(SMALL).unwrap(), "{q}: more text than the grant, {written} bytes spilled\n{shown}");
+    }
+    let keyed = "SELECT G, MIN(T COLLATE UCS_BASIC), MAX(T COLLATE UCS_BASIC) FROM L GROUP BY G";
+    let expected = alone(&a, keyed);
+    assert_eq!(parallel(&a, keyed), expected);
+}
