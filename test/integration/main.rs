@@ -283,6 +283,7 @@ mod normal_sorts;
 mod null_ordering;
 mod numeric_functions;
 mod octets_sorts;
+mod open_groups;
 mod order_by;
 mod ordered_joins;
 mod outer_rejection;

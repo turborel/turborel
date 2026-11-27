@@ -532,7 +532,7 @@ impl RowTable {
     /// its values out of line are fetched (RULES.md D1140).
     pub(super) fn newest_of(&self, tx: TxId, id: RowId) -> Result<Newest> {
         let _pinned = self.frozen.pinned();
-        let Some(newest) = self.tree.get(&key(id))? else { return Ok(Newest::of(self.frozen_row(id, None)?)) };
+        let Some(newest) = self.tree.get(&key(id))? else { return self.frozen_newest(tx, id) };
         let version = Version::parse(&newest)?;
         let decoded = |record: &[u8], deleted: bool| if deleted { Ok(None) } else { self.decode(id, record, None).map(Some) };
         let (writer, stamp) = match self.maker(&version) {
