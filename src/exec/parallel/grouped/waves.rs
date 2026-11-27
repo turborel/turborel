@@ -165,6 +165,13 @@ pub(super) struct How {
     /// \[DESIGN\] (RULES.md D1262) The morsels a thread the run leads its
     /// reader by.
     pub(super) lead: usize,
+    /// \[DESIGN\] (RULES.md D1282) The partitions a thread the runs that
+    /// merge a wave and finish the partitions lead their reader by. A
+    /// statement's runs lead by every partition. The reader keeps each
+    /// partition's result until the last is in, so a partition done
+    /// early holds nothing more for it, and the threads do not stand
+    /// idle behind one partition that holds most of the groups.
+    pub(super) parts: usize,
     /// The waves the partitions merged, and the times their tables were
     /// written to the spill.
     pub(super) counted: (AtomicUsize, AtomicUsize),
@@ -172,7 +179,7 @@ pub(super) struct How {
 
 impl Default for How {
     fn default() -> How {
-        How { forced: None, apart: None, lead: LEAD_PER_THREAD, counted: (AtomicUsize::new(0), AtomicUsize::new(0)) }
+        How { forced: None, apart: None, lead: LEAD_PER_THREAD, parts: PARTS, counted: (AtomicUsize::new(0), AtomicUsize::new(0)) }
     }
 }
 
@@ -422,7 +429,8 @@ impl Waves<'_> {
     /// As merging a partition, or writing it to the spill, fails.
     fn merged(&mut self) -> Result<bool> {
         let wave = std::mem::take(&mut self.wave);
-        let Some(held) = frozen_wave((self.grouping, &self.frozen, self.spilled.as_ref()), wave, self.run)? else { return Ok(false) };
+        let merging = (self.grouping, &self.frozen, self.spilled.as_ref());
+        let Some(held) = frozen_wave(merging, wave, self.run, self.how.parts)? else { return Ok(false) };
         self.how.counted.0.fetch_add(1, Ordering::Relaxed);
         self.limit.give(self.wave_bytes.saturating_add(self.parts_bytes));
         (self.wave_bytes, self.parts_bytes, self.waved) = (0, held, true);
@@ -479,7 +487,8 @@ impl Waves<'_> {
             return Ok(Held::GaveWay);
         }
         let Some(spilled) = self.spilled.clone() else {
-            return finished_wave((self.grouping, &self.frozen), self.wave, self.run).map(|runs| Held::Kept((runs, Vec::new())));
+            let runs = finished_wave((self.grouping, &self.frozen), self.wave, self.run, self.how.parts)?;
+            return Ok(Held::Kept((runs, Vec::new())));
         };
         // The last wave to the spill too, then each partition read back.
         if !self.wave.is_empty() && !self.merged()? {
@@ -518,7 +527,8 @@ fn thawed_and_merged(grouping: &Grouping, (frozen, p): (&Frozen, usize), wave: &
 /// Merges the morsels of `wave` into each partition's table on up to
 /// `degree` threads, each frozen again, or written to `spilled` if the
 /// partitions are held there: the bytes the tables held in memory hold;
-/// none if a table could not be written.
+/// none if a table could not be written. The run leads its reader by
+/// `wide` partitions a thread (RULES.md D1282).
 ///
 /// # Errors
 ///
@@ -527,6 +537,7 @@ fn frozen_wave(
     (grouping, frozen, spilled): (&Arc<Grouping>, &Frozen, Option<&Arc<Spilled>>),
     wave: Vec<Arc<Made>>,
     (db, tx, degree): (&Db, TxId, usize),
+    wide: usize,
 ) -> Result<Option<usize>> {
     let (grouping, kept, wave, spilled) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), spilled.cloned());
     let freeze = Box::new(move |p: usize| {
@@ -540,13 +551,14 @@ fn frozen_wave(
         }
         Ok(Some(bytes))
     });
-    Morsels::start(db, tx, (PARTS, degree), freeze)
+    Morsels::led(db, tx, (PARTS, degree), freeze, Some(Lead::unmetered(wide)))
         .try_fold(Some(0_usize), |sum, bytes| Ok(sum.zip(bytes?).map(|(sum, bytes)| sum.saturating_add(bytes))))
 }
 
 /// Merges the morsels of the last `wave` into each partition's table on up
 /// to `degree` threads: each partition's groups finished, with their
-/// numbers, in the order of their first rows.
+/// numbers, in the order of their first rows. The run leads its reader by
+/// `wide` partitions a thread (RULES.md D1282).
 ///
 /// # Errors
 ///
@@ -555,13 +567,14 @@ fn finished_wave(
     (grouping, frozen): (&Arc<Grouping>, &Frozen),
     wave: Vec<Arc<Made>>,
     (db, tx, degree): (&Db, TxId, usize),
+    wide: usize,
 ) -> Result<Vec<Run>> {
     let (grouping, kept, wave, db_for) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), db.clone());
     let finish = Box::new(move |p: usize| {
         let table = thawed_and_merged(&grouping, (&kept, p), &wave)?;
         grouping.kept_of(table, &Runner::new(&db_for, tx))
     });
-    Morsels::start(db, tx, (PARTS, degree), finish).collect()
+    Morsels::led(db, tx, (PARTS, degree), finish, Some(Lead::unmetered(wide))).collect()
 }
 
 // Unit tests: the groups whichever morsels are handed whole (RULES.md
