@@ -21715,6 +21715,33 @@ keys (D665) and takes fewer steps, each sound alone. The cost model
 needs no change. It prices each row hashed once whatever its keys
 (`HASH_ROW`), and counts a join's runtime filter once a class of
 equalities (D653), which is now what runs.
+
+#### D1208. Sorting a grouping's input first is weighed by the rows of the input as built
+
+A grouping under an ORDER BY of its keys whose input is in no such
+order is streamed over a sort of its rows where that costs less than
+hashing them and sorting the groups (D550). The rows weighed were the
+estimator's count of the grouping's logical input, the statement as
+written. The plan built for that input is another matter. Its joins
+were enumerated and chosen by the model's count of each set of them
+(D303), and that count is the one its operators carry. The two can be
+far apart. Of a join of a table to two readings of another under an OR
+of two pairs of their values, the count as written came out far under
+the plan's, and the plan's was the nearer to the rows the statement
+gave. By the lower count every row was thought a group of its own, a
+sort of the rows looked the cheaper, and the grouping sorted every
+joined row where, by the same weights and the plan's count, hashing
+them into their few groups costs less.
+
+The comparison now takes the rows the built input is estimated to give
+(`Plan::est`, `physical/streamed.rs`), and the logical count only of a
+plan that carries none. The rule of the choice and its weights are as
+they were. The grouping's own estimate of its groups is still made of
+the logical count, which bounds it, and with the rows right it no
+longer decides. Why the two counts part is the estimator's matter, a
+condition and the conditions derived from it counted as independent,
+and is not settled here.
+
 #### D1212. A table opened has its zones summed up only once one is asked for
 
 A table opened with zones not known, stale or unsettled was noted for
@@ -21770,32 +21797,6 @@ would be owed later. Every write after the load would keep its zone,
 the cost D868 took from tables written and read by key alone, and an
 order entry's tables are loaded in bulk too. The pass is paid once, by
 the table whose zones are asked for.
-
-#### D1208. Sorting a grouping's input first is weighed by the rows of the input as built
-
-A grouping under an ORDER BY of its keys whose input is in no such
-order is streamed over a sort of its rows where that costs less than
-hashing them and sorting the groups (D550). The rows weighed were the
-estimator's count of the grouping's logical input, the statement as
-written. The plan built for that input is another matter. Its joins
-were enumerated and chosen by the model's count of each set of them
-(D303), and that count is the one its operators carry. The two can be
-far apart. Of a join of a table to two readings of another under an OR
-of two pairs of their values, the count as written came out far under
-the plan's, and the plan's was the nearer to the rows the statement
-gave. By the lower count every row was thought a group of its own, a
-sort of the rows looked the cheaper, and the grouping sorted every
-joined row where, by the same weights and the plan's count, hashing
-them into their few groups costs less.
-
-The comparison now takes the rows the built input is estimated to give
-(`Plan::est`, `physical/streamed.rs`), and the logical count only of a
-plan that carries none. The rule of the choice and its weights are as
-they were. The grouping's own estimate of its groups is still made of
-the logical count, which bounds it, and with the rows right it no
-longer decides. Why the two counts part is the estimator's matter, a
-condition and the conditions derived from it counted as independent,
-and is not settled here.
 
 #### D1215. A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more
 
