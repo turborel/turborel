@@ -70,14 +70,15 @@ fn few(still: bool, (groups, taken): (usize, usize), degree: usize) -> bool {
 }
 
 /// \[DESIGN\] (RULES.md D1260) The groups a thousand rows of a morsel
-/// must leave for the next morsels to be handed on ungrouped. The break
-/// is where the lookups and slots a table spends on a morsel's rows cost
-/// what the rows it would have merged cost the partition after: appended,
-/// put in partition order and found again there. Of integer keys that is
-/// near 800 groups a thousand rows, as the shares of those steps in a
-/// profile of a grouping with a group a row give it. A key of text costs
-/// more to carry than to look up, so the bound is set above that.
-const APART_PER_MILLE: usize = 900;
+/// must leave for the next morsels to be handed on ungrouped. From a
+/// sweep with the hand-over forced on and forced off, over groupings of
+/// integer keys whose morsels leave from 640 to 1000 groups a thousand
+/// rows. Where every group is new to its partition the two were level at
+/// 640 and the hand-over ahead at 790 and above, by more the nearer to a
+/// group a row. Where the partitions merge the rows anyway, the keys few
+/// in all, it was ahead at 730 and above. So the bound is 750: above the
+/// ratio measured level, below the least measured ahead of both kinds.
+const APART_PER_MILLE: usize = 750;
 
 /// \[DESIGN\] (RULES.md D1260) The morsels of which one makes a table
 /// though the others do not, to see whether the rows reduce now. One in

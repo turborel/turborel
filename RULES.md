@@ -23127,14 +23127,17 @@ row is first grouped differs.
 Whether to group is the workers' own measurement, never the planner's
 estimate (`exec/parallel/grouped/waves.rs`, `Reduction`). Each morsel's
 table tells the groups it ended with of the rows it took. After a table
-that left more than 900 groups a thousand rows the next morsels are
-handed on ungrouped. The bound comes from what the steps cost. A table
-spends a lookup and a slot on each row, and saves, for each row it
-merges, the appending, the ordering by partition and the lookup the
-partition would spend on it. With the shares those steps take of a
-grouping of integer keys with a group a row, the two are equal near 800
-groups a thousand rows. A key of text costs more to carry than to look
-up, so the bound is set above that.
+that left more than 750 groups a thousand rows the next morsels are
+handed on ungrouped. A table spends a lookup and a slot on each row, and
+saves, for each row it merges, the appending, the ordering by partition
+and the lookup the partition would spend on it. Where the two meet was
+measured, the hand-over forced on and forced off over groupings of
+integer keys whose morsels leave from 640 to 1000 groups a thousand
+rows. Where every group is new to its partition, the two were level at
+640 and the hand-over was ahead at 790 and above. Where the keys are few
+in all, so that the partitions merge the rows anyway into tables that
+stay small, it was ahead at 730 and above. The bound sits between the
+ratio measured level and the least measured ahead of both kinds.
 
 One morsel in sixteen still makes a table. It gives back a sixteenth of
 what the others save, and data that turns to few groups is grouped in
