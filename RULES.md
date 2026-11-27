@@ -22982,7 +22982,11 @@ A set function that no key names is still finished of every group, with
 no value kept (`checked_but`). Its result may raise, as a sum past the
 range of its type does [ISO/IEC 9075:1992 §6.5 GR2b iv], and the plan run
 alone finishes every group and raises it, so the part raises it too. A
-count raises nothing and is not finished.
+count raises nothing and is not finished. An exact total raises only
+past the most digits a number has, and a mean only if its total written
+at its result's scale is past them, so a column of totals is passed over
+by their units, and only a total large enough to raise is finished to
+know (`exec/table/states/typed/quiet.rs`).
 
 A sort with a key that names a grouping column or a constant sorts the
 batch of every column, as before. A column of results is made at its

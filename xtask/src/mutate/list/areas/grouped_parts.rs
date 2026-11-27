@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 35] = [
+pub const GROUPED_PARTS: [Mutation; 36] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -362,6 +362,16 @@ pub const GROUPED_PARTS: [Mutation; 35] = [
         original: "return spilled.write_parts(self.regrouped(made)?.as_ref());",
         replacement: "return spilled.write_parts(made.as_ref());",
         integration: &["spilled_groups::a_grouping_spilled_holds_its_partitions_in_one_area"],
+        unit: &[],
+    },
+    Mutation {
+        name: "top-groups-totals-all-quiet",
+        package: Package::Core,
+        breaks: "every exact total is taken for too small to raise, so a sum or mean past its precision in a group not picked is lost (RULES.md D1256)",
+        file: "src/exec/table/states/typed/quiet.rs",
+        original: "digits.and_then(|d| TEN.checked_pow(d)).unwrap_or(0)",
+        replacement: "digits.map_or(u128::MAX, |_| u128::MAX)",
+        integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
         unit: &[],
     },
 ];

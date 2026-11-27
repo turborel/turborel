@@ -20,6 +20,7 @@ use crate::value::{DataType, Decimal, Value};
 
 mod few;
 mod merged;
+mod quiet;
 mod stated;
 mod written;
 
