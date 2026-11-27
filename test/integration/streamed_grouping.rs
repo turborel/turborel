@@ -228,3 +228,66 @@ fn a_sort_that_reads_every_group_passes_no_row_goal() {
     let own = plan(&a, &format!("{grouped} ORDER BY G FETCH FIRST 5 ROWS ONLY"));
     assert!(own.contains("Aggregate streamed") && !own.contains("Sort"), "{own}");
 }
+
+/// B of the column store, of forty thousand rows, K of a value each and X
+/// of seven, and D of seven rows, a name for each X; with eight workers,
+/// and a part of B run on eight threads.
+fn wide() -> (Database, Session) {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("EXECUTOR.WORKERS", &turborel::value::Value::Exact(turborel::value::Decimal::new(8, 0))).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE B (K INTEGER, X INTEGER) USING columnstore
+           CREATE TABLE D (X INTEGER, NAME VARCHAR(10)) USING columnstore",
+    )
+    .unwrap();
+    let a = db.session("A");
+    for first in (0..40_000_i64).step_by(1000) {
+        let values: Vec<String> = (first..first + 1000).map(|k| format!("({k}, {})", k % 7)).collect();
+        a.run(&format!("INSERT INTO B VALUES {}", values.join(", "))).unwrap();
+        a.commit().unwrap();
+    }
+    let names: Vec<String> = (0..7).map(|x| format!("({x}, 'N{x}')")).collect();
+    a.run(&format!("INSERT INTO D VALUES {}", names.join(", "))).unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    for set in ["SET EXECUTOR.DEGREE = 8", "SET EXECUTOR.MORSEL_ROWS = 2048", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"] {
+        exec(&a, set).unwrap();
+    }
+    (db, a)
+}
+
+/// Verifies: [DESIGN] RULES.md D1278, D1208, D550: a grouping under an
+/// ORDER BY of its key is weighed as each form would run. Of a table kept
+/// by column, grouped by an expression counted to give a group of most
+/// rows, the hashed grouping is a part its threads share, where a sort of
+/// the rows read by batch would stay on the statement's thread, so the
+/// rows are hashed in the part and the groups sorted, under an OFFSET and
+/// a FETCH FIRST too; and the rows are those the plan of one thread gives.
+/// Of that table joined to a few rows and grouped by their few names,
+/// where the sort of the joined rows would be a part as well, the rows
+/// are hashed in the part and the groups sorted, as before.
+///
+/// Regression test: both forms were once priced as run on one thread, and
+/// the grouping was streamed over a sort of every row on the statement's
+/// thread, where its threads would have hashed them.
+#[test]
+fn a_grouping_whose_order_is_asked_is_weighed_as_it_would_run() {
+    let (_db, a) = wide();
+    let halves = "SELECT M, COUNT(*) FROM (SELECT K / 2 AS M FROM B) AS H GROUP BY M ORDER BY M";
+    for tail in ["", " OFFSET 1000 ROWS FETCH FIRST 10 ROWS ONLY"] {
+        let shown = plan(&a, &format!("{halves}{tail}"));
+        let (sort, part, grouping) = (shown.find("Sort").unwrap(), shown.find("Parallel").unwrap(), shown.find("Aggregate").unwrap());
+        assert!(sort < part && part < grouping && !shown.contains("streamed"), "{shown}");
+    }
+    let named = plan(&a, "SELECT D.NAME, COUNT(*) FROM B, D WHERE B.X = D.X GROUP BY D.NAME ORDER BY D.NAME");
+    let (sort, part, grouping) = (named.find("Sort").unwrap(), named.find("Parallel").unwrap(), named.find("Aggregate").unwrap());
+    assert!(sort < part && part < grouping && !named.contains("streamed"), "{named}");
+    let paged = format!("{halves} OFFSET 1000 ROWS FETCH FIRST 10 ROWS ONLY");
+    let hashed = rows(&a, &paged).unwrap();
+    assert_eq!(hashed.len(), 10);
+    exec(&a, "SET EXECUTOR.DEGREE = 1").unwrap();
+    assert!(!plan(&a, &paged).contains("Parallel"));
+    assert_eq!(rows(&a, &paged).unwrap(), hashed);
+}
