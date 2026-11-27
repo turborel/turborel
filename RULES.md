@@ -24110,6 +24110,7 @@ expression does, the statement's plan.
 
 What a search finds is unchanged, as an automaton's states are of its
 program alone and the scratch is cleared by each search.
+
 #### D1293. A column store's scan does not judge a comparison that the bounds of every part of a run prove
 
 A chunk of a frozen group is written with the least and the greatest of
