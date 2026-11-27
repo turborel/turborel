@@ -8,7 +8,6 @@
 //! them of its batches, so a group the join's other operand has no key
 //! for is never made.
 
-use super::joined::gathered;
 use super::late::Deferred;
 use super::stream::{self, Batches};
 use super::{Taken, read_of, runtime, told, typed};
@@ -101,8 +100,9 @@ fn grouped_batches(part: Parallel, (db, tx): (&Db, TxId), deferred: &Deferred) -
     let warns = |t: &Taken| if let Taken::Column(at) = t { nullable(at) } else { false };
     let below = if read.taken.iter().any(warns) { Vec::new() } else { runtime::taken(&input, deferred.filters(), db).0 };
     let below: Vec<_> = below.into_iter().map(runtime::Told::given_above).collect();
-    match crate::exec::parallel::grouped_told(&input, (db, tx), degree, &below)? {
-        Held::Kept(groups) => Ok(gathered(groups, &columns)),
+    // Its partitions' groups as batches, no row made between (RULES.md D1220).
+    match crate::exec::parallel::grouped_batches(&input, (db, tx, degree), &below, &columns)? {
+        Held::Kept(batches) => Ok(batches),
         Held::GaveWay => told::grouped_batches(input, (db, tx), deferred),
     }
 }

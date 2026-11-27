@@ -775,6 +775,7 @@ verification approach DO-178C expects (§8).
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
+| D1220 | A parent that reads by batch takes a parallel grouping's groups as batches made of its partitions' own |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
@@ -19670,8 +19671,8 @@ so, in whatever partitions they are. The rows given and their order are
 therefore the plan's.
 
 It does so of a grouping by hash, alone at the top of its part, whose
-groups are made by batch, under a projection of its columns alone or
-none. A sort that asks the peers of its last row (WITH TIES) is not
+groups are made by batch, under a projection of its columns and of
+constants alone, or none. A sort that asks the peers of its last row (WITH TIES) is not
 taken so, as the number would part groups that are peers. Neither is one
 over a HAVING condition, a projection that computes a value, DISTINCT or
 a pair of groupings (D1113); the sort reads those groups as before. A
@@ -21371,6 +21372,30 @@ HAVING, grouping sets, a DISTINCT set function and a sort give whole
 groups; a null eliminated, a sum past its range and a division by zero
 in a later group are raised still; and groups past the work area are
 whole. Mutations in `xtask/src/mutate/list/areas/first_groups.rs`.
+
+#### D1220. A parent that reads by batch takes a parallel grouping's groups as batches made of its partitions' own
+
+A join that builds or probes over a grouping run in parallel, and a
+pipeline whose source is one, read the grouping by batch (D1063, D1072).
+They were given its rows gathered: each group made a row of values, the
+partitions' rows merged in the order of their first rows, and the rows
+put back into batches, every column a vector of values whatever its
+type.
+
+Where every partition gives its table's groups as a batch (D1125), the
+parent is now given batches made of those
+(`exec/parallel/grouped/runs.rs`, `Merged`). The statement's thread
+takes the partitions' groups in the order of their first rows, as before,
+and puts each group's values straight into the next batch's vectors, in
+lanes of the columns' types as a table keeps its keys (D356). No row is
+made of a group, and what reads the batches finds integers and texts in
+vectors of their types.
+
+The groups and their order are those the rows gave, so the parent's
+result is unchanged. A grouping any of whose partitions gives rows, one
+under a HAVING condition or a pair among them (D1125), or reads a run
+back from the spill (D1226), gives its rows gathered as before. A part
+that gives way is grouped alone and its rows gathered.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 

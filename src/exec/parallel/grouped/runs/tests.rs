@@ -57,3 +57,44 @@ fn runs_of_rows_and_of_batches_are_given_in_one_order() {
     assert_eq!(firsts, [0, 3, 9]);
     assert_eq!(as_rows.last().map(|g| g.1.clone()), expected.last().map(|row| format!("{row:?}")));
 }
+
+/// A run of `count` groups as a batch, the `n`th of first row
+/// `from + 2n`, its one column that number.
+fn stepped(from: i64, count: i64) -> Run {
+    let numbers: Vec<i64> = (0..count).map(|n| from.saturating_add(n.saturating_mul(2))).collect();
+    let firsts = numbers.iter().map(|&n| u64::try_from(n).unwrap()).collect();
+    Run::Columns(Batch { columns: vec![Column::Ints(Ints::new(numbers, 0, None))], rows: usize::try_from(count).unwrap() }, firsts)
+}
+
+/// The grant of a database made for a test.
+fn limit() -> Limit {
+    let db = crate::db::Database::new();
+    Limit::of(&crate::exec::Db::from(db.snapshot().unwrap()))
+}
+
+/// Verifies: [DESIGN] (RULES.md D1220) runs of batches are given as
+/// batches of their groups in the order of their first rows, of two runs
+/// whose groups alternate, across the batches' ends, in vectors of the
+/// columns' types; and runs with rows among them give the same groups in
+/// the same order, gathered.
+#[test]
+fn runs_of_batches_are_given_as_batches_in_one_order() {
+    let numbers = |batches: Batches| -> (Vec<String>, Vec<usize>, bool) {
+        let made: Vec<Batch> = batches.map(|kept| kept.unwrap().0).collect();
+        let typed = made.iter().all(|batch| matches!(batch.columns.first(), Some(Column::Ints(_))));
+        (
+            made.iter().flat_map(|batch| batch.values(0).iter().map(|v| format!("{v:?}"))).collect(),
+            made.iter().map(|b| b.rows).collect(),
+            typed,
+        )
+    };
+    let expected: Vec<String> = (0_i64..6000).map(|n| format!("{:?}", exact(n))).collect();
+    let (given, sizes, typed) = numbers(batches((vec![stepped(1, 3000), stepped(0, 3000)], Vec::new()), &[0], &limit()).unwrap());
+    assert_eq!(given, expected);
+    assert_eq!(sizes, [BATCH_ROWS, BATCH_ROWS, 6000_usize.saturating_sub(BATCH_ROWS.saturating_mul(2))]);
+    assert!(typed, "integers stay a vector of integers");
+    let rows = Run::Rows((0_i64..6000).step_by(2).map(|n| (u64::try_from(n).unwrap(), vec![exact(n)])).collect());
+    let (mixed, _, _) = numbers(batches((vec![stepped(1, 3000), rows], Vec::new()), &[0], &limit()).unwrap());
+    assert_eq!(mixed, expected);
+    assert_eq!(numbers(batches((Vec::new(), Vec::new()), &[0], &limit()).unwrap()).0, Vec::<String>::new());
+}

@@ -17,10 +17,13 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+use super::super::Limit;
 use super::Given;
 use crate::error::Result;
+use crate::exec::batch::{Batches, Kept, gathered};
 use crate::exec::broken;
-use crate::storage::{Batch, Row};
+use crate::exec::table::{Key, Keys};
+use crate::storage::{BATCH_ROWS, Batch, Row};
 
 /// A partition's groups, each with its first row's number, in the order
 /// of those numbers: finished rows, or a table's groups as a batch and
@@ -127,6 +130,72 @@ impl Iterator for Ordered {
             return Some(Err(e));
         }
         row.map(Ok)
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1220) The groups of `held` and `given`, a
+/// grouping's partitions', as batches of the columns `columns`, in the
+/// order of their first rows, the grant `limit` held while they are read:
+/// of runs of batches alone, made of those batches (`Merged`); of any
+/// other, of their rows gathered.
+///
+/// # Errors
+///
+/// As reading a run back fails.
+pub(super) fn batches((held, given): (Vec<Run>, Vec<Given>), columns: &[usize], limit: &Limit) -> Result<Batches> {
+    if !given.is_empty() || held.iter().any(|run| matches!(run, Run::Rows(_))) {
+        return Ok(gathered(limit.keeping(Box::new(Ordered::of(held, given)?)), columns));
+    }
+    let runs: Vec<(Batch, Vec<u64>)> =
+        held.into_iter().filter_map(|run| if let Run::Columns(batch, firsts) = run { Some((batch, firsts)) } else { None }).collect();
+    let mut order = BinaryHeap::with_capacity(runs.len());
+    for (at, (_, firsts)) in runs.iter().enumerate() {
+        order.extend(firsts.first().map(|&first| Reverse((first, at))));
+    }
+    Ok(Box::new(Merged {
+        next: runs.iter().map(|_| 0).collect(),
+        runs,
+        order,
+        columns: (0..columns.len()).collect(),
+        _held: limit.clone(),
+    }))
+}
+
+/// \[DESIGN\] (RULES.md D1220) Runs of batches given as batches, their
+/// groups in the order of their first rows: of the runs' groups next
+/// given the earliest is taken, as `Ordered` takes it, and its values are
+/// put straight into the next batch's vectors, of their types
+/// (`table/keys.rs`), no row made of it.
+struct Merged {
+    runs: Vec<(Batch, Vec<u64>)>,
+    /// Each run's group next given.
+    next: Vec<usize>,
+    /// The first rows' numbers of those groups, each with its run,
+    /// earliest first.
+    order: BinaryHeap<Reverse<(u64, usize)>>,
+    /// Every column's place in a run's batch.
+    columns: Vec<usize>,
+    /// The grant the runs are held in.
+    _held: Limit,
+}
+
+impl Iterator for Merged {
+    type Item = Result<Kept>;
+
+    fn next(&mut self) -> Option<Result<Kept>> {
+        let mut made = Keys::with_room(self.columns.len(), BATCH_ROWS.min(self.order.len().saturating_mul(BATCH_ROWS)));
+        let mut rows = 0_usize;
+        while rows < BATCH_ROWS {
+            let Some(Reverse((_, at))) = self.order.pop() else { break };
+            let (Some((batch, firsts)), Some(next)) = (self.runs.get(at), self.next.get_mut(at)) else {
+                return Some(Err(broken("a partition's groups are missing")));
+            };
+            made.push(Key::Row(batch, &self.columns, *next));
+            *next = next.saturating_add(1);
+            self.order.extend(firsts.get(*next).map(|_| Reverse((0, at))));
+            rows = rows.saturating_add(1);
+        }
+        (rows > 0).then(|| Ok((Batch { columns: made.into_columns(), rows }, None)))
     }
 }
 

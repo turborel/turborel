@@ -50,7 +50,7 @@ use super::run::Morsels;
 use super::{Held, Limit};
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
-use crate::exec::batch::{Read, Told, read_for};
+use crate::exec::batch::{Batches, Read, Told, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
@@ -289,6 +289,48 @@ pub(super) fn grouped_asked(
     told: &[Told],
     top: Option<&Arc<Top>>,
 ) -> Result<Held<RowIter>> {
+    let Held::Kept(done) = finished_runs(plan, (db, tx, degree), told, top)? else { return Ok(Held::GaveWay) };
+    let rows = match top {
+        Some(top) => top.given(done.grouping.top.is_some(), (done.runs, done.given))?,
+        None => Box::new(Ordered::of(done.runs, done.given)?),
+    };
+    Ok(Held::Kept(done.limit.keeping(rows)))
+}
+
+/// \[DESIGN\] (RULES.md D1220) As `grouped_told`, the groups given as
+/// batches of the columns `columns`, every column of a group's row, in
+/// the order of their first rows: of partitions that give their tables'
+/// groups as batches, made of those with no row between (`runs.rs`).
+///
+/// # Errors
+///
+/// As `grouped`.
+pub(in crate::exec) fn grouped_batches(
+    plan: &Plan,
+    (db, tx, degree): (&Db, TxId, usize),
+    told: &[Told],
+    columns: &[usize],
+) -> Result<Held<Batches>> {
+    let Held::Kept(done) = finished_runs(plan, (db, tx, degree), told, None)? else { return Ok(Held::GaveWay) };
+    runs::batches((done.runs, done.given), columns, &done.limit).map(Held::Kept)
+}
+
+/// A grouping's partitions finished: the grouping, each partition's
+/// groups, those read back from the spill, and the grant that holds them.
+struct Finished {
+    grouping: Arc<Grouping>,
+    runs: Vec<Run>,
+    given: Vec<Given>,
+    limit: Limit,
+}
+
+/// The partitions of the grouping `plan` finished, as `grouped_asked`
+/// gives their groups; or that the part gave way.
+///
+/// # Errors
+///
+/// As `grouped`.
+fn finished_runs(plan: &Plan, (db, tx, degree): (&Db, TxId, usize), told: &[Told], top: Option<&Arc<Top>>) -> Result<Held<Finished>> {
     let (plan, having) = if let Plan::Filter { cond, input, .. } = plan { (&**input, Some(cond.clone())) } else { (plan, None) };
     // Of a pair (RULES.md D1113), the part's pipeline is the first
     // grouping's input, told no filter, as those a join tells it are of
@@ -324,11 +366,7 @@ pub(super) fn grouped_asked(
         // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
         runs = vec![Run::Rows(grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?)];
     }
-    let rows = match top {
-        Some(top) => top.given(grouping.top.is_some(), (runs, given))?,
-        None => Box::new(Ordered::of(runs, given)?),
-    };
-    Ok(Held::Kept(limit.keeping(rows)))
+    Ok(Held::Kept(Finished { grouping, runs, given, limit }))
 }
 
 /// The grouping `plan` is, a grouping or DISTINCT, under the HAVING

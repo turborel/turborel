@@ -6,12 +6,13 @@
 //! merged by the statement's thread (D1133), and the second grouping of
 //! a pair made in a table of the first's groups given as a batch (D1123),
 //! the first rows of a sort taken from a grouping's tables (D1124), and
-//! a partition's groups given as a batch (D1125).
+//! a partition's groups given as a batch (D1125), and the batches a
+//! parent that reads by batch takes of them (D1220).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 23] = [
+pub const GROUPED_PARTS: [Mutation; 25] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -241,5 +242,25 @@ pub const GROUPED_PARTS: [Mutation; 23] = [
         replacement: "left.next().map(|(_, first)| (first, row_of(groups, 0)))",
         integration: &["grouped_parts::a_grouping_run_in_parallel_gives_its_tables_groups"],
         unit: &["exec::parallel::grouped::runs::tests::runs_of_rows_and_of_batches_are_given_in_one_order"],
+    },
+    Mutation {
+        name: "top-groups-constant-as-null",
+        package: Package::Core,
+        breaks: "a constant a projection gives comes from the tables as a null (RULES.md D1124)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "columns.push(Column::Values(vec![v.clone(); rows]));",
+        replacement: "columns.push(Column::Values(vec![Value::Null; rows]));",
+        integration: &["grouped_parts::the_first_rows_of_a_sort_over_a_grouping_are_the_plans"],
+        unit: &[],
+    },
+    Mutation {
+        name: "runs-as-batches-in-run-order",
+        package: Package::Core,
+        breaks: "a grouping's partitions given as batches give each partition's groups after the last's, not by their first rows (RULES.md D1220)",
+        file: "src/exec/parallel/grouped/runs.rs",
+        original: "self.order.extend(firsts.get(*next).map(|&first| Reverse((first, at))));",
+        replacement: "self.order.extend(firsts.get(*next).map(|_| Reverse((0, at))));",
+        integration: &["grouped_parts::a_grouping_run_in_parallel_gives_its_tables_groups"],
+        unit: &["exec::parallel::grouped::runs::tests::runs_of_batches_are_given_as_batches_in_one_order"],
     },
 ];
