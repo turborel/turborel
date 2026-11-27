@@ -37,7 +37,7 @@ const HAVING: &str = "physical::cardinality::having::tests::a_set_function_compa
 
 /// Mechanisms of the estimator and the rule driver whose removal must fail
 /// their tests.
-pub const ESTIMATES: [Mutation; 23] = [
+pub const ESTIMATES: [Mutation; 24] = [
     Mutation {
         name: "estimates-one-row-floor",
         package: Package::Core,
@@ -163,8 +163,8 @@ pub const ESTIMATES: [Mutation; 23] = [
         package: Package::Core,
         breaks: "an expression's values are counted by those the sample holds alone, not by the lattice they lie on",
         file: SHOWN_FILE,
-        original: "Some(lattice.places().map_or(counted, |places| counted.min(places)))",
-        replacement: "Some(counted)",
+        original: "(Some(counted), Some(places)) => Some(counted.min(places)),",
+        replacement: "(Some(counted), Some(_)) => Some(counted),",
         integration: &[],
         unit: &[SHOWN],
     },
@@ -177,6 +177,16 @@ pub const ESTIMATES: [Mutation; 23] = [
         replacement: "distinct",
         integration: &[],
         unit: &["physical::cardinality::shown::tests::values_seen_once_count_as_the_root_of_the_rows_a_row_stands_for"],
+    },
+    Mutation {
+        name: "shown-counted-past-the-sample-s-size",
+        package: Package::Core,
+        breaks: "the values the sample holds are counted where most sampled rows hold a value seen once, below the values there are",
+        file: SHOWN_FILE,
+        original: "(once.saturating_add(once) <= sampled).then(||",
+        replacement: "(once <= sampled).then(||",
+        integration: &[],
+        unit: &[SHOWS_NOTHING, "physical::cardinality::shown::tests::more_values_than_the_sample_counts_are_never_counted_below_them"],
     },
     Mutation {
         name: "shown-null-given-no-place",

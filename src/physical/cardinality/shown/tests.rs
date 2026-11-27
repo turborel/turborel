@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::super::lineage::computed_of;
 use super::super::seen::{named, ungathered};
-use super::{Lattice, common_step, guaranteed};
+use super::{Lattice, common_step, guaranteed, shown};
 use crate::catalog::QualifiedName;
 use crate::db::{Database, Session, State};
 use crate::functions::{ScalarFunction, ScalarRef};
@@ -140,8 +140,10 @@ fn a_sampled_row_that_raises_is_left_out() {
 /// Verifies: [DESIGN] RULES.md D1279 (MC/DC): the sample shows nothing,
 /// and the count is that of the columns read, in each case alone. No
 /// statistics are kept. No two rows that differ in the columns read give
-/// one value, as of a key and one. A column read may be cut in the
-/// sample. The columns read are two tables'. The plan has no more rows
+/// one value, as of a key and one. Most sampled rows hold a value seen
+/// once, as of strings of half as many values as rows, which a count of
+/// the values seen would put below the values there are. A column read
+/// may be cut in the sample. The columns read are two tables'. The plan has no more rows
 /// than the sample. And what the sample shows is never taken where it is
 /// more than the columns allow: strings of G's thousand values, a few
 /// made one, are counted past a thousand by the values seen once.
@@ -164,6 +166,8 @@ fn where_the_sample_shows_nothing_the_columns_bound_stands() {
         "more rows: {}",
         more.read
     );
+    let many = by("'p' || CAST(FLOOR(K / 2) AS VARCHAR(40))", "S");
+    assert!(stands(&many) && near(many.read, 5_000.0_f64), "more values than the sample counts: {} {:?}", many.read, many.shown);
     let past = by("CASE WHEN G < 10 THEN 'few' ELSE CAST(G AS VARCHAR(10)) END", "S");
     assert!(past.shown.is_some_and(|d| d > past.read) && same(past.grouped, past.read), "never more: {} {:?}", past.read, past.shown);
     let (_other, bare) = ungathered(&[("T", 3_000, 3_000)]);
@@ -265,4 +269,59 @@ fn a_lattice_has_a_place_each_step_and_one_of_a_null() {
     assert_eq!(places(&[Value::Null]), None, "no value");
     assert_eq!(places(&[exact(1, 0), Value::Char("a".into())]), None, "on no line");
     assert_eq!(places(&[exact(1, 0), exact(15, 1)]), None, "two scales");
+}
+
+/// A function of one exact number, the name of its remainder by `.0`, a
+/// character string.
+struct Named(i128);
+
+impl ScalarFunction for Named {
+    fn name(&self) -> &'static str {
+        "NAMED"
+    }
+    fn return_type(&self, _: &[DataType]) -> crate::error::Result<DataType> {
+        Ok(DataType::varying(40))
+    }
+    fn call(&self, args: &[Value]) -> crate::error::Result<Value> {
+        let Some(Value::Exact(d)) = args.first() else { return Ok(Value::Null) };
+        Ok(Value::Char(format!("v{}", d.units.rem_euclid(self.0)).into()))
+    }
+}
+
+/// A sample of 1,024 rows of one column, a key, whose remainders by
+/// `values` are drawn across them with no pattern, the last row's the
+/// first's again, as one chance repeat among them would be.
+fn drawn(values: i128) -> Vec<crate::storage::Row> {
+    // Of both parities, as a cube and a square alone would not be.
+    let of = |i: i128| {
+        let (square, cube) = (i.wrapping_mul(i), i.wrapping_mul(i).wrapping_mul(i));
+        cube.wrapping_mul(1_000_003).wrapping_add(square.wrapping_mul(7_919)).wrapping_add(i).rem_euclid(values)
+    };
+    let key = |i: i128, value: i128| vec![Value::Exact(Decimal::new(values.wrapping_mul(i.wrapping_add(1)).wrapping_add(value), 0))];
+    let mut rows: Vec<crate::storage::Row> = (0_i128..1_023).map(|i| key(i, of(i))).collect();
+    rows.push(key(1_023, of(0)));
+    rows
+}
+
+/// Verifies: [DESIGN] RULES.md D1279: an expression of more values than
+/// the sample can count is never counted below the values there are. Of
+/// a table of a hundred million rows and an expression of a million
+/// equally common values, and of ten million, the sample holds nearly
+/// every value once and one by chance twice. Counted by the values seen
+/// alone it would be put at some three hundred thousand. Of strings the
+/// sample then shows nothing, and the columns' bound stands; of numbers
+/// it shows the places of their range, which are the values but for the
+/// few thousandths of the range past the least and greatest sampled.
+#[test]
+fn more_values_than_the_sample_counts_are_never_counted_below_them() {
+    const TABLE: f64 = 1.0e8;
+    assert!(guaranteed((1_023.0_f64, 1_022.0_f64), 1_024.0_f64, TABLE) < 1.0e6_f64, "what the values seen alone would count");
+    for (values, in_all) in [(1_000_000_i128, 1.0e6_f64), (10_000_000_i128, 1.0e7_f64)] {
+        let rows = drawn(values);
+        let named = Expr::Call(ScalarRef(Arc::new(Named(values))), vec![Expr::Column(0)]);
+        assert_eq!(shown(&named, &[0], &rows, TABLE), None, "strings of {values} values");
+        let numbered = Expr::Call(ScalarRef(Arc::new(Remainder(values, Arc::new(AtomicUsize::new(0))))), vec![Expr::Column(0)]);
+        let places = shown(&numbered, &[0], &rows, TABLE).unwrap();
+        assert!(places >= in_all * 0.98_f64 && places <= in_all, "numbers of {values} values: {places}");
+    }
 }

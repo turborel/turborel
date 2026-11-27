@@ -23578,9 +23578,20 @@ distinct values from a statistics pass (Haas and Stokes, D31) is not
 used here. It takes the values as equally common, which of a sample
 this small counts an expression a few of whose values hold most rows,
 with many rare ones after them, far below what it takes. A count of
-groups is relied on to err high (D1278), and GEE's errs high where the
-values are in truth equally common. A sample that is the whole table
-holds every value.
+groups is relied on to err high (D1278). A sample that is the whole
+table holds every value.
+
+GEE counts no more than the root of the sample's rows times the
+table's, which is what it gives when every sampled value is seen once.
+Of more values than that it falls short, by up to the same root, and a
+single chance repeat among the sampled rows would pass for a merging.
+So its count is taken only where at most half of the sampled rows hold
+a value seen once. Of values equally common that is where they number
+no more than the sampled rows over the natural logarithm of 2, about
+the sample's own size and a half, and there GEE errs high or not at
+all. Past it the sample holds less than a row a value and could only
+guess, so it tells no count, and the lattice or the columns' bound
+stands.
 
 The second is the lattice the values lie on, of exact numbers of one
 scale, datetimes and intervals. The step is the greatest that every
@@ -23609,6 +23620,8 @@ of these cases.
 - The expression reads the columns of more than one table, or cannot
   be evaluated on a row alone, as one of a `?`, a subquery, a sequence
   or a routine cannot (D382).
+- The sample tells neither a count nor a lattice, as of strings most
+  of which it holds once.
 - No sampled row gives a value. A row whose evaluation raises is left
   out and nothing is raised, as planning raises nothing of what the
   statement evaluates (D15).

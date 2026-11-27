@@ -24,6 +24,16 @@
 //! values hold most rows, where a count of groups is relied on to err
 //! high (D1278).
 //!
+//! GEE counts no more than the root of the sample's rows times the
+//! table's, which it gives when every value is seen once, and of more
+//! values than that it falls short. So its count is taken only where at
+//! most half of the sampled rows hold a value seen once. Of values
+//! equally common that is where they are no more than the sampled rows
+//! over the natural logarithm of 2, about the sample's own size and a
+//! half, and there GEE errs high or not at all. Past it the sample holds
+//! less than a row a value and could only guess, so it tells no count,
+//! and the lattice or the columns' bound stands.
+//!
 //! The second, of exact numbers, datetimes or intervals, is the lattice
 //! they lie on. Its step is the greatest that all of them are whole steps
 //! apart by, and it has (greatest - least) / step + 1 places between the
@@ -35,7 +45,8 @@
 //! reads the columns of more than one table or cannot be evaluated on a
 //! row alone (`estimate::evaluable_expr`), where no sampled row gave a
 //! value, where a column it reads may have been cut in the sample
-//! (`may_be_cut`), and where no two rows that differ in the columns read
+//! (`may_be_cut`), where it tells neither a count nor a lattice, and
+//! where no two rows that differ in the columns read
 //! gave one value. In the last case the sample shows no values merged,
 //! and of the columns' own values the statistics know more than its rows
 //! do. A row whose evaluation raises is left out and nothing is raised,
@@ -108,8 +119,13 @@ pub(super) fn shown(e: &Expr, read: &[usize], rows: &[Row], of: f64) -> Option<f
         return None;
     }
     let once = values.values().filter(|&&times| times == 1).count();
-    let counted = guaranteed((cost_of(values.len()), cost_of(once)), cost_of(sampled), of);
-    Some(lattice.places().map_or(counted, |places| counted.min(places)))
+    // Past its own size the sample counts nothing (see the module).
+    let counted = (once.saturating_add(once) <= sampled).then(|| guaranteed((cost_of(values.len()), cost_of(once)), cost_of(sampled), of));
+    match (counted, lattice.places()) {
+        (Some(counted), Some(places)) => Some(counted.min(places)),
+        (Some(told), None) | (None, Some(told)) => Some(told),
+        (None, None) => None,
+    }
 }
 
 /// The hash of `row`'s values of the columns `read`, by XXH3, values
