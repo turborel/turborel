@@ -778,6 +778,7 @@ verification approach DO-178C expects (§8).
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1227 | A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read |
+| D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 
@@ -21524,6 +21525,22 @@ memory, one grant in all, and a row of each.
 A window computed over batches (D560) computes its partitions in
 pieces up to its work area and gives them as they are done; it gathers
 no partition's result, and is as it was.
+#### D1229. A sort that asks for its last row's peers is run in parallel, each morsel sorted whole
+
+FETCH FIRST n ROWS WITH TIES asks for the first n rows of a sort and
+every row after them that is a peer of the n-th under the sort's keys
+[ISO/IEC 9075-2:2023 §7.17 GR5, GR6]. The planner kept such a sort out
+of a part run in parallel, and the part gave way had it met one, so the
+sort read and sorted every row on the statement's thread alone.
+
+It is now run in parallel as a whole sort is (D294): each morsel sorted
+whole by a thread, since which of a morsel's rows are peers of the n-th
+is known only once every run is merged, and the runs merged in memory
+or, past the grant, from the spill (`exec/parallel/sorted.rs`). The
+first n rows of the merge are given, then each row after them while it
+is a peer of the n-th, which ends at the first that is not. Each sort is
+stable and the runs are merged in the order of their morsels, so the
+peers given are those the plan run alone gives, in its order.
 
 #### D1230. A structure's tally counts a miss only when the pool evicted a page for it
 
