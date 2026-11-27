@@ -8,7 +8,7 @@ use std::ops::Bound;
 
 use super::super::version::{Maker, Version};
 use super::super::{RowTable, key};
-use super::{SAMPLED, Slot, ZONE_ROWS, Zone, Zones, joined, past, zone_at};
+use super::{Slot, ZONE_ROWS, Zone, Zones, joined, past, zone_at};
 use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::RowId;
@@ -82,22 +82,6 @@ impl Zones {
         }
         past(&mut ranges, zones);
         (rows, ranges)
-    }
-
-    /// The share of the zones visible to every reader, of `SAMPLED` at
-    /// most, evenly apart; none of no zone.
-    pub(in crate::engine::rows) fn visible_share(&self) -> f64 {
-        // Asked by a plan weighing an index-only read: kept from now on
-        // (`zones/cold.rs`).
-        self.warm();
-        let zones = self.slots.len();
-        let step = zones.div_ceil(SAMPLED).max(1);
-        let (mut all, mut seen) = (0_u32, 0_u32);
-        for slot in self.slots.first(zones).step_by(step) {
-            all = all.saturating_add(1);
-            seen = seen.saturating_add(u32::from(slot.visible.load(AtomicOrdering::Acquire)));
-        }
-        if all == 0 { 0.0_f64 } else { f64::from(seen) / f64::from(all) }
     }
 
     /// Notes a version of row `id` superseded by a commit, to be collected

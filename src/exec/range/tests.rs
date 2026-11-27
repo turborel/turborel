@@ -11,6 +11,7 @@ use crate::error::Result;
 use crate::exec::{Runner, execute};
 use crate::physical::{PhysicalPlanner, Plan};
 use crate::storage::Row;
+use crate::threads::JobPolicy;
 use crate::txn::NO_TRANSACTION;
 
 /// A database of `A.T` (W, D, K, N, V, S), its primary key (W, D, K), of
@@ -319,4 +320,29 @@ fn a_range_longer_than_a_direct_read_holds_is_left_to_the_executor() {
     assert_eq!(read("SELECT G, COUNT(*) FROM B WHERE W = 1 AND K < 1100 GROUP BY G"), (None, None), "1100 rows grouped");
     assert_eq!(read("SELECT G, COUNT(*) FROM B WHERE W = 1 AND K < 1000 GROUP BY G"), (Some(7), Some(7)), "1000 rows grouped");
     assert_eq!(read("SELECT K, G FROM B WHERE W = 1 AND K < 1100 ORDER BY G DESC, K"), (Some(1100), Some(1100)), "a whole sort");
+}
+
+/// `plan` with its numbers taken out: the operators, paths and columns.
+fn shape(plan: &Plan) -> String {
+    format!("{plan:?}").chars().filter(|c| !c.is_ascii_digit()).collect()
+}
+
+/// Verifies: [DESIGN] RULES.md D1233: an index-only read is priced by the
+/// share of its table's rows every reader sees once collection and the
+/// horizon pass the writes made, so a range of T's key read for columns of
+/// the key alone is planned as an index-only read just after every zone of
+/// T is written, before the maintenance thread settles one again, as once
+/// it has; priced by the zones settled then, its rows were fetched and the
+/// table scanned instead.
+#[test]
+fn an_index_only_read_is_planned_alike_just_after_a_write() {
+    let (db, a) = filled();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.maintain().unwrap();
+    let sql = "SELECT T.W, T.D, T.K FROM T WHERE T.W = 1 AND T.K < 5";
+    let settled = shape(&planned(&a, sql).1);
+    assert!(settled.contains("IndexScan") && settled.contains("covering: true"), "{settled}");
+    a.run("UPDATE T SET N = 0 WHERE K = 1").unwrap();
+    a.commit().unwrap();
+    assert_eq!(shape(&planned(&a, sql).1), settled);
 }
