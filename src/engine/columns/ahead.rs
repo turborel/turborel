@@ -26,7 +26,8 @@ impl GroupAhead {
     /// order of `columns`.
     pub fn take_up(&mut self, group: &Group, columns: &[usize], runs: &[(u32, u32)]) {
         let mut chunks: Vec<(u32, usize, u64)> = Vec::new();
-        for (at, zones) in columns.iter().enumerate().filter_map(|(at, &c)| Some((at, group.columns.get(c)?))) {
+        // A column its header was read without has no pages asked for.
+        for (at, zones) in columns.iter().enumerate().filter_map(|(at, &c)| Some((at, group.zones(c).ok()??))) {
             let read = zones.iter().filter(|zone| holds_any(runs, (zone.run.first, zone.run.rows)));
             chunks.extend(read.map(|zone| (zone.run.first, at, zone.run.page.0)));
         }
@@ -85,9 +86,9 @@ mod tests {
             ids: Vec::new(),
             by_id: Vec::new(),
             columns: vec![
-                vec![zone(0, 100, 10), zone(100, 100, 11), zone(200, 100, 12)],
-                vec![zone(0, 150, 20), zone(150, 150, 21)],
-                vec![zone(0, 300, 30)],
+                Some(vec![zone(0, 100, 10), zone(100, 100, 11), zone(200, 100, 12)]),
+                Some(vec![zone(0, 150, 20), zone(150, 150, 21)]),
+                Some(vec![zone(0, 300, 30)]),
             ],
             order: Vec::new(),
             pax: false,

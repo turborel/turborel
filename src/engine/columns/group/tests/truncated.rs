@@ -36,7 +36,7 @@ fn every_header_prefix_is_refused() {
         let bytes = header::encode(&g, &TYPES).unwrap();
         let read_back = |b: &[u8]| {
             let chain = put_chain(&pages, b, &mut Vec::new()).unwrap();
-            read(&pages, chain[0], &TYPES)
+            read(&pages, chain[0], &TYPES, None)
         };
         assert_eq!(format!("{:?}", read_back(&bytes).unwrap().columns), format!("{:?}", g.columns));
         for cut in 1..bytes.len() {
@@ -73,7 +73,7 @@ fn every_summary_prefix_is_refused() {
     };
     let g = group(&pages);
     let mut bytes = Vec::new();
-    put_summary(&mut bytes, &Summary::of(&g, g.header[0]), &TYPES).unwrap();
+    put_summary(&mut bytes, &Summary::of(&g, g.header[0]).unwrap(), &TYPES).unwrap();
     for cut in 1..bytes.len() {
         assert_eq!(read_summaries(&bytes[..cut], &TYPES).unwrap_err().code, Code::Corrupt, "cut at {cut}");
     }

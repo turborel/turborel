@@ -94,3 +94,23 @@ pub(crate) fn avg_finished(total: Summed, count: i128, result: &DataType) -> Res
 pub(crate) fn extreme_acc(max: bool, best: Value, result: &DataType) -> Box<dyn Accumulator> {
     super::extremes::ExtremeAcc::of(max, best, result)
 }
+
+/// \[DESIGN\] (RULES.md D1186) COUNT's state of `n`, written to `out` as
+/// its accumulator writes it, none made on the heap: whether it has one.
+pub(crate) fn count_written(n: i128, out: &mut Vec<u8>) -> bool {
+    super::count::CountAcc(n).write_state(out)
+}
+
+/// \[DESIGN\] (RULES.md D1186) SUM's state of total `total`, of type
+/// `result`, written to `out` as its accumulator writes it: whether it
+/// has one.
+pub(crate) fn sum_written(total: Summed, result: &DataType, out: &mut Vec<u8>) -> bool {
+    super::sum::SumAcc::of(total, result.clone()).write_state(out)
+}
+
+/// \[DESIGN\] (RULES.md D1186) AVG's state of total `total` of `count`
+/// values, of type `result`, written to `out` as its accumulator writes
+/// it: whether it has one.
+pub(crate) fn avg_written(total: Summed, count: i128, result: &DataType, out: &mut Vec<u8>) -> bool {
+    super::sum::AvgAcc::of(total, count, result.clone()).write_state(out)
+}

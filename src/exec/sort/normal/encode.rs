@@ -239,6 +239,10 @@ fn value(part: &mut [u8], field: &Field, val: Val<'_>) -> Option<bool> {
         }
         (Val::Text(text), Code::Text { prefix }) => return text_into(part, text, prefix),
         (Val::Binary(octets), Code::Binary { prefix }) => return binary_into(part, octets, prefix),
+        // A character string of a key by octets, written as a binary
+        // string of its octets (RULES.md D1185); of any other key it is
+        // not its field's kind.
+        (Val::Text(text), Code::Binary { prefix }) => return if field.octets { binary_into(part, text, prefix) } else { None },
         (Val::Bool(b), Code::Bool) => part.fill(u8::from(b)),
         (
             Val::Null | Val::Int(..) | Val::Approx(_) | Val::Text(_) | Val::Binary(_) | Val::Bool(_),

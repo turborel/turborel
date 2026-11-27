@@ -81,8 +81,15 @@ impl Numbers<'_> {
 /// grouping values and the finished set functions `aggs`, in the order
 /// their first rows came, in a work area of `db`, for the statement of
 /// `tx`. Groups are made partly before they spill again if every set
-/// function writes its state.
-pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Db, TxId), batches: Batches) -> Result<RowIter> {
+/// function writes its state. Asked for `first` of its groups, any of
+/// them, it makes no more while they fit the work area, and drops each
+/// row of another (`first.rs`, RULES.md D1215).
+pub(super) fn grouped_all(
+    read: &Read,
+    aggs: &[AggCall],
+    (db, tx): (&Db, TxId),
+    (batches, first): (Batches, Option<usize>),
+) -> Result<RowIter> {
     let (mut work, runner) = (Work::of(db, tx), Runner::new(db, tx));
     let partial = aggs.iter().all(|a| a.func.0.accumulator(a.result.clone()).write_state(&mut Vec::new()));
     let seed = db.functions.seed().unpadded(&read.unpadded);
@@ -91,6 +98,7 @@ pub(super) fn grouped_all(read: &Read, aggs: &[AggCall], (db, tx): (&Db, TxId), 
     // back once; groups are made partly only of a partition that outgrows
     // it again, whose rows would be written again (`spilled::regrouped`).
     let mut groups = Groups::new(how, work.limit(), Overflow::Partitions(None), false);
+    groups.most = first.unwrap_or(usize::MAX);
     let mut rows = 0_u64;
     for kept in batches {
         let (batch, given) = kept?;
@@ -137,10 +145,12 @@ enum Target {
 /// Where a row or piece goes: to a group; to be written, a row by batch,
 /// a piece as it is; or nowhere yet, as its group would be partly made
 /// but those are full, or the groups held first fill the work area and
-/// it is to be split (`Groups::split`).
+/// it is to be split (`Groups::split`); or dropped, a row of a group
+/// past those asked for (RULES.md D1215).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Placed {
     Into(Target),
+    Dropped,
     Written,
     Passed,
     Full,
@@ -183,6 +193,11 @@ struct Groups {
     scratch: Row,
     /// The groups held the codes of rows went to (`coded.rs`).
     memo: Memo,
+    /// \[DESIGN\] (RULES.md D1215) The most groups it makes, if only
+    /// some are asked for: past them a row of another group is dropped,
+    /// unless a group has been past the work area, whose rows are then
+    /// written whatever groups are held.
+    most: usize,
 }
 
 impl Groups {
@@ -204,6 +219,7 @@ impl Groups {
             pieced: false,
             scratch: Vec::new(),
             memo: Memo::default(),
+            most: usize::MAX,
         }
     }
 
@@ -298,6 +314,9 @@ impl Groups {
         if let Some(g) = self.held.find(hashed.0, hashed.1) {
             return Ok(Placed::Into(Target::Held(g)));
         }
+        if !self.spilled && self.held.len() >= self.most {
+            return Ok(Placed::Dropped);
+        }
         if self.spilled || self.held.full() {
             return self.past(hashed, (number, r), work);
         }
@@ -352,7 +371,8 @@ impl Groups {
         let (table, g) = match (placed, &mut self.partial) {
             (Placed::Into(Target::Held(g)), _) => (&mut self.held, g),
             (Placed::Into(Target::Partial(g)), Some(partial)) => (partial, g),
-            (Placed::Into(Target::Partial(_)), None) | (Placed::Written | Placed::Passed | Placed::Full | Placed::Split, _) => {
+            (Placed::Into(Target::Partial(_)), None)
+            | (Placed::Dropped | Placed::Written | Placed::Passed | Placed::Full | Placed::Split, _) => {
                 return Err(spilled::lost());
             }
         };
