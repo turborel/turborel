@@ -80,10 +80,11 @@ impl Memo {
         for e in entries.clone() {
             strides.push(places);
             // Each code of the dictionary, and a null's place after them.
-            places = match places.checked_mul(e.len().saturating_add(1)) {
-                Some(p) if p <= MOST_PLACES => p,
-                Some(_) | None => return false,
-            };
+            let Some(wider) = places.checked_mul(e.len().saturating_add(1)) else { return false };
+            if wider > MOST_PLACES {
+                return false;
+            }
+            places = wider;
         }
         self.entries = entries.cloned().collect();
         self.strides = strides;

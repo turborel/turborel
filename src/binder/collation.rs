@@ -499,8 +499,13 @@ impl Binder<'_> {
             return Err(rule(format!("[ISO/IEC 9075-2:2023 §6.4 SR5] COLLATION FOR is of a character string, not {t}")));
         }
         let named = |name: Option<QualifiedName>| match name {
-            Some(n) if n.auth == INFORMATION_SCHEMA => Value::Char(n.ident.into()),
-            Some(n) => Value::Char(n.to_string().into()),
+            Some(n) => {
+                if n.auth == INFORMATION_SCHEMA {
+                    Value::Char(n.ident.into())
+                } else {
+                    Value::Char(n.to_string().into())
+                }
+            }
             None => Value::Char(SQL_TEXT.into()),
         };
         let value = match self.derived(e)? {
