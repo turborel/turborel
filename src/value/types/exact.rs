@@ -53,6 +53,22 @@ pub fn narrow_scale(t: &DataType) -> Option<u32> {
     (*precision <= NARROW_EXACT_PRECISION).then_some(*scale)
 }
 
+/// \[DESIGN\] (RULES.md D1287) The scale of `t` if it is an exact numeric
+/// type of more digits than 64 bits always hold, whose values a batch
+/// holds as integers only where each fits them (`word_holds`): none of a
+/// narrower one, or of another type.
+pub fn wide_scale(t: &DataType) -> Option<u32> {
+    let DataType::Exact { precision, scale, .. } = t else { return None };
+    (*precision > NARROW_EXACT_PRECISION).then_some(*scale)
+}
+
+/// \[DESIGN\] (RULES.md D1287) Whether `v` is an exact number at `scale`
+/// whose units 64 bits hold.
+pub fn word_holds(v: &Value, scale: u32) -> bool {
+    let Value::Exact(d) = v else { return false };
+    d.scale == scale && i64::try_from(d.units).is_ok()
+}
+
 /// \[DESIGN\] (RULES.md D956) The key of `v` among the keys of a column of
 /// `t`, and so its anchor, exactly, if `t` is an exact numeric type whose
 /// values 64 bits hold and `v` an exact number at its scale that 64 bits

@@ -69,7 +69,6 @@ use crate::storage::bound::{Bound, holds, rescaled_bound};
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
 use crate::storage::{Column, Condition, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Texts};
-use crate::value::types::narrow_scale;
 use crate::value::{CompOp, DataType, Decimal, Value, compare_strings};
 
 /// \[DESIGN\] The share of a run's rows, one in this many, past which the
@@ -237,13 +236,14 @@ fn judged_leaf(conjunct: &Conjunct) -> bool {
 }
 
 /// Whether a column of type `t` is decoded into a vector of its kind,
-/// which the scan judges: exact numbers 64 bits hold (`narrow_scale`),
-/// approximate numbers, datetimes of no time zone, truth values,
-/// character strings read as text.
+/// which the scan judges: exact numbers, read as integers where 64 bits
+/// hold a run's values (`scan::ints`, RULES.md D1287) and left to the
+/// filter where they do not, approximate numbers, datetimes of no time
+/// zone, truth values, character strings read as text.
 fn judged_type(t: &DataType) -> bool {
     match t {
-        DataType::Exact { .. } => narrow_scale(t).is_some(),
-        DataType::Approximate { .. }
+        DataType::Exact { .. }
+        | DataType::Approximate { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { zoned: false, .. }
