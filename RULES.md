@@ -23458,6 +23458,7 @@ The end now takes the early path only if nothing was spilled. With a
 spill it hands the table over as it does any other and reads each
 partition back. A unit test hands every morsel whole under a grant the
 table passes.
+
 #### D1278. Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret
 
 A grouping under an ORDER BY of its keys is streamed over a sort of its
