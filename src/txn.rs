@@ -575,19 +575,6 @@ impl Txn {
     }
 }
 
-impl Drop for Txn {
-    fn drop(&mut self) {
-        self.release();
-        // Only one whose records were written before its end has a first
-        // to forget.
-        if self.forget_held() {
-            lock_builtin(&self.origin.shared.firsts).remove(&self.id);
-        }
-        self.origin.shared.stops.remove(self.id);
-        self.origin.shared.clock.dropped(self.id);
-    }
-}
-
 /// An undo step that failed, and the table it leaves damaged, if one is known.
 struct UndoFailure {
     table: Option<QualifiedName>,

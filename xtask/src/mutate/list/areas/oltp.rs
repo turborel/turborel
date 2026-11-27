@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 36] = [
+pub const OLTP: [Mutation; 39] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -375,5 +375,38 @@ pub const OLTP: [Mutation; 36] = [
         replacement: "            drop(SqlError::new(e.code, why));",
         integration: &["held_records::a_refused_abort_record_stops_the_database"],
         unit: &[],
+    },
+    Mutation {
+        name: "oltp-dropped-open-kept",
+        package: Package::Core,
+        breaks: "a transaction dropped still open only releases its locks, its versions left in the engines with no end (D1259)",
+        file: "src/txn/release.rs",
+        original: "        if self.open.load(Ordering::Acquire) {\n            self.end_dropped();",
+        replacement: "        if false {\n            self.end_dropped();",
+        integration: &[],
+        unit: &[
+            "txn::tests::a_transaction_dropped_open_is_rolled_back",
+            "db::rollback::tests::a_session_dropped_with_no_call_to_enter_ends_its_transaction",
+        ],
+    },
+    Mutation {
+        name: "oltp-dropped-unwinding-undone",
+        package: Package::Core,
+        breaks: "a transaction dropped while a panic unwinds is rolled back there, where a second panic ends the process, and the database is not stopped (D1259)",
+        file: "src/txn/release.rs",
+        original: "        if std::thread::panicking() || self.state.is_poisoned() {",
+        replacement: "        if false {",
+        integration: &[],
+        unit: &["txn::tests::a_transaction_that_cannot_be_ended_stops_the_database"],
+    },
+    Mutation {
+        name: "oltp-dropped-committing-left",
+        package: Package::Core,
+        breaks: "a transaction dropped with its commit under way is left as one that changed nothing, the database taking changes still (D1259)",
+        file: "src/txn/release.rs",
+        original: "            (true, false) => Left::Committing,",
+        replacement: "            (true, false) => Left::Nothing,",
+        integration: &[],
+        unit: &["txn::tests::a_transaction_that_cannot_be_ended_stops_the_database"],
     },
 ];

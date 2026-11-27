@@ -73,8 +73,9 @@ impl Held {
 
 impl Transactions {
     /// Whether the database takes changes: not once it was stopped, by a
-    /// sync of its log that failed or an abort record that could not be
-    /// appended (`stop_changes`), nor while it is held (`Held`).
+    /// sync of its log that failed, an abort record that could not be
+    /// appended or a transaction that could not be ended (`stop_changes`),
+    /// nor while it is held (`Held`).
     ///
     /// # Errors
     ///
@@ -96,9 +97,11 @@ impl Transactions {
 
     /// \[DESIGN\] Stops the database taking changes, for `e`: a sync of
     /// its log that failed, after which a sync tried again may succeed
-    /// without what the failed one lost, or an abort record that could
-    /// not be appended (RULES.md D25, D1258). The first failure is the
-    /// one kept, and no commit is durable from then on (RULES.md D441).
+    /// without what the failed one lost, an abort record that could not
+    /// be appended (RULES.md D25, D1258), or a transaction dropped before
+    /// its end that could not be rolled back (RULES.md D1259). The first
+    /// failure is the one kept, and no commit is durable from then on
+    /// (RULES.md D441).
     pub(super) fn stop_changes(&self, e: &SqlError) {
         lock_builtin(&self.stopped).get_or_insert_with(|| e.clone());
         self.stopping.store(true, Ordering::Release);
