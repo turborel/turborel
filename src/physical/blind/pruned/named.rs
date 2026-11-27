@@ -1,10 +1,10 @@
 //! The names EXPLAIN gives the columns a pruning projection keeps
 //! (`blind/pruned.rs`, RULES.md D1167): a table's column by its table and
-//! its name, through the operators that move it, and any other by its
-//! place.
+//! its name, through the operators that move it, a window's call by the
+//! call as written, and any other by its place.
 
 use super::super::super::{PhysicalPlanner, Plan};
-use crate::logical::Expr;
+use crate::logical::{Expr, Window};
 
 impl PhysicalPlanner<'_> {
     /// The names of the `width` columns of `plan`'s rows.
@@ -42,6 +42,7 @@ impl PhysicalPlanner<'_> {
                 out
             }
             Plan::SemiJoin(s) => self.named(&s.left),
+            Plan::Window { window, .. } => self.window_named(window),
             Plan::Nearest(_)
             | Plan::IndexJoin { .. }
             | Plan::MergeJoin(_)
@@ -59,12 +60,20 @@ impl PhysicalPlanner<'_> {
             | Plan::Transition { .. }
             | Plan::Shared(_)
             | Plan::Unnest(_)
-            | Plan::Window { .. }
             | Plan::Recognize { .. }
             | Plan::Polymorphic(_)
             | Plan::Parallel(_)
             | Plan::Transfer(_)
             | Plan::Counted(_) => Vec::new(),
         }
+    }
+
+    /// The names of the columns of `window`'s rows: its input's, then its
+    /// calls' as written.
+    fn window_named(&self, window: &Window<Plan>) -> Vec<String> {
+        let Some(width) = self.sized(&window.input).width else { return Vec::new() };
+        let mut out = self.names(&window.input, width);
+        out.extend(window.calls.iter().map(|c| c.label.clone()));
+        out
     }
 }

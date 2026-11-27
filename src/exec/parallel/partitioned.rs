@@ -15,6 +15,8 @@
 //! window's by its sort keys, its partitions' rows never tied; a set
 //! operation's by the place of each first operand's row, each carried
 //! through it after the columns it compares (`partitioned/merged.rs`).
+//! A window whose rows nothing above reads in an order gives its
+//! partitions' lists one after another instead (RULES.md D1245).
 
 mod merged;
 
@@ -63,7 +65,7 @@ type MorselParts = (Vec<Vec<Row>>, Option<usize>);
 ///
 /// As reading the stream fails.
 pub(super) fn windowed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
-    let Plan::Window { window, detail, .. } = plan else { return Err(broken("not a window run in parallel")) };
+    let Plan::Window { window, detail, ordered, .. } = plan else { return Err(broken("not a window run in parallel")) };
     if crate::exec::batched(db) && crate::exec::window::admits_batches(window) && crate::exec::batch::reads_by_batch(&window.input, db) {
         let batches = crate::exec::window::window_batches_on(plan.clone(), (db, tx), degree)?;
         return Ok(Held::Kept(Box::new(batches.flat_map(|kept| match kept {
@@ -80,9 +82,13 @@ pub(super) fn windowed(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Res
     let sort_keys = keys.clone();
     let each = move |rows: TransitionRows| {
         let sorted = Plan::Sort { keys: sort_keys.clone(), detail: String::new(), input: Box::new(Plan::Transition { rows }), most: None };
-        Plan::Window { window: Box::new(shape.with_input(|()| sorted)), detail: detail.clone(), est: 0.0_f64 }
+        Plan::Window { window: Box::new(shape.with_input(|()| sorted)), detail: detail.clone(), est: 0.0_f64, ordered: true }
     };
     let outs = per_part(parts, (db, tx, degree), (each, limit.most()))?;
+    // Read in no order above: the partitions' lists one after another.
+    if !*ordered {
+        return Ok(Held::Kept(limit.keeping(Box::new(outs.into_iter().flat_map(IntoIterator::into_iter)))));
+    }
     Ok(Held::Kept(limit.keeping(Box::new(Merged::of(outs, &keys)?))))
 }
 

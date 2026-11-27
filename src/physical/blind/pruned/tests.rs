@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::super::super::{JoinKey, PhysicalPlanner, Plan, SemiJoin, SemiMethod};
 use crate::catalog::QualifiedName;
 use crate::db::State;
-use crate::logical::{AggCall, Cond, Expr, OuterJoin, SortKey};
+use crate::logical::{AggCall, Cond, Expr, Frame, OuterJoin, Pick, SortKey, Valued, Window, WindowCall, WindowKind};
 use crate::value::{DataType, Spelled, Value};
 
 /// A database's state with the tables.
@@ -228,4 +228,48 @@ fn a_sort_by_a_columns_octets_reads_the_column_and_ties_keep_the_key() {
     let limit = Plan::Limit { limit: Limit { offset: None, fetch: Some(fetch) }, input: Box::new(keyed()), est: 1.0_f64 };
     let peers_read = PhysicalPlanner::describing(&st).pruned(project(&[0], limit)).explain();
     assert!(peers_read.contains("Project T.A, T.B, T.B COLLATE UCS_BASIC"), "{peers_read}");
+}
+
+/// A window partitioned by T.B over a sort of a scan of T, computing
+/// `kind` over its whole partition, under a projection of T.A and the
+/// call's column.
+fn windowed(kind: WindowKind) -> Plan {
+    let call = WindowCall { kind, frame: Frame::implied(false), label: "W()".to_owned(), nested: Vec::new() };
+    let sort = Plan::Sort { keys: vec![SortKey::ascending(1)], detail: String::new(), input: Box::new(scan("T", &[0, 1, 2])), most: None };
+    let window = Window { partition: vec![1], order: Vec::new(), calls: vec![call], input: sort };
+    let plan = Plan::Window { window: Box::new(window), detail: String::new(), est: 1.0_f64, ordered: true };
+    project(&[0, 3], plan)
+}
+
+/// Verifies: [DESIGN] RULES.md D1245: a window's input reads its
+/// partitioning's columns and those read above it alone, and its rows
+/// carry those alone: the scan put under a projection of them, the
+/// window's partitioning, its sort's key and the call's column above it
+/// numbered anew, the plan's own columns as they were.
+#[test]
+fn a_windows_scan_reads_only_what_it_and_those_above_read() {
+    let st = state();
+    let planner = PhysicalPlanner::describing(&st);
+    let plan = planner.pruned(windowed(WindowKind::RowNumber));
+    assert_eq!(read(&plan, "T"), Some(vec![0, 1]));
+    let Plan::Project { exprs, input, .. } = &plan else { panic!("{}", plan.explain()) };
+    assert!(matches!(exprs.as_slice(), [Expr::Column(0), Expr::Column(2)]), "{}", plan.explain());
+    let Plan::Window { window, .. } = &**input else { panic!("{}", plan.explain()) };
+    assert_eq!(window.partition, vec![1]);
+    let Plan::Sort { keys, input: below, .. } = &window.input else { panic!("{}", plan.explain()) };
+    assert_eq!(keys.first().map(|k| k.column), Some(1));
+    let Plan::Project { exprs: kept, .. } = &**below else { panic!("{}", plan.explain()) };
+    assert_eq!(kept.len(), 2, "{}", plan.explain());
+    assert!(plan.explain().contains("Project T.A, T.B"), "{}", plan.explain());
+}
+
+/// Verifies: [DESIGN] RULES.md D1245: a column a window's call alone
+/// reads is read though nothing above reads the call, so no error its
+/// call raises is lost.
+#[test]
+fn a_column_a_windows_call_alone_reads_is_read() {
+    let st = state();
+    let first = WindowKind::Value(Valued { pick: Pick::First, arg: Expr::Column(2), ignore_nulls: false });
+    let plan = PhysicalPlanner::new(&st).pruned(project(&[0], windowed(first)));
+    assert_eq!(read(&plan, "T"), Some(vec![0, 1, 2]));
 }

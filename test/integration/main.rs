@@ -278,6 +278,7 @@ mod multiset_rules;
 mod multisets;
 mod mvcc;
 mod named_schemas;
+mod narrowed_windows;
 mod normal_sorts;
 mod null_ordering;
 mod numeric_functions;

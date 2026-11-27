@@ -2,14 +2,19 @@
 //! the smallest MEMORY.WORK_BYTES (RULES.md D1227): each partition's
 //! result held in a list of its share of the grant that spills, and the
 //! lists merged back as the statement reads them, the rows those of the
-//! plan run alone, in its order.
+//! plan run alone, in its order where one is asked of them (RULES.md
+//! D1245).
+
+use std::thread;
+use std::time::{Duration, Instant};
 
 use turborel::db::{Database, Session};
+use turborel::error::Code;
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{exec, rows};
+use crate::common::{exec, rows, spill_bytes};
 
 /// The smallest MEMORY.WORK_BYTES, 64 KiB.
 const SMALL: i128 = 64 << 10;
@@ -60,9 +65,10 @@ fn parallel(s: &Session, sql: &str) -> Vec<String> {
 }
 
 /// Windows whose calls the rows' form alone computes, a filtered count and
-/// a DISTINCT one, so their partitions are split by row; and EXCEPT and
-/// INTERSECT of every row's columns.
-const QUERIES: [&str; 4] = [
+/// a DISTINCT one, so their partitions are split by row, the first read
+/// in its own order; and EXCEPT and INTERSECT of every row's columns.
+const QUERIES: [&str; 5] = [
+    "SELECT K, G, COUNT(*) FILTER (WHERE N > 5) OVER (PARTITION BY G ORDER BY K) FROM W ORDER BY G, K",
     "SELECT K, G, COUNT(*) FILTER (WHERE N > 5) OVER (PARTITION BY G ORDER BY K) FROM W",
     "SELECT K, T, COUNT(DISTINCT N) OVER (PARTITION BY T) FROM W",
     "SELECT G, N, T FROM W EXCEPT ALL SELECT G, N, T FROM W WHERE MOD(K, 3) = 0",
@@ -73,7 +79,9 @@ const QUERIES: [&str; 4] = [
 /// INTERSECT run in parallel at the smallest MEMORY.WORK_BYTES, their
 /// partitions' results held in lists that spill past their shares and
 /// merged back as they are read, give the rows they give run alone, in
-/// their order.
+/// their order: a set operation's, and a window's read in its order; a
+/// window read in no order gives its partitions' lists one after another
+/// (RULES.md D1245), the same rows.
 #[test]
 fn partitions_past_the_grant_give_their_results_in_order() {
     let (db, a) = table();
@@ -81,6 +89,51 @@ fn partitions_past_the_grant_give_their_results_in_order() {
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
     for (q, expected) in QUERIES.iter().zip(&in_memory) {
         assert!(!expected.is_empty(), "{q}");
-        assert_eq!(&parallel(&a, q), expected, "{q}");
+        let (mut found, mut wanted) = (parallel(&a, q), expected.clone());
+        if q.contains(" OVER ") && !q.contains("ORDER BY G, K") {
+            found.sort();
+            wanted.sort();
+        }
+        assert_eq!(found, wanted, "{q}");
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D44, D1227, D1245: a window split by row
+/// at the smallest MEMORY.WORK_BYTES, cancelled past its
+/// STATEMENT.TIMEOUT_MS wherever that lands, while its rows are split,
+/// while its partitions are sorted and computed on their threads, or as
+/// their lists are read, is cancelled (SQLCODE -920) or gives its rows
+/// whole; and either way nothing of its lists is left held once its
+/// workers wake.
+#[test]
+fn a_window_split_by_row_cancelled_anywhere_leaves_nothing_held() {
+    let (db, a) = table();
+    let q = "SELECT K, T, COUNT(DISTINCT N) OVER (PARTITION BY T) FROM W";
+    let mut expected = alone(&a, q);
+    expected.sort();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    parallel(&a, q);
+    let mut cancelled = 0_usize;
+    for timeout in [1, 5, 25, 100, 400] {
+        exec(&a, &format!("SET STATEMENT.TIMEOUT_MS = {timeout}")).unwrap();
+        match rows(&a, q) {
+            Ok(mut found) => {
+                found.sort();
+                assert_eq!(found, expected, "{timeout} ms");
+            }
+            Err(code) => {
+                assert_eq!(code, Code::Cancelled, "{timeout} ms");
+                cancelled += 1;
+            }
+        }
+        exec(&a, "SET STATEMENT.TIMEOUT_MS = 0").unwrap();
+        // A worker lets go of its lists as it next wakes, after the
+        // statement has ended.
+        let began = Instant::now();
+        while spill_bytes(&db) > 0 && began.elapsed() < Duration::from_secs(30) {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(spill_bytes(&db), 0, "{timeout} ms: nothing left held");
+    }
+    assert!(cancelled > 0, "cancelled at least once");
 }
