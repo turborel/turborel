@@ -820,6 +820,7 @@ verification approach DO-178C expects (§8).
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
+| D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
 
 ### The project
 
@@ -23594,6 +23595,61 @@ order, gave the row store's results too
 (`test/integration/window_nulls.rs`, which stays as the requirement's
 test). Which step kept the store's numbers from the lane there was not
 found. The lane's own test shows the place it now clears.
+
+#### D1293. A column store's scan does not judge a comparison that the bounds of every part of a run prove
+
+A chunk of a frozen group is written with the least and the greatest of
+its values and the count of its nulls, and with the same of each part of
+1,024 of its rows (`engine/columns/group/zones.rs`). A scan read them one
+way only. A part whose bounds a told conjunct cannot match is passed
+over (`columns/scan.rs`). A part it may match was decoded and judged a
+row at a time (D360), also where the bounds say it matches every row.
+
+That case is common. A hash join tells its probing side's scan the
+least and the greatest of its built keys (D369), and where the built
+rows span the table's keys nearly every part lies inside that range. A
+profile showed the two bounds of such a range judged of every row of the
+probing table in most joins of the reference queries, by runs of a
+column kept as runs, and it was the largest single cost of a semi join
+over that table. A range of a column a table is written in the order of,
+a day of a log, holds every part between its two ends.
+
+So a run now asks its parts first (`columns/judged/proved.rs`). Of a
+comparison of a column with a constant, the run is proved if every part
+it lies in holds no null and has bounds that satisfy the comparison at
+the end that decides it. `>=` is decided by the least value and `>` by
+the least being above the constant. `<=` and `<` are decided by the
+greatest in the same way. `=` needs both ends equal to the constant, and
+`<>` needs the constant below the least or above the greatest. A
+comparison proved keeps every row, so the scan does not decode its
+column to judge it and tests no row. A null proves nothing, as no
+comparison is true of one [X3.135-1986 §5.11 GR2]. A run must lie
+wholly in chunks whose parts prove it, so a header that lacks a chunk
+proves nothing of the rows it held. The bound of a sort's first rows is
+proved as the comparison it is at that moment (D1241).
+
+The bounds are those of every row frozen in a part. A run gives those
+rows or fewer. A row changed or deleted since the freeze has an entry in
+the tree, its frozen row is left out of the run, and what the tree holds
+of it is given apart and judged by the filter alone
+(`rows/frozen/batches.rs`). So the bounds cover every row a run gives,
+whatever was written since, and no row is given that the scan would
+have left out. The filter judges every row given as before (D15).
+
+Only columns of exact numbers and of datetimes of no time zone are
+proved so. Their bounds are their values whole, and a bound compares
+with the constant as each value does (`value::compare`), at any scale. A
+part whose bounds do not compare with the constant proves nothing. Texts
+are left out, as are approximate numbers. A run asks two comparisons of
+values a part and a conjunct, against a decode and a test of each of up
+to 2,048 rows.
+
+The tests ask each comparison at the bound its parts reach and one unit
+past it, a part with a null, runs that are not whole parts and that
+cross chunks, and a header with a chunk missing
+(`judged/proved/tests.rs`). An integration test changes, deletes and
+adds rows in parts whose stored bounds prove a comparison and compares
+every answer with the row store's (`test/integration/proved_bounds.rs`).
 
 ## 2. Project layout
 

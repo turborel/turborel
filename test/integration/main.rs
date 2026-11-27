@@ -321,6 +321,7 @@ mod predicates;
 mod prepared;
 mod privileges;
 mod probes;
+mod proved_bounds;
 mod pruned_columns;
 mod psm_compound;
 mod psm_control;
