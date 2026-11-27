@@ -199,6 +199,7 @@ impl Top<'_> {
         let mut heap = std::mem::take(&mut self.heap);
         if heap.len() < self.most.rows {
             self.count(entry.batch);
+            self.offer(&entry);
             heap.push(entry);
             let last = heap.len().saturating_sub(1);
             sift_up(&mut heap, last, &|a, b| self.order(a, b));
@@ -209,6 +210,7 @@ impl Top<'_> {
         match (placed, self.most.ties) {
             (Some(Ordering::Less), _) => {
                 self.count(entry.batch);
+                self.offer(&entry);
                 let Some(first) = heap.first_mut() else { return };
                 let given_up = std::mem::replace(first, entry);
                 sift_down(&mut heap, 0, &|a, b| self.order(a, b));
@@ -233,6 +235,16 @@ impl Top<'_> {
         let (Some(greatest), Some(key)) = (self.heap.first(), self.keys.first()) else { return };
         if let Some(Some(batch)) = self.batches.get(greatest.batch) {
             bound.raise(&batch.cell(key.column, greatest.row).to_value());
+        }
+    }
+
+    /// \[DESIGN\] (RULES.md D1241) Offers the bound the first key of
+    /// `entry`, a row just taken among the first, which a bound shared by
+    /// the morsels of a sort run in parallel counts (`Threshold::offer`).
+    fn offer(&self, entry: &Entry) {
+        let Some(bound) = self.bound.as_ref().filter(|b| b.is_shared()) else { return };
+        if let (Some(Some(batch)), Some(key)) = (self.batches.get(entry.batch), self.keys.first()) {
+            bound.offer(&batch.cell(key.column, entry.row).to_value());
         }
     }
 

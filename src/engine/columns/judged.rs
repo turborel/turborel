@@ -15,6 +15,15 @@
 //! `Conjunct::matches_key` judges it, so what the scan keeps is what the
 //! conjunct keeps.
 //!
+//! \[DESIGN\] (RULES.md D1241) The bound of a sort of which only the
+//! first rows are asked for (`Conjunct::Dynamic`) is judged too, as the
+//! test the bound gives of a row as the run is judged
+//! (`Threshold::row_test`), a comparison of its column with the value it
+//! holds, and none while it holds no value. So a run's rows past the
+//! bound are left out before the filter's other columns are decoded for
+//! them. The sort would drop each such row, so leaving it out changes
+//! nothing it gives.
+//!
 //! A scan is told only conjuncts every row its filter keeps satisfies, of a
 //! condition that cannot raise an error (`logical/pushed.rs`), and the
 //! filter still judges every row the scan gives (RULES.md D15). So a row
@@ -25,6 +34,7 @@ mod coded;
 mod sketched;
 mod sorted;
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use super::group::{Group, Seal};
@@ -101,6 +111,13 @@ impl Judgment {
         self.preds.is_empty()
     }
 
+    /// \[DESIGN\] (RULES.md D1241) Whether it judges a sort's bound: its
+    /// reader is a sort of its first rows, which keeps few of the rows it
+    /// is given, so a run given whole leaves its late columns late.
+    pub fn bounded(&self) -> bool {
+        self.preds.iter().any(|p| matches!(p.conjunct, Conjunct::Dynamic { .. }))
+    }
+
     /// \[DESIGN\] The rows of the run `from` to `to` of `group`, of a
     /// table of columns of `types`, of `given`, places from its first, or
     /// of all, that each conjunct keeps, judged in turn, each of the rows
@@ -122,6 +139,10 @@ impl Judgment {
             if kept.as_ref().is_some_and(Vec::is_empty) {
                 break;
             }
+            // A sort's bound is judged as the test it is now. One not yet
+            // set keeps every row, so its column is not decoded for it.
+            let Some(pred) = pred.now() else { continue };
+            let pred = &*pred;
             let Some(t) = types.get(pred.column) else { continue };
             if let Some(rows) = coded::kept(group, (pages, &mut *prepared), (pred, t), (from, to), kept.as_deref())? {
                 kept = Some(rows);
@@ -148,9 +169,11 @@ fn judged_conjunct(conjunct: &Conjunct) -> bool {
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Unpadded { .. } => {
             judged_leaf(conjunct)
         }
-        // A sort's bound, and a join's spans, pass over groups and parts
-        // alone (RULES.md D379, D600).
-        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => false,
+        // A sort's bound is the test it is of a row as a run is judged
+        // (`Pred::now`, RULES.md D1241).
+        Conjunct::Dynamic { .. } => true,
+        // A join's spans pass over groups and parts alone (RULES.md D600).
+        Conjunct::Spans { .. } => false,
     }
 }
 
@@ -228,6 +251,18 @@ impl Pred {
             | Conjunct::Spans { .. }
             | Conjunct::Unpadded { .. } => None,
         }
+    }
+
+    /// \[DESIGN\] (RULES.md D1241) It as a run is judged: itself, but of a
+    /// sort's bound the test the bound is of a row now
+    /// (`Threshold::row_test`), a conjunct of a kind judged as any other,
+    /// never true of a null; none while the bound holds no value, when it
+    /// keeps every row. The bound chooses the test by what it holds, so a
+    /// bound of another kind of key is judged here with no change.
+    fn now(&self) -> Option<Cow<'_, Pred>> {
+        let Conjunct::Dynamic { column, threshold } = &self.conjunct else { return Some(Cow::Borrowed(self)) };
+        let conjunct = threshold.row_test(*column)?;
+        Some(Cow::Owned(Pred { at: self.at, column: self.column, conjunct, of_null: false }))
     }
 
     /// The rows of `given`, or of all `len`, it keeps, each judged of its

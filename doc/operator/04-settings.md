@@ -324,7 +324,10 @@ their first 32 bytes, and sorts the strings, by radix sort when they are
 MEMORY.WORK_BYTES writes the keys beside its rows and merges its runs by
 them. A sort under FETCH FIRST keeps a batch's rows only if their keys
 are below the greatest of those it holds, so of a long input it makes
-only the rows it gives. Rows of equal keys keep the order they came in,
+only the rows it gives. It tells the scan under it that greatest key,
+and a column store's scan leaves out the rows past it before it decodes
+the other columns a filter reads, so a filter of a long string under
+such a sort reads the string of few rows. Rows of equal keys keep the order they came in,
 whatever the degree.
 
 A grouping or DISTINCT run in parallel groups each morsel apart, then

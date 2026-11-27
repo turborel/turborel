@@ -21524,6 +21524,72 @@ lookups are counted as before, so LEAST_LOOKUPS and the window are
 unchanged. A hit costs nothing more, and a miss only notes which way the
 pool found its frame (`disk/buffer/tally.rs`).
 
+#### D1241. A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound
+
+A sort under FETCH FIRST tells the scan under it the bound of its first
+key (D379), and the scan passed over groups and parts whose zone maps
+lie past it. Within a part it read every row. A filter of a wide column
+over such a scan, as LIKE of a text, then decoded that column of every
+row of every part read, though the sort would drop nearly all of them
+by their key. And D291 kept such a sort of a column store table on the
+statement's thread, from when a worker made each row of its morsel.
+Since D380 a morsel is read and sorted as batches, so that reason no
+longer held.
+
+The scan now judges the bound of each row (`engine/columns/judged.rs`).
+A bound that holds a value is a comparison of its column with that
+value, at or before it as the key is ordered, read as each run of a
+group is judged and judged by the kernel over the column's vector. A
+bound that holds none yet is not judged, and its column is not decoded
+for it. The rows a run keeps are decoded of the filter's other columns
+at their places alone (D366). A row left out is past the first key of
+the greatest row the sort holds, so the sort would drop it whatever its
+other keys. A null is left out too, as a bound is told only of a key
+whose nulls sort last, and it holds no null. A row equal to the bound
+is kept, as the sort's other keys or its peers decide of it. The bound
+is told only where no filter or projection on the way can raise (D379),
+so no error of a row left out is lost. A scan may still give a run
+whole where most of its rows are kept, as the sort judges every row it
+is given.
+
+A sort over a column store table that FETCH FIRST asks for a count of
+rows, ONLY, is now a part (`physical/parallel.rs`, `Asked::under`), as
+it is over the row store. The planner knows it by the limit above it,
+through what the limit tells a sort through, a projection that raises
+nothing. A whole sort of one, one under OFFSET alone, WITH TIES or of a
+percentage stays on the statement's thread as before. A part's pipeline
+read by such a sort of few rows, whose batches hold every column, is
+told what the serial stream is told (`Pipeline::topped`,
+`parallel/sorted.rs`). Each branch's scan is told the bound through its
+steps as `Deferred` carries it, by a split told one conjunct more
+(`Split::told`). The columns neither a step nor a key reads are left
+late past the pipeline's end, and each morsel's sort decodes them of
+the rows it gives alone, where a morsel decoded them of every row its
+filter kept.
+
+One bound is shared by every morsel (`Threshold::shared`). A filter
+that keeps few rows leaves most morsels with fewer rows than are asked,
+so a morsel's own rows seldom prove a bound. Each morsel's sort
+therefore offers the bound the first key of every row it takes, and the
+bound keeps the first so many keys offered by them all. Once as many
+are offered as rows are asked, the bound is the last of those. That
+many rows of the sort's input are then at or before it, so no row past
+it is among the first of all. The bound only narrows, under a lock, and
+a scan that reads it before another thread narrowed it only reads more
+rows. Each morsel keeps its rows equal to the bound, and the runs are
+merged in morsel order as before, so rows of equal keys come in the
+order the serial sort gives them.
+
+A run the scan judged and kept one row in eight or more of is given
+whole, and its late columns were then decoded with it (D366), as those
+rows were taken to be the ones kept. Under a sort's bound the sort
+keeps few of them, so such a run now leaves its late columns late
+(`frozen/batches/run.rs`).
+
+The rows given, their order and the errors are as before. EXPLAIN shows
+`Parallel` over such a sort, and EXPLAIN ANALYZE counts fewer rows of
+its scan.
+
 ## 2. Project layout
 
 ```

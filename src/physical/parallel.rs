@@ -76,6 +76,10 @@ struct Asked<'a> {
     morsel: usize,
     /// The least rows a part reads in parallel.
     least: usize,
+    /// \[DESIGN\] (RULES.md D1241) Whether the plan walked is asked for
+    /// its first rows alone: the input of a FETCH FIRST of a count, ONLY,
+    /// which tells a sort under it how many (`exec/limit/bounded.rs`).
+    first: bool,
 }
 
 /// The threads the system runs at once, as EXECUTOR.WORKERS of 0 asks.
@@ -109,16 +113,41 @@ impl<'a> Asked<'a> {
             n => n.min(workers.max(1)),
         };
         let (morsel, least) = (db.settings.count(EXECUTOR_MORSEL_ROWS).max(1), db.settings.count(EXECUTOR_PARALLEL_MIN_ROWS));
-        Asked { db, seen, most, morsel, least }
+        Asked { db, seen, most, morsel, least, first: false }
     }
 
     /// The degree of the part `plan` reading `rows` rows: 1 to run it
-    /// alone, as one a serial scan by batch serves better.
+    /// alone, as one a serial scan by batch serves better. \[DESIGN\]
+    /// (RULES.md D1241) A sort asked for its first rows alone is a part
+    /// whatever it reads: its morsels are read and sorted by batch, share
+    /// the bound of its first key and make only the rows they keep.
     fn degree(self, plan: &Plan, rows: usize) -> usize {
-        if crate::exec::batched(self.db) && by_batch(self.db, plan) {
+        let topped = self.first && matches!(plan, Plan::Sort { .. });
+        if crate::exec::batched(self.db) && !topped && by_batch(self.db, plan) {
             return 1;
         }
         self.by_rows(rows)
+    }
+
+    /// It, as the inputs of `plan` are walked: asked for their first rows
+    /// alone under a FETCH FIRST of a count with no peers, and under what
+    /// such a limit tells a sort through, a projection that raises
+    /// nothing or an analyzed plan's count.
+    fn under(self, plan: &Plan) -> Asked<'a> {
+        let first = if let Plan::Limit { limit, .. } = plan {
+            limit.fetch.as_ref().is_some_and(|f| !f.percent && f.ties.is_none())
+        } else if let Plan::Project { exprs, .. } = plan {
+            self.first && !exprs.iter().any(Expr::can_raise)
+        } else {
+            self.first && matches!(plan, Plan::Counted(_))
+        };
+        Asked { first, ..self }
+    }
+
+    /// It, as the plans under a part or a join's operand are walked, none
+    /// of them asked for its first rows alone.
+    fn rest(self) -> Asked<'a> {
+        Asked { first: false, ..self }
     }
 
     /// The degree of a part reading `rows` rows, by the rule the costs
@@ -202,7 +231,7 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
             && stream_in(input, Some(asked.db)).is_some()
             && !filtered(input)
         {
-            return outside(asked, input, deeper);
+            return outside(asked.rest(), input, deeper);
         }
         if let Plan::SemiJoin(s) = plan
             && s.method == SemiMethod::BuildLeft
@@ -210,12 +239,13 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
             // Its left is held as a hash join's built operand is
             // (`exec/batch/joined/semi/marked.rs`), by batch whatever its
             // store (RULES.md D1132).
-            built(asked, &mut s.left, deeper);
-            return built(asked, &mut s.right, deeper);
+            built(asked.rest(), &mut s.left, deeper);
+            return built(asked.rest(), &mut s.right, deeper);
         }
-        return plan.each_input(&mut |input| walk(asked, input, deeper));
+        let below = asked.under(plan);
+        return plan.each_input(&mut |input| walk(below, input, deeper));
     }
-    outside(asked, plan, deeper);
+    outside(asked.rest(), plan, deeper);
     let input = std::mem::replace(plan, Plan::Values { rows: Vec::new(), detail: String::new() });
     *plan = Plan::Parallel(Box::new(Parallel { degree, input }));
 }
