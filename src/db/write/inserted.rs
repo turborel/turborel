@@ -64,8 +64,9 @@ pub(super) fn query_rows(
     Ok(rows)
 }
 
-/// The candidate rows of `target`'s query, of an INSERT kept by `k` with
-/// `params`, by its physical plan kept or learning (`Keeping::physical`);
+/// The candidate rows of `target`'s query, of an INSERT `kept`, its
+/// keeping and its parameters, by its physical plan kept or learning
+/// (`Keeping::physical`);
 /// none if it is planned with its values, or its statement is analyzed,
 /// whose plan EXPLAIN ANALYZE counts.
 ///

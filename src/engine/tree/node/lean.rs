@@ -174,8 +174,13 @@ pub(in crate::engine::tree) fn child(bytes: &[u8], key: &[u8]) -> Option<(u64, u
     // child on its left.
     let below = match key.strip_prefix(prefix) {
         Some(tail) => lean.find(tail)?.map_or_else(|at| at, |(at, _)| at),
-        None if key < prefix => 0,
-        None => lean.slotted.len(),
+        None => {
+            if key < prefix {
+                0
+            } else {
+                lean.slotted.len()
+            }
+        }
     };
     let Some(last) = below.checked_sub(1) else { return Some((u64::from_le_bytes(field(lean.header, FIRST_AT)), level)) };
     let &[o0, o1, _, _] = lean.slotted.get(last)?;
