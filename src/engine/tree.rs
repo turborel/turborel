@@ -517,9 +517,17 @@ impl BLinkTree {
             }
         };
         let mut splits = vec![Split { separator: halves.separator, right: new, level: node.level }];
-        *page = self.fitted(halves.right, &mut splits)?;
+        let right = self.fitted(halves.right, &mut splits).map(|right| *page = right);
         drop(page);
-        *self.pool.write(self.file, id)? = self.fitted(halves.left, &mut splits)?;
+        let written = right.and_then(|()| self.fitted(halves.left, &mut splits)).and_then(|left| {
+            *self.pool.write(self.file, id)? = left;
+            Ok(())
+        });
+        // Not written over, the old node links to none of the new pages.
+        if let Err(e) = written {
+            self.give_back(&splits);
+            return Err(e);
+        }
         count(&self.counters.splits);
         Ok(splits)
     }

@@ -1,6 +1,6 @@
 //! The mutations of the B-link tree's node layout, leaf hints and merges
-//! (RULES.md R-TEST-9, D500, D814), and of the epochs that keep a page
-//! taken out (D31, D1270).
+//! (RULES.md R-TEST-9, D500, D814), of the epochs that keep a page taken
+//! out (D31, D1270), and of a split refused a page (D1271).
 
 use super::super::{Mutation, Package};
 
@@ -16,7 +16,7 @@ const EPOCHS: &str = "engine::tree::tests::epochs::a_page_retired_waits_for_the_
 const STOPPED: &str = "engine::tree::tests::epochs::a_leaf_taken_out_under_a_writer_stopped_above_it_is_kept_and_leads_right";
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 35] = [
+pub const BTREE: [Mutation; 36] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -366,5 +366,15 @@ pub const BTREE: [Mutation; 35] = [
         replacement: "        let before = usize::from(!epoch.is_multiple_of(2));",
         integration: &[],
         unit: &[EPOCHS, STOPPED],
+    },
+    Mutation {
+        name: "btree-split-pages-kept",
+        package: Package::Core,
+        breaks: "a split refused a page keeps those it took, allocated and unlinked, the first with a leaf's content",
+        file: "src/engine/tree.rs",
+        original: "            self.give_back(&splits);",
+        replacement: "            self.give_back(&[]);",
+        integration: &[],
+        unit: &["engine::tree::tests::shared::a_split_refused_a_page_gives_back_those_it_took"],
     },
 ];

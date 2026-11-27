@@ -807,6 +807,7 @@ verification approach DO-178C expects (§8).
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
+| D1271 | A split that is refused a page gives back those it took |
 
 ### The project
 
@@ -22918,6 +22919,29 @@ else uses, its load and its freeing.
 The tree's tests that called these paths directly enter the epoch as an
 operation does, through one helper, `leaf_of`, where they ask for a
 key's leaf.
+
+#### D1271. A split that is refused a page gives back those it took
+
+A split writes its right half to a new page, then its left half over
+the old node, which links the new page in (D31). A half that does not
+fit its page is split again, each part taking a page more (D500,
+`engine/tree/fit.rs`). A file may refuse a page, as the file of a
+database kept in memory does at its budget's limit (D38).
+
+A split refused its first page failed with nothing taken. One refused
+a later page left the pages before it allocated, with nothing linking
+to them, for as long as the file lived. The first of them already held
+the right half, a leaf of the tree in every byte. A read of a row
+starts at the leaf noted for the row and trusts a page a frame holds
+that is a leaf of the tree, not deleted, whose first key is at or below
+the row's (D500). A note can name a number a leaf had before the page
+was freed and taken again. Such a read could then have answered from
+the page left behind, with the row as it was when the split failed.
+
+A split that fails after it took a page now gives back every page it
+took (`BLinkTree::give_back`). The old node is not yet written over, so
+the tree is as it was. Each page is emptied first, so one that cannot
+be freed is no node, and freed once no read holds it.
 
 ## 2. Project layout
 
