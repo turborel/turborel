@@ -801,7 +801,6 @@ verification approach DO-178C expects (§8).
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
 | D1245 | A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked |
-| D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
 
