@@ -250,3 +250,35 @@ fn a_crossing_second_grouping_past_the_grant_gives_its_rows() {
         in_parallel(&a, q);
     }
 }
+
+/// Verifies: [DESIGN] (RULES.md D1281, D1226) the first rows of a sort
+/// over a pair of groupings, at the smallest MEMORY.WORK_BYTES, whose
+/// partitions are written to the spill and merged back, are the rows the
+/// plan run alone gives in memory, in its order: by a count nearly every
+/// group ties on, where the first rows' numbers order them, and past an
+/// offset. Each part read back gives its first rows alone, so an analyzed
+/// plan counts its projection fewer rows than there are groups, which a
+/// part given way to would not. The WHERE clause keeps a third of the
+/// groups, that of null G not among them. Of every group this pair gives
+/// way at this grant, with a sort over it or none.
+#[test]
+fn a_pairs_first_rows_past_the_grant_are_the_plans() {
+    let (db, a, threads) = table();
+    let queries = [
+        "SELECT 1, G, COUNT(DISTINCT N / 2) FROM C WHERE G < 8000 GROUP BY G ORDER BY 3 DESC FETCH FIRST 2 ROWS ONLY",
+        "SELECT 1, G, COUNT(DISTINCT N / 40) FROM C WHERE G < 8000 GROUP BY G ORDER BY 3 DESC OFFSET 1 ROWS FETCH FIRST 2 ROWS ONLY",
+    ];
+    let in_memory: Vec<Vec<String>> = queries.iter().map(|q| alone(&a, q)).collect();
+    let groups: u64 = alone(&a, "SELECT COUNT(*) FROM (SELECT G FROM C WHERE G < 8000 GROUP BY G) AS X").concat().parse().unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    threads.taken();
+    for (q, expected) in queries.iter().zip(&in_memory) {
+        assert_eq!(&parallel(&a, q), expected, "{q}");
+        let written = threads.taken().written;
+        let shown = in_parallel(&a, q);
+        assert!(written > usize::try_from(SMALL).unwrap() * 4, "{q}: its partitions many times the grant, spilled\n{shown}");
+        let analyzed = a.analyzed(q, &turborel::params::Params::new()).unwrap();
+        let projected = analyzed.operators.iter().find(|o| o.label.starts_with("Project")).map(|o| o.rows);
+        assert!(projected.is_some_and(|kept| kept < groups), "{q}: the rows the parts kept, {projected:?} of {groups}\n{shown}");
+    }
+}

@@ -230,11 +230,11 @@ fn a_second_grouping_no_batch_reads_is_made_of_rows() {
     assert_eq!(alone, together, "{sql}");
 }
 
-/// Verifies: [ISO/IEC 9075-2:2023 §7.17 GR6] (RULES.md D1124) the first
-/// rows of a sort over a pair of groupings run as one part are not taken
-/// from the first grouping's tables, whose groups are not the pair's: the
-/// sort reads the second's groups and gives the rows the plan run alone
-/// gives, in its order.
+/// Verifies: [ISO/IEC 9075-2:2023 §7.17 GR6] (RULES.md D1124, D1281) the
+/// first rows of a sort over a pair of groupings run as one part are not
+/// taken from the first grouping's tables, whose groups are not the
+/// pair's. They are taken of the second's groups, and are the rows the
+/// plan run alone gives, in its order.
 #[test]
 fn the_first_rows_of_a_sort_over_a_pair_are_the_second_groupings() {
     let (_db, a) = tables();

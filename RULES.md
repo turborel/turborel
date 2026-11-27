@@ -814,6 +814,7 @@ verification approach DO-178C expects (§8).
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1281 | A sort's first rows over a pair of groupings are taken from the second's table of each partition |
 
 ### The project
 
@@ -19790,8 +19791,9 @@ It does so of a grouping by hash, alone at the top of its part, whose
 groups are made by batch, under a projection of its columns and of
 constants alone, or none. A sort that asks the peers of its last row (WITH TIES) is not
 taken so, as the number would part groups that are peers. Neither is one
-over a HAVING condition, a projection that computes a value, DISTINCT or
-a pair of groupings (D1113); the sort reads those groups as before. A
+over a HAVING condition, a projection that computes a value or DISTINCT;
+the sort reads those groups as before. A pair of groupings (D1113) gives
+them from the second's tables (D1281). A
 grouping whose groups are made of rows gives its groups in order, which
 are projected and sorted. A part that gives way is grouped alone and its
 rows projected and sorted, the part not tried again.
@@ -23228,6 +23230,66 @@ A split that fails after it took a page now gives back every page it
 took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
+
+#### D1281. A sort's first rows over a pair of groupings are taken from the second's table of each partition
+
+A sort that asks for its first rows over a grouping run in parallel
+takes them from each partition's table (D1124), and where its keys are
+set functions it picks them before any row is made (D1256). A pair of
+groupings run as one part (D1113), as a DISTINCT set function makes
+them (D340), was left out. Each partition's thread made the second's
+groups in a table (D1123) and then a row of every one of them. The
+statement's thread merged the partitions' rows in the order of their
+first rows and projected each, and the sort kept its few. Of a second
+grouping of very many groups that was a row allocated, moved, compared
+and freed a group, most of it on one thread after the partitions were
+done.
+
+A partition's thread now takes the first rows from the second's table
+(`exec/parallel/grouped/top.rs`, `of_part`). The table is made of the
+partition's groups of the first as before (`regrouped.rs`,
+`second_table`) and given to the code that takes the first rows from
+the table of a grouping alone. The sort stands over the second grouping,
+so its keys and the projection under it already name the columns of the
+second's row. No row is made of a group the partition does not keep,
+and the statement's thread sorts the partitions' few rows alone.
+
+The rows given and their order are the plan's, by the argument of
+D1124. The plan run alone gives the second's groups in the order each
+is first met among the first's groups, and those come in the order of
+their first rows. The sort is stable, so of two groups of equal keys it
+gives the one met earlier. A group of the second is numbered by its
+first group of the first (D1113), which is the number of the first row
+that falls in it. No row falls in two groups, so no two groups share a
+number, and the number as the last key orders any two groups of equal
+keys as the plan does. The partitions are split by the second's
+grouping columns alone, so a group of the second lies whole in one
+partition, and that partition's table holds its one row, with its
+number and its results as the plan computes them. A row among the first
+of all is then among the first of its partition under the same keys, so
+the statement's thread, sorting the partitions' rows by the keys and
+then the number, gives the plan's rows in the plan's order.
+
+It does so where each partition makes the second in a table and the
+second crosses no partition (`Outer::in_tables`). A second that crosses
+the partitions (D1133, D1219) has a group in several of them, a part of
+its count in each, so no partition's table holds its row. A second that
+no grouping by batch reads, as one with a filtered set function, is
+made of rows (D1123). Both are read as before, every group given to the
+sort. So is a pair under a HAVING condition, and a sort that asks the
+peers of its last row.
+
+Whether the first's groups lie in the order of their first rows is
+known of each partition's table only as it is finished (D1123). A
+partition where they do not makes the second's groups of rows put in
+order, as before, and keeps the first of them under the same keys and
+numbers (`of_groups`). Its rows are those its table would have given,
+so the statement's thread reads them alike. A partition read back from
+the spill (D1226) is finished by the same code and gives its first rows
+the same way.
+
+An analyzed plan counts the second grouping the groups its tables made,
+and the projection the rows the partitions kept (D1254).
 
 ## 2. Project layout
 

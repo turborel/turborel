@@ -91,6 +91,7 @@ mod mark_joins;
 mod morsel_memory;
 mod narrowed_windows;
 mod outer_steps;
+mod pair_top;
 mod semi_joins;
 mod spilled_joins;
 mod steady;
@@ -316,7 +317,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
 /// window narrowed's and a join built in passes' last, as `last` holds no
 /// more.
-fn closing() -> [&'static [Mutation]; 35] {
+fn closing() -> [&'static [Mutation]; 36] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -335,6 +336,7 @@ fn closing() -> [&'static [Mutation]; 35] {
         &xxhash::XXHASH,
         &semi_joins::SEMI_JOINS,
         &grouped_parts::GROUPED_PARTS,
+        &pair_top::PAIR_TOP,
         &first_groups::FIRST_GROUPS,
         &like_pieces::LIKE_PIECES,
         &outer_steps::OUTER_STEPS,
