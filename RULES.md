@@ -821,6 +821,7 @@ verification approach DO-178C expects (§8).
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
+| D1295 | An IN list of exact constants is judged of integers by its units folded to their scale once, found by a bit or by halving |
 
 ### The project
 
@@ -23650,6 +23651,46 @@ cross chunks, and a header with a chunk missing
 (`judged/proved/tests.rs`). An integration test changes, deletes and
 adds rows in parts whose stored bounds prove a comparison and compares
 every answer with the row store's (`test/integration/proved_bounds.rs`).
+
+#### D1295. An IN list of exact constants is judged of integers by its units folded to their scale once, found by a bit or by halving
+
+A column of exact numbers reaches a filter and a column store's scan as
+a vector of integers of one scale (D31, D360). A comparison with a
+constant was folded to that scale once and judged as integers (D354).
+An IN list was not. The scan made a value of every integer and compared
+it with each constant in turn (`Conjunct::matches_key`). The filter
+compared a list of under eight constants in 128 bits, a constant at a
+time, and looked a longer one up in a set of buckets, which made a value
+and hashed it for every row (`logical/sets.rs`). A profile of a filter
+of eight sizes on a table of parts showed both: the scan's judging and
+the filter's second judging of the same rows were together a sixth of
+the statement.
+
+A list of exact constants is now folded once for a vector
+(`storage/batch/listed.rs`). Each constant folds as an equality with it
+does (`rescaled_bound`, D354). One of fewer fractional digits is scaled
+up, one of more is divided where the scale divides it, and one the
+scale cannot hold, or past 64 bits, equals no integer and is left out.
+The units are kept in order, each once. Where the greatest lies fewer
+than 64 above the least, they are the bits of one word counted from the
+least, and a row is found by one subtraction and one bit. Otherwise it
+is found by halving the list. Neither form has a length to tune. The
+width of a word is the only bound, and it is the machine's.
+
+NOT IN keeps the rows found in none, and no row at all if a constant is
+null, as it is then unknown of every row not found [X3.135-1986 §5.13
+GR2, §5.18]. A null row is kept by neither. A list with a constant that
+is not an exact number, or too large to scale, is judged as before, by
+the set if it is long and of the values if it is short. The filter's
+list of pairs in 128 bits is gone, as every list it took is now folded.
+
+Both readers use the one type, so a scan keeps what the filter keeps.
+The tests compare each list, IN and NOT IN, with each value judged
+against each constant: constants out of order and repeated, a null
+among them, one the scale cannot hold, one past 64 bits, spans of 63, 64
+and 65 units, the ends of an integer, and integers kept as runs
+(`storage/batch/listed/tests.rs`, `columns/judged/tests.rs`,
+`batch/judge/tests.rs`).
 
 ## 2. Project layout
 

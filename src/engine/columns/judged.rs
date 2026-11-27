@@ -66,6 +66,7 @@ use crate::error::Result;
 use crate::index::Probe;
 use crate::kernels::Kernels;
 use crate::storage::bound::{Bound, holds, rescaled_bound};
+use crate::storage::listed::Listed;
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
 use crate::storage::{Column, Condition, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Texts};
@@ -306,6 +307,23 @@ impl Pred {
         matches!(self.conjunct, Conjunct::Like { .. })
     }
 
+    /// \[DESIGN\] (RULES.md D1295) Its list of constants folded to
+    /// integers of `scale`, if it is an IN or a NOT IN of exact constants
+    /// (`storage::listed`).
+    fn listed(&self, scale: u32) -> Option<Listed> {
+        match &self.conjunct {
+            Conjunct::In { values, .. } => Listed::of(scale, values, false),
+            Conjunct::NotIn { values, .. } => Listed::of(scale, values, true),
+            Conjunct::Condition(_)
+            | Conjunct::Null { .. }
+            | Conjunct::Any(_)
+            | Conjunct::Dynamic { .. }
+            | Conjunct::Spans { .. }
+            | Conjunct::Unpadded { .. }
+            | Conjunct::Like { .. } => None,
+        }
+    }
+
     /// \[DESIGN\] (RULES.md D1241) It as a run is judged: itself, but of a
     /// sort's bound the test the bound is of a row now
     /// (`Threshold::row_test`), a conjunct of a kind judged as any other,
@@ -326,18 +344,25 @@ impl Pred {
     }
 
     /// Of integers: a comparison by the kernel, its constant folded to
-    /// their scale once; of integers kept as runs, none null, judged once a
-    /// run, the runs and the rows walked together (`Ints::kept_by_runs`,
-    /// RULES.md D1084; a run's first row may be a null, whose unit is not
-    /// the run's).
+    /// their scale once; an IN or a NOT IN of exact constants by their
+    /// units folded to that scale once (RULES.md D1295); of integers kept
+    /// as runs, none null, judged once a run, the runs and the rows walked
+    /// together (`Ints::kept_by_runs`, RULES.md D1084; a run's first row
+    /// may be a null, whose unit is not the run's).
     fn ints(&self, ints: &Ints, given: Option<&[u32]>, kernels: &dyn Kernels) -> Vec<u32> {
         let bound = self.compared().and_then(|(op, c)| rescaled_bound(ints.scale, op, c));
+        let listed = self.listed(ints.scale);
         let value = |u: i64| Value::Exact(Decimal::new(i128::from(u), ints.scale));
-        let keeps = |u: i64| bound.map_or_else(|| self.conjunct.matches_key(&[&value(u)]), |b| b.holds(u));
+        let by_value = |u: i64| listed.as_ref().map_or_else(|| self.conjunct.matches_key(&[&value(u)]), |list| list.holds(u));
+        let keeps = |u: i64| bound.map_or_else(|| by_value(u), |b| b.holds(u));
         if ints.runs().is_some()
             && let Some(kept) = ints.kept_by_runs(given, &keeps)
         {
             return kept;
+        }
+        if let Some(list) = &listed {
+            let unit = |r: u32| ints.units.get(index(r)).copied().filter(|_| !ints.is_null(index(r)));
+            return rows(ints.units.len(), given).into_iter().filter(|&r| unit(r).map_or(self.of_null, |u| list.holds(u))).collect();
         }
         let mut out = Vec::new();
         match bound {

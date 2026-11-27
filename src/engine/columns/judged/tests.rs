@@ -101,6 +101,41 @@ fn numbers_keep_what_their_values_keep() {
     judged_as_values(&Column::Datetimes(datetimes()), &date_values, &conjuncts(&[day]), "datetimes");
 }
 
+/// Verifies: [DESIGN] RULES.md D1295 [X3.135-1986 §5.13 GR2, §5.18]: an
+/// IN and a NOT IN of exact constants, judged of integers by the
+/// constants' units folded to their scale, keep what each value's own
+/// judging keeps, nulls among the rows: of a list of eight, of one with a
+/// constant twice, with a null constant, of which NOT IN keeps no row,
+/// with a constant the scale cannot hold and one past 64 bits, of
+/// constants far apart, and of a list with an approximate constant,
+/// judged a value at a time as before; of integers and of integers kept
+/// as runs, judged once a run.
+#[test]
+fn lists_of_exact_constants_keep_what_their_values_keep() {
+    let nulls = Mask::from_bools(&(0_i32..200_i32).map(|n| n % 13_i32 == 0_i32).collect::<Vec<_>>());
+    let units: Vec<i64> = (0..200_i64).map(|n| (n * 37) % 101 - 50).collect();
+    let ints = || Ints::new(units.clone(), 2, Some(nulls.clone()));
+    let values = Column::Ints(ints()).values().to_vec();
+    let hundredths = |n: i128| Value::Exact(Decimal::new(n, 2));
+    let lists = [
+        [-50, -37, -3, 0, 4, 11, 25, 50].map(hundredths).to_vec(),
+        vec![hundredths(25), hundredths(-3), hundredths(25), Value::Exact(Decimal::new(250, 3))],
+        vec![hundredths(25), Value::Null, hundredths(-3)],
+        vec![Value::Exact(Decimal::new(255, 3)), hundredths(4), Value::Exact(Decimal::new(i128::from(i64::MAX) * 4, 0))],
+        vec![hundredths(-5000), hundredths(11), hundredths(5000)],
+        vec![hundredths(11), Value::Approx(0.25)],
+    ];
+    let both = |list: &Vec<Value>| [Conjunct::In { column: 0, values: list.clone() }, Conjunct::NotIn { column: 0, values: list.clone() }];
+    let listed: Vec<Conjunct> = lists.iter().flat_map(both).collect();
+    judged_as_values(&Column::Ints(ints()), &values, &listed, "integers");
+    let sorted: Vec<i64> = (0..200_i64).map(|n| n.checked_div(20).unwrap() * 25 - 50).collect();
+    let ends: Vec<usize> = (1..=10).map(|n| n * 20).collect();
+    let runs = Ints::new(sorted.clone(), 2, None).with_runs(ends);
+    assert!(runs.runs().is_some());
+    let run_values = Column::Ints(Ints::new(sorted, 2, None)).values().to_vec();
+    judged_as_values(&Column::Ints(runs), &run_values, &listed, "runs");
+}
+
 /// Verifies: [DESIGN] RULES.md D360, texts judged over vectors: texts,
 /// nulls among them, one not ASCII, one with a trailing space, the empty
 /// one, and a dictionary's codes of them, each entry judged once, keep

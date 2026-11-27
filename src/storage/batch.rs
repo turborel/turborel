@@ -15,6 +15,7 @@ mod held;
 mod joined;
 mod kinds;
 mod late;
+pub mod listed;
 pub mod mask;
 mod runs;
 pub mod sel;
