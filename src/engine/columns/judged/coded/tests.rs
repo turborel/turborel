@@ -161,7 +161,9 @@ fn a_run_is_seen_whole_by_the_rate_kept_of_a_share_of_it() {
 /// place: of each run that keeps few rows, of every row and of every
 /// third, it keeps the rows whose text the predicate is true of and no
 /// null, of a piece between, a first piece, a last, several pieces, a
-/// pattern of no `%`, one nothing matches and `%` alone; and of a run
+/// pattern of no `%`, one nothing matches, `%` alone, and the empty
+/// pattern, which the empty string alone matches and so no null, whose
+/// codes are none; and of a run
 /// that keeps one row in eight or more, which is given whole, it stops
 /// judging and keeps the rows left, nulls among them. No column is
 /// decoded to judge them, and the steps are made once for the group,
@@ -176,7 +178,7 @@ fn a_like_is_judged_of_texts_coded_by_symbols_in_place() {
     let told = Conjunction(vec![like("zz%", false)]);
     assert_eq!(super::super::super::scan::candidates(&group, Some(&told)).unwrap(), [(0, ROWS)], "a LIKE passes over no part");
     let patterns =
-        ["%site12%", "http://site1%", "%page4", "%site1%page%77", "%often%", "http://often.example/", "%nothing%", "%", "h%e%77"];
+        ["%site12%", "http://site1%", "%page4", "%site1%page%77", "%often%", "http://often.example/", "%nothing%", "%", "h%e%77", ""];
     for (pattern, not) in patterns.into_iter().flat_map(|p| [(p, false), (p, true)]) {
         let conjunct = like(pattern, not);
         let judgment = Judgment::of(Some(&Conjunction(vec![conjunct.clone()])), &TYPES);
