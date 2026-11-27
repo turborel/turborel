@@ -291,6 +291,7 @@ mod ordered_joins;
 mod outer_rejection;
 mod outer_steps;
 mod pages;
+mod pair_top;
 mod parallel;
 mod parameter_defaults;
 mod partial_groups;

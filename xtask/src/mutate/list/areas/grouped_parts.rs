@@ -217,10 +217,10 @@ pub const GROUPED_PARTS: [Mutation; 33] = [
     Mutation {
         name: "top-groups-of-a-pair",
         package: Package::Core,
-        breaks: "first rows are taken from the tables of a pair's first grouping, its groups given for the second's (RULES.md D1124)",
+        breaks: "first rows are taken from the tables of a pair's first grouping, its groups given for the second's (RULES.md D1124, D1281)",
         file: "src/exec/parallel/grouped/top.rs",
-        original: "grouping.read.is_some() && plain &&",
-        replacement: "grouping.read.is_some() &&",
+        original: "let Some(outer) = &grouping.outer else { return self.of_table(table) };",
+        replacement: "let Some(outer) = grouping.outer.as_ref().filter(|_| false) else { return self.of_table(table) };",
         integration: &["regrouped_parts::the_first_rows_of_a_sort_over_a_pair_are_the_second_groupings"],
         unit: &[],
     },
