@@ -812,6 +812,7 @@ verification approach DO-178C expects (§8).
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
+| D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 
 ### The project
 
@@ -21895,11 +21896,10 @@ them into their few groups costs less.
 The comparison now takes the rows the built input is estimated to give
 (`Plan::est`, `physical/streamed.rs`), and the logical count only of a
 plan that carries none. The rule of the choice and its weights are as
-they were. The grouping's own estimate of its groups is still made of
-the logical count, which bounds it, and with the rows right it no
-longer decides. Why the two counts part is the estimator's matter, a
-condition and the conditions derived from it counted as independent,
-and is not settled here.
+they were. The grouping's own estimate of its groups was left made of
+the logical count, which D1278 changes. Why the two counts part is the
+estimator's matter, a condition and the conditions derived from it
+counted as independent, and is not settled here.
 
 #### D1212. A table opened has its zones summed up only once one is asked for
 
@@ -23148,6 +23148,84 @@ numbers, so a set function whose state depends on the order of its
 values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
+
+#### D1278. Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret
+
+A grouping under an ORDER BY of its keys is streamed over a sort of its
+rows where that costs less than hashing them and sorting the groups
+(D550), the rows weighed those of the input as built (D1208). Three
+things were left as they had been, and a grouping of a table kept by
+column, by an expression of a time, under an ORDER BY of it, showed
+them. It was streamed over a sort of every row on the statement's
+thread, where a part's threads had hashed the rows before.
+
+The first is how each form runs. Both were priced as work of one
+thread. But the marking pass makes a hashed grouping over a stream a
+part its threads share (D291), and a sort a part only where a serial
+scan by batch does not serve its stream better, which of a table kept
+by column with no join it does. So the two forms of one grouping may
+run on different numbers of threads, and the choice between them saw
+none of it. Each is now priced as it would run
+(`physical/streamed.rs`, `parallel/sides.rs`). The planner asks the
+marking pass's own rule how many threads the hashed grouping it would
+make, and a sort of the same rows, would each be given. What a part's
+threads share, the sort of the rows, or their hashing and the making of
+their groups, costs its share of them, each thread past the first
+gaining what the stream's table lets a part gain, and the part's start
+(D652). What the statement's thread does after costs it whole. That is
+the comparing of the sorted rows as they stream, or the sort of the
+groups. The weights are those the joins' costs use, and none is new. Of
+an input no part could read on more threads than one, by its rows, both
+forms run alone, with no plan made to ask, so a statement of few rows
+is planned at no cost more.
+
+The second is the groups. The rows weighed became the built input's,
+and the groups stayed those the estimator counted of the logical
+input. Where a scan is told a condition and reads only the zones that
+may match, the plan carries fewer rows than the logical count, and the
+groups counted of the larger number could come near the rows built or
+pass them. Every row then looked a group of its own, and sorting the
+rows once looked cheaper than hashing them and sorting as many groups.
+The groups weighed are now those of the rows built, as the estimator's
+own formula counts them of that many rows (`Estimates::groups_of`,
+D370), and never more than it counted of the logical input, which
+still bounds them where the plan's rows are the more.
+
+The third is what the choice does where the two forms price near each
+other. It took the cheaper at the groups estimated, by however little.
+But the two do not answer alike to a count that is wrong. A count of
+groups errs high. The values of several columns, or of an expression
+of one, are taken as independent of each other and as likely each as
+the next (D370, D1082), and what they share or favour only makes the
+groups fewer. Of fewer groups than counted the hashed grouping costs
+less, as it makes and sorts fewer, and the sort of the rows costs what
+it did, every row still sorted. So the form is now taken by its regret
+(D386, `robust.rs`), between the groups estimated and those over
+PLANNER.ESTIMATE_MARGIN, at least one. A form's regret at a number of
+groups is its cost there over the cheaper form's, and the form taken
+is the one whose larger regret of the two ends is least. The hashed
+grouping's cost only rises with its groups and the sort's does not
+change, so the two ends hold each form's largest regret between them,
+as they do of the joins' linear costs. Of equal regret the hashed
+grouping is taken. The margin is the one the joins weigh their
+estimates by, taken here the way a count of groups errs, as an index
+range bounded by a scan is weighed by the table's rows over it
+(`access/bounded.rs`). A margin of 1 restores the cheaper form at the
+estimate.
+
+So the sort of the rows is taken where it is the cheaper even of the
+groups over the margin, or where hashing would lose more at the count
+than the sort would at the fewer. That holds of few rows, each nearly
+a group, as a DISTINCT of a short range of a key is, where a sort is
+cheap whatever the count. Of many rows counted a group each, both
+forms alone, the hashed grouping is now taken, as what it loses if the
+count is right is less than what the sort loses if the count is high
+by the margin.
+
+None of the three changes what a grouping gives, as both forms give
+the same groups in the order asked. How far the count of an
+expression's values is from the values it takes is the estimator's
+matter (D1082) and is not settled here.
 
 ## 2. Project layout
 

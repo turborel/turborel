@@ -39,6 +39,7 @@
 
 mod exchange;
 mod inputs;
+pub(super) mod sides;
 
 use std::sync::{Arc, OnceLock};
 
@@ -176,9 +177,7 @@ impl<'a> Asked<'a> {
 /// run in parallel as it is: so a streamed one is not chosen in its place
 /// (RULES.md D550).
 pub(super) fn runs_parallel(db: &State, seen: &Seen, plan: &Plan) -> bool {
-    let asked = Asked::of(db, seen);
-    let Some(rows) = rooted(plan, Some(db)).filter(|_| asked.most > 1) else { return false };
-    !asked.kept_whole(plan, rows) && asked.degree(plan, rows) > 1
+    sides::part_degree(db, seen, plan) > 1
 }
 
 /// `plan` with each part worth running in parallel marked so.
