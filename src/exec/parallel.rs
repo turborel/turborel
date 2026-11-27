@@ -50,7 +50,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub(super) use self::batches::streamed_batches;
 use self::charged::{Ahead, Flow, whole_rows};
 pub(super) use self::each::each_morsel;
-pub(super) use self::grouped::grouped_told;
+pub(super) use self::grouped::grouped_batches;
 pub(super) use self::held::{Left, held_left};
 pub(super) use self::looped::{loop_degree, looped};
 use self::pipeline::Pipeline;

@@ -49,10 +49,14 @@ fn tables() -> (Database, Session) {
     db.schema(&format!(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE R {columns}
-           CREATE TABLE C {columns} USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)"
+           CREATE TABLE C {columns} USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)
+           CREATE TABLE N (K INTEGER, NAME VARCHAR(25))"
     ))
     .unwrap();
     let a = db.session("A");
+    let names: Vec<String> =
+        (0..25).map(|k| if k == 13 { format!("({k}, NULL)") } else { format!("({k}, 'nation {}')", k % 20) }).collect();
+    exec(&a, &format!("INSERT INTO N VALUES {}", names.join(", "))).unwrap();
     let insert = |(from, to): (i64, i64)| {
         for table in ["R", "C"] {
             let values: Vec<String> = (from..to).map(row).collect();
@@ -68,7 +72,7 @@ fn tables() -> (Database, Session) {
 }
 
 /// The queries each table answers alike, `{t}` its name.
-const QUERIES: [&str; 31] = [
+const QUERIES: [&str; 35] = [
     "SELECT SUM(A), SUM(D), SUM(E) FROM {t} WHERE C < 60",
     "SELECT K, A, D, T, U, S FROM {t} WHERE C < 60",
     "SELECT K, U FROM {t} WHERE C BETWEEN 100 AND 3100",
@@ -100,6 +104,10 @@ const QUERIES: [&str; 31] = [
     "SELECT SUM(D), MAX(D), COUNT(D) FROM {t} WHERE D < 0.30",
     "SELECT Y.S, COUNT(*), SUM(X.A), MAX(X.U) FROM {t} X JOIN R Y ON X.N = Y.K WHERE Y.C < 900 GROUP BY Y.S",
     "SELECT COUNT(*), SUM(X.D), MIN(X.T) FROM {t} X JOIN R Y ON X.K = Y.K JOIN R Z ON X.N = Z.K WHERE Z.C < 2000 AND X.A < 40",
+    "SELECT N.NAME, COUNT(*), MIN(X.U) FROM {t} X JOIN N ON X.A = N.K WHERE X.C < 3000 GROUP BY N.NAME",
+    "SELECT N.NAME, Y.T, X.K FROM {t} X JOIN N ON X.A = N.K JOIN R Y ON X.N = Y.K WHERE Y.C < 900",
+    "SELECT X.K, N.NAME FROM {t} X JOIN N ON X.A = N.K WHERE N.NAME LIKE '%1%' ORDER BY N.NAME, X.K FETCH FIRST 9 ROWS ONLY",
+    "SELECT COUNT(*), MAX(N.NAME) FROM {t} X JOIN N ON X.A = N.K JOIN {t} Y ON X.K = Y.K WHERE Y.C < 4000 AND N.NAME <> 'nation 3'",
 ];
 
 /// What `s` reads of table `table` by each query, sorted.

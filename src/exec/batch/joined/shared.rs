@@ -20,6 +20,7 @@
 //! by SipHash keyed by the database's seed from the first.
 
 mod found;
+mod kept;
 mod outer;
 mod paired;
 mod probing;
@@ -32,8 +33,10 @@ use crate::error::Result;
 use crate::exec::table::{Hashing, JoinTable, KeyHashes, RuntimeFilter, Seed, keys_equal, values_hash};
 use crate::kernels::Kernels;
 use crate::physical::JoinKey;
-use crate::storage::{Batch, Column, NO_ROW, Picks, Row};
+use crate::storage::{Batch, Column, NO_ROW, Picks, Row, Texts, dictionaries};
 use crate::value::{Value, key_equal};
+
+pub(in crate::exec) use self::kept::PassKept;
 
 /// A hash join's right operand, built for a pipeline's morsels.
 pub(in crate::exec) struct SharedTable {
@@ -56,6 +59,9 @@ pub(in crate::exec) struct SharedTable {
     made: Filters,
     /// The kernels its pairs' integers are gathered on (RULES.md D1083).
     kernels: Arc<dyn Kernels>,
+    /// Of each of `right`'s vectors, its texts as a dictionary if they are
+    /// made one, gathered as codes of it (RULES.md D1099).
+    dictionaries: Vec<Option<Arc<Texts>>>,
 }
 
 /// The pairs of a probing batch not yet gathered: of each, its row of the
@@ -117,7 +123,7 @@ impl Frame {
     /// How its keys are hashed for a hashed table or a runtime filter;
     /// given as numbers to a direct table if `direct` (RULES.md D601).
     pub(in crate::exec) fn hashing(&self, direct: bool) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct, kernels: None }
     }
 
     /// The runtime filter of its key `k`, if it has one (RULES.md D369).
@@ -168,6 +174,7 @@ impl SharedTable {
     /// they were made with it.
     pub(in crate::exec) fn framed(frame: Frame, table: JoinTable, made: Filters) -> SharedTable {
         let Frame { right, columns, width, places, nulls, seed, keyed } = frame;
+        let dictionaries = dictionaries(&right);
         SharedTable {
             right,
             columns,
@@ -180,6 +187,7 @@ impl SharedTable {
             shown: None,
             made,
             kernels: Arc::new(crate::kernels::Portable),
+            dictionaries,
         }
     }
 
@@ -277,6 +285,11 @@ impl SharedTable {
         self.table.parts()
     }
 
+    /// The dictionary of its vector at `a`, if it is made one.
+    fn entries(&self, a: usize) -> Option<&Arc<Texts>> {
+        self.dictionaries.get(a).and_then(Option::as_ref)
+    }
+
     /// Whether its table is direct (RULES.md D601).
     #[cfg(test)]
     pub(in crate::exec) fn is_direct(&self) -> bool {
@@ -285,13 +298,13 @@ impl SharedTable {
 
     /// How it hashes its keys.
     fn hashing(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct() }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: self.table.is_direct(), kernels: Some(&*self.kernels) }
     }
 
     /// How it hashes its keys for a hashed table or a runtime filter,
     /// never as a direct table's numbers (RULES.md D601).
     fn hashed(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct: false }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: false, kernels: Some(&*self.kernels) }
     }
 
     /// The columns of the rows of a batch that probed it, of left batches
@@ -347,9 +360,26 @@ impl SharedTable {
     ///
     /// SQLCODE -910 if a value nests deeper than a type may.
     pub(in crate::exec) fn matched(&self, batch: &Batch, left: &[usize]) -> Result<Vec<(usize, usize)>> {
-        let given: Vec<usize> = (0..batch.rows).collect();
+        self.matched_kept((batch, left), None)
+    }
+
+    /// The pairs of `matched` of the rows `kept`, if given, keeps alone
+    /// (RULES.md D1242).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a value nests deeper than a type may.
+    pub(in crate::exec) fn matched_kept(
+        &self,
+        (batch, left): (&Batch, &[usize]),
+        kept: Option<PassKept<'_>>,
+    ) -> Result<Vec<(usize, usize)>> {
+        let mut given: Vec<usize> = (0..batch.rows).collect();
         let mut hashes = KeyHashes::default();
         hashes.of_batch((batch, Some(&given)), (left, &self.nulls), self.hashing())?;
+        if let Some(kept) = kept {
+            self.kept_rows((batch, left), (&mut given, &mut hashes), kept)?;
+        }
         let mut pairs = Vec::new();
         for ((&r, &h), &miss) in given.iter().zip(&hashes.hashes).zip(&hashes.misses) {
             if miss {
@@ -394,13 +424,13 @@ impl SharedTable {
             Some(at) => at.iter().filter_map(|&a| batch.columns.get(a)).collect(),
             None => batch.columns.iter().collect(),
         };
-        let rights: Vec<&Column> = match &self.shown {
-            Some(at) => at.iter().filter_map(|&a| self.right.columns.get(a)).collect(),
-            None => self.right.columns.iter().collect(),
+        let rights: Vec<(&Column, Option<&Arc<Texts>>)> = match &self.shown {
+            Some(at) => at.iter().filter_map(|&a| self.right.columns.get(a).map(|c| (c, self.entries(a)))).collect(),
+            None => self.right.columns.iter().enumerate().map(|(a, c)| (c, self.entries(a))).collect(),
         };
         let (of_left, of_right) = (Picks::new(&pairs.0), Picks::new(&pairs.1));
         let mut columns: Vec<Column> = lefts.iter().map(|c| c.gathered_by(&of_left, &*self.kernels)).collect();
-        columns.extend(rights.iter().map(|c| c.gathered_by(&of_right, &*self.kernels)));
+        columns.extend(rights.iter().map(|(c, entries)| c.gathered_coded(&of_right, *entries, &*self.kernels)));
         drop((of_left, of_right));
         pairs.0.clear();
         pairs.1.clear();

@@ -94,7 +94,8 @@ impl Partitions {
         let columns = self.keys.iter().map(|k| if matches!(operand, Operand::Left) { k.left } else { k.right });
         let values = columns.filter_map(|c| row.get(c));
         let nulls: Vec<bool> = self.keys.iter().map(|k| k.nulls).collect();
-        let hash = values_hash(values, &nulls, Hashing { seed: &self.seed.0, keyed: true, direct: false })?.unwrap_or_default();
+        let hash =
+            values_hash(values, &nulls, Hashing { seed: &self.seed.0, keyed: true, direct: false, kernels: None })?.unwrap_or_default();
         let hash = fmix64(hash ^ self.seed.1);
         let n = u64::try_from(self.right.len()).unwrap_or(1);
         Ok(usize::try_from((hash >> TAG_BITS).checked_rem(n).unwrap_or_default()).unwrap_or_default())

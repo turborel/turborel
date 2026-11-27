@@ -443,7 +443,7 @@ impl Keys {
 
     /// As `new`, each lane with room for `room` groups once its first
     /// value tells its type.
-    pub(super) fn with_room(width: usize, room: usize) -> Keys {
+    pub(in crate::exec) fn with_room(width: usize, room: usize) -> Keys {
         Keys { lanes: (0..width).map(|_| Lane { nulls: Vec::with_capacity(room), room, ..Lane::default() }).collect() }
     }
 

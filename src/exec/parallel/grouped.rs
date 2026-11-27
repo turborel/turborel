@@ -29,17 +29,18 @@
 //! (`waves/spilled.rs`, RULES.md D1226); another gives way to the serial
 //! grouping, which spills, its rows read again in the statement's snapshot.
 
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 mod first;
 mod regrouped;
+mod runs;
 mod second;
 mod top;
 mod waves;
 
 use self::regrouped::Outer;
+use self::runs::{Ordered, Run};
 pub(super) use self::top::Top;
 
 use super::batched::ByBatch;
@@ -49,7 +50,7 @@ use super::run::Morsels;
 use super::{Held, Limit};
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
-use crate::exec::batch::{Read, Told, read_for};
+use crate::exec::batch::{Batches, Read, Told, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
@@ -90,7 +91,7 @@ type Chunks = Vec<Vec<Piece>>;
 
 /// Each partition's groups, finished with their numbers, in the order of
 /// their first rows; or that the grouping gave way.
-type Runs = Held<Vec<Vec<(u64, Row)>>>;
+type Runs = Held<Vec<Run>>;
 
 /// A partition's groups, finished with their numbers, in the order of
 /// their first rows, read back one at a time from a run of the spill
@@ -99,7 +100,7 @@ type Given = Box<dyn Iterator<Item = Result<(u64, Row)>> + Send>;
 
 /// Each partition's groups held in memory, and those read back from the
 /// spill; or that the grouping gave way.
-type Waved = Held<(Vec<Vec<(u64, Row)>>, Vec<Given>)>;
+type Waved = Held<(Vec<Run>, Vec<Given>)>;
 
 /// What a grouping groups: by `Spec`, or, of DISTINCT, by every column;
 /// and, of a pipeline read by batch, what it reads of each batch
@@ -143,15 +144,30 @@ impl Grouping {
     /// its HAVING condition is true of, or all of none, as `kept` keeps
     /// them: the condition judged of each group's row before the group
     /// takes a row of its own; in the order of their first rows. Of a
+    /// grouping under no condition, the table's groups as a batch
+    /// (RULES.md D1125), and of a sort's first rows asked, those (D1124). Of a
     /// pair, the second grouping's groups of them, then those kept: made
     /// in a table of the first's groups as a batch where the second reads
     /// them so (RULES.md D1123), else of their rows (`ended`).
-    fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
+    fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Run> {
         if let Some(top) = &self.top {
             // Its first rows alone, the number each is merged by its last
             // column (RULES.md D1124).
-            return Ok(top.of_table(table)?.into_iter().map(|row| (0, row)).collect());
+            return Ok(Run::Rows(top.of_table(table)?.into_iter().map(|row| (0, row)).collect()));
         }
+        if self.having.is_none() && self.outer.is_none() && table.in_order() {
+            // Its groups as the table holds them, a row made of each
+            // only as it is given (RULES.md D1125).
+            let (batch, firsts) = table.into_batch()?;
+            return Ok(Run::Columns(batch, firsts));
+        }
+        self.rows_of(table, runner).map(Run::Rows)
+    }
+
+    /// The groups of `table` as rows, as `kept_of` gives them of a
+    /// grouping under a HAVING condition, of a pair, and of a table whose
+    /// groups are not in the order of their first rows, put in it.
+    fn rows_of(&self, table: GroupTable, runner: &Runner) -> Result<Vec<(u64, Row)>> {
         if let Some(outer) = self.outer.as_ref().filter(|outer| outer.tabled(&table)) {
             // Its groups come in the order of the first's (RULES.md D1123).
             // The second flags the seed by its own key's columns, those
@@ -273,6 +289,48 @@ pub(super) fn grouped_asked(
     told: &[Told],
     top: Option<&Arc<Top>>,
 ) -> Result<Held<RowIter>> {
+    let Held::Kept(done) = finished_runs(plan, (db, tx, degree), told, top)? else { return Ok(Held::GaveWay) };
+    let rows = match top {
+        Some(top) => top.given(done.grouping.top.is_some(), (done.runs, done.given))?,
+        None => Box::new(Ordered::of(done.runs, done.given)?),
+    };
+    Ok(Held::Kept(done.limit.keeping(rows)))
+}
+
+/// \[DESIGN\] (RULES.md D1220, D1221) As `grouped_told`, the groups given
+/// as batches of the columns `columns`, every column of a group's row, in
+/// the order of their first rows if `ordered`, else in any. Partitions
+/// that give their tables' groups as batches give these (`runs.rs`).
+///
+/// # Errors
+///
+/// As `grouped`.
+pub(in crate::exec) fn grouped_batches(
+    plan: &Plan,
+    (db, tx, degree): (&Db, TxId, usize),
+    told: &[Told],
+    (columns, ordered): (&[usize], bool),
+) -> Result<Held<Batches>> {
+    let Held::Kept(done) = finished_runs(plan, (db, tx, degree), told, None)? else { return Ok(Held::GaveWay) };
+    runs::batches((done.runs, done.given), (columns, ordered), &done.limit).map(Held::Kept)
+}
+
+/// A grouping's partitions finished: the grouping, each partition's
+/// groups, those read back from the spill, and the grant that holds them.
+struct Finished {
+    grouping: Arc<Grouping>,
+    runs: Vec<Run>,
+    given: Vec<Given>,
+    limit: Limit,
+}
+
+/// The partitions of the grouping `plan` finished, as `grouped_asked`
+/// gives their groups; or that the part gave way.
+///
+/// # Errors
+///
+/// As `grouped`.
+fn finished_runs(plan: &Plan, (db, tx, degree): (&Db, TxId, usize), told: &[Told], top: Option<&Arc<Top>>) -> Result<Held<Finished>> {
     let (plan, having) = if let Plan::Filter { cond, input, .. } = plan { (&**input, Some(cond.clone())) } else { (plan, None) };
     // Of a pair (RULES.md D1113), the part's pipeline is the first
     // grouping's input, told no filter, as those a join tells it are of
@@ -300,18 +358,14 @@ pub(super) fn grouped_asked(
     // Of a second grouping crossing the first's partitions, its groups
     // merged here of theirs, then those its HAVING keeps (RULES.md D1133, D1228).
     if let Some(crossing) = grouping.outer.as_ref().filter(|o| o.crosses()) {
-        let Some(merged) = crossing.merged(|groups| grouping.kept(groups, &Runner::new(db, tx)))? else { return Ok(Held::GaveWay) };
-        (runs, given) = merged;
+        let Some((merged, read)) = crossing.merged(|groups| grouping.kept(groups, &Runner::new(db, tx)))? else { return Ok(Held::GaveWay) };
+        (runs, given) = (merged.into_iter().map(Run::Rows).collect(), read);
     }
-    if runs.iter().all(Vec::is_empty) && given.is_empty() && grouping.spec.groups.is_empty() && !grouping.distinct {
+    if runs.iter().all(Run::is_empty) && given.is_empty() && grouping.spec.groups.is_empty() && !grouping.distinct {
         // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
-        runs = vec![grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?];
+        runs = vec![Run::Rows(grouping.kept(vec![(0, finished(fresh(&grouping.spec.aggs), Vec::new())?)], &Runner::new(db, tx))?)];
     }
-    let rows = match top {
-        Some(top) => top.given(grouping.top.is_some(), (runs, given))?,
-        None => Box::new(Ordered::of(runs, given)?),
-    };
-    Ok(Held::Kept(limit.keeping(rows)))
+    Ok(Held::Kept(Finished { grouping, runs, given, limit }))
 }
 
 /// The grouping `plan` is, a grouping or DISTINCT, under the HAVING
@@ -345,66 +399,9 @@ fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&
     let (merging, db_for) = (Arc::clone(grouping), db.clone());
     let merge = Box::new(move |p: usize| {
         let taken = chunks.get(p).map(|c| std::mem::take(&mut *c.lock().unwrap_or_else(PoisonError::into_inner))).unwrap_or_default();
-        merging.ended(merged(&merging, p, taken)?, &Runner::new(&db_for, tx))
+        merging.ended(merged(&merging, p, taken)?, &Runner::new(&db_for, tx)).map(Run::Rows)
     });
     Morsels::start(db, tx, (PARTS, degree), merge).collect::<Result<Vec<_>>>().map(Held::Kept)
-}
-
-/// The groups of each partition, each partition's in the order of their
-/// first rows, given in that order: of the partitions' first groups not
-/// yet given, the earliest, as a merge of sorted runs takes them.
-struct Ordered {
-    runs: Vec<Given>,
-    /// Each run's group next given, if any.
-    heads: Vec<Option<Row>>,
-    /// The heads' first rows' numbers, each with its run, earliest first.
-    order: BinaryHeap<Reverse<(u64, usize)>>,
-}
-
-impl Ordered {
-    /// The groups of the runs `held` and `given`, each in order.
-    ///
-    /// # Errors
-    ///
-    /// As reading a run back fails.
-    fn of(held: Vec<Vec<(u64, Row)>>, given: Vec<Given>) -> Result<Ordered> {
-        let held = held.into_iter().map(|run| -> Given { Box::new(run.into_iter().map(Ok)) });
-        let runs: Vec<Given> = held.chain(given).collect();
-        let mut ordered = Ordered { heads: runs.iter().map(|_| None).collect(), order: BinaryHeap::with_capacity(runs.len()), runs };
-        for at in 0..ordered.runs.len() {
-            ordered.advance(at)?;
-        }
-        Ok(ordered)
-    }
-
-    /// Takes run `at`'s next group as its head, if it has one.
-    ///
-    /// # Errors
-    ///
-    /// As reading the run back fails.
-    fn advance(&mut self, at: usize) -> Result<()> {
-        let (Some(head), Some(run)) = (self.heads.get_mut(at), self.runs.get_mut(at)) else {
-            return Err(broken("a partition's groups are missing"));
-        };
-        *head = run.next().transpose()?.map(|(first, next)| {
-            self.order.push(Reverse((first, at)));
-            next
-        });
-        Ok(())
-    }
-}
-
-impl Iterator for Ordered {
-    type Item = Result<Row>;
-
-    fn next(&mut self) -> Option<Result<Row>> {
-        let Reverse((_, at)) = self.order.pop()?;
-        let row = self.heads.get_mut(at).and_then(Option::take);
-        if let Err(e) = self.advance(at) {
-            return Some(Err(e));
-        }
-        row.map(Ok)
-    }
 }
 
 /// The pieces of `pipeline`'s rows under `grouping`, each morsel's made

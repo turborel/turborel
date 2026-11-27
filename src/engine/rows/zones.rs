@@ -59,17 +59,20 @@
 //! Kept in memory, and with the table's pages at each checkpoint
 //! (`zones/saved.rs`), so a table opened knows the zones its last
 //! checkpoint saved, those it did not save read whole until the
-//! maintenance thread has summed each up. Kept are numbers, datetimes,
+//! maintenance thread has summed each up. That it does only once a zone
+//! of the table is asked for after it opens, so a start costs no pass
+//! over a table nothing reads (`zones/cold.rs`, RULES.md D1212). Kept are numbers, datetimes,
 //! intervals, and character strings of at most `SHORT` characters, so a
 //! zone takes a few bytes of each row.
 
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use super::counted::Live;
 use crate::engine::record::RecordFormat;
+use crate::spill::WorkAreas;
 use crate::storage::{Conjunct, Conjunction, Row, RowId};
 use crate::sync::lock_builtin;
 use crate::value::{DataType, Value, compare};
@@ -163,6 +166,15 @@ pub(super) struct Zones {
     /// Whether zones are kept: not until one is asked for
     /// (`zones/cold.rs`, RULES.md D868).
     warm: AtomicBool,
+    /// Whether a zone was asked for since the table was made or opened:
+    /// until one is, a table opened has none summed up (RULES.md D1212).
+    asked: AtomicBool,
+    /// Whether the table was opened, its zones due then held back until
+    /// one is asked for. Only such a table tells of its first ask.
+    held: AtomicBool,
+    /// The work areas its store is attached to, once it is, which are
+    /// told of the first ask (`spill/asks.rs`).
+    work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
     /// The table's row ids given so far: one past them.
     given: Arc<AtomicU64>,
     /// The versions superseded while the table was cold, not yet collected.
@@ -282,6 +294,9 @@ impl Zones {
             growing: Mutex::new(()),
             unknown_below: AtomicU64::new(0),
             warm: AtomicBool::new(false),
+            asked: AtomicBool::new(false),
+            held: AtomicBool::new(false),
+            work: Arc::default(),
             given: Arc::default(),
             owed: Live::new(),
             stale: AtomicUsize::new(0),
@@ -299,6 +314,12 @@ impl Zones {
     /// The zones, of a table whose row ids given so far are below `given`.
     pub(super) fn over(mut self, given: Arc<AtomicU64>) -> Zones {
         self.given = given;
+        self
+    }
+
+    /// The zones, their first ask told to `work`, its store's work areas.
+    pub(super) fn telling(mut self, work: Arc<RwLock<Option<Arc<WorkAreas>>>>) -> Zones {
+        self.work = work;
         self
     }
 
@@ -568,3 +589,7 @@ mod rested;
 // R-TEST-7, R-TEST-8).
 #[cfg(test)]
 mod costs;
+// Unit tests: a table opened has no zone summed up until one is asked
+// for (RULES.md R-TEST-1, R-TEST-7, R-TEST-8).
+#[cfg(test)]
+mod asked;

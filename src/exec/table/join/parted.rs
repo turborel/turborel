@@ -291,7 +291,7 @@ mod tests {
         let batch = Batch { columns: vec![Column::Ints(ints)], rows: 4 };
         let hashes = |direct: bool| {
             let mut out = KeyHashes::default();
-            out.of_batch((&batch, None), (&[0], &[true]), Hashing { seed: &seed, keyed: false, direct }).unwrap();
+            out.of_batch((&batch, None), (&[0], &[true]), Hashing { seed: &seed, keyed: false, direct, kernels: None }).unwrap();
             out.hashes
         };
         assert_eq!(numbers_hashed(&hashes(true), &seed), hashes(false));

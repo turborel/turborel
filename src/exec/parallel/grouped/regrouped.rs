@@ -22,6 +22,14 @@
 //! rows are taken. A projection that fails in a partition gives the whole
 //! part way to the serial plan, which raises what it raises, as the rows
 //! it fails of are then met in their order.
+//!
+//! \[DESIGN\] (RULES.md D1219) A second grouping by no column whose set
+//! functions are COUNT alone, as COUNT(DISTINCT) of no GROUP BY is made,
+//! crosses the partitions too: its one group takes groups of every
+//! partition, each partition's thread counts its own, and the statement's
+//! thread merges the counts, one group even of no rows. With no
+//! projection between the two, a partition's groups of the first are
+//! read as a batch from their table (`second.rs`), no row made of one.
 
 mod crossing;
 
@@ -56,10 +64,10 @@ pub(super) struct Outer {
     /// last; its partitions' groups, each with its first and its states
     /// written; and whether a projection failed in one.
     crossing: Option<Crossing>,
-    /// \[DESIGN\] (RULES.md D1123) What it reads of the first's groups
-    /// given as a batch, if it reads them so (`second.rs`): of one that
-    /// crosses no partition, each set function as a grouping by batch
-    /// takes it.
+    /// \[DESIGN\] (RULES.md D1123, D1219) What it reads of the first's
+    /// groups given as a batch, if it reads them so (`second.rs`): of one
+    /// with no projection between the two, each set function as a
+    /// grouping by batch takes it.
     read: Option<Read>,
 }
 
@@ -75,7 +83,9 @@ impl Outer {
         // [EXTENSION] The first grouping counted as its groups are made
         // (RULES.md D378).
         let count = if let Plan::Counted(c) = below { Some(Arc::clone(&c.count)) } else { None };
-        let steps = steps.into_iter().map(<[Expr]>::to_vec).collect();
+        let steps: Vec<Vec<Expr>> = steps.into_iter().map(<[Expr]>::to_vec).collect();
+        // Through a projection its groups are made rows, each evaluated.
+        let batched = steps.is_empty();
         let crossing = crosses(plan).then(|| Crossing::new(steps));
         let projected = counted_between(input, 0);
         for c in count.iter().chain(&projected) {
@@ -85,7 +95,7 @@ impl Outer {
         // key is the text itself are grouped unpadded, as the first's are
         // (RULES.md D1184).
         let unpadded = unpadded_keys(collations)?;
-        let read = if crossing.is_none() { read_for(groups, aggs, &layout).map(|read| Read { unpadded, ..read }) } else { None };
+        let read = if batched { read_for(groups, aggs, &layout).map(|read| Read { unpadded, ..read }) } else { None };
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: Vec::new() };
         Some((Outer { spec, count, projected, crossing, read }, first))
     }
@@ -158,8 +168,9 @@ impl Outer {
 
     /// [X3.135-1986 §5.22 GR2] The groups of `first`, a partition's
     /// groups of the first grouping it groups in a table (`tabled`), as
-    /// `regrouped` gives them of the same groups; none of one it does not
-    /// read so.
+    /// `regrouped` gives them of the same groups, those of one that
+    /// crosses the partitions kept written and none given; none of one
+    /// it does not read so.
     ///
     /// # Errors
     ///
@@ -169,7 +180,20 @@ impl Outer {
         self.counted(first.len());
         // Its keys are hashed and compared as its own columns are grouped,
         // each by its place in its key (RULES.md D1184).
-        super::second::regrouped(first, (read, &self.spec.aggs), (runner, &seed.unpadded(&read.unpadded)))
+        let table = super::second::regrouped(first, (read, &self.spec.aggs), (runner, &seed.unpadded(&read.unpadded)))?;
+        let Some(crossing) = &self.crossing else { return table.finished() };
+        // Of one that crosses the partitions, each group's states written
+        // for the statement's thread to merge (RULES.md D1219).
+        let written = (0..table.len()).map(|g| {
+            let states = (0..table.functions()).map(|a| {
+                let mut state = Vec::new();
+                table.write_state((g, a), &mut state);
+                state
+            });
+            (table.first(g), table.values(g), states.collect())
+        });
+        crossing.add(&self.spec, written.collect(), runner)?;
+        Ok(Vec::new())
     }
 
     /// `row`, a group of the first, through the projections between the

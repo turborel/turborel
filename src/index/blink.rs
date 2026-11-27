@@ -192,6 +192,7 @@ impl Drop for BLinkIndex {
 mod encoded;
 mod entries;
 mod range;
+mod sorted;
 mod value;
 
 use entries::{Borrowed, Held};
@@ -329,6 +330,11 @@ impl Index for BLinkIndex {
             put_value_of(into, count.saturating_add(1), hint_for(row, old)?);
             Ok(Updated::Put)
         })
+    }
+
+    /// Each written in key order, a leaf's run at a time (RULES.md D1235).
+    fn insert_sorted(&self, entries: &[(Key, RowId)], _alone: bool) -> Result<Vec<bool>> {
+        self.sorted(entries)
     }
 
     /// Built whole: the entries' tree keys sorted in a spill area of `work`,

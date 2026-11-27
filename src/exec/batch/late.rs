@@ -45,13 +45,18 @@ pub(in crate::exec) struct Deferred {
     /// key's column of the subtree's rows and the bound it raises, told
     /// the scan (RULES.md D379).
     bound: Bound,
+    /// \[DESIGN\] (RULES.md D1221) Whether what reads the subtree finds
+    /// its rows by a key no two of them share, so the order they are
+    /// given in shows in nothing it gives. A projection of columns hands
+    /// it on to its input, and no other operator does.
+    any_order: bool,
 }
 
 impl Deferred {
     /// Of a stream read whole, its rows `width` columns wide: no column read
     /// yet, no row dropped.
     pub(in crate::exec) fn all(width: usize) -> Deferred {
-        Deferred { reduced: false, unread: (0..width).collect(), bound: None, told: Vec::new() }
+        Deferred { reduced: false, unread: (0..width).collect(), ..Deferred::default() }
     }
 
     /// \[DESIGN\] (RULES.md D379, D380) Of a sort's input of which only the
@@ -59,7 +64,7 @@ impl Deferred {
     /// read, rows dropped, as the sort keeps those rows alone; and the
     /// bound of its first key, `bound`, told the scan if given.
     pub(in crate::exec) fn topped(&self, keys: &[usize], bound: Bound) -> Deferred {
-        Deferred { reduced: true, unread: without(&self.unread, keys), bound, told: Vec::new() }
+        Deferred { reduced: true, unread: without(&self.unread, keys), bound, ..Deferred::default() }
     }
 
     /// Whether it leaves any column unread, or tells a bound.
@@ -85,7 +90,7 @@ impl Deferred {
         // A condition that can raise sees every row, so no group is passed
         // over under it.
         let bound = self.bound.clone().filter(|_| !cond.can_raise());
-        Deferred { reduced: true, unread: without(&self.unread, &read), bound, told: Vec::new() }
+        Deferred { reduced: true, unread: without(&self.unread, &read), bound, ..Deferred::default() }
     }
 
     /// \[DESIGN\] (RULES.md D1063) Of the input of runtime filters judged
@@ -93,7 +98,7 @@ impl Deferred {
     /// dropped, as a filter keeps only rows its join may match, so the
     /// columns no step reads before are decoded of those rows alone.
     pub(in crate::exec) fn judged(&self, columns: &[usize]) -> Deferred {
-        Deferred { reduced: true, unread: without(&self.unread, columns), bound: self.bound.clone(), told: Vec::new() }
+        Deferred { reduced: true, unread: without(&self.unread, columns), bound: self.bound.clone(), ..Deferred::default() }
     }
 
     /// Of a projection's input, `exprs` its expressions: a column one of
@@ -138,7 +143,9 @@ impl Deferred {
         unread.dedup();
         // The bound's column moved to the column it is of.
         let bound = self.bound.as_ref().and_then(|(at, t)| moved.get(*at).copied().flatten().map(|c| (c, Arc::clone(t))));
-        Deferred { reduced: self.reduced, unread: without(&unread, &read), bound, told: Vec::new() }
+        // A projection of columns gives its input's rows in their order,
+        // so what may come in any order of it may of its input (RULES.md D1221).
+        Deferred { reduced: self.reduced, unread: without(&unread, &read), bound, any_order: self.any_order, told: Vec::new() }
     }
 
     /// Of an inner hash join's left operand, `width` columns wide, `keys`
@@ -147,7 +154,7 @@ impl Deferred {
     pub(in crate::exec) fn left_of(&self, keys: &[JoinKey], width: usize) -> Deferred {
         let read: Vec<usize> = keys.iter().map(|k| k.left).collect();
         let unread: Vec<usize> = self.unread.iter().copied().filter(|&c| c < width).collect();
-        Deferred { reduced: true, unread: without(&unread, &read), bound: None, told: Vec::new() }
+        Deferred { reduced: true, unread: without(&unread, &read), ..Deferred::default() }
     }
 
     /// The runtime filters told it.
@@ -158,6 +165,18 @@ impl Deferred {
     /// It, told `told` in place of the filters it was.
     pub(in crate::exec) fn with_told(self, told: Vec<Told>) -> Deferred {
         Deferred { told, ..self }
+    }
+
+    /// \[DESIGN\] (RULES.md D1221) It, of a reader that finds the
+    /// subtree's rows by a key no two of them share if `keyed`, so it
+    /// may be given them in any order.
+    pub(in crate::exec) fn in_any_order(self, keyed: bool) -> Deferred {
+        Deferred { any_order: keyed, ..self }
+    }
+
+    /// Whether the subtree's rows may be given in any order.
+    pub(in crate::exec) fn any_order(&self) -> bool {
+        self.any_order
     }
 
     /// The columns of a scan of `columns` it gives late: those left unread,

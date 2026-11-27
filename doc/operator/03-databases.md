@@ -233,8 +233,11 @@ The database does some of its work in the background: its checkpoints;
 its maintenance, which gathers tables' statistics (a table's, after
 the database opens, once a query first plans with it, which plans
 without them meanwhile), counts the distinct keys of an index that has
-not kept them (the same way: once a query first plans with it), and
-freezes the rows of the column store; the syncs of its log that
+not kept them (the same way: once a query first plans with it), sums
+up tables' zone maps (a table's, after the database opens, once a
+statement first asks them, by a scan with a condition, a count of its
+rows or a read of an index alone, so a start does no such work for a
+table nothing reads), and freezes the rows of the column store; the syncs of its log that
 commits of LOG.COMMIT_SYNC OFF leave for LOG.SYNC_AFTER_MS
 ([Settings](04-settings.md#a-sessions-own)); and the pages its scans
 read ahead ([A database's directory](#a-databases-directory)), which a

@@ -10,7 +10,10 @@
 //! and no accumulator a group where a column holds the states. A group of
 //! the second is numbered by its first group of the first, and each set
 //! function takes its values in the first's order, as
-//! `regrouped.rs` feeds them a row at a time.
+//! `regrouped.rs` feeds them a row at a time. Its reader finishes the
+//! groups, or, of a second grouping that crosses the first's partitions,
+//! writes their states for the statement's thread to merge (RULES.md
+//! D1219).
 
 use crate::error::Result;
 use crate::exec::Runner;
@@ -22,12 +25,13 @@ use crate::storage::Row;
 /// [X3.135-1986 §5.22 GR2] The groups `read` and `aggs` make of `first`,
 /// a partition's groups of the first grouping in the order of their
 /// first rows, keyed by hashes of `seed`: each numbered by its first
-/// group of the first, in that order, finished.
+/// group of the first, in that order, in their table, for its reader to
+/// finish or to write.
 ///
 /// # Errors
 ///
 /// As a set function fails.
-pub(super) fn regrouped(first: GroupTable, (read, aggs): (&Read, &[AggCall]), (runner, seed): (&Runner, &Seed)) -> Result<Vec<(u64, Row)>> {
+pub(super) fn regrouped(first: GroupTable, (read, aggs): (&Read, &[AggCall]), (runner, seed): (&Runner, &Seed)) -> Result<GroupTable> {
     let (batch, firsts) = first.into_batch()?;
     let mut table = GroupTable::new(read.groups.len(), aggs, seed, usize::MAX);
     let mut hashes = Vec::new();
@@ -38,5 +42,5 @@ pub(super) fn regrouped(first: GroupTable, (read, aggs): (&Read, &[AggCall]), (r
     }
     let fed = lanes(&read.taken, &batch, None);
     table.feed(&batch, (&read.taken, &fed), (&mut Row::new(), runner))?;
-    table.finished()
+    Ok(table)
 }

@@ -44,6 +44,7 @@ const BATCH_ROWS: usize = 4096;
 /// record stays well within a log segment and a replay holds little.
 const RECORD_BYTES: usize = 1 << 20;
 
+pub(super) mod keyed;
 pub(super) mod load;
 
 /// An index the rows of a table go to, and where its entries are.
@@ -71,15 +72,16 @@ pub(in crate::db) struct Together<'s> {
     grouped: Option<usize>,
     /// Whether the table qualifies for extents, so a load goes to groups
     /// by default: no index, no constraint but NOT NULL, no large object
-    /// column (RULES.md D1147). A trigger's table loads none at all.
+    /// column (RULES.md D1147); of a load by column, of keys and indexes
+    /// too (D1235). A trigger's table loads none at all.
     qualifies: bool,
 }
 
 /// The rows of a batch gone in: their ids, in order, and of each whether
 /// its key was its key's only entry in every unique index.
 pub(in crate::db) struct Gone {
-    ids: Vec<RowId>,
-    alone: Vec<bool>,
+    pub(in crate::db) ids: Vec<RowId>,
+    pub(in crate::db) alone: Vec<bool>,
 }
 
 impl State {
@@ -204,41 +206,55 @@ fn qualifies(desc: &TableDesc) -> bool {
     desc.constraints.iter().all(own) && !desc.columns.iter().any(lob)
 }
 
-impl Together<'_> {
-    /// Whether its table qualifies for extents (RULES.md D1147).
-    pub(in crate::db) fn qualifies(&self) -> bool {
-        self.qualifies
-    }
-}
-
 impl State {
-    /// \[DESIGN\] RULES.md D1148: puts the rows `columns` holds, the
-    /// columns of the table of `together` each by its records, in its
+    /// \[DESIGN\] RULES.md D1148, D1235: puts the rows `columns` holds,
+    /// the columns of the table of `together` each by its records, in its
     /// storage as one group, if its load writes groups of as many rows or
-    /// more and the storage takes them so, and logs it: its extent as its record, else its rows,
-    /// decoded, as `stored_together` logs rows. Their ids, in order; none
-    /// if the group was not written, so the rows go in as rows.
+    /// more and the storage takes them so, logs it, its extent as its
+    /// record, else its rows, decoded, as `stored_together` logs rows, and
+    /// adds their entries to its indexes (`keyed.rs`). Their ids, in
+    /// order, and whether each was alone in every unique index; none if
+    /// the group was not written, so the rows go in as rows.
     ///
     /// # Errors
     ///
-    /// As `prepare_write`, `Loading::insert_records` and logging.
-    pub(in crate::db) fn insert_records(&self, tx: &Txn, together: &Together<'_>, columns: &[Records]) -> Result<Option<Vec<RowId>>> {
+    /// As `prepare_write`, `Loading::insert_records`, logging and
+    /// `index_group`.
+    pub(in crate::db) fn insert_records(&self, tx: &Txn, together: &Together<'_>, columns: &[Records]) -> Result<Option<Gone>> {
         let count = columns.first().map_or(0, Records::len);
         // A group takes as many rows as its load's groups do at most, as rows given are split.
         let fits = together.grouped.filter(|&most| count <= most);
         let Some(loading) = fits.and_then(|_| together.storage.loading()) else { return Ok(None) };
         self.prepare_write(tx, together.table)?;
+        // Held to the last entry, so a checkpoint holds the group and its entries or neither.
         let _gate = self.tx.gate.enter();
-        let Some(loaded) = loading.insert_records(tx.id, columns, together.indexes.is_empty())? else { return Ok(None) };
+        let Some(loaded) = loading.insert_records(tx.id, columns, true)? else { return Ok(None) };
+        let logged = self.logged_records(tx, together, columns, &loaded)?;
+        if together.indexes.is_empty() {
+            return Ok(Some(Gone { alone: vec![true; loaded.ids.len()], ids: loaded.ids }));
+        }
+        let desc = self.table_desc(together.table)?;
+        let rows = match logged {
+            Some(rows) => rows,
+            None => keyed::sparse_rows(desc, columns, &together.key_reads())?,
+        };
+        let alone = Self::index_group(tx, together, (&rows, &loaded.ids))?;
+        Ok(Some(Gone { ids: loaded.ids, alone }))
+    }
+
+    /// Logs the group `loaded`, of the rows `columns` holds, if the table
+    /// of `together` logs its changes: its extent as its record, else its
+    /// rows, decoded, which it gives.
+    fn logged_records(&self, tx: &Txn, together: &Together<'_>, columns: &[Records], loaded: &Loaded) -> Result<Option<Vec<Row>>> {
         if !together.logs {
-            return Ok(Some(loaded.ids));
+            return Ok(None);
         }
         let table = together.table;
         if let Some(extent) = &loaded.extent {
             let span = (loaded.ids.first().copied().unwrap_or_default(), loaded.ids.last().copied().unwrap_or_default());
             let head = group_record_head(tx.id, (table, self.generation_of(table)), span, extent.len());
             tx.log_parts(&[&head, extent], u64::try_from(loaded.ids.len()).unwrap_or(u64::MAX))?;
-            return Ok(Some(loaded.ids));
+            return Ok(None);
         }
         let rows = self.decoded_rows(table, columns)?;
         let mut from = 0;
@@ -249,13 +265,18 @@ impl State {
             tx.log_encoded(&record, u64::try_from(made.len()).unwrap_or(u64::MAX))?;
             from = from.saturating_add(taken);
         }
-        Ok(Some(loaded.ids))
+        Ok(Some(rows))
+    }
+
+    /// The description of `table`.
+    fn table_desc(&self, table: &QualifiedName) -> Result<&TableDesc> {
+        self.catalog.table(table).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {table} does not exist")))
     }
 
     /// The rows of `columns`, the columns of `table` each by its records,
     /// each value decoded.
     fn decoded_rows(&self, table: &QualifiedName, columns: &[Records]) -> Result<Vec<Row>> {
-        let desc = self.catalog.table(table).ok_or_else(|| SqlError::new(Code::Api, format!("[DESIGN] {table} does not exist")))?;
+        let desc = self.table_desc(table)?;
         let bad = || SqlError::new(Code::Corrupt, format!("[DESIGN] a record of a load into {table} does not decode"));
         (0..columns.first().map_or(0, Records::len))
             .map(|n| {

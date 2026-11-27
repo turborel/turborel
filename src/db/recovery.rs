@@ -501,6 +501,9 @@ impl State {
     /// Takes back every entry of the row `change` touched under the keys
     /// of its images, in each index `kept` chooses.
     fn take_back_images(&self, change: &RowChange, kept: &impl Fn(&IndexDesc) -> bool) -> Result<()> {
+        if let Some((_, extent)) = &change.group {
+            return self.take_back_group(change, extent, kept);
+        }
         // A dropped table has no indexes left to mend (`Database::redo`).
         for (ix, partition) in self.table_indexes(&change.table).into_iter().filter(|(ix, _)| kept(ix)) {
             let (index, id) = (self.index_of(&ix.name)?, Self::entry_id(partition, change.row)?);
@@ -518,7 +521,7 @@ impl State {
             return Ok(());
         }
         if let Some((last, _)) = &change.group {
-            return (change.row..=*last).try_for_each(|row| self.restore_entry(&groups::row_of(change, row), kept));
+            return self.restore_group(change, *last, kept);
         }
         let Some(now) = self.storage_of(&change.table)?.get(NO_TRANSACTION, change.row)? else { return Ok(()) };
         for (ix, partition) in self.table_indexes(&change.table).into_iter().filter(|(ix, _)| kept(ix)) {

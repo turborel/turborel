@@ -267,6 +267,8 @@ impl Zones {
         }
         self.stale.store(stale, AtomicOrdering::Release);
         self.unsettled.store(unsettled, AtomicOrdering::Release);
+        // [DESIGN] RULES.md D1212: those due wait until one is asked for.
+        self.opened();
         Ok(())
     }
 

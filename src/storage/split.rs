@@ -5,7 +5,9 @@
 //! every row the scan they split gives, once each, as the transaction
 //! that asked for them sees it.
 
-use super::{Batches, Rows};
+use std::sync::Arc;
+
+use super::{Batches, Conjunct, Rows};
 
 /// \[DESIGN\] A scan of a table split into morsels (`TableStorage::split`).
 /// It holds what the scan holds, its reader and the table's parts as they
@@ -28,6 +30,15 @@ pub trait Split: Send + Sync {
     /// hold the rows `morsel` gives, in its order.
     fn morsel_batches(&self, n: usize, late: &[usize]) -> Option<Batches> {
         let _ = (n, late);
+        None
+    }
+
+    /// \[DESIGN\] (RULES.md D1241) The same split, each morsel reading the
+    /// same rows, told `more` beside its condition, a conjunct that is
+    /// true of every row its reader wants, as the bound of a sort of its
+    /// first rows is: none, the default, if its engine takes none.
+    fn told(&self, more: Conjunct) -> Option<Arc<dyn Split>> {
+        let _ = more;
         None
     }
 }

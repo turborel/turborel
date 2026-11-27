@@ -124,7 +124,7 @@ impl RowTable {
         // skips the tree's blocks as it does frozen chunks; kept in memory
         // only, as its rows are soon frozen (`rows/frozen/batches.rs`).
         let next = Arc::new(AtomicU64::new(reserved));
-        let zones = Arc::new(Zones::new(types, true, place).over(Arc::clone(&next)));
+        let zones = Arc::new(Zones::new(types, true, place).over(Arc::clone(&next)).telling(Arc::clone(&files.work)));
         // A table of the column store reads by zone from the first; any
         // other keeps none until one is asked for (`zones/cold.rs`).
         if options.columns.is_some() {

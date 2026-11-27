@@ -12,7 +12,9 @@ use crate::common::{exec, rows};
 
 /// Tables C, of the column store in groups of 2048, and R, of the row
 /// store, alike: K, a key; G, one of 500, null for every 41st; N, a
-/// number, null for every 13th.
+/// number, null for every 13th. And D, of the column store, of as many
+/// rows: K, a key; A, one of 7; B, one of 60, so 420 pairs of them, more
+/// than a morsel's thread merges alone, so the partitions hold them.
 fn tables() -> (Database, Session) {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
@@ -20,7 +22,8 @@ fn tables() -> (Database, Session) {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE C (K INTEGER PRIMARY KEY, G INTEGER, N INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)
-           CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, N INTEGER)",
+           CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, N INTEGER)
+           CREATE TABLE D (K INTEGER PRIMARY KEY, A INTEGER, B INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
     )
     .unwrap();
     let a = db.session("A");
@@ -31,6 +34,8 @@ fn tables() -> (Database, Session) {
             .collect();
         a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
     }
+    let pairs: Vec<String> = (0_i64..7000).map(|k| format!("({k}, {}, {})", k % 7, k % 60)).collect();
+    a.run(&format!("INSERT INTO D VALUES {}", pairs.join(", "))).unwrap();
     a.commit().unwrap();
     db.maintain().unwrap();
     (db, a)
@@ -147,8 +152,8 @@ fn a_join_over_a_grouping_reads_it_by_batch() {
 /// alone gives, in its order: of counts that many groups tie on, where
 /// the earlier group comes first, by a set function and then a key, past
 /// an offset, by a key with a null, of a column given twice, of more rows
-/// than there are groups, and of the row store, whose groups are made of
-/// rows.
+/// than there are groups, of a projection that gives constants beside
+/// its columns, and of the row store, whose groups are made of rows.
 #[test]
 fn the_first_rows_of_a_sort_over_a_grouping_are_the_plans() {
     let (_db, a) = tables();
@@ -160,6 +165,7 @@ fn the_first_rows_of_a_sort_over_a_grouping_are_the_plans() {
             "SELECT G, MAX(K) FROM {t} GROUP BY G ORDER BY G DESC FETCH FIRST 3 ROWS ONLY",
             "SELECT G, G, COUNT(*) FROM {t} GROUP BY G ORDER BY 3 DESC FETCH FIRST 4 ROWS ONLY",
             "SELECT N, COUNT(*) FROM {t} GROUP BY N ORDER BY 2 DESC FETCH FIRST 1000 ROWS ONLY",
+            "SELECT 1, G, COUNT(*), 'x' FROM {t} GROUP BY G ORDER BY 3 DESC FETCH FIRST 6 ROWS ONLY",
         ] {
             let sql = shape.replace("{t}", table);
             let (alone, together, shown) = both(&a, &sql);
@@ -185,6 +191,68 @@ fn a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups() {
         "SELECT G, COUNT(*) + 1 FROM C GROUP BY G ORDER BY 2 DESC FETCH FIRST 5 ROWS ONLY",
     ] {
         let (alone, together, _) = both(&a, sql);
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+}
+
+/// Verifies: [X3.135-1986 §5.22 GR2] (RULES.md D1125) a grouping run in
+/// parallel with no HAVING condition, whose partitions give their
+/// tables' groups as batches, gives the groups the plan run alone gives,
+/// in its order: of counts, sums and extremes, a null key and null
+/// values among them, and read by a join.
+#[test]
+fn a_grouping_run_in_parallel_gives_its_tables_groups() {
+    let (_db, a) = tables();
+    for sql in [
+        "SELECT G, COUNT(*), COUNT(N), SUM(N), MIN(N), MAX(K) FROM C GROUP BY G",
+        "SELECT N, COUNT(*), SUM(K) FROM C GROUP BY N",
+        "SELECT COUNT(*), SUM(X.S) FROM C JOIN (SELECT G, SUM(N) AS S FROM C GROUP BY G) AS X ON X.G = C.K",
+    ] {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(shown.contains("Parallel"), "{sql}\n{shown}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+}
+
+/// Whether `shown`, a plan, has a grouping that is a part run in
+/// parallel: the line after a `Parallel` line begins with `Aggregate`.
+fn grouped_part(shown: &str) -> bool {
+    let lines: Vec<&str> = shown.lines().map(str::trim_start).collect();
+    lines
+        .windows(2)
+        .any(|pair| pair.first().is_some_and(|l| l.starts_with("Parallel")) && pair.get(1).is_some_and(|l| l.starts_with("Aggregate")))
+}
+
+/// Verifies: [ISO/IEC 9075:1992 §7.5 GR1] (RULES.md D1221) a join that
+/// builds of a grouping run in parallel on keys holding every grouping
+/// column, which is handed the partitions' groups in any order, gives the
+/// rows the plan run alone gives, in its order: an inner join and a LEFT
+/// join of a derived table, whose projection lies between, a semi join
+/// on the key and a set function, and a grouping of two columns keyed by
+/// both, as a step of a pipeline run in parallel and run alone over the
+/// first rows of a sort. A join on one of two grouping columns finds
+/// several groups of a key and gives them in the order the plan run alone
+/// does, either way, and so does a FULL join its unmatched groups.
+#[test]
+fn a_join_keyed_by_a_groupings_columns_gives_the_plans_rows() {
+    let (_db, a) = tables();
+    for sql in [
+        "SELECT C.K, X.G, X.S FROM C JOIN (SELECT G, SUM(N) AS S FROM C GROUP BY G) AS X ON X.G = C.K",
+        "SELECT R.K, X.G, X.S FROM R JOIN (SELECT G, SUM(N) AS S FROM R GROUP BY G) AS X ON X.G = R.K",
+        "SELECT C.K, X.S FROM C LEFT JOIN (SELECT G, COUNT(*) AS S FROM C GROUP BY G) AS X ON X.G = C.K",
+        "SELECT K, N FROM C WHERE (K, N) IN (SELECT G, MIN(N) FROM C GROUP BY G)",
+        "SELECT D.K, X.S FROM D JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.A = D.A AND X.B = D.B",
+        "SELECT D.K, X.A, X.S FROM D JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.B = D.A",
+        "SELECT L.K, X.S FROM (SELECT K, A, B FROM D ORDER BY K FETCH FIRST 6000 ROWS ONLY) AS L \
+         JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.A = L.A AND X.B = L.B",
+        "SELECT L.K, X.A, X.S FROM (SELECT K, A, B FROM D ORDER BY K FETCH FIRST 6000 ROWS ONLY) AS L \
+         JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.B = L.A",
+        "SELECT C.K, X.G, X.S FROM C FULL JOIN (SELECT G, SUM(N) AS S FROM C GROUP BY G) AS X ON X.G = C.K + 6700",
+    ] {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(grouped_part(&shown) && !shown.contains("IndexNestedLoop"), "{sql}\n{shown}");
         assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
         assert_eq!(alone, together, "{sql}");
     }

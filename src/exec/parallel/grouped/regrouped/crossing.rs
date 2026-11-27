@@ -114,7 +114,12 @@ impl Crossing {
         }
         let kept = std::mem::take(&mut *self.kept.lock().unwrap_or_else(PoisonError::into_inner));
         let Some(mut spill) = kept.spilled else {
-            let groups = merged_groups(spec, kept.groups.into_iter().map(Ok))?;
+            let mut groups = merged_groups(spec, kept.groups.into_iter().map(Ok))?;
+            if groups.is_empty() && spec.groups.is_empty() {
+                // [X3.135-1986 §5.23 GR1, §5.25 GR1] One group even of no
+                // rows, of a grouping by no column (RULES.md D1219).
+                groups.push((0, finished(fresh(&spec.aggs), Row::new())?));
+            }
             return Ok(Some((vec![keep(groups)?], Vec::new())));
         };
         let (types, lobs) = (spill.work.types().clone(), spill.work.lobs().clone());

@@ -72,8 +72,8 @@ fn called(name: &str, distinct: bool) -> AggCall {
 /// Verifies: [DESIGN] RULES.md D1113: a grouping over another is a
 /// pair a part holds whole if it groups by some of the first's
 /// grouping columns and no others, an analyzed plan's count between
-/// them or none; not of no grouping column, of a column past the
-/// first's grouping columns, of groups of empty
+/// them or none; not of no grouping column unless it counts alone, of a
+/// column past the first's grouping columns, of groups of empty
 /// grouping sets of either, of a first streamed, of a DISTINCT set
 /// function in the second, or of the first's states that do not merge.
 #[test]
@@ -87,8 +87,8 @@ fn a_grouping_over_one_holding_its_columns_is_a_pair() {
     let count_node = Arc::new(NodeCount::default());
     let counted = Plan::Counted(Box::new(crate::physical::Counted { count: count_node, input: first(Vec::new(), false) }));
     assert!(first_level(&pair(vec![0], Vec::new(), counted)).is_some(), "an analyzed plan's count between");
-    assert!(first_level(&pair(Vec::new(), Vec::new(), first(Vec::new(), false))).is_none(), "of no grouping column");
     let max = || vec![called("MAX", false)];
+    assert!(first_level(&pair(Vec::new(), max(), first(Vec::new(), false))).is_none(), "of no grouping column, of MAX");
     assert!(first_level(&pair(vec![2], max(), first(Vec::new(), false))).is_none(), "of a set function's column, of MAX");
     assert!(first_level(&pair(vec![0], Vec::new(), first(vec![vec![Value::Null, Value::Null]], false))).is_none(), "of seeds");
     assert!(first_level(&grouping(vec![0], (Vec::new(), vec![vec![Value::Null]]), first(Vec::new(), false), false)).is_none());
@@ -184,8 +184,9 @@ fn a_pair_crossing_the_partitions_is_by_octets_or_none() {
 /// Verifies: [DESIGN] RULES.md D1133: a grouping over another crosses
 /// the first's partitions, as a pair a part holds, if it counts alone
 /// and groups by a column past the first's grouping columns or over a
-/// projection between them; not of another set function, nor of no
-/// grouping column; one by the first's grouping columns does not cross.
+/// projection between them, or groups by no column (RULES.md D1219); not
+/// of another set function, grouped or not, nor of seeds; one by the
+/// first's grouping columns does not cross.
 #[test]
 fn a_count_over_a_set_function_s_column_crosses_the_partitions() {
     let values = || Plan::Values { rows: Vec::new(), detail: String::new() };
@@ -198,7 +199,11 @@ fn a_count_over_a_set_function_s_column_crosses_the_partitions() {
     let over = pair(vec![0], vec![count(false)], projected(first()));
     assert!(crosses(&over) && first_level(&over).is_some(), "over a projection");
     assert!(!crosses(&pair(vec![2], vec![called("SUM", false)], first())), "of SUM");
-    assert!(!crosses(&pair(Vec::new(), vec![count(false)], first())), "of no grouping column");
+    let one = pair(Vec::new(), vec![count(false)], first());
+    assert!(crosses(&one) && first_level(&one).is_some(), "of no grouping column, its one group of every partition (D1219)");
+    assert!(!crosses(&pair(Vec::new(), vec![called("SUM", false)], first())), "of no grouping column, of SUM");
+    let seeded = grouping(Vec::new(), (vec![count(false)], vec![Vec::new()]), first(), false);
+    assert!(first_level(&seeded).is_none(), "of no grouping column, of seeds");
     assert!(!crosses(&pair(vec![0], vec![count(false)], first())), "by the first's grouping column");
 }
 

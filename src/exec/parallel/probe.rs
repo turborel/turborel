@@ -18,7 +18,9 @@
 //! §5.11 GR2], but of a key on which a null matches a null [ISO/IEC
 //! 9075-2:2023 §8.15], as the serial join leaves it out. The rows keep the
 //! order the operand gives them, so a probing row's matches come in the
-//! order they would alone.
+//! order they would alone. An operand no two rows of which share a key
+//! may give them in any order (RULES.md D1221), a probing row then
+//! matching one at most.
 
 use std::sync::Arc;
 
@@ -28,7 +30,7 @@ use super::run::Morsels;
 use super::{Held, Limit};
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{SharedTable, TABLE_ROW_BYTES, layout, reads_by_batch, whole_batches};
+use crate::exec::batch::{SharedTable, TABLE_ROW_BYTES, built_by_batch, layout, whole_keyed};
 use crate::exec::{Runner, Seed, execute};
 use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Row};
@@ -100,8 +102,9 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit
         return parallel_built(pipeline, keys, (db, tx), (p.degree, limit));
     }
     // An operand that gives batches is read by batch, as the serial join
-    // reads it (RULES.md D1050).
-    if let Some(shape) = layout(right, db).filter(|_| crate::exec::batched(db) && reads_by_batch(right, db)) {
+    // reads it (RULES.md D1050), a grouping run in parallel among them
+    // (RULES.md D1221).
+    if let Some(shape) = layout(right, db).filter(|_| crate::exec::batched(db) && built_by_batch(right, db)) {
         return batch_built(right, shape, keys, (db, tx), limit);
     }
     let mut rows = Vec::new();
@@ -122,10 +125,12 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit
 /// \[DESIGN\] (RULES.md D1050) The operand `right` of a hash join on
 /// `keys`, one that gives batches of `columns` of rows `width` wide, read
 /// by batch on the statement's thread as the serial join reads it
-/// (`stream::whole_batches`): its scans judge the conditions told them
+/// (`stream::whole_keyed`): its scans judge the conditions told them
 /// over their vectors and decode late the columns of the rows kept alone,
 /// and each batch's kept rows are held as vectors of their kinds, no row
-/// made of them. Given way if they outgrow `limit`.
+/// made of them. Every join built here finds its rows by their keys
+/// alone, so a grouping keyed by all its columns is read in any order
+/// (RULES.md D1221). Given way if they outgrow `limit`.
 ///
 /// # Errors
 ///
@@ -138,7 +143,7 @@ fn batch_built(
     limit: &Limit,
 ) -> Result<Held<Arc<Table>>> {
     let mut parts = Vec::new();
-    for kept in whole_batches(right.clone(), db, tx)? {
+    for kept in whole_keyed(right.clone(), keys, db, tx)? {
         let (batch, rows) = kept?;
         let places = crate::storage::sel::places_of(rows, batch.rows);
         if places.is_empty() {

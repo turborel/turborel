@@ -703,6 +703,8 @@ verification approach DO-178C expects (§8).
 | D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
 | D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
 | D1097 | A fetch of a frozen row is priced by the number of columns it reads |
+| D1098 | A join hashes a vector of integers of scale 0 by a loop with no branch, the kernels' hash of words, as their buckets hash |
+| D1099 | A join keeps a vector of texts as codes of a dictionary: a built operand's parts of one, and a built operand's texts of no more rows than a batch |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
@@ -718,6 +720,7 @@ verification approach DO-178C expects (§8).
 | D1122 | The pager's free list finds the smallest free run that holds a request by its runs kept by size, and counts its free pages as they change |
 | D1123 | The second grouping of a pair is made in the executor's table, of the first's groups given as a batch |
 | D1124 | The first rows of a sort over a grouping run in parallel are taken from its partitions' tables |
+| D1125 | A partition of a grouping run in parallel gives its table's groups as a batch, a row made of a group as it is given |
 | D1126 | SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text |
 | D1127 | A filter's scalar subquery with no outer reference is run as its first row is judged, and the filter judged with its value a constant |
 | D1128 | A subquery run once for its statement is planned as a statement is, its parts in parallel |
@@ -769,6 +772,7 @@ verification approach DO-178C expects (§8).
 | D1184 | A DISTINCT set function's pair of groupings under a collation of octets runs as one part |
 | D1185 | A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets |
 | D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
+| D1187 | A top-N by a key that orders strings by their octets tells its scan a bound that holds a string, judged of each row by octets |
 | D1188 | A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured |
 | D1189 | A character string of any characters is matched where it lies, by the octets its characters begin at, and a match over a vector takes no memory of its own |
 | D1190 | A greedy loop of one class before a character outside it is run through by the matcher that marks, no fork kept |
@@ -779,9 +783,14 @@ verification approach DO-178C expects (§8).
 | D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
 | D1205 | The unique index of a deferrable constraint is no key to the estimates |
 | D1206 | An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all |
+| D1208 | Sorting a grouping's input first is weighed by the rows of the input as built |
+| D1212 | A table opened has its zones summed up only once one is asked for |
 | D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
 | D1216 | SUM of a value and a constant is computed from the value's sum and count, shared among such sums |
 | D1218 | A sort that reads its input whole passes it no row goal |
+| D1219 | COUNT(DISTINCT) of no GROUP BY runs as one part, a string argument under a collation of octets grouped as it is |
+| D1220 | A parent that reads by batch takes a parallel grouping's groups as batches made of its partitions' own |
+| D1221 | A join that builds of a grouping on keys holding every grouping column is handed its partitions' groups in any order |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1227 | A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read |
@@ -789,6 +798,10 @@ verification approach DO-178C expects (§8).
 | D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 | D1231 | The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends |
+| D1235 | A load by column into a table of keys and indexes adds each group's entries at once, a leaf's run at a time |
+| D1236 | A key of a row in another transaction's open load is pending to a UNIQUE check |
+| D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
+| D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 
 ### The project
@@ -16067,8 +16080,8 @@ The first scan told a condition of a column kept, the first plan that
 weighs an index-only read of the table (`visible_share`), the first read
 that asks whether a row is visible to all, and the first count of its
 rows warm the table. Warming makes a zone not known for every block of row ids
-given so far, and the maintenance thread sums them up as it does a
-table's opened (D770, D771). Until a zone is summed up it prunes
+given so far, and the maintenance thread sums them up as it does those
+of a table opened once one is asked for (D770, D771, D1212). Until a zone is summed up it prunes
 nothing. From the warming on, every write keeps its zone as before, and
 a zone made for row ids given after it is known from its first row. A
 table stays warm while it is open. The planner's question of the share
@@ -19254,6 +19267,76 @@ in its tree reads them whole, and its fetch costs the same whatever is
 read. So does that of an engine that does not keep its columns apart,
 the default.
 
+#### D1098. A join hashes a vector of integers of scale 0 by a loop with no branch, the kernels' hash of words, as their buckets hash
+
+A join hashed each integer of a key's vector one at a time (D368). It
+checked the row for a null, widened the units to 128 bits, looked up the
+power of 10 of the scale, made the nearest `f64` by `MAGIC` and divided
+it by that power, then hashed the bits as a word. A profile of TPC-H's
+ninth query put about a twelfth of its cycles on hashing keys, almost
+all of them integers of scale 0.
+
+A vector of scale 0 is now hashed in two loops with no branch
+(`table/join/keys.rs`, `integers_hashed`). The first makes each row's
+`f64` by `MAGIC`, which is exact below 2^51 in magnitude and is the
+nearest `f64` the bucket gives, and notes whether any row is that wide.
+The second hashes the bits as words on the statement's kernels
+(`Kernels::hash_i64`), the XXH3-64 of 8 bytes that `Seed::word` gives,
+seeded alike (`Seed::word_seed`). Without kernels it hashes each by
+`Seed::word`, and for a direct table (D601) it gives the bits. A null is
+then given a null's hash and marked a miss unless nulls match
+(`nulls_marked`). A vector holding a value of 2^51 or more is hashed as
+before, as is one of another scale.
+
+Every hash is the one the bucket gives, so a table built one way and
+probed the other, a runtime filter and a Bloom filter (D369, D1087) all
+agree. A key of integers need not be one on both sides. The probe and
+build of a shared table pass the statement's kernels. Every other
+hashing passes none and takes the loop of words.
+
+#### D1099. A join keeps a vector of texts as codes of a dictionary: a built operand's parts of one, and a built operand's texts of no more rows than a batch
+
+A join gathered a vector of texts at its pairs by reading each row's
+text and copying it. It put the parts of its built operand together the
+same way, so a store's dictionary codes became texts at the first join.
+Every join above then read a row's end and its bytes at random from a
+vector that could hold millions of rows. A profile of TPC-H's ninth
+query put about a sixth of its last-level cache misses on those reads.
+They gathered a nation's name, of 25 values, from a built operand of
+three million rows.
+
+A vector of texts of a dictionary now keeps it (`storage/batch/coded.rs`).
+The parts of a built operand whose vectors are codes of one dictionary,
+the same entries for all, make a vector of their codes (`of_codes`), and
+parts of two dictionaries or of texts are put together as texts as
+before. A built operand of no more rows than a batch holds, 2,048, makes
+each vector of texts that is not coded a dictionary once as the table is
+made, each row an entry (`dictionaries`). A join gathers that
+vector as codes of it, a built row's code its row, a pick of none, past
+the end or of a null a null (`Column::gathered_coded`). Both the probe of
+a held operand (`batch/joined/pairs.rs`) and a shared table's
+(`batch/joined/shared.rs`) do so. A join above gathers four bytes a row
+of it, and puts its parts together as codes.
+
+Coded vectors were already given by a store's scan, and every reader of a
+batch's vectors reads them. Conditions, hashes, comparisons, groupings
+and sorts take each entry once, and none takes two codes for unequal
+texts. So entries that repeat a text, as a built operand's rows may, are
+read as a store's are, and a grouping by a name finds one group for each
+text (D1161).
+
+The bound is derived from the batch, not tuned. A reader of codes takes
+each entry once per batch, so entries no more than a batch's rows cost
+it no more than reading the batch's rows as texts would. A batch of codes
+is charged its entries as well as its codes, so entries no more than a
+full batch of the same texts keep the charge at that batch's plus four
+bytes a row. The dictionary a table makes is a copy of at most a batch of
+its texts, charged to no grant.
+
+A built operand of a row more is gathered as texts, as it was before, so
+past the bound a join costs what it did and never more. The step at the
+bound is the gain, not a loss.
+
 #### D1100. A group's shadow bits are trusted only once the entries the tree held as it was published are marked
 
 A group is put in the directory first, and the entries the tree holds in
@@ -19691,14 +19774,39 @@ so, in whatever partitions they are. The rows given and their order are
 therefore the plan's.
 
 It does so of a grouping by hash, alone at the top of its part, whose
-groups are made by batch, under a projection of its columns alone or
-none. A sort that asks the peers of its last row (WITH TIES) is not
+groups are made by batch, under a projection of its columns and of
+constants alone, or none. A sort that asks the peers of its last row (WITH TIES) is not
 taken so, as the number would part groups that are peers. Neither is one
 over a HAVING condition, a projection that computes a value, DISTINCT or
 a pair of groupings (D1113); the sort reads those groups as before. A
 grouping whose groups are made of rows gives its groups in order, which
 are projected and sorted. A part that gives way is grouped alone and its
 rows projected and sorted, the part not tried again.
+
+#### D1125. A partition of a grouping run in parallel gives its table's groups as a batch, a row made of a group as it is given
+
+Each partition of a grouping run in parallel finished its table into a
+row of values a group, every row made before the first was read. The
+rows were held beside the tables they were made of, in memory charged to
+no grant (D38), so a grouping of very many groups held several times its
+grant, and its threads spent their time growing the vectors of rows.
+
+A partition of a grouping with no HAVING condition and no second
+grouping over it now gives its table's groups as one batch (D1123) and
+their first rows' numbers (`exec/parallel/grouped/runs.rs`). The batch
+is the table's own vectors, which the grant was charged as the table was
+made, so the part holds nothing more to give its groups. The statement's
+thread still takes the partitions' groups in the order of their first
+rows, as a merge of sorted runs takes them, and makes a row of a group
+only as that group is given. A run read to its end gives back what it
+held.
+
+A grouping under a HAVING condition, a pair of groupings (D1113), a
+grouping whose groups are made of rows, and a table whose groups are not
+in the order of their first rows give rows as before. So does a
+partition asked a sort's first rows (D1124), which are few, and one
+whose groups go to the grouping's spill (D1226), which writes them there
+as rows.
 
 #### D1126. SUBSTRING of a constant start and length, and IN a list of strings, are evaluated of a vector's text
 
@@ -20240,8 +20348,8 @@ The rows go so only where nothing they need is given a row alone. That
 is an INSERT into a base table, through no view WITH CHECK OPTION, of no
 identity, generated or self-referencing column; rows checked as they go
 in, so no trigger, deferred constraint or assertion reads the table; a
-table that qualifies for extents (D1147) whose load writes groups; and
-columns of numbers, character strings, datetimes and truth values. A
+table that qualifies for extents (D1147), or since D1235 one of keys and
+indexes, whose load writes groups; and columns of numbers, character strings, datetimes and truth values. A
 column the copy does not name takes its default, the same for each
 row. A NOT NULL constraint is checked by its column's nulls, and a
 CHECK by the columns it reads alone. A CHECK that reads no other table
@@ -20572,8 +20680,10 @@ table opens sees what was committed before it closed. A write after
 the save clears the flag before its index entries are written and
 marks the zone's segment to be saved again, and a row recovery writes
 does so too. A zone saved unsettled, or not visible, opens unsettled
-as before. So a database reaches its steady state once, after its
-first checkpoint, and keeps it from start to start.
+as before, and is summed up or settled once a zone of its table is
+asked for (D1212). So a table reaches its steady state once, after the
+first checkpoint that follows its zones' settling, and keeps it from
+start to start.
 
 #### D1164. A start that changes nothing records no catalog image
 
@@ -21027,9 +21137,9 @@ two functions and one layout.
 - A string's 8-byte prefix (`sort/prefix.rs`) is of the padded order, so
   a key by octets has none. Where the keys have no normal form, a key of
   a DECFLOAT beside it, the rows are compared whole.
-- The bound a top-N tells its scan (D379) holds exact numbers and
-  datetimes alone, so none is told of a key by octets
-  (`sort::topped_of`).
+- The bound a top-N tells its scan (D379) held exact numbers and
+  datetimes alone, so none was told of a key by octets. D1187 tells one
+  that holds a string.
 
 A key stays made, and the sort as it was, where the mark would be
 wrong or is not known to be right. A key column read above the sort is
@@ -21089,6 +21199,41 @@ accumulator.
 
 The second grouping is as it was. It reads each part as a binary string
 and merges it into its own accumulator, of which there are few.
+
+#### D1187. A top-N by a key that orders strings by their octets tells its scan a bound that holds a string, judged of each row by octets
+
+D379's bound holds the first key of the last row a sort of its first
+rows keeps, and D1241 has the scan judge it of each row. It held exact
+numbers and datetimes. A sort by a column under a collation of NO PAD
+by octets (D1185) was told none, so a FETCH FIRST by such a column
+gave its sort every row its filter kept, and the sort made a key of
+each to drop nearly all of them.
+
+- A bound of a key marked `octets` holds a character string
+  (`Threshold::by_octets`, made by `sort::topped_of`). It narrows by
+  the strings' octets, a prefix the less, as the sort compares them
+  (`SortKey::cmp`), and a bound shared by the morsels of a sort run in
+  parallel counts the first keys offered in that order
+  (`Threshold::among`, `Threshold::offer`). A value that is no string
+  neither sets nor counts.
+- The test it is of a row (`Threshold::row_test`) is a comparison of
+  octets with the string it holds (`Conjunct::Unpadded`), at most it of
+  an ascending key and at least it of a descending one. The scan judges
+  it as it judges any such comparison (D1183), once an entry of a
+  dictionary and then by the rows' codes, of texts coded by symbols in
+  place with no text decoded, and of plain texts where they lie. A null
+  is left out, as D1241 says of every bound.
+- It passes over no group and no part (`Threshold::may_match`). Their
+  least and greatest are kept in the padded order, where a string and
+  the same with spaces after it are one value and a tab after a letter
+  is below the letter alone, so a range whose ends look past the bound
+  may hold a row at or before it by octets.
+
+What D1241 says of when a bound is read holds here unchanged. The
+bound only narrows, a run judged by a bound read before the sort last
+narrowed it keeps more rows and never fewer, and the sort judges every
+row it is given. So the rows given, their order and the errors are as
+before, and EXPLAIN ANALYZE counts fewer rows of the scan.
 
 #### D1188. A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured
 
@@ -21695,6 +21840,88 @@ needs no change. It prices each row hashed once whatever its keys
 (`HASH_ROW`), and counts a join's runtime filter once a class of
 equalities (D653), which is now what runs.
 
+#### D1208. Sorting a grouping's input first is weighed by the rows of the input as built
+
+A grouping under an ORDER BY of its keys whose input is in no such
+order is streamed over a sort of its rows where that costs less than
+hashing them and sorting the groups (D550). The rows weighed were the
+estimator's count of the grouping's logical input, the statement as
+written. The plan built for that input is another matter. Its joins
+were enumerated and chosen by the model's count of each set of them
+(D303), and that count is the one its operators carry. The two can be
+far apart. Of a join of a table to two readings of another under an OR
+of two pairs of their values, the count as written came out far under
+the plan's, and the plan's was the nearer to the rows the statement
+gave. By the lower count every row was thought a group of its own, a
+sort of the rows looked the cheaper, and the grouping sorted every
+joined row where, by the same weights and the plan's count, hashing
+them into their few groups costs less.
+
+The comparison now takes the rows the built input is estimated to give
+(`Plan::est`, `physical/streamed.rs`), and the logical count only of a
+plan that carries none. The rule of the choice and its weights are as
+they were. The grouping's own estimate of its groups is still made of
+the logical count, which bounds it, and with the rows right it no
+longer decides. Why the two counts part is the estimator's matter, a
+condition and the conditions derived from it counted as independent,
+and is not settled here.
+
+#### D1212. A table opened has its zones summed up only once one is asked for
+
+A table opened with zones not known, stale or unsettled was noted for
+maintenance as the database opened (D31, D1163), whether or not
+anything read it. A table warmed once (D868) and closed before its
+zones were summed up was then summed up at every start, by a pass that
+decodes every row of each zone not known, on the cores the sessions run
+on and through the buffer pool they read through, until some start
+lasted long enough to finish it. A session that read other tables alone
+paid for it. Its queries shared their cores with the pass, and the pool
+filled with pages none of them read.
+
+A table now notes whether a zone of it was asked for since it was made
+or opened (`rows/zones/cold.rs`). The asks are those that warm a cold
+table (D868), which are a scan told a condition of a column kept, a
+read asking whether a row is visible to every reader, a count of its
+rows, and a plan weighing an index-only read. The zones of a table opened are wanted by the
+maintenance thread only once one was asked for (`rows/zones/summed.rs`),
+as its statistics are gathered only once a plan read them (D473). The
+table opened tells its database of its first ask (`spill/asks.rs`), through
+the work areas its store is attached to. A note is set and the
+maintenance job asked for, and the job, finding the note, notes each
+table with maintenance due. A transaction that wrote notes its tables
+as it ends, as before, but one that read alone collects nothing and
+notes none, and its commit is the path of every read by key, so nothing
+is asked there. The telling stands in for the noting the database's
+opening did, so a table opened is summed up as it was before, only
+later. The thread sums the zones up from then on, 64 a
+call, with the rests of D771. What it summed up is saved by each checkpoint as
+before, so a table closed part summed up goes on from there once asked
+again. A zone saved settled visible opens so (D1163), asked or not.
+
+A table made in this session is as before. One of the row store is
+cold until asked, and one of the column store is warm and asked from
+its first row. Its
+first ask tells nothing. A read that warms it leaves its zones for the
+commit of the next write to it, as before, so the maintenance thread
+does not start beside the statements of a session that only read a
+table it made, and the plans made of such a table do not change with
+when the thread ran. With the telling, a join was planned by an index
+or not, and read direct or not, from one run to the next. A write
+to a table opened and not asked keeps its zones, as a warm table's
+writes do, and leaves them due until one is asked for.
+`Database::maintain` sums up every table's zones now, asked or not, so
+a program that wants a database settled before it is used, or copied,
+calls it. An ask after the first reads one flag and writes nothing, so
+a read by an index, which asks of each row, costs what it did, and the
+commit of a transaction that read alone is as it was.
+
+A load into an empty table of the row store does not begin warm, though
+its zones would then be known as its rows are written and no pass
+would be owed later. Every write after the load would keep its zone,
+the cost D868 took from tables written and read by key alone, and an
+order entry's tables are loaded in bulk too. The pass is paid once, by
+the table whose zones are asked for.
+
 #### D1215. A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more
 
 Without ORDER BY the order of a query expression's rows is
@@ -21893,6 +22120,129 @@ mutation. Its input under a goal differs from its input with none only
 when something below the grouping plans otherwise for a few rows, as a
 join's left operand may, and no statement was found whose plan shows
 that difference there. It was changed by reading, as the same defect.
+
+#### D1219. COUNT(DISTINCT) of no GROUP BY runs as one part, a string argument under a collation of octets grouped as it is
+
+A DISTINCT set function is computed by two groupings (D340), and a part
+runs the pair whole where the second groups by some of the first's
+columns (D1113) or counts across its partitions (D1133). A second
+grouping by no column was left above the part. So of COUNT(DISTINCT x)
+with no GROUP BY, every group of the first, one a distinct value, was
+made a row by its partition's thread, the partitions' rows were merged
+in the order of their first rows, and the statement's thread counted
+them one at a time while the workers waited.
+
+Such a second grouping whose set functions are COUNT alone now crosses
+the partitions as D1133's does (`physical::crosses`). Its one group
+takes groups of every partition. Each partition's thread counts its
+own, and the statement's thread merges the counts
+(`exec/parallel/grouped/regrouped.rs`). A count is the same whatever
+order its values are taken in. Of no rows the merge still gives one
+group, COUNT of it 0. A HAVING condition is judged of the merged group.
+Another set function there, as SUM(DISTINCT), takes its values in the
+order of their first rows, so its second grouping stays above the part,
+as does one with groups of empty grouping sets.
+
+A second grouping that crosses the partitions with no projection
+between the two now reads each partition's groups of the first as a
+batch from their table (D1123, `grouped/second.rs`) and writes each of
+its groups' states for the merge. No row is made of a group of the
+first. One over a projection makes rows as before, as the projection is
+evaluated of each.
+
+The binder gives a DISTINCT function of a string under a collation the
+string's sort key for its argument, so the rewrite's projection made a
+binary string of every row and the first grouping keyed its groups by
+those values. Where the collation's key is the text itself (D1183), the
+rewrite now groups by the string under that collation
+(`optimizer/distinct_aggregates.rs`, `Slot::of`), which a table hashes
+and compares in place. Two strings are in one group exactly when their
+keys are equal, so the groups are the same. COUNT then counts the
+strings, as a key is null exactly when its string is. Any other
+function takes the key, made of each group in the second grouping, as
+it took it before. An argument under any other collation is grouped by
+its key as before.
+
+Results, their warnings and the row of no rows are as before. EXPLAIN
+shows both groupings under one `Parallel`.
+#### D1220. A parent that reads by batch takes a parallel grouping's groups as batches made of its partitions' own
+
+A join that builds or probes over a grouping run in parallel, and a
+pipeline whose source is one, read the grouping by batch (D1063, D1072).
+They were given its rows gathered: each group made a row of values, the
+partitions' rows merged in the order of their first rows, and the rows
+put back into batches, every column a vector of values whatever its
+type.
+
+Where every partition gives its table's groups as a batch (D1125), the
+parent is now given batches made of those
+(`exec/parallel/grouped/runs.rs`, `Merged`). The statement's thread
+takes the partitions' groups in the order of their first rows, as before,
+and puts each group's values straight into the next batch's vectors, in
+lanes of the columns' types as a table keeps its keys (D356). No row is
+made of a group, and what reads the batches finds integers and texts in
+vectors of their types.
+
+The groups and their order are those the rows gave, so the parent's
+result is unchanged. A grouping any of whose partitions gives rows, one
+under a HAVING condition or a pair among them (D1125), or reads a run
+back from the spill (D1226), gives its rows gathered as before. A part
+that gives way is grouped alone and its rows gathered.
+
+#### D1221. A join that builds of a grouping on keys holding every grouping column is handed its partitions' groups in any order
+
+A grouping run in parallel gives its groups in the order of their first
+rows, as the plan run alone does, whatever partition made each. A parent
+that reads by batch was given them so too (D1220). The statement's
+thread took the partitions' groups one at a time, the earliest first row
+next, and put each into a new batch. Of a grouping of very many groups
+that was one thread's work on every group, done after the part's threads
+had finished.
+
+A join did not read the grouping it builds of by batch at all. It asked
+whether the operand's tables read by batch, which a grouping by hash
+answers only as the operand of a join inside it, so the join took the
+groups a row at a time, each made by the statement's thread (D1125), and
+put the rows back into a batch for its table. A join now reads such an
+operand by batch (`exec/batch/parted.rs`, `built_by_batch`), a grouping
+by hash run in parallel alone or under projections, whatever its tables
+are read by, as its partitions give batches either way.
+
+A hash join that builds of the grouping keeps no order of what it
+builds. It finds the built rows by their keys. Where the join's keys
+hold every grouping column, no two groups share a key, so a probing row
+finds one group at most, and the order the groups were built in shows in
+no row the join gives. Such a join now asks the grouping for its groups
+in any order (`exec/batch/parted.rs`, `keyed_whole`), and the grouping
+hands it each partition's batch as it is, one after another
+(`exec/parallel/grouped/runs.rs`, `Handed`). No group is compared with
+another's first row and none is copied to a batch between.
+
+The joins that ask are those that give a built row only when a key
+found it. They are an inner join, a LEFT join that probes, and a semi
+join, read alone (`exec/batch/joined/held.rs`, `read_keyed`) or as a
+step of a pipeline run in parallel (`exec/parallel/probe.rs`). A RIGHT
+or FULL join gives its unmatched built rows in the order built, and a
+product pairs them in it, so they read the groups in order as before.
+
+The request is kept narrow, so that no result's order can differ from
+the plan's run alone.
+
+- Every grouping column must be a key's right column. A join on some of
+  them finds several groups of a key and gives them in the order built.
+- Every grouping column must be grouped by the default collation. Two
+  strings are then one group exactly where the join finds them equal
+  [X3.135-1986 §5.11 GR5]. A column grouped by another collation may
+  make two groups of strings one key matches.
+- The operand must be the grouping itself, or projections of columns
+  over it, which give a row of each group in the order they are given
+  it. A key's column is then the grouping's column the projection
+  names. What a filter, a projection that computes a value or another
+  join asks of its own input is in order again (`exec/batch/late.rs`,
+  `Deferred`).
+- A DISTINCT, a grouping under a HAVING condition, a pair of groupings,
+  and one any of whose partitions gives rows or reads a run back from
+  the spill (D1125, D1226) give their groups in order as before.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 
@@ -22124,6 +22474,168 @@ first position asked, as it ran from the open before. A rollback, a
 replica's replay and the checkpoint job ask up to the log's end. The
 appends write nothing for the count, and the commit reads only the
 position of the last checkpoint.
+#### D1235. A load by column into a table of keys and indexes adds each group's entries at once, a leaf's run at a time
+
+A load by column (D1148) went only into a table of no index and no key,
+so a table of a primary key or a foreign key, which most are, loaded
+row by row. Such a table now loads by column too, where its UNIQUE
+constraints have no period and each foreign key references another
+table, of no subtable, through an index of exactly its referenced
+columns, with no period. Its group is written and logged as its extent,
+as a table of no index's is, and then each index takes the group's
+entries at once through `Index::insert_sorted`. A B-link tree sorts
+them and writes them a leaf's run at a time: each leaf a run falls in is
+reached and locked once for the keys it covers, each key searched,
+written and found alone or not under the leaf's latch as one key's
+insert does, and a leaf that fills splits as it would for one key, the
+keys after it going down again. A reader sees each entry as it is
+written, as it does one written alone. Any other method keeps the
+default, `insert_from` of each entry in turn. The checkpoint gate is
+held from the group to its last entry, so a checkpoint holds both or
+neither. An entry's undo is logged even when its insert fails, as an
+entry absent is removed as nothing.
+
+A row whose key was not alone in a unique index is noted for the
+statement's end, which checks it as a row inserted alone is checked.
+A key of a row in a group of a load still open in another transaction
+is that transaction's change pending (D1236), so the check fails the
+whole statement as another transaction's row of the key does (SQLCODE
+-911, SQLSTATE TB911), exactly as it fails a multi-row INSERT of the
+row path today, whether the other row is a version in the tree or a row
+of an open load's group; it never rests on a row that may yet be rolled
+back. A foreign key's distinct
+keys among the group's rows are each looked up once in its referenced
+table before the group is written, and a key that matches no row sends
+the rows to the row path, which names it; nothing of the group is
+written before that. A load into a table of foreign keys holds back no
+index (D532), as a write to a table it references reads its rows by
+them.
+
+Recovery mends the entries of an index reopened as its checkpoint left
+it a group at a time: the entries of the rows the group's extent holds
+are taken back, as a row's are under its images, and then the entries
+of the rows it holds now that an index lacks are added at once.
+
+#### D1236. A key of a row in another transaction's open load is pending to a UNIQUE check
+
+A UNIQUE check at a statement's end reads the newest state of each other
+row its key's entries name. A row a load wrote straight into a frozen
+group (D533) has no version in the tree, and its state was read from its
+group as if it stood, whoever made the group. So a row of another
+transaction's open load was taken as a committed holder of its key, and
+an insert of that key failed as a duplicate (SQLSTATE 23000) though the
+load might yet roll back. The newest state of a frozen row now tells
+the group's maker: a row of a group of another transaction still open
+is that transaction's change pending, as a version in the tree made by
+it is, so the check fails the statement as a key another transaction is
+changing does (SQLCODE -911), and an insert of the key after the load
+rolls back goes in.
+
+#### D1241. A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound
+
+A sort under FETCH FIRST tells the scan under it the bound of its first
+key (D379), and the scan passed over groups and parts whose zone maps
+lie past it. Within a part it read every row. A filter of a wide column
+over such a scan, as LIKE of a text, then decoded that column of every
+row of every part read, though the sort would drop nearly all of them
+by their key. And D291 kept such a sort of a column store table on the
+statement's thread, from when a worker made each row of its morsel.
+Since D380 a morsel is read and sorted as batches, so that reason no
+longer held.
+
+The scan now judges the bound of each row (`engine/columns/judged.rs`).
+A bound that holds a value is a comparison of its column with that
+value, at or before it as the key is ordered, read as each run of a
+group is judged and judged by the kernel over the column's vector. A
+bound that holds none yet is not judged, and its column is not decoded
+for it. The rows a run keeps are decoded of the filter's other columns
+at their places alone (D366). A row left out is past the first key of
+the greatest row the sort holds, so the sort would drop it whatever its
+other keys. A null is left out too, as a bound is told only of a key
+whose nulls sort last, and it holds no null. A row equal to the bound
+is kept, as the sort's other keys or its peers decide of it. The bound
+is told only where no filter or projection on the way can raise (D379),
+so no error of a row left out is lost. A scan may still give a run
+whole where most of its rows are kept, as the sort judges every row it
+is given.
+
+A sort over a column store table that FETCH FIRST asks for a count of
+rows, ONLY, is now a part (`physical/parallel.rs`, `Asked::under`), as
+it is over the row store. The planner knows it by the limit above it,
+through what the limit tells a sort through, a projection that raises
+nothing. A whole sort of one, one under OFFSET alone, WITH TIES or of a
+percentage stays on the statement's thread as before. A part's pipeline
+read by such a sort of few rows, whose batches hold every column, is
+told what the serial stream is told (`Pipeline::topped`,
+`parallel/sorted.rs`). Each branch's scan is told the bound through its
+steps as `Deferred` carries it, by a split told one conjunct more
+(`Split::told`). The columns neither a step nor a key reads are left
+late past the pipeline's end, and each morsel's sort decodes them of
+the rows it gives alone, where a morsel decoded them of every row its
+filter kept.
+
+One bound is shared by every morsel (`Threshold::shared`). A filter
+that keeps few rows leaves most morsels with fewer rows than are asked,
+so a morsel's own rows seldom prove a bound. Each morsel's sort
+therefore offers the bound the first key of every row it takes, and the
+bound keeps the first so many keys offered by them all. Once as many
+are offered as rows are asked, the bound is the last of those. That
+many rows of the sort's input are then at or before it, so no row past
+it is among the first of all. The bound only narrows, under a lock, and
+a scan that reads it before another thread narrowed it only reads more
+rows. Each morsel keeps its rows equal to the bound, and the runs are
+merged in morsel order as before, so rows of equal keys come in the
+order the serial sort gives them.
+
+No result and no plan depends on the order the threads narrow the
+bound in, nor on when a scan reads it. The plan is chosen before any
+morsel is read and reads no bound. A row among the first of all is
+never past the bound, whatever it holds when the row is judged, as the
+bound is never before the last of those rows, so every morsel's run
+holds each such row of its morsel. A morsel's run is its own first rows
+in the order of its rows, and the runs are merged in morsel order, so
+the rows given and the order of peers are those of the keys and the
+rows' places alone. What does vary from run to run is how many rows a
+scan reads before the bound narrows, which EXPLAIN ANALYZE counts of a
+part, and no more than that.
+
+The scan judges the bound as the test the bound gives of a row
+(`Threshold::row_test`, `Pred::now` in `engine/columns/judged.rs`), a
+conjunct judged as any other the scan is told. The bound chooses the
+kind of test by the kind of value it holds, so a bound of another kind
+of key is judged by the same loop.
+
+A run the scan judged and kept one row in eight or more of is given
+whole, and its late columns were then decoded with it (D366), as those
+rows were taken to be the ones kept. Under a sort's bound the sort
+keeps few of them, so such a run now leaves its late columns late
+(`frozen/batches/run.rs`).
+
+The rows given, their order and the errors are as before. EXPLAIN shows
+`Parallel` over such a sort, and EXPLAIN ANALYZE counts fewer rows of
+its scan.
+
+#### D1242. A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up
+
+A join whose built operand passes its grant builds and probes it in
+passes, each pass holding some parts of it. A pass pairs the probing
+rows whose keys fall in its parts, and leaves the rest to the pass that
+holds theirs. The probe of a shared table (`batch/joined/shared/kept.rs`)
+and its whole batch's match (`matched_kept`) take what a pass keeps, a
+test of a row's key hash. The hash they are told is the one a hashed
+table's probe makes, seeded as the table's. A direct table's probe finds
+its rows by a key's number (D601), so its rows are hashed a second time
+for the test, and a row falls in the same pass whatever kind of table a
+pass makes. A key that matches no row, a null's where a null matches
+nothing, has no hash, and the test is told so. The pass that takes the
+rows of no part, the first, keeps it.
+
+A row a pass does not keep is dropped once the batch is hashed, before
+it is screened by a Bloom filter (D1087), looked up or paired. So
+no slot is read for it, and a LEFT join pairs it with nulls only in the
+pass that keeps it, never twice. A probe told nothing to keep makes its
+hashes once and drops no row, its loop over the rows unchanged, at the
+cost of one test of the batch.
 
 #### D1250. A record of a transaction reaches the log only while it may still commit, or with its abort record after it
 
