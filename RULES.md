@@ -22368,6 +22368,7 @@ keeps few of them, so such a run now leaves its late columns late
 The rows given, their order and the errors are as before. EXPLAIN shows
 `Parallel` over such a sort, and EXPLAIN ANALYZE counts fewer rows of
 its scan.
+
 ## 2. Project layout
 
 ```
