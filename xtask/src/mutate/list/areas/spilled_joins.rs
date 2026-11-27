@@ -29,12 +29,18 @@ const WEIGHED: &str = "src/physical/enumerate/weighed.rs";
 /// The test of the joins weighed probed in passes.
 const WEIGHED_PASSES: &str = "physical::enumerate::weighed::tests::only_a_join_a_pipeline_builds_in_parts_costs_passes";
 
+/// The test of a probing side of late columns probed in passes.
+const LATE: &str = "spilled_joins::a_probing_side_of_late_columns_probed_in_passes_gives_its_rows";
+
+/// The test of a later pass's late columns.
+const LATE_PASS: &str = "exec::parallel::passes::tests::a_later_pass_leaves_late_what_the_first_leaves";
+
 /// The test of joins of each kind built past the grant.
 const JOINS: &str = "spilled_joins::joins_built_past_the_grant_give_their_rows";
 
 /// Mechanisms whose removal must fail the requirements of a hash join
 /// built in parts and probed in passes.
-pub const SPILLED_JOINS: [Mutation; 6] = [
+pub const SPILLED_JOINS: [Mutation; 7] = [
     Mutation {
         name: "passes-cells-ignored",
         package: Package::Core,
@@ -94,5 +100,15 @@ pub const SPILLED_JOINS: [Mutation; 6] = [
         replacement: "let passes = kind != Kind::Full;",
         integration: &[],
         unit: &[WEIGHED_PASSES],
+    },
+    Mutation {
+        name: "passes-late-own",
+        package: Package::Core,
+        breaks: "a later pass's batches leave late the columns the first pass's leave, decoded once (D1240)",
+        file: PASSES,
+        original: ".map(|(by, first)| by.late_of_first(first));",
+        replacement: ".map(|(by, _)| by);",
+        integration: &[LATE],
+        unit: &[LATE_PASS],
     },
 ];

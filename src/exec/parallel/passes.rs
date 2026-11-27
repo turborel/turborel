@@ -124,7 +124,8 @@ impl Passes {
                 scanned: b.scanned.clone(),
             })
             .collect::<Vec<_>>();
-        let batched = super::batched::by_batch(&branches, &self.db);
+        let batched =
+            super::batched::by_batch(&branches, &self.db).zip(template.batched.as_ref()).map(|(by, first)| by.late_of_first(first));
         Ok(Arc::new(Pipeline { branches, batched, passes: None }))
     }
 

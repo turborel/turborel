@@ -152,3 +152,22 @@ fn the_first_pass_carries_the_whole_operands_filters() {
     assert!(passed.passes.as_ref().is_some_and(|p| p.count() > 2), "built in passes");
     assert_eq!(bounds(&passed), bounds(&whole));
 }
+
+/// Verifies: [DESIGN] RULES.md D1240, D1241: a later pass's pipeline
+/// leaves late the columns the first pass's leaves, and leaves them so
+/// as the first's does: of the pipeline told the keys of a sort of its
+/// first rows that decodes them, the columns no step and no key reads, not
+/// every column no step reads, which its own steps would leave.
+#[test]
+fn a_later_pass_leaves_late_what_the_first_leaves() {
+    let db = database();
+    db.set_setting("EXECUTOR.BATCHES", &Value::Char("ON".into())).unwrap();
+    let topped = kept(&db, 1 << 20).topped((&[0], true), &None);
+    let passes = topped.passes.as_ref().map_or(1, |p| p.count());
+    assert!(passes > 1, "built in passes");
+    let base = topped.count().checked_div(passes).unwrap();
+    let first = topped.batched.as_ref().unwrap().late_given();
+    assert!(first.1, "left late for the sort");
+    let Some((pass, _)) = super::passed(&topped, base).unwrap() else { panic!("a morsel of a later pass") };
+    assert_eq!(pass.batched.as_ref().unwrap().late_given(), first);
+}

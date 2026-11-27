@@ -59,7 +59,7 @@ fn tables() -> (Database, Session) {
 }
 
 /// The queries each table answers alike, `{t}` its name.
-const QUERIES: [&str; 19] = [
+const QUERIES: [&str; 21] = [
     "SELECT * FROM {t} ORDER BY N FETCH FIRST 10 ROWS ONLY",
     "SELECT * FROM {t} ORDER BY N DESC FETCH FIRST 10 ROWS ONLY",
     "SELECT K, U, T FROM {t} ORDER BY A FETCH FIRST 25 ROWS WITH TIES",
@@ -79,6 +79,8 @@ const QUERIES: [&str; 19] = [
     "SELECT T, COUNT(*), MAX(U) FROM (SELECT * FROM {t} ORDER BY N FETCH FIRST 300 ROWS ONLY) X GROUP BY T",
     "SELECT DISTINCT T FROM (SELECT * FROM {t} ORDER BY K DESC FETCH FIRST 400 ROWS ONLY) X",
     "SELECT K, U FROM {t} WHERE A <> 7 ORDER BY A, K FETCH FIRST 3 ROWS ONLY",
+    "SELECT * FROM {t} WHERE U LIKE '%7@mail%' ORDER BY A, K FETCH FIRST 10 ROWS ONLY",
+    "SELECT * FROM {t} WHERE U LIKE '%7@mail%' ORDER BY F DESC, K FETCH FIRST 10 ROWS ONLY",
 ];
 
 /// The rows `s` reads of each query of `table`, in the order given, under
@@ -153,6 +155,41 @@ fn topped_sorts_raise_and_read_changes_as_rows() {
     assert_eq!(unordered(answers(&s, "C", &[])), rows_of(&s), "changed, not committed");
     s.commit().unwrap();
     assert_eq!(unordered(answers(&s, "C", &[])), rows_of(&s), "changed, committed");
+}
+
+/// Verifies: [DESIGN] RULES.md D1241: a scan under a FETCH FIRST judges
+/// the sort's bound of each row, so on one thread it gives the filter
+/// fewer rows than the table holds, of a key spread through every group,
+/// whose zone maps pass over none; with a bound never set, of a key whose
+/// nulls sort first, it gives every row. A FETCH FIRST of a count of the
+/// column store, ONLY, is a part run in parallel; a whole sort of it, one
+/// under OFFSET alone, one WITH TIES and one of a percentage are not.
+#[test]
+fn a_scan_judges_a_top_bound_of_each_row_and_a_top_is_a_part() {
+    let (_db, s) = tables();
+    let scanned = |sql: &str| {
+        let a = s.analyzed(sql, &turborel::params::Params::new()).unwrap();
+        a.operators.iter().find(|o| o.label.starts_with("SeqScan")).unwrap_or_else(|| panic!("no scan in\n{}", a.text)).rows
+    };
+    let all = u64::try_from(ROWS).unwrap();
+    let bounded = scanned("SELECT * FROM C WHERE U LIKE '%mail%' ORDER BY A FETCH FIRST 10 ROWS ONLY");
+    assert!(bounded.saturating_mul(2) < all, "rows past the bound are left out: {bounded}");
+    assert_eq!(scanned("SELECT * FROM C WHERE U LIKE '%mail%' ORDER BY A NULLS FIRST FETCH FIRST 10 ROWS ONLY"), all, "no bound");
+    for statement in ["SET EXECUTOR.DEGREE = 16", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0", "SET EXECUTOR.MORSEL_ROWS = 512"] {
+        exec(&s, statement).unwrap();
+    }
+    let plan = |sql: &str| s.physical_plan(sql, &turborel::params::Params::new()).unwrap();
+    let top = plan("SELECT * FROM C WHERE U LIKE '%mail%' ORDER BY A FETCH FIRST 10 ROWS ONLY");
+    assert!(top.contains("Parallel"), "a sort of its first rows is a part: {top}");
+    for (kept, why) in [
+        ("SELECT K FROM C WHERE U LIKE '%mail%' ORDER BY A", "a whole sort of the column store"),
+        ("SELECT K FROM C WHERE U LIKE '%mail%' ORDER BY A OFFSET 5 ROWS", "an OFFSET alone, which asks every row"),
+        ("SELECT K FROM C WHERE U LIKE '%mail%' ORDER BY A FETCH FIRST 10 ROWS WITH TIES", "WITH TIES, whose peers one sort finds"),
+        ("SELECT K FROM C WHERE U LIKE '%mail%' ORDER BY A FETCH FIRST 10 PERCENT ROWS ONLY", "a percentage, of every row"),
+    ] {
+        let whole = plan(kept);
+        assert!(!whole.contains("Parallel"), "{why} stays on one thread: {whole}");
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D380, D44: a sort held in memory looks for a

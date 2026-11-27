@@ -127,7 +127,7 @@ pub(in crate::exec::parallel) struct Keep {
 impl Keep {
     /// How its keys are hashed: as the built rows' were split.
     fn hashing(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed, direct: false }
+        Hashing { seed: &self.seed, keyed: self.keyed, direct: false, kernels: None }
     }
 
     /// Of `batch`'s rows `rows`, or all, those it keeps, its keys of the
@@ -274,7 +274,7 @@ impl Spilling {
     /// How its keys are hashed, once a batch said whether texts are among
     /// them.
     fn hashing(&self) -> Hashing<'_> {
-        Hashing { seed: &self.seed, keyed: self.keyed.unwrap_or(false), direct: false }
+        Hashing { seed: &self.seed, keyed: self.keyed.unwrap_or(false), direct: false, kernels: None }
     }
 
     /// Adds the rows of `batch`, charged `charged` to the grant, which it

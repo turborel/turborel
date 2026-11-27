@@ -243,7 +243,7 @@ fn finished_part(
 ) -> Result<Finished> {
     if part.bytes <= half {
         let table = merged(grouping, part)?;
-        return Ok(Some(spilled.rows(grouping.kept_of(table, runner)?)?.into_iter().collect()));
+        return Ok(Some(spilled.rows(grouping.kept_of(table, runner)?.into_rows())?.into_iter().collect()));
     }
     if level >= depth {
         return Ok(None);

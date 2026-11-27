@@ -60,7 +60,7 @@ fn paged_over(undo: Arc<dyn Log>) -> (Arc<Pager>, TableFiles) {
 }
 
 /// `column = value`.
-fn equal(column: usize, value: i128) -> Conjunction {
+pub(super) fn equal(column: usize, value: i128) -> Conjunction {
     Conjunction::of(Condition { columns: vec![column], probe: Probe::Compare { op: CompOp::Eq, value: int(value) } })
 }
 
@@ -72,7 +72,7 @@ fn found(table: &Arc<RowTable>, tx: u64, conditions: &Conjunction) -> Vec<String
 }
 
 /// Whether a scan told `conditions` reads the zone of row `id`.
-fn reads(table: &RowTable, conditions: &Conjunction, id: RowId) -> bool {
+pub(super) fn reads(table: &RowTable, conditions: &Conjunction, id: RowId) -> bool {
     table.zones.ranges(Some(conditions)).iter().any(|&(first, end)| first <= id && end.is_none_or(|e| id < e))
 }
 
@@ -300,7 +300,7 @@ fn a_tables_zones_saved_are_known_once_opened() {
     let past: Vec<RowId> = (0..3000).map(|n| again.insert(NO_TRANSACTION, row(n)).unwrap()).collect();
     drop(again);
     let opened = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
-    assert!(opened.maintenance_due() && reads(&opened, &equal(0, -1), past[2999]), "not known: read");
+    assert!(reads(&opened, &equal(0, -1), past[2999]) && opened.maintenance_due(), "not known: read, and due once asked");
     summed(&opened, u64::MAX);
     assert!(!opened.maintenance_due() && !reads(&opened, &equal(0, -1), past[2999]), "known once summed up");
 }
@@ -343,7 +343,7 @@ fn zones_unsealable_or_malformed_are_not_known() {
     let segment = table.zones.place.lock().unwrap().as_ref().map(|p| p.segments[0]).unwrap();
     drop(table);
     let opened = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
-    assert!(opened.maintenance_due() && reads(&opened, &equal(0, -1), 0), "not known");
+    assert!(reads(&opened, &equal(0, -1), 0) && opened.maintenance_due(), "not known");
     summed(&opened, u64::MAX);
     assert!(!reads(&opened, &equal(0, -1), 0), "summed up");
     drop(opened);

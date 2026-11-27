@@ -30,7 +30,7 @@ impl Lane {
 
 impl Keys {
     /// Its groups' keys as columns, a lane each, in the lanes' order.
-    pub(in crate::exec::table) fn into_columns(self) -> Vec<Column> {
+    pub(in crate::exec) fn into_columns(self) -> Vec<Column> {
         self.lanes.into_iter().map(Lane::into_column).collect()
     }
 }

@@ -7,13 +7,15 @@
 //!
 //! * the INSERT is into a base table, through no view WITH CHECK OPTION,
 //!   of no identity, generated or self-referencing column;
-//! * its rows are checked as they go in (`rows_checked`): no trigger, no
-//!   deferred constraint, no assertion reads the table;
-//! * the table qualifies for extents (D1147) and its load writes groups;
+//! * its rows are checked as they go in (`rows_checked_by_column`): no
+//!   trigger, no deferred constraint, no assertion reads the table;
+//! * the table qualifies for extents (D1147), or is of keys and indexes
+//!   (D1235, `bulk/keyed.rs`), and its load writes groups;
 //! * every column is of a type a record holds plainly, no large object,
 //!   no user-defined or extension type;
 //! * the rows hold its NOT NULL constraints and CHECKs, each checked by
-//!   the columns it reads alone.
+//!   the columns it reads alone, and its foreign keys, each distinct key
+//!   looked up once.
 //!
 //! Each column the INSERT gives no value takes its default, the same of
 //! each row, as the statement found it. Else, or if a cell is not a
@@ -21,6 +23,7 @@
 //! value given is, which tells what fails and where.
 
 use super::Target;
+use super::bulk::keyed::decoded_row;
 use crate::db::{Session, State, StatementContext};
 use crate::error::{Code, Result, SqlError};
 use crate::params::{Gift, Given, Load, conformed_row};
@@ -32,7 +35,7 @@ use crate::value::{DataType, Value, assign};
 #[cfg(test)]
 thread_local! {
     /// The executions this thread put in by column, for its tests.
-    static BY_COLUMN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(in crate::db::write) static BY_COLUMN: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl Session {
@@ -55,13 +58,13 @@ impl Session {
         let StatementContext { st, tx } = cx;
         let mut held = lock(given)?;
         let Some(Gift::Lanes(lanes, types)) = held.as_ref() else { return Ok(None) };
-        let effects = self.effects(st);
+        let mut effects = self.effects(st);
         if !plain(st, target)? || lanes.rows == 0 {
             return Ok(None);
         }
-        let Some(mut checked) = st.rows_checked(target.name(), &effects) else { return Ok(None) };
+        let Some(mut checked) = st.rows_checked_by_column(target.name(), &effects) else { return Ok(None) };
         let mut together = st.together(target.name())?;
-        if !together.qualifies() {
+        if !together.by_column(&target.desc) {
             return Ok(None);
         }
         let columns = records_of(target, (lanes, types))?;
@@ -70,14 +73,20 @@ impl Session {
         }
         self.settle_cursors(st, target.name());
         super::bulk::load::hold_back(st, tx, &mut together)?;
-        let Some(ids) = st.insert_records(tx, &together, &columns)? else { return Ok(None) };
+        let Some(gone) = st.insert_records(tx, &together, &columns)? else { return Ok(None) };
         held.take();
         drop(held);
+        // [DESIGN] RULES.md D1235: a row not alone under a unique key is checked at the statement's end.
+        for (n, (&id, &alone)) in gone.ids.iter().zip(&gone.alone).enumerate() {
+            if checked.needs_note(alone) {
+                effects.inserted(target.name(), id, &decoded_row(&target.desc, &columns, n)?)?;
+            }
+        }
         #[cfg(test)]
         BY_COLUMN.with(|n| n.set(n.get().saturating_add(1)));
         super::bulk::load::end(st, tx, load)?;
         st.end_statement(tx, effects)?;
-        Ok(Some(ids.len()))
+        Ok(Some(gone.ids.len()))
     }
 }
 

@@ -11,7 +11,8 @@
 //! filter that cannot raise over such a grouping, its HAVING condition,
 //! judged of each group by the part's threads (RULES.md D1073); or a
 //! grouping over such a grouping by some of its grouping columns, both
-//! made by the part's threads (RULES.md D1113). A
+//! made by the part's threads (RULES.md D1113), or one counting across
+//! its partitions (RULES.md D1133, D1219). A
 //! grouping or DISTINCT streamed over rows in its keys' order is no such
 //! part, as its order would be lost among the threads (RULES.md D550).
 //!
@@ -22,7 +23,9 @@
 //! as a point query does, its plan unchanged, so it costs nothing more
 //! than the walk that finds it. So does one a serial scan by batch of a
 //! table kept by column serves better, with no hash join's probe nor
-//! window functions, while EXECUTOR.BATCHES is on, and a bare COUNT(*) its
+//! window functions, while EXECUTOR.BATCHES is on, but a sort asked for
+//! its first rows alone, which is a part of either store (RULES.md
+//! D1241); and so does a bare COUNT(*) its
 //! table's storage counts (RULES.md D351); the operand a part's hash join
 //! builds is a part by its rows alone, of either store, as its morsels
 //! are gathered by batch (RULES.md D1051). So does a grouping or DISTINCT
@@ -76,6 +79,10 @@ struct Asked<'a> {
     morsel: usize,
     /// The least rows a part reads in parallel.
     least: usize,
+    /// \[DESIGN\] (RULES.md D1241) Whether the plan walked is asked for
+    /// its first rows alone: the input of a FETCH FIRST of a count, ONLY,
+    /// which tells a sort under it how many (`exec/limit/bounded.rs`).
+    first: bool,
 }
 
 /// The threads the system runs at once, as EXECUTOR.WORKERS of 0 asks.
@@ -109,16 +116,41 @@ impl<'a> Asked<'a> {
             n => n.min(workers.max(1)),
         };
         let (morsel, least) = (db.settings.count(EXECUTOR_MORSEL_ROWS).max(1), db.settings.count(EXECUTOR_PARALLEL_MIN_ROWS));
-        Asked { db, seen, most, morsel, least }
+        Asked { db, seen, most, morsel, least, first: false }
     }
 
     /// The degree of the part `plan` reading `rows` rows: 1 to run it
-    /// alone, as one a serial scan by batch serves better.
+    /// alone, as one a serial scan by batch serves better. \[DESIGN\]
+    /// (RULES.md D1241) A sort asked for its first rows alone is a part
+    /// whatever it reads: its morsels are read and sorted by batch, share
+    /// the bound of its first key and make only the rows they keep.
     fn degree(self, plan: &Plan, rows: usize) -> usize {
-        if crate::exec::batched(self.db) && by_batch(self.db, plan) {
+        let topped = self.first && matches!(plan, Plan::Sort { .. });
+        if crate::exec::batched(self.db) && !topped && by_batch(self.db, plan) {
             return 1;
         }
         self.by_rows(rows)
+    }
+
+    /// It, as the inputs of `plan` are walked: asked for their first rows
+    /// alone under a FETCH FIRST of a count with no peers, and under what
+    /// such a limit tells a sort through, a projection that raises
+    /// nothing or an analyzed plan's count.
+    fn under(self, plan: &Plan) -> Asked<'a> {
+        let first = if let Plan::Limit { limit, .. } = plan {
+            limit.fetch.as_ref().is_some_and(|f| !f.percent && f.ties.is_none())
+        } else if let Plan::Project { exprs, .. } = plan {
+            self.first && !exprs.iter().any(Expr::can_raise)
+        } else {
+            self.first && matches!(plan, Plan::Counted(_))
+        };
+        Asked { first, ..self }
+    }
+
+    /// It, as the plans under a part or a join's operand are walked, none
+    /// of them asked for its first rows alone.
+    fn rest(self) -> Asked<'a> {
+        Asked { first: false, ..self }
     }
 
     /// The degree of a part reading `rows` rows, by the rule the costs
@@ -202,7 +234,7 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
             && stream_in(input, Some(asked.db)).is_some()
             && !filtered(input)
         {
-            return outside(asked, input, deeper);
+            return outside(asked.rest(), input, deeper);
         }
         if let Plan::SemiJoin(s) = plan
             && s.method == SemiMethod::BuildLeft
@@ -210,12 +242,13 @@ fn walk(asked: Asked<'_>, plan: &mut Plan, depth: usize) {
             // Its left is held as a hash join's built operand is
             // (`exec/batch/joined/semi/marked.rs`), by batch whatever its
             // store (RULES.md D1132).
-            built(asked, &mut s.left, deeper);
-            return built(asked, &mut s.right, deeper);
+            built(asked.rest(), &mut s.left, deeper);
+            return built(asked.rest(), &mut s.right, deeper);
         }
-        return plan.each_input(&mut |input| walk(asked, input, deeper));
+        let below = asked.under(plan);
+        return plan.each_input(&mut |input| walk(below, input, deeper));
     }
-    outside(asked, plan, deeper);
+    outside(asked.rest(), plan, deeper);
     let input = std::mem::replace(plan, Plan::Values { rows: Vec::new(), detail: String::new() });
     *plan = Plan::Parallel(Box::new(Parallel { degree, input }));
 }
@@ -314,10 +347,11 @@ fn keyed_alike(groups: &[usize], collations: &[Option<CollationRef>], by: &[Opti
     each && groups.iter().enumerate().all(|(at, &g)| unpadded(collations.get(at)) == unpadded(by.get(g)))
 }
 
-/// \[DESIGN\] (RULES.md D1133) Whether `plan`, a grouping over another,
-/// crosses the first's partitions: it groups by some columns, its set
-/// functions are COUNT alone, and a projection lies between them or it
-/// groups by a column other than the first's grouping columns. Its
+/// \[DESIGN\] (RULES.md D1133, D1219) Whether `plan`, a grouping over
+/// another, crosses the first's partitions: its set functions are COUNT
+/// alone, and it groups by no column, its one group taking groups of
+/// every partition, or a projection lies between them or it groups by a
+/// column other than the first's grouping columns. Its
 /// partitions are then the first's, by its whole key, each partition's
 /// thread groups its own groups of the first again, and the statement's
 /// thread merges each group's counts of the partitions, of no more groups
@@ -330,7 +364,7 @@ pub(crate) fn crosses(plan: &Plan) -> bool {
     let Plan::Aggregate { groups: keys, .. } = first else { return false };
     let counts = aggs.iter().all(|a| a.func.0.columnar().is_some_and(|c| c.0 == crate::functions::ColumnarKind::Count));
     let within = steps.is_empty() && groups.iter().all(|g| *g < keys.len());
-    !groups.is_empty() && counts && !within
+    counts && (groups.is_empty() || !within)
 }
 
 /// The projections of `plan`'s rows down from it, the nearest first, an
@@ -369,7 +403,12 @@ fn uncounted(plan: &Plan) -> &Plan {
 /// subqueries judged of `db`'s tables if given (`stream_in`).
 fn rooted(plan: &Plan, db: Option<&State>) -> Option<usize> {
     if let Some(first) = first_level(plan) {
-        return rooted(first, db);
+        // The first's input is the part's pipeline (RULES.md D1219). A
+        // first that is itself over a grouping, as the second of three,
+        // has none, so the three are no part, and the lower two are
+        // walked for one.
+        let Plan::Aggregate { input, .. } = first else { return None };
+        return stream_in(input, db);
     }
     // A streamed grouping or DISTINCT reads its input in order, a group
     // at a time, which no morsel's table of groups does (RULES.md D550).

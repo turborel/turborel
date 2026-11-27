@@ -26,7 +26,7 @@
 //! grouping sets [§7.13 GR2a], are the second's alone.
 
 use super::{Shape, Slot, copies};
-use crate::functions::{AggregateRef, Merged, PART_TYPE, PARTIAL, Partial};
+use crate::functions::{AggregateRef, ColumnarKind, Merged, PART_TYPE, PARTIAL, Partial};
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan, Unnest, expr_columns, map_cond_columns, map_expr_columns};
 use crate::storage::Row;
 use crate::value::collation::CollationRef;
@@ -124,8 +124,10 @@ pub(super) fn two_levels(grouping: &Grouping<'_>, shape: &Shape, input: LogicalP
     let mut part = parts;
     for (a, of) in shape.aggs.iter().zip(&shape.of) {
         aggs.push(if let Some(s) = of {
-            let value = parts.saturating_sub(shape.slots.len()).saturating_add(*s);
-            AggCall { arg: Some(Expr::Column(value)), distinct: false, filter: layout.admits(*s), ..a.clone() }
+            let value = Expr::Column(parts.saturating_sub(shape.slots.len()).saturating_add(*s));
+            let arg =
+                shape.slots.get(*s).and_then(|slot| slot.keyed.as_ref()).map_or_else(|| value.clone(), |c| keyed(a, value.clone(), c));
+            AggCall { arg: Some(arg), distinct: false, filter: layout.admits(*s), ..a.clone() }
         } else {
             let func = AggregateRef(Arc::new(Merged { func: a.func.clone(), result: a.result.clone() }));
             let filter = layout.marker.map(|_| marked(layout.width, layout.plain));
@@ -136,6 +138,16 @@ pub(super) fn two_levels(grouping: &Grouping<'_>, shape: &Shape, input: LogicalP
     }
     let groups: Vec<usize> = (0..layout.width).collect();
     regrouped(&Grouping { groups: &groups, ..*grouping }, aggs, inner)
+}
+
+/// \[DESIGN\] (RULES.md D1219) What the function `a` takes of `value`, a
+/// group's string the first grouping grouped under `collation` in place
+/// of its sort key: the key, made once a group, as the function took it
+/// before; but the string itself of a function that only counts its
+/// values, as a sort key is null exactly when its string is.
+fn keyed(a: &AggCall, value: Expr, collation: &CollationRef) -> Expr {
+    let counts = a.func.0.columnar().is_some_and(|c| c.0 == ColumnarKind::Count);
+    if counts { value } else { Expr::sort_key(value, collation) }
 }
 
 /// The rows of `input` made once for each of `copies`, if more than one,
@@ -218,8 +230,14 @@ fn first(grouping: &Grouping<'_>, shape: &Shape, layout: &Layout, projected: Log
     groups.extend(layout.marker.map(|m| layout.at(m)));
     groups.extend(used..used.saturating_add(layout.truth_count()).saturating_add(shape.slots.len()));
     let mut collations = grouping.collations.to_vec();
-    if !collations.is_empty() {
+    if !collations.is_empty() || shape.slots.iter().any(|slot| slot.keyed.is_some()) {
         collations.resize(groups.len(), None);
+    }
+    // A slot's string is grouped under the collation its key was of
+    // (RULES.md D1219), the slots the last of the grouping columns.
+    let slots = groups.len().saturating_sub(shape.slots.len());
+    for (by, slot) in collations.iter_mut().skip(slots).zip(&shape.slots) {
+        by.clone_from(&slot.keyed);
     }
     let at = |c: usize| layout.at(c);
     let aggs = shape

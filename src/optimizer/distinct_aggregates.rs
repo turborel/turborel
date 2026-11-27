@@ -31,6 +31,7 @@ use super::{Rule, RuleContext};
 use crate::functions::{Split, split_of};
 use crate::lexer::kw;
 use crate::logical::{AggCall, Cond, Expr, LogicalPlan};
+use crate::value::collation::CollationRef;
 
 /// The rule's name, as EXPLAIN shows it and its setting names it.
 pub const DISTINCT_AGGREGATES: &str = "distinct_aggregates";
@@ -67,8 +68,30 @@ fn extreme(a: &AggCall) -> bool {
 /// The values of a DISTINCT set function: its argument, and its filter
 /// [ISO/IEC 9075-2:2023 §10.9 GR4a].
 struct Slot {
+    /// The value the first grouping groups by: the argument, or, of
+    /// `keyed`, the string its sort key was made of.
     arg: Expr,
     filter: Option<Cond>,
+    /// \[DESIGN\] (RULES.md D1219) Of an argument that is the sort key
+    /// of a string under a collation whose key is the text itself
+    /// (`CollationRef::is_octets`), that collation. The first grouping
+    /// groups by the string under it, which a table hashes and compares
+    /// in place (RULES.md D1183), where it grouped by a binary string
+    /// made of each row. Two strings share a group then exactly when
+    /// their keys are equal, so the groups are the same.
+    keyed: Option<CollationRef>,
+}
+
+impl Slot {
+    /// The slot of a function of the argument `arg` and `filter`.
+    fn of(arg: &Expr, filter: Option<Cond>) -> Slot {
+        if let Expr::SortKey(of, collation) = arg
+            && collation.is_octets()
+        {
+            return Slot { arg: (**of).clone(), filter, keyed: Some(collation.clone()) };
+        }
+        Slot { arg: arg.clone(), filter, keyed: None }
+    }
 }
 
 /// The set functions of an aggregation, as the rule computes them.
@@ -103,7 +126,7 @@ impl Shape {
             let key = format!("{arg:?} {:?}", a.filter);
             let at = keys.iter().position(|k| *k == key).unwrap_or_else(|| {
                 keys.push(key);
-                slots.push(Slot { arg: arg.clone(), filter: a.filter.clone() });
+                slots.push(Slot::of(arg, a.filter.clone()));
                 slots.len().saturating_sub(1)
             });
             of.push(Some(at));

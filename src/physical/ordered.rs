@@ -24,7 +24,9 @@ impl PhysicalPlanner<'_> {
         };
         let window = Box::new(w.with_input(|_| ()).over(input));
         let est = self.card(&w.input).rows;
-        Built { plan: Plan::Window { window, detail, est }, ordered: !want.is_empty() && keys.starts_with(want) }
+        // No order asked of it: nothing above reads its rows in an order.
+        let wanted = !want.is_empty();
+        Built { plan: Plan::Window { window, detail, est, ordered: wanted }, ordered: wanted && keys.starts_with(want) }
     }
 
     /// [X3.135-1986 §8.3 GR2b] UNION is UNION ALL followed by duplicate

@@ -5,12 +5,15 @@
 //! another that a part makes whole, and one that crosses its partitions,
 //! merged by the statement's thread (D1133), and the second grouping of
 //! a pair made in a table of the first's groups given as a batch (D1123),
-//! and the first rows of a sort taken from a grouping's tables (D1124).
+//! the first rows of a sort taken from a grouping's tables (D1124), a
+//! partition's groups given as a batch (D1125), the batches a parent that
+//! reads by batch takes of them (D1220), and COUNT(DISTINCT) of no GROUP
+//! BY run as one part, its string argument grouped as it is (D1219).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 22] = [
+pub const GROUPED_PARTS: [Mutation; 29] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -230,5 +233,75 @@ pub const GROUPED_PARTS: [Mutation; 22] = [
         replacement: "    if table.len() > 1 {",
         integration: &["ungrouped_parts::set_functions_of_no_grouping_are_fed_by_vectors_in_parallel"],
         unit: &[],
+    },
+    Mutation {
+        name: "count-of-no-grouping-above-the-part",
+        package: Package::Core,
+        breaks: "a second grouping by no column that counts alone does not cross the first's partitions (RULES.md D1219)",
+        file: "src/physical/parallel.rs",
+        original: "    counts && (groups.is_empty() || !within)",
+        replacement: "    counts && !groups.is_empty() && !within",
+        integration: &[],
+        unit: &["physical::parallel::tests::a_count_over_a_set_function_s_column_crosses_the_partitions"],
+    },
+    Mutation {
+        name: "crossing-of-no-rows-gives-no-group",
+        package: Package::Core,
+        breaks: "a second grouping by no column that crosses the partitions gives no row of no rows (RULES.md D1219)",
+        file: "src/exec/parallel/grouped/regrouped/crossing.rs",
+        original: "            if groups.is_empty() && spec.groups.is_empty() {",
+        replacement: "            if false {",
+        integration: &["unpadded_collations::a_count_of_distinct_values_of_no_grouping_is_one_part_10_9"],
+        unit: &[],
+    },
+    Mutation {
+        name: "distinct-key-of-octets-made-a-row",
+        package: Package::Core,
+        breaks: "a DISTINCT argument, a sort key under a collation of octets, is grouped by the key made of each row (RULES.md D1219)",
+        file: "src/optimizer/distinct_aggregates.rs",
+        original: "            && collation.is_octets()",
+        replacement: "            && false",
+        integration: &[],
+        unit: &["optimizer::distinct_aggregates::tests::a_key_of_octets_is_grouped_as_its_string"],
+    },
+    Mutation {
+        name: "run-of-columns-gives-its-first-group",
+        package: Package::Core,
+        breaks: "a partition's groups given as a batch are each given as the batch's first group (RULES.md D1125)",
+        file: "src/exec/parallel/grouped/runs.rs",
+        original: "left.next().map(|(g, first)| (first, row_of(groups, g)))",
+        replacement: "left.next().map(|(_, first)| (first, row_of(groups, 0)))",
+        integration: &["grouped_parts::a_grouping_run_in_parallel_gives_its_tables_groups"],
+        unit: &["exec::parallel::grouped::runs::tests::runs_of_rows_and_of_batches_are_given_in_one_order"],
+    },
+    Mutation {
+        name: "top-groups-constant-as-null",
+        package: Package::Core,
+        breaks: "a constant a projection gives comes from the tables as a null (RULES.md D1124)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "columns.push(Column::Values(vec![v.clone(); rows]));",
+        replacement: "columns.push(Column::Values(vec![Value::Null; rows]));",
+        integration: &["grouped_parts::the_first_rows_of_a_sort_over_a_grouping_are_the_plans"],
+        unit: &[],
+    },
+    Mutation {
+        name: "runs-as-batches-in-run-order",
+        package: Package::Core,
+        breaks: "a grouping's partitions given as batches give each partition's groups after the last's, not by their first rows (RULES.md D1220)",
+        file: "src/exec/parallel/grouped/runs.rs",
+        original: "self.order.extend(firsts.get(*next).map(|&first| Reverse((first, at))));",
+        replacement: "self.order.extend(firsts.get(*next).map(|_| Reverse((0, at))));",
+        integration: &["grouped_parts::a_join_keyed_by_a_groupings_columns_gives_the_plans_rows"],
+        unit: &["exec::parallel::grouped::runs::tests::runs_of_batches_are_given_as_batches_in_one_order"],
+    },
+    Mutation {
+        name: "groups-in-any-order-keyed-by-some",
+        package: Package::Core,
+        breaks: "a join keyed by some of a grouping's columns, which finds several groups of a key, is handed them in any order (RULES.md D1221)",
+        file: "src/exec/batch/parted.rs",
+        original: "(0..groups.len()).all(|column| keyed.contains(&column))",
+        replacement: "(0..groups.len()).any(|column| keyed.contains(&column))",
+        integration: &["grouped_parts::a_join_keyed_by_a_groupings_columns_gives_the_plans_rows"],
+        unit: &["exec::batch::parted::tests::keys_holding_every_grouping_column_find_one_group"],
     },
 ];

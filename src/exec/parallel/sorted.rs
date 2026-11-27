@@ -36,13 +36,13 @@ use super::{Held, Limit, Streamed};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::{Batches, rows_of};
-use crate::exec::sort::{Sorter, first_of_morsel, rows_of_batches, sorted_morsel, sorted_morsel_batches, sorted_rows};
+use crate::exec::sort::{Sorter, first_of_morsel, rows_of_batches, sorted_morsel, sorted_morsel_batches, sorted_rows, topped_of};
 use crate::exec::work::Work;
 use crate::exec::{RowIter, Runner, broken, compare_rows};
 use crate::logical::{Most, SortKey};
 use crate::physical::Plan;
 use crate::spill::row_bytes;
-use crate::storage::{Batch, Row};
+use crate::storage::{Batch, Row, Threshold};
 use crate::txn::TxId;
 
 /// \[DESIGN\] The ranges a sort's runs are merged in, by thread: more than
@@ -76,9 +76,10 @@ pub(super) fn sorted(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Resul
     let most = asked.filter(|m| !m.ties).map(|m| m.rows);
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::of(input, (db, tx), &limit)? else { return Ok(Held::GaveWay) };
+    let (pipeline, bound) = told_first(pipeline, (keys, most), input.est());
     let (pipeline, keys, db_for, within) = (Arc::new(pipeline), Arc::new(keys.clone()), db.clone(), limit.clone());
     let (count, keys_for) = (pipeline.count(), Arc::clone(&keys));
-    let each = Box::new(move |m: usize| morsel_run(&pipeline, m, (&keys_for, most), (&db_for, tx), &within));
+    let each = Box::new(move |m: usize| morsel_run(&pipeline, m, (&keys_for, most, bound.clone()), (&db_for, tx), &within));
     // What it held before its morsels, read before a thread starts on one.
     let from = limit.held();
     let morsels = Morsels::start(db, tx, (count, degree), each);
@@ -144,6 +145,35 @@ impl Iterator for WithTies {
     }
 }
 
+/// The width of the rows of `pipeline`'s batches, if it is read by batch
+/// and they hold every column of its rows.
+fn whole_of(pipeline: &Pipeline) -> Option<usize> {
+    pipeline.batched.as_ref().filter(|b| b.layout.iter().copied().eq(0..b.width)).map(|b| b.width)
+}
+
+/// \[DESIGN\] (RULES.md D1241) `pipeline`, the input of a sort by `keys`
+/// of its first `most` rows, of `est` rows estimated, told what the
+/// serial stream under such a sort is told (RULES.md D379): of few rows
+/// asked of morsels whose batches hold every column, its scans the bound
+/// of the first key, which is given too for each morsel's sort to raise,
+/// and the columns the keys do not read late, where the serial sort would
+/// read them late (`sort::topped_of`). Every morsel's sort offers the one
+/// bound the first keys of the rows it holds, and the bound is the last
+/// of the first so many offered by them all (`Threshold::shared`), so
+/// morsels that each hold fewer rows than are asked still bound one
+/// another. It only narrows, and a morsel that reads it before another
+/// narrowed it only reads more, so the rows the morsels keep between them
+/// hold the first of all. Any other sort is told nothing.
+fn told_first(pipeline: Pipeline, (keys, most): (&[SortKey], Option<usize>), est: Option<f64>) -> (Pipeline, Option<Arc<Threshold>>) {
+    let Some(rows) = most.filter(|&n| n <= FEW_FIRST && whole_of(&pipeline).is_some()) else { return (pipeline, None) };
+    let (late, threshold) = topped_of(keys, Most { rows, ties: false }, est);
+    // One bound, which counts the first keys every morsel's sort offers.
+    let threshold = threshold.map(|t| Arc::new(t.among(rows)));
+    let columns: Vec<usize> = keys.iter().map(|k| k.column).collect();
+    let told = threshold.clone().zip(keys.first()).map(|(t, k)| (k.column, t));
+    (pipeline.topped((&columns, late), &told), threshold)
+}
+
 /// The runs of `morsels`, `count` of `pipeline`'s sorted by `keys`, held
 /// within `limit`; or, once they outgrow it, written to a sorter's spill
 /// area as they come, a morsel that outgrew the grant written as its run
@@ -195,7 +225,9 @@ fn held_runs(
 
 /// Morsel `m` of `pipeline`, sorted by `keys`, its first `most` rows
 /// alone if given: by its batches if it is read by batch and they hold
-/// every column of its rows, else as its rows (RULES.md D380). A run that
+/// every column of its rows, else as its rows (RULES.md D380). Of few
+/// first rows it raises `bound`, the bound of the first key every morsel
+/// shares, if given (RULES.md D1241). A run that
 /// holds the morsel whole is charged to `limit` as it is read; past the
 /// grant, the morsel is given as its rows, those gathered and the rest of
 /// its read, or as its run if that outgrew the grant once sorted (RULES.md
@@ -207,17 +239,16 @@ fn held_runs(
 fn morsel_run(
     pipeline: &Arc<Pipeline>,
     m: usize,
-    (keys, most): (&[SortKey], Option<usize>),
+    (keys, most, bound): (&[SortKey], Option<usize>, Option<Arc<Threshold>>),
     (db, tx): (&Db, TxId),
     limit: &Limit,
 ) -> Result<Made> {
     let tally = Tally::of(limit);
     let kernel = crate::db::kernels::chosen(db);
-    let whole = pipeline.batched.as_ref().filter(|b| b.layout.iter().copied().eq(0..b.width)).map(|b| b.width);
-    let run = if let Some(width) = whole {
+    let run = if let Some(width) = whole_of(pipeline) {
         let kept = pipeline.morsel_kept(m, (db, tx))?;
         if let Some(n) = most.filter(|&n| n <= FEW_FIRST) {
-            Run::Rows(first_of_morsel(keys, kept, n, (db, tx))?)
+            Run::Rows(first_of_morsel(keys, kept, (n, bound), (db, tx))?)
         } else {
             let (batches, rest) = gather_batches(kept, &tally)?;
             if tally.past() {

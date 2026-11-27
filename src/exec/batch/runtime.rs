@@ -445,7 +445,7 @@ mod tests {
     /// A filter of built keys 1 and 2, told of `column`.
     fn told(column: usize) -> Told {
         let seed = Seed::fixed(7);
-        let how = Hashing { seed: &seed, keyed: false, direct: false };
+        let how = Hashing { seed: &seed, keyed: false, direct: false, kernels: None };
         let built = Batch { columns: vec![Column::Ints(Ints::new(vec![1, 2], 0, None))], rows: 2 };
         let mut hashes = KeyHashes::default();
         hashes.of_batch((&built, None), (&[0], &[false]), how).unwrap();

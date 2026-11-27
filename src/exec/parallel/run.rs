@@ -15,11 +15,17 @@
 //! cancellation first (RULES.md D44), and after one fails none past it is
 //! taken. A panic in a morsel is its failure, so the reader never waits
 //! for a morsel that will not end.
+//!
+//! A reader that drops its run waits for the morsels running to end,
+//! each looking at the statement's cancellation on its rows, then lets
+//! go of the work and of the results it did not read, so what they hold
+//! of the grant is given back before the statement returns, not when a
+//! worker next wakes (RULES.md D1245).
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 
 use crate::db::State;
 use crate::error::{Code, Result, SqlError};
@@ -43,7 +49,9 @@ pub(in crate::exec) type Work<T> = Box<dyn Fn(usize) -> Result<T> + Send + Sync>
 
 /// A run of morsels, shared by the workers taking them and its reader.
 struct Run<T> {
-    work: Work<T>,
+    /// The work of each morsel, read by each morsel running and let go
+    /// by the reader once none is.
+    work: RwLock<Option<Work<T>>>,
     count: usize,
     degree: usize,
     window: usize,
@@ -105,17 +113,22 @@ impl<T: Send + 'static> Run<T> {
         got
     }
 
-    /// Runs morsel `m`, claimed, and keeps its result.
+    /// Runs morsel `m`, claimed, and keeps its result; nothing if its
+    /// reader has let go of the work.
     fn run(&self, m: usize) {
-        let checked = self.stop.as_ref().map_or(Ok(()), |s| s.check_now());
-        let result = checked.and_then(|()| {
-            catch_unwind(AssertUnwindSafe(|| (self.work)(m)))
-                .unwrap_or_else(|_| Err(SqlError::new(Code::Api, "[DESIGN] a morsel of a parallel query failed")))
-        });
-        if result.is_err() {
-            self.failed.fetch_min(m, Ordering::AcqRel);
+        let held = self.work.read().unwrap_or_else(PoisonError::into_inner);
+        if let Some(work) = held.as_ref() {
+            let checked = self.stop.as_ref().map_or(Ok(()), |s| s.check_now());
+            let result = checked.and_then(|()| {
+                catch_unwind(AssertUnwindSafe(|| work(m)))
+                    .unwrap_or_else(|_| Err(SqlError::new(Code::Api, "[DESIGN] a morsel of a parallel query failed")))
+            });
+            if result.is_err() {
+                self.failed.fetch_min(m, Ordering::AcqRel);
+            }
+            done_of(self).insert(m, result);
         }
-        done_of(self).insert(m, result);
+        drop(held);
         self.running.fetch_sub(1, Ordering::AcqRel);
         self.landed.notify_all();
     }
@@ -182,7 +195,7 @@ impl<T: Send + 'static> Morsels<T> {
             None => work,
         };
         let run = Arc::new(Run {
-            work,
+            work: RwLock::new(Some(work)),
             count,
             degree,
             window: window(degree),
@@ -218,7 +231,17 @@ impl<T: Send + 'static> Iterator for Morsels<T> {
 impl<T: Send + 'static> Drop for Morsels<T> {
     fn drop(&mut self) {
         self.run.ended.store(true, Ordering::Release);
-        // Woken, the workers let go of the run, and of what its work holds.
+        // Woken, the idle workers let go of the run.
         self.run.pool.nudge();
+        // Once the morsels running end, as a cancelled statement's do at
+        // their next row, the work and the results not read are let go
+        // here, what they hold given back before the statement goes on.
+        let work = self.run.work.write().unwrap_or_else(PoisonError::into_inner).take();
+        drop(work);
+        let unread = std::mem::take(&mut *done_of(&self.run));
+        drop(unread);
     }
 }
+
+#[cfg(test)]
+mod tests;

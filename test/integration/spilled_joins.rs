@@ -73,13 +73,15 @@ fn parallel(s: &Session, sql: &str) -> Vec<String> {
 /// An inner join, a LEFT join, a semi join and an antijoin of F with D on
 /// their G, D built; and an inner join with E, whose passes' keys each
 /// lie in a range of their own, so its scan of F is told the range of the
-/// whole operand's keys, not the first pass's.
-const QUERIES: [&str; 5] = [
+/// whole operand's keys, not the first pass's; and a join built of a
+/// grouping of D, read by batch where it runs in parallel (D1221).
+const QUERIES: [&str; 6] = [
     "SELECT F.K, E.K FROM F JOIN E ON F.G = E.G",
     "SELECT F.K, D.K, D.T FROM F JOIN D ON F.G = D.G",
     "SELECT F.K, D.K FROM F LEFT JOIN D ON F.G = D.G",
     "SELECT F.K FROM F WHERE F.G IN (SELECT D.G FROM D)",
     "SELECT F.K FROM F WHERE NOT EXISTS (SELECT * FROM D WHERE D.G = F.G)",
+    "SELECT F.K, X.K, X.T FROM F JOIN (SELECT K, MAX(T) AS T FROM D GROUP BY K) AS X ON F.G = X.K",
 ];
 
 /// Verifies: [DESIGN] (RULES.md D1240) hash joins run in parallel whose
@@ -101,5 +103,35 @@ fn joins_built_past_the_grant_give_their_rows() {
                 assert_eq!(spill_bytes(&db), 0, "{q}: nothing left held");
             }
         }
+    }
+}
+
+/// Verifies: [DESIGN] (RULES.md D1240, D366, D1241) a join built in
+/// passes whose probing side is a scan of the column store, its columns
+/// no step reads given late, gives the rows the join run alone gives and
+/// the rows it gives within the grant: each pass's batches decoded once,
+/// as the first pass's, and left late for a sort of the first rows to
+/// decode, its scan told that sort's bound.
+#[test]
+fn a_probing_side_of_late_columns_probed_in_passes_gives_its_rows() {
+    let (db, a) = tables();
+    a.run("CREATE TABLE C (K INTEGER, G INTEGER, W VARCHAR(100), N INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)")
+        .unwrap();
+    let c: Vec<String> = (0_i64..6_000).map(|k| format!("({k}, {}, 'wide {}', {})", k * 3 % 2_500, k % 311, k % 17)).collect();
+    a.run(&format!("INSERT INTO C VALUES {}", c.join(", "))).unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    exec(&a, "SET EXECUTOR.BATCHES = 'ON'").unwrap();
+    for q in [
+        "SELECT C.K, C.W, C.N, D.K FROM C JOIN D ON C.G = D.G WHERE C.N > 3",
+        "SELECT C.K, C.W, D.K FROM C JOIN D ON C.G = D.G ORDER BY C.K, D.K FETCH FIRST 40 ROWS ONLY",
+    ] {
+        let want = alone(&a, q);
+        assert!(!want.is_empty(), "{q}");
+        db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(1 << 30, 0))).unwrap();
+        assert_eq!(&parallel(&a, q), &want, "{q}: within the grant");
+        db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(PASSED, 0))).unwrap();
+        assert_eq!(&parallel(&a, q), &want, "{q}: in passes");
+        assert_eq!(spill_bytes(&db), 0, "{q}: nothing left held");
     }
 }

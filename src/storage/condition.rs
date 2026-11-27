@@ -103,9 +103,11 @@ pub enum Conjunct {
     /// [X3.135-1986 §5.18] An OR of conjuncts of one column: any of them.
     Any(Vec<Conjunct>),
     /// \[DESIGN\] (RULES.md D379) The bound of a sort's first key, `column`,
-    /// as it holds rows. A row past it is not among the first. True of
-    /// every row, as the sort judges them, it passes over groups and parts
-    /// alone.
+    /// as it holds rows. A row past it is not among the first. It is true
+    /// of every row the sort would keep, and the sort judges each row it
+    /// is given, so a scan may pass over a group or a part past it, and may
+    /// leave out a row past it or of a null key (RULES.md D1241), or give
+    /// either.
     Dynamic {
         /// The column.
         column: usize,

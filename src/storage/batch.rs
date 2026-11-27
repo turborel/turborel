@@ -9,6 +9,7 @@
 //! any other reads them as values, made the first time it asks.
 
 pub mod bound;
+mod coded;
 mod gathered;
 mod held;
 mod joined;
@@ -20,6 +21,7 @@ pub mod sel;
 
 use std::sync::{Arc, OnceLock};
 
+pub use self::coded::dictionaries;
 pub use self::gathered::{NO_ROW, Picks};
 pub use self::kinds::{Bools, Datetimes};
 pub use self::late::{Late, LateSource};
