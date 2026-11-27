@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 35] = [
+pub const OLTP: [Mutation; 36] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -365,5 +365,15 @@ pub const OLTP: [Mutation; 35] = [
         replacement: "(!ends && !held.pinned)",
         integration: &[],
         unit: &["txn::tests::a_transaction_dropped_as_its_records_are_written_holds_no_log"],
+    },
+    Mutation {
+        name: "oltp-abort-refused-ignored",
+        package: Package::Core,
+        breaks: "an abort record that cannot be appended after its transaction's records is ignored, so the next writer of its rows commits after them and recovery puts the rows back over that commit (D1258)",
+        file: "src/txn/logging.rs",
+        original: "            shared.stop_changes(&SqlError::new(e.code, why));",
+        replacement: "            drop(SqlError::new(e.code, why));",
+        integration: &["held_records::a_refused_abort_record_stops_the_database"],
+        unit: &[],
     },
 ];

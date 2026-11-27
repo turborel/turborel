@@ -279,8 +279,9 @@ pub(crate) struct Transactions {
     builds: Mutex<usize>,
     /// Signalled when a build ends.
     built: Condvar,
-    /// The failed sync of the log that stopped the database's changes, if
-    /// one did (`txn/logging.rs`), and whether one did.
+    /// The failure of the log that stopped the database's changes, if one
+    /// did, a sync's or an abort record's append (`txn/logging.rs`), and
+    /// whether one did.
     stopped: Mutex<Option<SqlError>>,
     stopping: Alone<AtomicBool>,
     /// The commits written to the log but not yet synced, under

@@ -72,8 +72,9 @@ impl Held {
 }
 
 impl Transactions {
-    /// Whether the database takes changes: not once a sync of its log
-    /// failed, nor while it is held (`Held`).
+    /// Whether the database takes changes: not once it was stopped, by a
+    /// sync of its log that failed or an abort record that could not be
+    /// appended (`stop_changes`), nor while it is held (`Held`).
     ///
     /// # Errors
     ///
@@ -84,15 +85,24 @@ impl Transactions {
             let cause = lock_builtin(&self.stopped).as_ref().map_or_else(String::new, SqlError::described);
             return Err(SqlError::new(
                 Code::Io,
-                format!(
-                    "[DESIGN] a sync of the log failed, so the database takes no change until it is opened again and recovered: {cause}"
-                ),
+                format!("[DESIGN] the database takes no change until it is opened again and recovered: {cause}"),
             ));
         }
         if !self.holding.load(Ordering::Acquire) {
             return Ok(());
         }
         lock_builtin(&self.held).map_or(Ok(()), |held| Err(held.refusal()))
+    }
+
+    /// \[DESIGN\] Stops the database taking changes, for `e`: a sync of
+    /// its log that failed, after which a sync tried again may succeed
+    /// without what the failed one lost, or an abort record that could
+    /// not be appended (RULES.md D25, D1258). The first failure is the
+    /// one kept, and no commit is durable from then on (RULES.md D441).
+    pub(super) fn stop_changes(&self, e: &SqlError) {
+        lock_builtin(&self.stopped).get_or_insert_with(|| e.clone());
+        self.stopping.store(true, Ordering::Release);
+        self.clock.halt();
     }
 
     /// What holds the database's changes beside a failed sync, if anything
@@ -127,12 +137,9 @@ impl Transactions {
     /// As `sync`.
     pub(super) fn sync_reaching(&self, log: &dyn Log, lsn: Lsn) -> Result<Lsn> {
         self.taking_changes()?;
-        let reached = log.sync_reached(lsn).inspect_err(|e| {
-            lock_builtin(&self.stopped).get_or_insert_with(|| e.clone());
-            self.stopping.store(true, Ordering::Release);
-            // [DESIGN] RULES.md D441: no commit is durable from now on.
-            self.clock.halt();
-        })?;
+        let reached = log
+            .sync_reached(lsn)
+            .inspect_err(|e| self.stop_changes(&SqlError::new(e.code, format!("a sync of the log failed: {}", e.msg))))?;
         // Every record before `reached` is durable, the unsynced commits
         // among them too (RULES.md D410).
         self.synced(log, reached.max(lsn));
@@ -375,19 +382,36 @@ impl Txn {
     /// record, if a record of the transaction may have reached the log.
     /// Both are done under the gate its rollback undid its changes under,
     /// so no checkpoint writes a record of it after (`Txn::drop_held`,
-    /// RULES.md D1250). Not synced: a transaction without a commit record is undone by
-    /// recovery either way, and a failure to write it cannot matter for the
-    /// same reason. Not written while the database is held (`Held`): a deposed
+    /// RULES.md D1250).
+    ///
+    /// The abort record is not synced. The sync of any later commit makes
+    /// it durable first, being before it in the log, and a crash that
+    /// loses it loses every commit after it, so recovery, which undoes a
+    /// transaction with no end record, undoes this one before anything
+    /// was committed over its rows. An append that fails is another
+    /// matter. The transaction's records then stand in the log with no
+    /// end, and a log that takes records again would let later commits
+    /// follow them, which recovery would put its rows back over. So the
+    /// database then takes no change until it is opened again and
+    /// recovered (`Transactions::stop_changes`, RULES.md D1258).
+    ///
+    /// Not written while the database is held (`Held`): a deposed
     /// database's log is its replica's, which may serve again, in a later
     /// view, for the database opened again (RULES.md D57), and the primary
     /// promoted there aborts each transaction its log leaves open.
     pub(super) fn log_abort(&self) {
         self.drop_held();
-        if self.origin.shared.held().is_some() {
+        let shared = &self.origin.shared;
+        if shared.held().is_some() {
             return;
         }
-        if let Some(log) = self.origin.log.as_ref().filter(|_| self.reached_log()) {
-            let _ = log.append(&Record { tx: self.id, change: Change::Abort }.encode());
+        let Some(log) = self.origin.log.as_ref().filter(|_| self.reached_log()) else { return };
+        if let Err(e) = log.append(&Record { tx: self.id, change: Change::Abort }.encode()) {
+            let why = format!(
+                "[DESIGN] the abort record of a transaction rolled back could not be appended after its records: {}",
+                e.described()
+            );
+            shared.stop_changes(&SqlError::new(e.code, why));
         }
     }
 }

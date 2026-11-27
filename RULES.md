@@ -788,6 +788,7 @@ verification approach DO-178C expects (§8).
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 | D1231 | The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
+| D1258 | An abort record that cannot be appended stops the database |
 
 ### The project
 
@@ -2401,7 +2402,9 @@ clearing or reading anything, so a database is open in one place at a
 time.
 
 A failed sync stops changes, because it may have lost logged data and a
-later sync could succeed without it. The file log never retries. Row
+later sync could succeed without it. The file log never retries. An abort
+record that cannot be appended after its transaction's records stops them
+too (D1258). Row
 changes, writing commits, definitions and checkpoints are refused
 (SQLCODE -915), reads and rollbacks go on, and reopening recovers from the
 log.
@@ -22074,6 +22077,55 @@ and forgets it, or the write finds the transaction over and notes none.
 Recovery is unchanged. Nothing in the log tells a transaction rolled
 back in memory from one a crash stopped, so the rule is kept where
 records are written.
+
+#### D1258. An abort record that cannot be appended stops the database
+
+A rollback appends its abort record after the records of its transaction
+already in the log, and ignored a failure of that append, on the ground
+that recovery undoes a transaction with no commit record either way.
+D1250 shows where that ground gives way. The records then stand in the
+log with no end, the transaction is rolled back in memory and its locks
+released, and if the log takes records again the next writer of its rows
+commits after them. Recovery that reads so far back puts the rows back
+over that commit.
+
+Whether a log takes records after it refused one is the log's own
+matter. The file log mostly does not. A write that fails, of the records
+its buffer held or of the zeros written ahead, leaves the segment
+refusing appends until the log is opened again (`BlockFile::publish`),
+and a segment is begun only after an append that succeeded. Yet a change
+of the log's formats begins one before the next append
+(`rotate_for_formats`), and a record's own encoding can fail with
+nothing written. A log is a plug-in, and `Log::append` promises nothing
+of the appends after one that failed.
+
+So the rule is kept above the log. A rollback whose abort record cannot
+be appended, a record of its transaction having reached the log, stops
+the database as a failed sync does (`Txn::log_abort`,
+`Transactions::stop_changes`, D25). It takes no row change, no commit
+that wrote, no definition and no checkpoint (SQLCODE -915, naming the
+abort record) until it is opened again and recovered. Recovery then
+undoes the transaction as one a crash interrupted, and rightly, nothing
+having been committed over its rows since. Reads and rollbacks go on. A
+transaction that would write those rows makes that write after the locks
+on them are released, which follows the stop, and every row change,
+load and commit record asks first whether the database takes changes. A
+commit written and not yet synced as the database stops is in doubt, as
+after a failed sync. The stop is told to the sink with the first change
+refused.
+
+The abort record is still not synced. The sync of a later commit makes
+it durable first, being before it in the log, and a crash that loses it
+loses every commit after it.
+
+A commit record that cannot be appended needs no rule of its own. Its
+transaction is rolled back, the run that failed having noted that a
+record of it may have reached the log (`TxLog::write`), so its abort
+record is appended after whatever was, or the database stops by this
+rule. It stops so even where the log refused the whole run, as how
+much of a run reached a log that failed is not known above it. With
+the file log nothing is lost by that, a segment that refused a write
+taking no append until the log is opened again.
 
 ## 2. Project layout
 
