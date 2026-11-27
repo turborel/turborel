@@ -26,12 +26,13 @@ use super::picks::{pick, picked};
 use super::project::{computed, place_of};
 use super::runtime::{self, Told};
 use super::told;
+use super::vetted::{self, Filtering, Said};
 use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::Runner;
-use crate::logical::{Cond, Window, pushed_conjuncts};
+use crate::logical::{Window, pushed_conjuncts};
 use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Conjunct, Conjunction, Sel};
 use crate::txn::{TxId, counted};
@@ -487,13 +488,14 @@ fn filter_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Res
     // An input that is no scan is read from here, so each filter over a
     // join of a deep chain adds one call to the stack, not two (RULES.md
     // R-CF-6).
+    let said = Arc::new(Said::default());
     let (inner, columns) = if scanned(&input) {
-        told(input, &cond, (db, tx), &below)?
+        told(input, (&cond, &said), (db, tx), &below)?
     } else {
         let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
         (batches_with(input, (db, tx), &below)?, columns)
     };
-    Ok(filtered(inner, (Judging::of(&cond, &columns), runner)))
+    Ok(filtered(inner, (Judging::over_scan(&cond, &columns).hearing(Some(&said)), runner)))
 }
 
 /// Whether `plan`, a filter's input, is one `told` reads: a scan in no
@@ -511,7 +513,7 @@ fn scanned(plan: &Plan) -> bool {
 /// # Errors
 ///
 /// As `batches`.
-fn told(inner: Plan, cond: &Cond, (db, tx): (&Db, TxId), below: &Deferred) -> Result<(Batches, Vec<usize>)> {
+fn told(inner: Plan, cond: Filtering<'_>, (db, tx): (&Db, TxId), below: &Deferred) -> Result<(Batches, Vec<usize>)> {
     if let Plan::Counted(c) = inner {
         return super::counted::through(*c, db, |input| told(input, cond, (db, tx), below));
     }
@@ -559,14 +561,12 @@ fn appended_batches(chain: Plan, (db, tx): (&Db, TxId), _deferred: &Deferred) ->
     Ok(Box::new(operands.flat_map(move |operand| batches(operand, &later, tx).unwrap_or_else(|e| Box::new(std::iter::once(Err(e)))))))
 }
 
-/// A scan's batches (`TableStorage::scan_batches`), its columns `deferred`
-/// leaves unread given late (RULES.md D361), told the bound of a sort above if it has
-/// one (D379) and the ranges of the runtime filters it is told as
-/// conjuncts, then judged by each of those filters, no row of them
-/// filtered by the condition yet (RULES.md D369).
-fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred, db: &Db, tx: TxId) -> Result<Batches> {
+/// A scan's batches (`TableStorage::scan_batches`), its columns `deferred` leaves unread late (RULES.md D361), told a sort's
+/// bound above if there is one (D379) and the ranges of the runtime filters told it, then judged by each of those filters, no
+/// row filtered by the condition yet (D369). It says to its filter, one that cannot raise, what it judged of each batch (D1266).
+fn scan_of(scan: (&QualifiedName, &[usize], Option<Filtering<'_>>), deferred: &Deferred, db: &Db, tx: TxId) -> Result<Batches> {
     let storage = Arc::clone(db.storage_of(scan.0)?);
-    let mut pushed = scan.2.and_then(pushed_conjuncts);
+    let mut pushed = scan.2.and_then(|(cond, _)| pushed_conjuncts(cond));
     let told = deferred.filters();
     let mut more: Vec<Conjunct> = told.iter().flat_map(|t| t.filter.range_conjuncts(t.column)).collect();
     // A sort's bound told the scan beside the filter's (RULES.md D379).
@@ -574,9 +574,9 @@ fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred,
     if !more.is_empty() {
         pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.extend(more);
     }
-    let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), &deferred.late_of(scan.1));
-    let batches: Batches =
-        Box::new(counted(batches, db.tx.stop_of(tx), |b| u64::try_from(b.rows).unwrap_or(u64::MAX)).map(|b| b.map(|b| (b, None))));
+    let hears = scan.2.filter(|(cond, _)| !cond.can_raise()).map(|(_, said)| said);
+    let read = vetted::scanned(storage, tx, (scan.1, pushed.as_ref(), &deferred.late_of(scan.1)), hears);
+    let batches = Box::new(counted(read, db.tx.stop_of(tx), |(b, _)| u64::try_from(b.rows).unwrap_or(u64::MAX)));
     Ok(runtime::applied(batches, told.to_vec(), scan.1, (db, true)))
 }
 

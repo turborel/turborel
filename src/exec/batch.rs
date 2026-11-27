@@ -35,6 +35,7 @@ mod stream;
 mod told;
 mod transfer;
 mod typed;
+mod vetted;
 
 use std::sync::Arc;
 
@@ -50,11 +51,12 @@ pub(super) use parted::built_by_batch;
 use project::Place;
 pub(super) use project::{projectable, projected, vector_of};
 pub(super) use runtime::{Told, taken as runtime_taken, wanted};
-pub(super) use shaped::{Keeps, Shaped, filter_step, outer_step, probe_step, project_step, runtime_step, semi_step, through};
+pub(super) use shaped::{Keeps, Shaped, filter_step, outer_step, probe_step, project_step, runtime_step, semi_step, through, told_step};
 pub(super) use stream::{Batches, Kept, layout, reads_by_batch, whole_batches, whole_keyed};
 pub use transfer::HeldLeaf;
 pub(super) use transfer::rows as transfer_rows;
 pub(crate) use transfer::{batch_layout, transferable};
+pub(super) use vetted::{Said, morsel as morsel_read};
 
 use super::{Runner, eval, failed, warn};
 use crate::db::State;

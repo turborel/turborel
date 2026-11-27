@@ -50,6 +50,16 @@
 //! filter still judges every row the scan gives (RULES.md D15). So a row
 //! left out here is one the filter would have left out, and a conjunct a
 //! column's vector cannot be judged over is left to the filter.
+//!
+//! \[DESIGN\] (RULES.md D1266) Judging a run says which conjuncts it
+//! judged exactly (`Judged::exact`): the conjunct itself evaluated of
+//! every row it was asked of, so it is true of each row kept and the
+//! filter need not judge it of them again. A LIKE whose judging stopped
+//! part way through the run is said to be judged of the rows before the
+//! one it stopped at (`Judged::partly`). A sort's bound is never said to
+//! be judged, as it tightens while the scan runs; nor a LIKE a chunk gave
+//! way under; nor a comparison a sketch's codes answered for some rows;
+//! nor a conjunct not reached because no row was left.
 
 mod coded;
 mod entries;
@@ -68,7 +78,7 @@ use crate::kernels::Kernels;
 use crate::storage::bound::{Bound, holds, rescaled_bound};
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
-use crate::storage::{Column, Condition, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Texts};
+use crate::storage::{Column, Condition, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Texts, Vetted};
 use crate::value::{CompOp, DataType, Decimal, Value, compare_strings};
 
 /// \[DESIGN\] The share of a run's rows, one in this many, past which the
@@ -106,6 +116,51 @@ pub struct Judged {
     pub kept: Vec<u32>,
     /// The columns decoded of every row of the run.
     pub decoded: Vec<(usize, Column)>,
+    /// \[DESIGN\] (RULES.md D1266) The conjuncts judged exactly, by
+    /// their places in the condition (`Vetted::bit`): each is true of
+    /// every row kept.
+    pub exact: u64,
+    /// \[DESIGN\] (RULES.md D1266) A conjunct judged exactly of the
+    /// rows kept before a place alone, by its bit and that place from
+    /// the run's first (`Vetted::partly`): the rows kept from there on
+    /// were kept unjudged by it.
+    pub partly: Option<(u64, u32)>,
+}
+
+/// \[DESIGN\] (RULES.md D1266) How far a conjunct was judged of the rows
+/// asked of a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Reach {
+    /// The conjunct itself was evaluated of every row asked.
+    Every,
+    /// It was evaluated of every row asked before the one at this place
+    /// from the run's first, and the rows from there on were kept
+    /// unjudged.
+    Before(u32),
+    /// Some row was kept unjudged among the others, or kept or left by a
+    /// summary's word.
+    Part,
+}
+
+/// \[DESIGN\] (RULES.md D1266) The conjuncts judged exactly of a run so
+/// far, and the one judged of its first rows alone, if one was.
+#[derive(Debug, Clone, Copy, Default)]
+struct Reached {
+    exact: u64,
+    partly: Option<(u64, u32)>,
+}
+
+impl Reached {
+    /// Notes that the conjunct of `bit` was judged as far as `reach`.
+    /// One conjunct judged of the first rows alone is noted, the first:
+    /// another is judged whole by the filter.
+    fn note(&mut self, bit: u64, reach: Reach) {
+        match reach {
+            Reach::Every => self.exact |= bit,
+            Reach::Before(place) => self.partly = self.partly.or(Some((bit, place))),
+            Reach::Part => {}
+        }
+    }
 }
 
 impl Judgment {
@@ -168,11 +223,12 @@ impl Judgment {
         (types, (from, to)): (&[DataType], (u32, u32)),
         given: Option<Vec<u32>>,
     ) -> Result<Judged> {
-        let (mut kept, mut decoded) = (given, Vec::<(usize, Column)>::new());
+        let (mut kept, mut decoded, mut reached) = (given, Vec::<(usize, Column)>::new(), Reached::default());
         for pred in &self.preds {
             if kept.as_ref().is_some_and(Vec::is_empty) {
                 break;
             }
+            let bit = pred.bit();
             // A sort's bound is judged as the test it is now. One not yet
             // set keeps every row, so its column is not decoded for it.
             let Some(pred) = pred.now() else { continue };
@@ -181,16 +237,23 @@ impl Judgment {
             // A LIKE is judged in place or left to the filter, its
             // column not decoded to judge it (RULES.md D1251).
             if let Conjunct::Like { like, .. } = &pred.conjunct {
-                kept = coded::liked(group, (pages, &mut *prepared), (pred, like, t), (from, to), kept.as_deref())?.or(kept);
+                if let Some((rows, reach)) = coded::liked(group, (pages, &mut *prepared), (pred, like, t), (from, to), kept.as_deref())? {
+                    kept = Some(rows);
+                    reached.note(bit, reach);
+                }
                 continue;
             }
             // A comparison the bounds of the run's parts prove keeps every
-            // row, its column not decoded to judge it (RULES.md D1293).
+            // row, its column not decoded to judge it (RULES.md D1293): it
+            // is true of each row of the run, so it is judged exactly of
+            // them (RULES.md D1266).
             if proved::proved(group, (pred, t), (from, to))? {
+                reached.note(bit, Reach::Every);
                 continue;
             }
-            if let Some(rows) = coded::kept(group, (pages, &mut *prepared), (pred, t), (from, to), kept.as_deref())? {
+            if let Some((rows, reach)) = coded::kept(group, (pages, &mut *prepared), (pred, t), (from, to), kept.as_deref())? {
                 kept = Some(rows);
+                reached.note(bit, reach);
                 continue;
             }
             if !decoded.iter().any(|(c, _)| *c == pred.column) {
@@ -199,10 +262,11 @@ impl Judgment {
             let at = decoded.iter().position(|(c, _)| *c == pred.column).unwrap_or(0);
             if let Some(rows) = decoded.get(at).and_then(|(_, column)| pred.kept(column, kept.as_deref(), pages.kernels)) {
                 kept = Some(rows);
+                reached.note(bit, Reach::Every);
             }
         }
         let all = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-        Ok(Judged { kept: kept.unwrap_or_else(|| rows_of(0..all)), decoded })
+        Ok(Judged { kept: kept.unwrap_or_else(|| rows_of(0..all)), decoded, exact: reached.exact, partly: reached.partly })
     }
 }
 
@@ -304,6 +368,15 @@ impl Pred {
     /// Whether it is a LIKE (RULES.md D1251).
     fn liked(&self) -> bool {
         matches!(self.conjunct, Conjunct::Like { .. })
+    }
+
+    /// \[DESIGN\] (RULES.md D1266) Its bit among the conjuncts judged
+    /// exactly (`Vetted::bit`), by its place in the condition: none of a
+    /// sort's bound, which is judged as the test it is now and may be a
+    /// tighter one by the time the filter reads the rows, so no judging
+    /// of it is the conjunct's own.
+    fn bit(&self) -> u64 {
+        if matches!(self.conjunct, Conjunct::Dynamic { .. }) { 0 } else { Vetted::bit(self.at) }
     }
 
     /// \[DESIGN\] (RULES.md D1241) It as a run is judged: itself, but of a

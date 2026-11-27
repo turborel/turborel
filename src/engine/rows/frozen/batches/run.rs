@@ -10,6 +10,14 @@
 //! would pay a batch's overhead for. A column asked for late is given as
 //! its rows' places (`storage::Late`), decoded once an operator reads it,
 //! of the rows still kept then.
+//!
+//! \[DESIGN\] (RULES.md D1266) With each batch of frozen rows the scan
+//! notes what it judged of them (`Batched::vetted`): of a run given
+//! whole, the rows its conjuncts kept, which the filter starts from, the
+//! conjuncts judged exactly of those rows, and the one judged of the
+//! first of them alone, if one was; of a batch of the rows kept of
+//! several runs, the conjuncts every one of those runs judged exactly. The filter over the scan does not judge those again
+//! (`exec/batch/vetted.rs`).
 
 use std::sync::Arc;
 
@@ -19,7 +27,7 @@ use crate::engine::columns::group::Group;
 use crate::engine::columns::judged::KEPT_SHARE;
 use crate::engine::columns::scan::{column_at, column_of_run};
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Column, Late};
+use crate::storage::{BATCH_ROWS, Batch, Column, Late, Vetted};
 use crate::value::Value;
 
 /// \[DESIGN\] The rows kept of a group's runs a batch is decoded of once
@@ -47,6 +55,7 @@ impl Batched {
         let judged = self.judgment.judge(&group, (&pages, &mut self.prepared), (types, (from, to)), given)?;
         let rows = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
         let kept: Vec<u32> = judged.kept.iter().map(|&r| from.saturating_add(r)).collect();
+        let (exact, partly) = (judged.exact, judged.partly);
         // Of many rows kept, the run as it is, which the filter selects of;
         // but a short run, as imprints leave (RULES.md D511), is gathered
         // with others, so batches stay full.
@@ -55,19 +64,23 @@ impl Batched {
             if !shadowed {
                 // Under a sort's bound the sort keeps few of the rows
                 // given, so late columns stay late (RULES.md D1241).
-                return self.dense(&group, (from, to), (judged.decoded, self.judgment.bounded())).map(Some);
+                let batch = self.dense(&group, (from, to), (judged.decoded, self.judgment.bounded()))?;
+                // The run whole, with the rows of it judging kept, whose
+                // places from its first are the batch's (RULES.md D1266).
+                self.vetted = Some(Vetted { rows: (judged.kept.len() < rows).then_some(judged.kept), exact, partly });
+                return Ok(Some(batch));
             }
             let mut once = Pending::default();
-            once.add(&kept, (&judged.kept, &judged.decoded));
+            once.add(&kept, (&judged.kept, &judged.decoded), exact);
             return self.held_batch(&group, once.take()).map(Some);
         }
         let these = (judged.kept.as_slice(), judged.decoded.as_slice());
         if !self.pending.is_empty() && self.pending.len().saturating_add(kept.len()) > BATCH_ROWS {
             let ready = self.pending.take();
-            self.pending.add(&kept, these);
+            self.pending.add(&kept, these, exact);
             return self.held_batch(&group, ready).map(Some);
         }
-        self.pending.add(&kept, these);
+        self.pending.add(&kept, these, exact);
         if self.pending.len() < KEPT_ROWS {
             return Ok(None);
         }
@@ -116,9 +129,12 @@ impl Batched {
 
     /// The batch of the rows held at `positions` of `group`, the columns
     /// of `held` as they are, each other decoded at them alone (RULES.md
-    /// D366).
-    fn held_batch(&mut self, group: &Group, (positions, held): (Vec<u32>, Vec<(usize, Column)>)) -> Result<Batch> {
-        self.at_positions(group, &positions, held)
+    /// D366), every row of it one judging kept, `exact` the conjuncts
+    /// judged exactly of them all (RULES.md D1266).
+    fn held_batch(&mut self, group: &Group, (positions, held, exact): (Vec<u32>, Vec<(usize, Column)>, u64)) -> Result<Batch> {
+        let batch = self.at_positions(group, &positions, held)?;
+        self.vetted = Some(Vetted { rows: None, exact, partly: None });
+        Ok(batch)
     }
 
     /// The batch of the rows at `positions` of `group`, ascending, those

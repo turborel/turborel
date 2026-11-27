@@ -518,6 +518,7 @@ mod vector_operators;
 mod vector_pipelines;
 mod vector_search;
 mod vectors;
+mod vetted_scans;
 mod views;
 mod warnings;
 mod weblog;

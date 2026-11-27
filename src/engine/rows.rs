@@ -93,6 +93,7 @@ use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::stats::Statistics;
+use crate::storage::VettedBatches;
 use crate::storage::{Condition, Conjunction, Garbage, Near, Newest, Region, Removed, Row, RowId, Rows, ScanOrder, Split, TableStorage};
 use crate::txn::{Concurrency, NO_TRANSACTION, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
@@ -292,6 +293,10 @@ impl TableStorage for RowTable {
         late: &[usize],
     ) -> crate::storage::Batches {
         self.scan_batches_of(tx, columns, condition.cloned(), late)
+    }
+    /// \[DESIGN\] (RULES.md D1266) Of the column store, each batch of frozen rows with what the scan judged of it (`rows/scan.rs`).
+    fn scan_vetted(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>, late: &[usize]) -> VettedBatches {
+        self.scan_vetted_of(tx, columns, condition.cloned(), late)
     }
 
     /// Split at row ids, of the column store at its groups' starts

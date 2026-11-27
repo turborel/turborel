@@ -11,11 +11,11 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use super::frozen::{Batched, Directory, Merged, Merging};
+use super::frozen::{Batched, Directory, Merged, Merging, Vetting};
 use super::mvcc::{Read, Reader};
 use super::{RowTable, row_id};
 use crate::error::Result;
-use crate::storage::{Batches, Conjunct, Conjunction, Ramp, RowId, Rows, Split};
+use crate::storage::{Batches, Conjunct, Conjunction, Ramp, RowId, Rows, Split, VettedBatches, unvetted};
 use crate::txn::TxId;
 
 /// A row table's scan split at row ids.
@@ -89,6 +89,16 @@ impl RowTable {
 }
 
 impl RowSplit {
+    /// The batches of the groups of `directory` within `range`, a
+    /// morsel's row ids, then of its tree's rows of the range, of the
+    /// columns `asked`, those of `late` late.
+    fn frozen_batches(&self, directory: &Arc<Directory>, (range, asked): ((RowId, Option<RowId>), Vec<usize>), late: &[usize]) -> Batched {
+        let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
+        let part = Arc::new(Directory::part(directory, directory.groups.iter().filter(inside).cloned().collect()));
+        let what = (asked, self.condition.clone());
+        Batched::within(Arc::clone(&self.table), (self.reader, part), what, self.zones_within(range)).with_late(late)
+    }
+
     /// The row ids of morsel `n`: from its first up to, not including, its
     /// end, if it has one; none past the last.
     fn range(&self, n: usize) -> Option<(RowId, Option<RowId>)> {
@@ -152,10 +162,16 @@ impl Split for RowSplit {
         let Some(directory) = &self.directory else {
             return Some(Arc::clone(&self.table).gathered_in((self.reader, Ramp::whole()), &asked, self.zones_within(range)));
         };
-        let inside = |e: &&Arc<super::frozen::Entry>| e.summary.first >= range.0 && range.1.is_none_or(|end| e.summary.last < end);
-        let part = Arc::new(Directory::part(directory, directory.groups.iter().filter(inside).cloned().collect()));
-        let what = (asked, self.condition.clone());
-        Some(Box::new(Batched::within(Arc::clone(&self.table), (self.reader, part), what, self.zones_within(range)).with_late(late)))
+        Some(Box::new(self.frozen_batches(directory, (range, asked), late)))
+    }
+
+    /// \[DESIGN\] (RULES.md D1266) Of the column store, each batch of the
+    /// morsel's groups with what the scan judged of it
+    /// (`frozen/batches/vetted.rs`); of the row store nothing is said.
+    fn morsel_vetted(&self, n: usize, late: &[usize]) -> Option<VettedBatches> {
+        let Some(directory) = &self.directory else { return self.morsel_batches(n, late).map(unvetted) };
+        let asked = self.columns.get(..self.asked)?.to_vec();
+        Some(Box::new(Vetting(self.frozen_batches(directory, (self.range(n)?, asked), late))))
     }
 
     /// Its morsels as they are cut, their scans told `more` after the

@@ -52,7 +52,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
-pub(super) use batches::Batched;
+pub(super) use batches::{Batched, Vetting};
 pub(super) use merge::{Merged, Merging};
 pub(super) use ordered::Ordered;
 use shadow_bits::ShadowBits;

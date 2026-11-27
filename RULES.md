@@ -815,6 +815,7 @@ verification approach DO-178C expects (§8).
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
+| D1266 | The first filter over a scan judges only the rows the scan kept of each batch and passes over the conjuncts the scan says it judged exactly of them |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
 | D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
@@ -23361,6 +23362,110 @@ numbers, so a set function whose state depends on the order of its
 values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
+
+#### D1266. The first filter over a scan judges only the rows the scan kept of each batch and passes over the conjuncts the scan says it judged exactly of them
+
+A column store's scan judges the conjuncts it is told of each frozen run
+before it decodes the columns its filter does not read (D360), and the
+filter over it judges every row the scan gives (D15). Where a run keeps
+one row in eight or more the scan gives the run whole and the filter
+selects of it. Every conjunct the scan had judged of that run was then
+judged a second time of each of its rows, by the scan and again by the
+filter, and of a run whose rows were gathered each conjunct was judged
+again of rows already known to satisfy it. A condition that keeps most
+rows paid for its conjuncts twice.
+
+The scan now says what it judged. With each batch of frozen rows it
+gives, beside the batch, the rows of it its judging kept, if not all,
+and the set of told conjuncts it judged exactly (`storage::Vetted`). The
+first filter over the scan judges only those rows, as the rows a filter
+before it kept, and passes over each of its conjuncts whose own told
+conjunct is in the set.
+
+A conjunct is judged exactly of a run when the conjunct itself was
+evaluated of every row asked, so it is true of each row kept
+(`Judgment::judge`). That holds of a comparison, IS NULL, IN, NOT IN and
+an OR of them judged over the column's vector or of its texts in place,
+and of a LIKE judged of every chunk to the run's end. It does not hold
+of a sort's bound, which is judged as the test it is at that moment and
+tightens as the scan runs. It does not hold of a LIKE one of whose
+chunks gave way, as that chunk's rows were kept unjudged. It does not
+hold of a comparison that a sketch's codes answered for some rows
+(D525), which is a summary's word for the row's text. So the filter
+still judges such a comparison of the rows given, and a sketched column
+gains nothing here for the conjuncts its sketch judges. A conjunct not
+reached because no row was left is not said either.
+
+A LIKE whose judging stopped once the run was seen to be given whole
+(D1251) was evaluated of the rows asked up to the chunk it stopped
+before, and the rows of the chunks after were kept unjudged. The scan
+says so with the place of the first row it did not judge
+(`Vetted::partly`). The filter keeps the rows before that place as the
+scan found them and judges the LIKE of the rows from it on, after its
+other conjuncts (`Judged::rest_kept`). So the rows the scan judged
+before it could tell that the run keeps most of its rows are not judged
+again either. One conjunct of a run is said so, the first, and it is
+said only of a run given whole, as the rows gathered of several runs
+have places of their own. A group or a zone
+passed over by its bounds says nothing of any row given. A batch of the
+rows kept of several runs holds only the conjuncts each of those runs
+judged exactly (`batches/pending.rs`). A batch of the tree's rows, which
+the scan judges nothing of, comes with nothing said, and so do the rows
+of a table of the row store.
+
+Of a run given whole the set speaks of the rows the scan kept alone.
+The other rows of the batch are rows a told conjunct is false of or a
+sort's bound leaves out, and the filter would keep none of them, as a
+scan is told only conjuncts every row its filter keeps satisfies (D15).
+So the filter starts from the rows kept whether or not anything was
+judged exactly.
+
+A filter's conjunct and a told conjunct are the same predicate where
+the scan was told that conjunct as itself (`logical::told_conjuncts`).
+That is a comparison of a column with a constant, padded or by octets,
+IS NULL or IS NOT NULL, IN or NOT IN constants, an OR of those of one
+column, and LIKE or NOT LIKE of a constant pattern. The bounds of a
+LIKE's prefix are told before the LIKE and are not it, as they hold of
+strings the LIKE is false of. A runtime filter's range, a sort's bound
+and a join's spans are told after the filter's conjuncts and are no
+conjunct of the filter. Each conjunct the filter judges over vectors is
+paired with its told place as the filter is made, before the conjuncts
+are ordered, so the pair stays together however they are ordered
+(`exec/batch/judge.rs`).
+
+No conjunct passed over can raise an error or complete a warning. A
+scan is told nothing of a condition that can raise (D15), and a
+comparison with a constant, a null test, a list of constants and a LIKE
+of a constant pattern report nothing of a row. So nothing a row would
+have reported is lost with its second judging. A filter whose condition
+can raise an error is read as before: it hears nothing, and it is given
+every row of each batch its scan gives, so which rows it judges does not
+change.
+
+What the scan says is no part of a batch. A batch is read and passed on
+by every operator, and what the scan judged is true only of the batch
+as the scan gave it, against the condition that scan was told. It
+travels on the scan's own stream (`TableStorage::scan_vetted`,
+`Split::morsel_vetted`, whose defaults say nothing) to the one filter
+whose conjuncts the scan was told, the filter directly over the scan
+with at most the counting of an analyzed plan and the judging of runtime
+filters between. The rows kept go beside the batch as a filter's kept
+rows do. The set of conjuncts is said to a value only that scan's
+stream and that filter hold (`exec/batch/vetted.rs`). It is heard only
+while the filter has judged exactly as many batches as the scan has
+given, so the batch in hand is the scan's last. Were a batch ever held
+back, repeated or made of two, the counts part, and from then on nothing
+is heard and every conjunct is judged. A filter over a projection, a
+join or another filter is made as before and hears nothing. A filter
+whose subqueries are made constants judges by a filter made of that
+other condition, which hears nothing, of the rows the scan kept.
+
+A told conjunct past the sixty-fourth of a condition has no place in
+the set and is judged by the filter, as the set is one word.
+
+The rows a query gives are the same. An analyzed plan shows a scan under
+a filter giving the rows its judging kept, where it showed every row of
+a run given whole.
 
 #### D1270. A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch
 

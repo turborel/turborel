@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use super::{Batches, Conjunct, Rows};
+use super::{Batches, Conjunct, Rows, VettedBatches, unvetted};
 
 /// \[DESIGN\] A scan of a table split into morsels (`TableStorage::split`).
 /// It holds what the scan holds, its reader and the table's parts as they
@@ -31,6 +31,14 @@ pub trait Split: Send + Sync {
     fn morsel_batches(&self, n: usize, late: &[usize]) -> Option<Batches> {
         let _ = (n, late);
         None
+    }
+
+    /// \[DESIGN\] (RULES.md D1266) As `morsel_batches`, each batch with
+    /// what the scan judged of it (`Vetted`), as
+    /// `TableStorage::scan_vetted` gives a scan's: by default nothing said
+    /// of any.
+    fn morsel_vetted(&self, n: usize, late: &[usize]) -> Option<VettedBatches> {
+        self.morsel_batches(n, late).map(unvetted)
     }
 
     /// \[DESIGN\] (RULES.md D1241) The same split, each morsel reading the

@@ -22,9 +22,15 @@
 //! batch whose judgment raises an error is judged again a row at a time, in
 //! order, to give the rows before its failing one first, as a filter read row
 //! by row does, for an EXISTS that stops at one of them (RULES.md D15).
+//!
+//! \[DESIGN\] (RULES.md D1266) The first filter over a scan told its
+//! conjuncts judges of each batch the rows the scan kept alone, and passes
+//! over each conjunct the scan says it judged exactly of them
+//! (`judge/vetted.rs`).
 
 use super::expr::Program;
 use super::project::{Place, place_of};
+use super::vetted::Said;
 use crate::error::{Result, SqlError};
 use crate::exec::eval::compared;
 use crate::exec::{Runner, Subqueries, eval_cond};
@@ -32,10 +38,10 @@ use crate::kernels::Kernels;
 use likes::Operand;
 use std::sync::{Arc, OnceLock};
 
-use crate::logical::{Cond, Expr, InSet, Truth, compared_unpadded, compared_with_constant, in_list};
+use crate::logical::{Cond, Expr, InSet, Truth, compared_unpadded, compared_with_constant, in_list, told_conjuncts};
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
-use crate::storage::{Batch, Column, Mask, Sel};
+use crate::storage::{Batch, Column, Mask, Sel, Vetted};
 use crate::value::{CompOp, LikePattern, Value, constant_pattern};
 
 pub(crate) use bound::bound_by;
@@ -165,6 +171,13 @@ pub(in crate::exec) struct Judging {
     /// judged (`judge/bound.rs`); none of a filter holding no such
     /// subquery.
     late: Option<OnceLock<Box<Judging>>>,
+    /// \[DESIGN\] (RULES.md D1266) Of the first filter over a scan told
+    /// its conjuncts, the bit of each of `judged` among those told
+    /// (`placed`), in their order; of any other filter, none.
+    told: Vec<u64>,
+    /// What that scan says of each batch, of the stream this judges
+    /// (`judge/vetted.rs`).
+    said: Option<Arc<Said>>,
 }
 
 impl Judging {
@@ -173,7 +186,8 @@ impl Judging {
         let (judged, rest) = split(cond, columns);
         let width = columns.iter().max().map_or(0, |&c| c.saturating_add(1));
         let late = bound::binds(cond).then(OnceLock::new);
-        Judging { columns: columns.to_vec(), judged, rest, whole: cond.clone(), raising: cond.can_raise(), width, late }
+        let (whole, raising) = (cond.clone(), cond.can_raise());
+        Judging { columns: columns.to_vec(), judged, rest, whole, raising, width, late, told: Vec::new(), said: None }
     }
 
     /// \[DESIGN\] (RULES.md D1127) The filter with its subqueries of no
@@ -206,7 +220,13 @@ impl Judging {
             return self.kept_raising(batch, rows, runner);
         }
         let mut kept: Option<Vec<u32>> = None;
-        for judged in &self.judged {
+        // What the scan judged exactly of these rows is not judged again,
+        // nor here what it judged of the first of them (RULES.md D1266).
+        let heard = self.heard();
+        for (n, judged) in self.judged.iter().enumerate() {
+            if self.told.get(n).is_some_and(|&told| heard.passes(told)) {
+                continue;
+            }
             let over = kept.as_deref().or(rows);
             kept = Some(match judged.kept(batch, over, runner, runner.kernels()) {
                 Some(true_of) => true_of,
@@ -225,6 +245,14 @@ impl Judging {
                     }
                 },
             });
+        }
+        // The conjunct the scan judged of the batch's first rows alone,
+        // judged of the rest (RULES.md D1266).
+        if let Some((conjunct, from)) = self.partly_judged(heard) {
+            let Some(with_rest) = conjunct.rest_kept(from, kept, (batch, rows), runner) else {
+                return self.by_rows(&self.whole, batch, &places(rows, batch.rows), runner).map(Sel::of);
+            };
+            kept = Some(with_rest);
         }
         let kept = kept.map_or_else(|| places(rows, batch.rows), |k| k.iter().map(|&r| index(r)).collect());
         match &self.rest {
@@ -315,14 +343,29 @@ impl Judging {
 /// of it is judged over vectors, as every row must see raised what it
 /// would be.
 fn split(cond: &Cond, columns: &[usize]) -> (Vec<Judged>, Option<Cond>) {
+    let (judged, rest) = placed(cond, columns);
+    (judged.into_iter().map(|(conjunct, _)| conjunct).collect(), rest)
+}
+
+/// \[DESIGN\] (RULES.md D1266) As `split`, each conjunct judged over
+/// vectors with the bit (`Vetted::bit`) of the conjunct a scan told
+/// `cond`'s is told that is the conjunct itself
+/// (`logical::told_conjuncts`), none set if none is. Each is paired with
+/// its bit as it is gathered, before they are put in order, so whatever
+/// orders them keeps each with its own.
+fn placed(cond: &Cond, columns: &[usize]) -> (Vec<(Judged, u64)>, Option<Cond>) {
     let (mut judged, mut rest) = (Vec::new(), Vec::new());
-    gather(cond, columns, (&mut judged, &mut rest));
+    for (conjunct, told) in told_conjuncts(cond) {
+        let mut found = Vec::new();
+        gather(conjunct, columns, (&mut found, &mut rest));
+        judged.extend(found.into_iter().map(|j| (j, told.map_or(0, Vetted::bit))));
+    }
     if cond.can_raise() && !rest.is_empty() {
         return (Vec::new(), Some(cond.clone()));
     }
     // A LIKE last: it costs more a row than the rest, which may leave it
     // fewer.
-    judged.sort_by_key(|j| matches!(j, Judged::Like(..) | Judged::LikeOf(..)));
+    judged.sort_by_key(|(j, _)| matches!(j, Judged::Like(..) | Judged::LikeOf(..)));
     (judged, rest.into_iter().reduce(|a, b| Cond::And(Box::new(a), Box::new(b))))
 }
 
@@ -448,6 +491,7 @@ mod ints;
 mod kinds;
 mod likes;
 mod texts;
+mod vetted;
 
 #[cfg(test)]
 mod tests;

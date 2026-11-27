@@ -26,7 +26,7 @@ mod split;
 
 pub use batch::{
     BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Late, LateSource, Mask, NO_ROW,
-    Nulls, Picks, Ramp, Sel, Texts, batches_of, bound, dictionaries, mask, sel,
+    Nulls, Picks, Ramp, Sel, Texts, VETTED_PLACES, Vetted, VettedBatches, batches_of, bound, dictionaries, mask, sel, unvetted,
 };
 pub use condition::{Condition, Conjunct, Conjunction, Liked, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
@@ -189,6 +189,10 @@ pub trait TableStorage: Send + Sync {
     /// Default: `scan_where`'s rows, gathered, none late.
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, _late: &[usize]) -> Batches {
         batch::scanned(self, tx, columns, conditions)
+    }
+    /// \[DESIGN\] (RULES.md D1266) As `scan_batches`, each batch with what the scan judged of it (`Vetted`). Default: nothing said of any.
+    fn scan_vetted(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, late: &[usize]) -> VettedBatches {
+        unvetted(self.scan_batches(tx, columns, conditions, late))
     }
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, split into morsels of about `rows` rows each, for workers to
     /// read at once (RULES.md D290); none if it cannot split them, or failed to, its scan then raising what failed. Default: none.
