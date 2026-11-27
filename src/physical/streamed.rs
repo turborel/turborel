@@ -7,7 +7,9 @@
 //! A grouping whose input gives the order asked of it, a sort or an
 //! ordered read below, streams. Under an ORDER BY of its keys, the input
 //! not in their order, it is streamed over a sort of its rows when that
-//! costs less than hashing them and sorting the groups. Of no order asked,
+//! costs less than hashing them and sorting the groups, each form priced
+//! as it would run, a part's work shared by its threads (RULES.md D1278).
+//! Of no order asked,
 //! it is streamed over a read of its one table in an order the table keeps
 //! or an index gives, when that read and a comparison of each row cost
 //! less than the cheapest read and a hashed grouping, and the grouping
@@ -17,8 +19,11 @@
 //! of a set function DISTINCT or of an inverse distribution is hashed.
 
 use super::cost::HASH_ROW;
+use super::cost::parallel::PART_START;
 use super::cost::spill::grouped_spilled;
 use super::indexed::access_cost;
+use super::parallel::sides;
+use super::robust::least_regret;
 use super::{Built, PhysicalPlanner, Plan};
 use crate::catalog::QualifiedName;
 use crate::logical::{AggCall, Expr, LogicalPlan, SortKey, render_keys};
@@ -51,6 +56,35 @@ pub(super) struct Grouping<'a> {
     pub(super) width: usize,
     /// Whether it may be streamed at all (`streamable`).
     pub(super) streamable: bool,
+}
+
+/// \[DESIGN\] (RULES.md D1278) How a form of a grouping would run: how
+/// many times faster its part's threads make the work they share than one
+/// thread does, and what starting them costs, in rows of a scan
+/// (`cost/parallel.rs`, RULES.md D652).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Run {
+    faster: f64,
+    start: f64,
+}
+
+impl Run {
+    /// On the statement's thread alone.
+    pub(super) const ALONE: Run = Run { faster: 1.0_f64, start: 0.0_f64 };
+
+    /// As a part on `degree` threads, each past the first gaining `gain`
+    /// of what one does; of one thread, alone.
+    pub(super) fn shared(degree: usize, gain: f64) -> Run {
+        if degree <= 1 {
+            return Run::ALONE;
+        }
+        Run { faster: 1.0_f64 + (cost_of(degree) - 1.0_f64) * gain.clamp(0.0, 1.0), start: PART_START }
+    }
+
+    /// What `work` costs run so.
+    fn cost(self, work: f64) -> f64 {
+        work / self.faster + self.start
+    }
 }
 
 /// Whether a grouping by `collations`, of `seeds`, computing `aggs`, may
@@ -112,8 +146,9 @@ impl PhysicalPlanner<'_> {
         if b.ordered {
             return Built { plan: make(b.plan, every), ordered: true };
         }
-        if !self.sorts_first(g, &b.plan) {
-            return Built::unordered(make(b.plan, false));
+        let (hashed, runs) = self.forms(&b.plan, &make);
+        if !self.sorts_first(g, &b.plan, runs) {
+            return Built::unordered(hashed.unwrap_or_else(|| make(b.plan, false)));
         }
         let mut keys = inner.to_vec();
         keys.extend(g.keys.iter().filter(|&&k| !inner.iter().any(|i| i.column == k)).map(|&k| SortKey::ascending(k)));
@@ -122,15 +157,56 @@ impl PhysicalPlanner<'_> {
         Built { plan: make(sorted, true), ordered: true }
     }
 
+    /// \[DESIGN\] (RULES.md D1278) How a sort of the rows of `input` and
+    /// the hashed grouping of them would each run, by the marking pass's
+    /// rule (`parallel/sides.rs`), and that grouping, which `make` makes
+    /// to ask the rule of it. Of an input no part could read on more
+    /// threads than one, by its rows, both run alone and none is made, so
+    /// a statement of few rows is planned with no plan copied.
+    fn forms(&self, input: &Plan, make: &impl Fn(Plan, bool) -> Plan) -> (Option<Plan>, (Run, Run)) {
+        self.estimating(|est| {
+            let (db, seen) = (self.db, est.seen());
+            if !sides::shares(db, seen, input) {
+                return (None, (Run::ALONE, Run::ALONE));
+            }
+            let hashed = make(input.clone(), false);
+            let gain = sides::stream_gain(db, input);
+            let sort = Run::shared(sides::sort_degree(db, seen, input), gain);
+            let hash = Run::shared(sides::part_degree(db, seen, &hashed), gain);
+            (Some(hashed), (sort, hash))
+        })
+    }
+
     /// Whether sorting the input of `g`, built as `input`, and streaming
-    /// it costs less than hashing it and sorting its groups. The rows
+    /// it costs less than hashing it and sorting its groups, the sort run
+    /// as `sort` and the hashed grouping as `hash`. The rows
     /// weighed are those the plan built is estimated to give (RULES.md
     /// D1208), the count its joins were chosen by, and the logical
-    /// input's count only of a plan that carries none.
-    fn sorts_first(&self, g: Grouping<'_>, input: &Plan) -> bool {
+    /// input's count only of a plan that carries none. The groups weighed
+    /// are those rows' (RULES.md D1278): no more than the estimator counts
+    /// of that many rows, nor than it counted of the logical input. Each
+    /// form is priced as it would run. What a part's threads share, the
+    /// sort of the rows, or their hashing and the making of their groups,
+    /// costs its share of them and their start; what the statement's
+    /// thread does after, comparing the sorted rows as they stream, or
+    /// sorting the groups, costs it whole.
+    ///
+    /// The form taken is the one of least regret (`robust.rs`, RULES.md
+    /// D386) between the groups estimated and those over
+    /// PLANNER.ESTIMATE_MARGIN, at least one. A count of groups errs high,
+    /// the values of several columns or of an expression taken as
+    /// independent of each other and of the rows, and it is the sort of
+    /// the rows that fewer groups make no cheaper, where the hashed
+    /// grouping costs less the fewer it makes. Of equal regret the hashed
+    /// grouping is taken.
+    fn sorts_first(&self, g: Grouping<'_>, input: &Plan, (sort, hash): (Run, Run)) -> bool {
         let w = self.weights();
         let n = input.est().unwrap_or_else(|| self.card(g.input).rows);
-        w.sort(n) + n * w.sort_compare < self.hashed_cost(n, g) + w.sort(g.groups)
+        let groups = g.groups.min(self.estimating(|est| est.groups_of(g.input, g.keys, n)));
+        let few = (groups / w.estimate_margin.max(1.0_f64)).max(groups.min(1.0_f64));
+        let hashed = |made: f64| hash.cost(self.hashed_cost(n, Grouping { groups: made, ..g })) + w.sort(made);
+        let sorted = sort.cost(w.sort(n)) + n * w.sort_compare;
+        least_regret([(false, (hashed(groups), hashed(few))), (true, (sorted, sorted))].into_iter()) == Some(true)
     }
 
     /// What hashing `n` rows into the groups of `g` costs: each row hashed,
@@ -260,7 +336,53 @@ mod tests {
         let few = Plan::Values { rows: vec![Vec::new(), Vec::new(), Vec::new()], detail: String::new() };
         let cond = crate::logical::Cond::Const(crate::logical::Truth::True);
         let many = Plan::Filter { cond, detail: String::new(), est: 30_000.0_f64, of_read: false, input: Box::new(few.clone()) };
-        assert!(planner.sorts_first(g, &few));
-        assert!(!planner.sorts_first(g, &many));
+        let alone = (Run::ALONE, Run::ALONE);
+        assert!(planner.sorts_first(g, &few, alone));
+        assert!(!planner.sorts_first(g, &many, alone));
+    }
+
+    /// A plan estimated to give `est` rows.
+    fn built(est: f64) -> Plan {
+        let cond = crate::logical::Cond::Const(crate::logical::Truth::True);
+        let input = Box::new(Plan::Values { rows: Vec::new(), detail: String::new() });
+        Plan::Filter { cond, detail: String::new(), est, of_read: false, input }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1278, D1208, D386, D550: sorting a
+    /// grouping's input first is weighed with each form priced as it would
+    /// run, by the groups of the rows built, and by least regret. The
+    /// logical input has forty thousand values and was counted to fall
+    /// into thirty thousand groups. Of three thousand rows built, nearly
+    /// each a group, both forms alone, the rows are sorted first. Of six
+    /// thousand, the grouping a part of eight threads and the sort alone,
+    /// the rows are hashed, their groups those of six thousand rows; both
+    /// parts of eight threads, they are sorted first. Of forty thousand
+    /// rows, both forms alone, the sort is the cheaper at the groups
+    /// estimated and the dearer by more at an eighth of them, so the rows
+    /// are hashed. A part whose threads gain nothing costs its work and
+    /// its start, and one of one thread runs alone.
+    ///
+    /// Regression test: the weighing once priced both forms as run on one
+    /// thread and took the groups of the logical input's count, and a
+    /// grouping a part would have run on eight threads was streamed over
+    /// a sort of its rows on one.
+    #[test]
+    fn a_sort_first_is_weighed_as_each_form_would_run() {
+        const VALUES: usize = 40_000;
+        const THREADS: usize = 8;
+        let db = crate::db::State::with_builtins(Box::new(crate::catalog::MemoryCatalog::default()));
+        let planner = PhysicalPlanner::new(&db);
+        let input = LogicalPlan::Values {
+            rows: vec![vec![Expr::Const(crate::value::Value::Null)]; VALUES],
+            types: vec![crate::value::DataType::Boolean],
+        };
+        let g = Grouping { input: &input, keys: &[0], reads: None, groups: 30_000.0_f64, width: 2, streamable: true };
+        let (alone, part) = (Run::ALONE, Run::shared(THREADS, 1.0_f64));
+        assert!(planner.sorts_first(g, &built(3_000.0_f64), (alone, alone)));
+        assert!(!planner.sorts_first(g, &built(6_000.0_f64), (alone, part)));
+        assert!(planner.sorts_first(g, &built(6_000.0_f64), (part, part)));
+        assert!(!planner.sorts_first(g, &built(cost_of(VALUES)), (alone, alone)));
+        assert!((Run::shared(THREADS, 0.0_f64).cost(100.0_f64) - 100.0_f64 - PART_START).abs() < 1e-9_f64);
+        assert_eq!(Run::shared(1, 1.0_f64), Run::ALONE);
     }
 }

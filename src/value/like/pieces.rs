@@ -23,12 +23,12 @@ use super::finder::Finder;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Pieces {
     /// What a value begins with; all of it, of a pattern of no `%`.
-    first: String,
+    pub(super) first: String,
     /// The pieces a value holds past the first and before the last, none
     /// empty, each made once to be searched for (RULES.md D1118).
     pub(super) between: Vec<Finder>,
     /// What a value ends with, of a pattern of some `%`.
-    last: Option<String>,
+    pub(super) last: Option<String>,
 }
 
 impl Pieces {

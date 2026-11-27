@@ -27,7 +27,7 @@ const SHAPED_OR: &str = "benchmark_shapes::an_equality_each_disjunct_repeats_joi
 const MERGED: &str = "join_enumeration::merge_joins_pair_runs_of_equal_keys";
 
 /// Mechanisms of join enumeration whose removal must fail its tests.
-pub const JOINS: [Mutation; 13] = [
+pub const JOINS: [Mutation; 14] = [
     Mutation {
         name: "joins-conflict-rule",
         package: Package::Core,
@@ -156,6 +156,16 @@ pub const JOINS: [Mutation; 13] = [
         original: "let guessed = || by_keys().unwrap_or(share).max(floor);",
         replacement: "let guessed = || by_keys().unwrap_or(share).max(0.0_f64);",
         integration: &["benchmark_shapes::a_longer_equal_prefix_is_read"],
+        unit: &[],
+    },
+    Mutation {
+        name: "joins-merge-priced-by-its-pairs",
+        package: Package::Core,
+        breaks: "a merge join is priced by the rows it gives, not the pairs its key matches",
+        file: "src/physical/enumerate/methods.rs",
+        original: "let cost = left.0 + right.0 + compared + self.merge_pairs(sides, (a, b)).max(rows);",
+        replacement: "let cost = left.0 + right.0 + compared + rows;",
+        integration: &["join_enumeration::a_merge_join_by_a_key_of_one_value_is_priced_as_its_product"],
         unit: &[],
     },
 ];

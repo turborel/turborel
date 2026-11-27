@@ -176,6 +176,18 @@ Whatever the option, a query judges first, of each group, the condition
 that keeps fewest of its rows by the least and greatest values of each
 1,024 rows, and by imprints where it has them.
 
+A condition `column LIKE pattern` or `column NOT LIKE pattern` on a
+VARCHAR column is judged of the frozen strings where they lie, none read
+out to be searched, when the pattern is a constant with no `_` whose
+characters beside its `%`s take 253 octets at most. Strings kept as
+codes of their parts are matched by their codes, and of few distinct
+strings kept once each, each is matched once for all its rows. The
+condition is judged after the query's other conditions on the group, and
+the other columns are read only of the rows it keeps. A pattern with
+`_`, a LIKE under a collation that folds or contracts characters, and a
+CHARACTER column are searched as text, as before. A query gives the same
+rows either way.
+
 COLUMNSTORE.LAYOUT says how a frozen group is laid out on its pages.
 COLUMNS, the default, puts each column's values on pages of their own: a
 query reads only the pages of the columns it names, which suits scans

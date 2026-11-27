@@ -4,7 +4,10 @@
 //! filter's truth, the copies read again, the copy of the functions computed whole, the parts
 //! merged and given, and the bag of values a function took; and, of a part
 //! kept in its function's column of states (D1186), what a group gives,
-//! what a column sent between threads is, and what it turns into.
+//! what a column sent between threads is, and what it turns into; and,
+//! of a part's column the second grouping takes as it is (D1280), that it
+//! is taken, which function takes it, and the group each state is merged
+//! into.
 
 use super::super::{Mutation, Package};
 
@@ -17,9 +20,12 @@ const PART_COLUMN: &str = "exec::table::states::tests::a_part_kept_in_a_column_i
 /// The parts kept in columns give the results the query has without the rule.
 const PARTS_ALIKE: &str = "distinct_aggregates::parts_kept_in_columns_give_the_results_without_the_rule";
 
+/// A second grouping that takes the first's columns gives its values' groups.
+const COLUMNS_MERGED: &str = "exec::table::merged::tests::columns_of_parts_merged_as_they_are_give_the_groups_their_values_give";
+
 /// Mechanisms whose removal must fail the DISTINCT set functions'
 /// requirements.
-pub const DISTINCT_AGGREGATES: [Mutation; 16] = [
+pub const DISTINCT_AGGREGATES: [Mutation; 19] = [
     Mutation {
         name: "distinct-aggregates-unregistered",
         package: Package::Core,
@@ -179,5 +185,35 @@ pub const DISTINCT_AGGREGATES: [Mutation; 16] = [
         replacement: "    typed.to_boxed_by(agg, |acc| if agg.distinct { part_acc(acc) } else { acc })",
         integration: &[],
         unit: &["exec::table::states::tests::a_parts_column_widens_into_the_parts_accumulators"],
+    },
+    Mutation {
+        name: "part-columns-given-as-values",
+        package: Package::Core,
+        breaks: "the second grouping of a pair takes a part's column of counts or exact totals as it is (D1280)",
+        file: "src/exec/table/merged.rs",
+        original: "from.push(part.filter(|&at| self.states.get(at).is_some_and(States::is_merged_whole)));",
+        replacement: "from.push(part.filter(|_| false));",
+        integration: &[],
+        unit: &[COLUMNS_MERGED],
+    },
+    Mutation {
+        name: "part-column-merged-by-first-group",
+        package: Package::Core,
+        breaks: "a part's state is merged into the group of the second its group of the first fell in (D1280)",
+        file: "src/exec/table/merged.rs",
+        original: "states.merge_part(part, (&self.pending.groups, &self.pending.read))?,",
+        replacement: "states.merge_part(part, (&self.pending.read, &self.pending.read))?,",
+        integration: &["regrouped_parts::parts_merged_from_their_columns_give_the_plans_groups"],
+        unit: &[COLUMNS_MERGED],
+    },
+    Mutation {
+        name: "part-column-taken-by-any-function",
+        package: Package::Core,
+        breaks: "a part's column is taken only by a function that merges its parts, and one of approximate sums by none (D1280)",
+        file: "src/exec/table/merged.rs",
+        original: "let part = part.filter(|at| merges && !from.contains(&Some(*at)));",
+        replacement: "let part = part.filter(|at| !from.contains(&Some(*at)));",
+        integration: &[],
+        unit: &["exec::table::merged::tests::only_a_function_merging_a_part_takes_its_column"],
     },
 ];

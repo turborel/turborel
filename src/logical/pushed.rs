@@ -2,17 +2,20 @@
 //! `TableStorage::scan_where`), as the executor tells them and the planner
 //! prices them (`TableStorage::scan_share`).
 
+use std::sync::Arc;
+
 use super::{Cond, Expr};
 use crate::index::Probe;
-use crate::storage::{Condition, Conjunct, Conjunction};
-use crate::value::{CompOp, Value, constant_prefix};
+use crate::storage::{Condition, Conjunct, Conjunction, Liked};
+use crate::value::{CompOp, Value, constant_pattern, constant_prefix};
 
 /// The conjuncts of `cond` comparing a column with a constant, as strings
 /// compare padded or, under a collation of NO PAD that orders them as their
 /// octets do, unpadded (`compared_unpadded`), testing it
 /// IS NULL or IS NOT NULL, IN or NOT IN a list of constants, LIKE a
-/// constant pattern (as the bounds of its prefix), or an OR of these of one
-/// column, if any, unless `cond` can raise an error: every row `cond` keeps
+/// constant pattern (as the bounds of its prefix, and, of a pattern of no
+/// `_`, itself, as NOT LIKE one is, RULES.md D1251), or an OR of these of
+/// one column, if any, unless `cond` can raise an error: every row `cond` keeps
 /// satisfies each, so a scan tells its engine (`TableStorage::scan_where`),
 /// which may then leave out the rows they do not match, skip the blocks of
 /// rows one cannot match, and count only the rows they all match as read.
@@ -42,12 +45,17 @@ fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
         // OR of conjuncts of one column.
         Cond::Or(..) => found.extend(single(cond).or_else(|| alternatives(cond))),
         // NOT IN a list of constants, none null: a null in it leaves no row.
+        // Or NOT LIKE a constant pattern.
         Cond::Not(inner) => found.extend(
             in_list(inner)
                 .filter(|(_, values)| !values.iter().any(Value::is_null))
-                .map(|(column, values)| Conjunct::NotIn { column, values }),
+                .map(|(column, values)| Conjunct::NotIn { column, values })
+                .or_else(|| liked(inner, true)),
         ),
-        Cond::Like(Expr::Column(c), pattern, escape) => found.extend(prefixed(*c, pattern, escape.as_ref())),
+        Cond::Like(Expr::Column(c), pattern, escape) => {
+            found.extend(prefixed(*c, pattern, escape.as_ref()));
+            found.extend(liked(cond, false));
+        }
         Cond::Compare(..)
         | Cond::Distinct(..)
         | Cond::In(..)
@@ -104,6 +112,24 @@ pub fn disjuncts<'c>(cond: &'c Cond, out: &mut Vec<&'c Cond>) {
 fn prefixed(column: usize, pattern: &Expr, escape: Option<&Expr>) -> Vec<Conjunct> {
     let bound = |(op, value)| Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value } });
     like_bounds(pattern, escape).into_iter().map(bound).collect()
+}
+
+/// \[DESIGN\] (RULES.md D1251) The conjunct a scan is told of `cond`, a
+/// LIKE of a column, or, if `not`, of NOT of it: of a constant pattern
+/// and escape that raise nothing and are not null (`constant_pattern`),
+/// the pattern of no `_` and of pieces short enough for a machine over
+/// octets (`Liked::of`). A LIKE under a collation that folds or
+/// contracts characters is not of a column as it is
+/// (`binder/collation.rs`), so is none.
+fn liked(cond: &Cond, not: bool) -> Option<Conjunct> {
+    let Cond::Like(Expr::Column(column), Expr::Const(pattern), escape) = cond else { return None };
+    let escape = match escape {
+        None => None,
+        Some(Expr::Const(e)) => Some(e),
+        Some(_) => return None,
+    };
+    let like = Liked::of(&constant_pattern(pattern, escape)??, not)?;
+    Some(Conjunct::Like { column: *column, like: Arc::new(like) })
 }
 
 /// [X3.135-1986 §5.14] The bounds of the values LIKE the constant
@@ -224,27 +250,95 @@ mod tests {
 
     /// Verifies: [X3.135-1986 §5.14 GR5, §5.11 GR5] a LIKE of a constant
     /// pattern is told a scan as the bounds of the characters it begins
-    /// with: every string beginning with them between, a tab after them
-    /// and spaces padding them too; none else; a pattern beginning with `%`
-    /// tells nothing; a pattern whose escape has no partitioning may raise
-    /// an error, so nothing is told.
+    /// with, beside the LIKE itself: every string beginning with them
+    /// between, a tab after them and spaces padding them too; none else; a
+    /// pattern beginning with `%` tells no bounds; a pattern whose escape
+    /// has no partitioning may raise an error, so nothing is told.
     #[test]
     fn a_like_is_told_as_the_bounds_of_its_prefix() {
+        let bounds = |cond: &Cond| {
+            let told = pushed_conjuncts(cond).map(|c| c.0).unwrap_or_default();
+            told.iter().filter(|c| matches!(c, Conjunct::Condition(_))).count()
+        };
         let prefix = like("abc%", None);
-        assert_eq!(pushed_conjuncts(&prefix).map(|c| c.0.len()), Some(2));
+        assert_eq!(bounds(&prefix), 2);
         for matching in ["abc", "abc\t", "abcz", "abc  ", "abc\u{10FFFF}"] {
             assert!(passes(&prefix, Value::Char(matching.into())), "{matching:?}");
         }
         for not in ["abb", "abd", "ab", "b"] {
             assert!(!passes(&prefix, Value::Char(not.into())), "{not:?}");
         }
-        assert!(pushed_conjuncts(&like("%abc", None)).is_none(), "no prefix");
-        assert_eq!(pushed_conjuncts(&like("a!%b%", Some("!"))).map(|c| c.0.len()), Some(2), "an escaped % is the prefix's");
+        assert_eq!(bounds(&like("%abc", None)), 0, "no prefix");
+        assert_eq!(bounds(&like("a_c%", None)), 2, "the characters before a `_`");
+        assert_eq!(bounds(&like("a!%b%", Some("!"))), 2, "an escaped % is the prefix's");
         assert!(passes(&like("a!%b%", Some("!")), Value::Char("a%bc".into())));
         assert!(!passes(&like("a!%b%", Some("!")), Value::Char("abc".into())));
         assert!(like("a!x%", Some("!")).can_raise(), "no partitioning");
         assert!(pushed_conjuncts(&like("a!x%", Some("!"))).is_none());
         assert!(!like("abc%", None).can_raise());
+    }
+
+    /// Verifies: [X3.135-1986 §5.14 GR2a, GR4, GR5] (RULES.md D1251) a
+    /// LIKE of a column and a constant pattern of no `_` is told a scan as
+    /// itself, and NOT of one as NOT LIKE, each true of the strings the
+    /// predicate is true of and of no null, with an ESCAPE that makes
+    /// `%` a character of the pattern too, and of a pattern of no `%`, of
+    /// a first piece alone and of `%` alone.
+    #[test]
+    fn a_like_of_a_constant_pattern_is_told_itself() {
+        let not = |cond: Cond| Cond::Not(Box::new(cond));
+        let char_of = |s: &str| Value::Char(s.into());
+        // Whether `cond` is told as one LIKE of column 0, and whether NOT.
+        let negated = |cond: &Cond| {
+            let all = conjuncts_told(cond);
+            let [Conjunct::Like { column: 0, like }] = all.as_slice() else { panic!("not one LIKE: {all:?}") };
+            like.not()
+        };
+        let within = like("%b%d%", None);
+        assert!(!negated(&within));
+        assert!(passes(&within, char_of("abcd")) && !passes(&within, char_of("adcb")) && !passes(&within, Value::Null));
+        let without = not(like("%b%d%", None));
+        assert!(negated(&without));
+        assert!(!passes(&without, char_of("abcd")) && passes(&without, char_of("adcb")) && !passes(&without, Value::Null));
+        let escaped = like("%5!%%", Some("!"));
+        assert_eq!(likes_told(&escaped), 1);
+        assert!(passes(&escaped, char_of("a 5% b")) && !passes(&escaped, char_of("a 50 b")));
+        assert_eq!((likes_told(&like("abc", None)), likes_told(&like("ab%", None)), likes_told(&like("%", None))), (1, 1, 1));
+    }
+
+    /// Verifies: [X3.135-1986 §5.14 GR2b] (RULES.md D1251) a scan is told
+    /// no LIKE of a pattern with `_`, of pieces of more octets than a
+    /// machine has states for, of a null pattern or escape, of a pattern
+    /// or an escape not a constant, of a LIKE of an expression, as one
+    /// under a collation that folds is, nor of one that may raise an
+    /// error.
+    #[test]
+    fn a_like_with_no_machine_is_not_told() {
+        let not = |cond: Cond| Cond::Not(Box::new(cond));
+        let long = |octets: usize| like(&format!("%{}%", "x".repeat(octets)), None);
+        assert_eq!((likes_told(&long(253)), likes_told(&long(254)), likes_told(&not(long(254)))), (1, 0, 0), "past a machine's states");
+        for none in [like("a_c", None), like("%_%", None), not(like("_b%", None))] {
+            assert_eq!(likes_told(&none), 0, "an arbitrary character: {none:?}");
+        }
+        let null = Expr::Const(Value::Null);
+        let of_column = |pattern: Expr, escape: Option<Expr>| Cond::Like(Expr::Column(0), pattern, escape);
+        assert_eq!(likes_told(&of_column(null.clone(), None)), 0, "a null pattern");
+        assert_eq!(likes_told(&of_column(text("%a%"), Some(null))), 0, "a null escape");
+        assert_eq!(likes_told(&of_column(Expr::Column(1), None)), 0, "a column's pattern");
+        assert_eq!(likes_told(&of_column(text("%a%"), Some(Expr::Column(1)))), 0, "a column's escape");
+        let folded = Cond::Like(Expr::Neg(Box::new(Expr::Column(0))), text("%a%"), None);
+        assert_eq!((likes_told(&folded), likes_told(&not(folded))), (0, 0), "of an expression");
+        assert!(conjuncts_told(&like("%a!x%", Some("!"))).is_empty(), "no partitioning");
+    }
+
+    /// The conjuncts a scan is told of `cond`.
+    fn conjuncts_told(cond: &Cond) -> Vec<Conjunct> {
+        pushed_conjuncts(cond).map(|c| c.0).unwrap_or_default()
+    }
+
+    /// How many LIKEs a scan is told of `cond`.
+    fn likes_told(cond: &Cond) -> usize {
+        conjuncts_told(cond).iter().filter(|c| matches!(c, Conjunct::Like { .. })).count()
     }
 
     /// Verifies: [X3.135-1986 §5.13, §5.18] NOT IN a list of constants is

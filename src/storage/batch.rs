@@ -208,7 +208,9 @@ impl Texts {
 /// keeps it.
 #[derive(Debug, Clone)]
 pub struct Ints {
-    /// Each row's units, a null's 0.
+    /// Each row's units. A null's has no meaning, as a store gives there
+    /// what its chunk's encoding holds, so nothing reads one without its
+    /// nulls (RULES.md D1289).
     pub units: Vec<i64>,
     /// The digits of each after the decimal point.
     pub scale: u32,
@@ -314,7 +316,7 @@ impl Ints {
 /// approximate numeric type, as a store keeps it.
 #[derive(Debug, Clone, Default)]
 pub struct Floats {
-    /// Each row's number, a null's 0.
+    /// Each row's number, a null's of no meaning, as `Ints::units`.
     pub numbers: Vec<f64>,
     /// Which rows are null, if any is.
     pub nulls: Option<Mask>,

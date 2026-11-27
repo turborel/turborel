@@ -14,7 +14,8 @@ use crate::value::{Datetime, Value};
 /// \[DESIGN\] Datetimes of one type, each its microseconds in UTC.
 #[derive(Debug, Clone)]
 pub struct Datetimes {
-    /// Each row's microseconds in UTC, a null's 0.
+    /// Each row's microseconds in UTC, a null's of no meaning, as
+    /// `Ints::units`.
     pub utc: Vec<i64>,
     /// Each row's displacement in minutes, of a type WITH TIME ZONE; none
     /// of one without, whose values carry 0 as the store keeps them.

@@ -14,6 +14,14 @@
 //! groups, or, of a second grouping that crosses the first's partitions,
 //! writes their states for the statement's thread to merge (RULES.md
 //! D1219).
+//!
+//! \[DESIGN\] (RULES.md D1280) A set function of the second that merges
+//! the parts of one of the first (RULES.md D341) takes that function's
+//! column of states from the first's table as it is, where the column
+//! holds counts or exact totals (`table/merged.rs`). Its own states are
+//! a column of the same kind, and the first's are added to them slot by
+//! slot. No part is made a value. A part kept as accumulators is given
+//! as its value and merged by an accumulator, as before.
 
 use crate::error::Result;
 use crate::exec::Runner;
@@ -32,8 +40,9 @@ use crate::storage::Row;
 ///
 /// As a set function fails.
 pub(super) fn regrouped(first: GroupTable, (read, aggs): (&Read, &[AggCall]), (runner, seed): (&Runner, &Seed)) -> Result<GroupTable> {
-    let (batch, firsts) = first.into_batch()?;
-    let mut table = GroupTable::new(read.groups.len(), aggs, seed, usize::MAX);
+    let from = first.merged_by(&read.taken, aggs);
+    let (batch, firsts, parts) = first.into_parts(&from)?;
+    let mut table = GroupTable::merging(read.groups.len(), aggs, seed, &parts);
     let mut hashes = Vec::new();
     hash_rows(&batch, (&read.groups, None), (seed, runner.kernels()), &mut hashes);
     for (n, (&hash, &number)) in hashes.iter().zip(&firsts).enumerate() {
@@ -41,6 +50,6 @@ pub(super) fn regrouped(first: GroupTable, (read, aggs): (&Read, &[AggCall]), (r
         table.take(g, (n, n));
     }
     let fed = lanes(&read.taken, &batch, None);
-    table.feed(&batch, (&read.taken, &fed), (&mut Row::new(), runner))?;
+    table.feed_parts(&batch, (&read.taken, &fed), &parts, (&mut Row::new(), runner))?;
     Ok(table)
 }
