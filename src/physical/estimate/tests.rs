@@ -156,7 +156,7 @@ fn a_sample_of_the_whole_table_is_exact() {
 /// 5 and 5.0, identical by the standard, are one constant.
 #[test]
 fn the_sample_remembers_by_the_conjuncts_structure() {
-    let key = |question: &str, conds: &[Cond]| fingerprint::key_of(question, &conds.iter().collect::<Vec<&Cond>>(), &|_| {});
+    let key = |question: &str, conds: &[Cond]| fingerprint::key_of(question, &conds.iter().collect::<Vec<&Cond>>(), &|_| {}).key();
     let both = key("kept", &[eq(0, 5), eq(2, 6)]);
     assert_eq!(both, key("kept", &[eq(2, 6), eq(0, 5)]));
     let tenths = Cond::Compare(Expr::Column(0), CompOp::Eq, Expr::Const(Value::Exact(Decimal::new(50, 1))));
@@ -190,4 +190,65 @@ fn a_chain_of_ors_of_one_column_is_answered_by_its_synopsis() {
     equalities.insert(40, eq(1, 3));
     let two = crate::logical::or_all(equalities).unwrap();
     assert!(!sampled::answered(&two));
+}
+
+/// A function of one argument named HELD, that holds `.0`.
+struct Held(u64);
+
+impl crate::functions::ScalarFunction for Held {
+    fn name(&self) -> &'static str {
+        "HELD"
+    }
+    fn return_type(&self, _: &[DataType]) -> crate::error::Result<DataType> {
+        Ok(DataType::Exact { precision: 9, scale: 0, spelled: Spelled::Numeric })
+    }
+    fn call(&self, _: &[Value]) -> crate::error::Result<Value> {
+        Ok(number(self.0))
+    }
+}
+
+/// "`f`(column 0) = 5".
+fn held_is_five(f: &crate::functions::ScalarRef) -> Cond {
+    Cond::Compare(Expr::Call(f.clone(), vec![Expr::Column(0)]), CompOp::Eq, Expr::Const(number(5)))
+}
+
+/// Verifies: [DESIGN] RULES.md D1299, D382: the sample remembers a
+/// conjunct of a function by the function's handle, not by its name
+/// alone. Two functions of one name that hold what differs are two
+/// questions, each with its own answer, and one function asked twice is
+/// one question, answered once.
+///
+/// Regression test: a function once wrote its name alone, so the second
+/// of two that held what differed was given the answer of the first.
+#[test]
+fn two_functions_of_one_name_are_two_questions() {
+    let handle = |held: u64| crate::functions::ScalarRef(std::sync::Arc::new(Held(held)));
+    let (five, six) = (handle(5), handle(6));
+    let key = |f: &crate::functions::ScalarRef| fingerprint::key_of("kept", &[&held_is_five(f)], &|_| {}).key();
+    assert_ne!(key(&five), key(&six), "two handles of one name");
+    assert_eq!(key(&five), key(&five), "one handle");
+    let stats = correlated(20_000);
+    assert_eq!(share(&stats, &[held_is_five(&five)]), 1.0_f64, "HELD of 5 is 5 of every row");
+    let none = share(&stats, &[held_is_five(&six)]);
+    assert!(none <= 3.0_f64 / 1_024.0_f64, "HELD of 6 is 5 of none, the empty sample's bound: {none}");
+    assert_eq!(share(&stats, &[held_is_five(&five)]), 1.0_f64, "and the first keeps its own");
+}
+
+/// Verifies: [DESIGN] RULES.md D1299: an answer the sample remembers
+/// keeps the handles its key was written of, so none is freed and its
+/// address taken by another function while the answer may be given, and
+/// lets them go when the statistics are dropped.
+#[test]
+fn a_remembered_answer_keeps_its_functions_until_the_statistics_go() {
+    let of = std::sync::Arc::new(Held(5));
+    let five = crate::functions::ScalarRef(of.clone());
+    let stats = correlated(20_000);
+    let before = std::sync::Arc::strong_count(&of);
+    assert_eq!(share(&stats, &[held_is_five(&five)]), 1.0_f64);
+    let kept = std::sync::Arc::strong_count(&of);
+    assert!(kept > before, "kept beside the answer: {kept} for {before}");
+    assert_eq!(share(&stats, &[held_is_five(&five)]), 1.0_f64);
+    assert_eq!(std::sync::Arc::strong_count(&of), kept, "once, however often it is asked");
+    drop(stats);
+    assert_eq!(std::sync::Arc::strong_count(&of), before, "let go with the statistics");
 }

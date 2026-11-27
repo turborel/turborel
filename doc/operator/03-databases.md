@@ -261,7 +261,10 @@ by many rows is not estimated as rare as the rest. The table keeps a
 sample of up to 1,024 of its rows, on which the planner evaluates a
 condition whose parts go together, such as a city and its country, or
 that no column's statistics answer, such as a column compared with
-another or a pattern beginning with `%`. An index's count of its
+another or a pattern beginning with `%`. It evaluates there too an
+expression a query groups by, such as the year of a date or the first
+characters of a string, and counts the groups by the values the sample
+shows. An index's count of its
 distinct keys gives the distinct combinations of its columns. Between
 passes, the planner reads the statistics with the rows written since, so
 a value past the greatest the pass saw, as a key that grows with each
