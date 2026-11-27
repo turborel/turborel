@@ -23,11 +23,12 @@ use std::sync::{Arc, Mutex};
 pub use search::{OCCURRENCES_REGEX, POSITION_REGEX, SUBSTRING_REGEX};
 pub use translate::TRANSLATE_REGEX;
 
-use super::ScalarFunction;
 use super::strings::{character, text};
+use super::{Arg, ScalarFunction};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::params::ParameterType;
 use crate::regex::{LobText, Regex};
+use crate::storage::{Bools, Column, Mask, Nulls, Texts};
 use crate::value::{BIGINT_PRECISION, CharUnits, DataType, Decimal, Spelled, Value};
 use subject::short;
 
@@ -215,4 +216,41 @@ impl ScalarFunction for LikeRegex {
         };
         Ok(Value::Bool(matched))
     }
+    /// \[DESIGN\] (RULES.md D1188, D363) Over a vector of values in
+    /// memory, the pattern and the flag constants: the pattern compiled
+    /// and its searcher made once for the vector, so its automaton is
+    /// kept from one value to the next. None of any other operands, each
+    /// row then called.
+    fn eval_batch(&self, args: &[Arg<'_>], rows: usize) -> Option<Result<Column>> {
+        let [Arg::Column(Column::Texts(values)), Arg::Const(pattern), Arg::Const(flag)] = args else { return None };
+        Some(self.of_texts(values, (pattern, flag), rows))
+    }
 }
+
+impl LikeRegex {
+    /// `eval_batch`'s work: of each of the first `rows` of `values`,
+    /// whether it matches `pattern` under `flag`, Unknown of a null, and
+    /// of every row if the pattern or the flag is null \[GR1\].
+    fn of_texts(&self, values: &Texts, (pattern, flag): (&Value, &Value), rows: usize) -> Result<Column> {
+        let (Some(pattern), Some(flag)) = (short(pattern)?, short(flag)?) else { return Ok(Column::Nulls(Nulls::new(rows))) };
+        let regex = self.cache.compiled(&pattern, &flag)?;
+        let mut searcher = regex.searcher();
+        let (mut bits, mut nulls) = (Mask::none(rows), Mask::none(rows));
+        for n in 0..rows {
+            match values.get(n) {
+                Some(value) => {
+                    if searcher.is_match(value)? {
+                        bits.set(n);
+                    }
+                }
+                None => nulls.set(n),
+            }
+        }
+        Ok(Column::Bools(Bools::new(bits, nulls.any().then_some(nulls))))
+    }
+}
+
+// Unit tests: the call over a vector against the call of each row
+// (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;
