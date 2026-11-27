@@ -4,10 +4,12 @@
 //! with both newline characters and a character of two octets, from every
 //! position. What a searcher kept across the texts finds, with its
 //! automaton, its marks and its scratch, is held to the matchers D61
-//! began with, the one of threads and the one that counts its steps.
+//! began with, the one of threads and the one that counts its steps. So
+//! is what it finds in each text read where it lies, by the octets its
+//! characters begin at (RULES.md D1189).
 
 use super::super::bounded::tests::PATTERNS;
-use super::super::{Ascii, Emit, Matcher, backtrack, dfa, pike};
+use super::super::{Ascii, Emit, Matcher, Replacement, Utf8, backtrack, dfa, pike};
 use super::*;
 
 /// What a pattern is made of: something that matches a character, or a
@@ -128,7 +130,7 @@ fn texts() -> Vec<Vec<char>> {
 }
 
 /// The match the matchers D61 began with find.
-fn first(regex: &Regex, text: &[char], from: usize) -> Option<pike::Slots> {
+fn first<T: Text + ?Sized>(regex: &Regex, text: &T, from: usize) -> Option<pike::Slots> {
     if regex.back_references {
         return backtrack::search(&regex.program, text, from, regex.caseless.then_some(&regex.table)).unwrap();
     }
@@ -155,15 +157,40 @@ struct Counted {
     again: usize,
 }
 
+/// The octet each character of `string` begins at, and its length after
+/// them, which is where a position that counts characters is in the
+/// string read where it lies.
+fn octets_of(string: &str) -> Vec<usize> {
+    string.char_indices().map(|(at, _)| at).chain([string.len()]).collect()
+}
+
+/// `found`, spans of characters, as spans of the octets `octets` gives.
+fn in_octets(found: &Captures, octets: &[usize]) -> Captures {
+    Captures { spans: found.spans.iter().map(|span| span.map(|(a, b)| (octets[a], octets[b]))).collect() }
+}
+
 /// Holds `kept`, a searcher of `regex` kept across the texts, to the
 /// first matchers over `text` from each position: the match, its groups,
-/// whether there is one, the same of the text read as ASCII where it is,
-/// and of a search of the text alone.
+/// whether there is one, the same of the text read as ASCII where it is
+/// and of any text read where it lies, by its octets, into a match
+/// vector kept from one search to the next, and of a search of the text
+/// alone.
 fn searched(regex: &Regex, kept: &mut Searcher<'_>, text: &[char], counted: &mut Counted) {
     let what = |from: usize| format!("{:?} in {text:?} from {from}", regex.program.insts);
     let string: String = text.iter().collect();
+    let (octets, mut again) = (octets_of(&string), Captures::default());
     for from in 0..=text.len() {
         let wanted = groups(first(regex, text, from));
+        let lying = wanted.as_ref().map(|found| in_octets(found, &octets));
+        assert_eq!(
+            kept.find_into(&Utf8::of(&string), octets[from], &mut again).unwrap(),
+            wanted.is_some(),
+            "where it lies, {}",
+            what(from)
+        );
+        assert_eq!(wanted.is_some().then_some(&again), lying.as_ref(), "where it lies, {}", what(from));
+        assert_eq!(regex.find_in(&Utf8::of(&string), octets[from]).unwrap(), lying, "where it lies, alone, {}", what(from));
+        assert_eq!(groups(first(regex, &Utf8::of(&string), octets[from])), lying, "where it lies, the first matchers, {}", what(from));
         count(&mut counted.found, wanted.is_some());
         count(&mut counted.none, wanted.is_none());
         count(&mut counted.empty, wanted.as_ref().and_then(|c| c.get(0)).is_some_and(|(a, b)| a == b));
@@ -172,15 +199,62 @@ fn searched(regex: &Regex, kept: &mut Searcher<'_>, text: &[char], counted: &mut
         if let Some(ascii) = Ascii::of(&string) {
             assert_eq!(kept.find_in(&ascii, from).unwrap(), wanted, "in place, {}", what(from));
         }
-        assert_eq!(kept.search(text, from, false).unwrap().is_some(), wanted.is_some(), "whether, {}", what(from));
+        assert_eq!(kept.search(text, from, false).unwrap(), wanted.is_some(), "whether, {}", what(from));
     }
     assert_eq!(kept.is_match(&string).unwrap(), first(regex, text, 0).is_some(), "whether, of the string, {}", what(0));
+}
+
+/// What `regex` makes of the match at `span` of `text` replaced by
+/// `with` as fn:replace replaces it, `cut` giving what two positions of
+/// the text span.
+fn made_of<T: Text + ?Sized>(
+    regex: &Regex,
+    (text, span): (&T, (usize, usize)),
+    with: &Replacement,
+    cut: &dyn Fn(usize, usize) -> String,
+) -> String {
+    let mut made = String::new();
+    let put = |piece: Emit<'_>| {
+        match piece {
+            Emit::Text(t) => made.push_str(t),
+            Emit::Span(a, b) => made.push_str(&cut(a, b)),
+        }
+        Ok(())
+    };
+    regex.replace_in(text, span, with, put).unwrap();
+    made
+}
+
+/// Holds each match of `regex` in `text` read where it lies, one after
+/// another to its end, a match of no characters passed by a character
+/// of however many octets, and what replaces it by `with`, if given, to
+/// the matches of the text's characters and what replaces them.
+fn lying(regex: &Regex, text: &[char], with: Option<&Replacement>) {
+    let string: String = text.iter().collect();
+    let (octets, utf8) = (octets_of(&string), Utf8::of(&string));
+    let (mut wanted, mut found) = (Vec::new(), Vec::new());
+    regex
+        .each(text, 0, usize::MAX, |mv| {
+            let made = mv.get(0).zip(with).map(|(span, with)| made_of(regex, (text, span), with, &|a, b| text[a..b].iter().collect()));
+            wanted.push((in_octets(&mv, &octets), made));
+            Ok(true)
+        })
+        .unwrap();
+    regex
+        .each(&utf8, 0, usize::MAX, |mv| {
+            let made = mv.get(0).zip(with).map(|(span, with)| made_of(regex, (&utf8, span), with, &|a, b| utf8.span(a, b).to_owned()));
+            found.push((mv, made));
+            Ok(true)
+        })
+        .unwrap();
+    assert_eq!(found, wanted, "where it lies, {:?} in {text:?}", regex.program.insts);
 }
 
 /// Holds what replaces each match of `regex` in `text`, where the match
 /// is replaced from its own groups, to fn:replace of the match searched as
 /// a string of its own.
 fn replaced(regex: &Regex, text: &[char], counted: &mut Counted) {
+    lying(regex, text, regex.replacement("[$1|$2|$0]").ok().as_ref());
     let Ok(with) = regex.replacement("[$1|$2|$0]") else { return };
     regex
         .each(text, 0, usize::MAX, |found| {
@@ -212,8 +286,12 @@ fn replaced(regex: &Regex, text: &[char], counted: &mut Counted) {
 /// LF and a letter of two octets, and longer ones, from every position, a
 /// searcher kept across the texts finds the match and the groups the
 /// matcher of threads finds, or of a back-reference the matcher that
-/// counts its steps; so does a search of each text alone, and one of the
-/// text of ASCII read where it lies; and a match replaced from its own
+/// counts its steps; so does a search of each text alone, one of the
+/// text of ASCII read where it lies, and (D1189) one of any text read
+/// where it lies, its positions the octets its characters begin at, into
+/// a match vector kept from search to search; each match after another
+/// of a text read so, and what replaces it, are those of its characters;
+/// and a match replaced from its own
 /// groups is replaced as the match searched as a string of its own is.
 /// A program with a back-reference runs on the matcher that counts, and
 /// it and one with `^` or `$` of each line have no automaton.
@@ -275,4 +353,31 @@ fn a_match_is_searched_again_only_where_that_may_find_other_groups() {
     };
     beside.replace_in(chars.as_slice(), (1, 2), &with, put).unwrap();
     assert_eq!(made, "[a|]", "fn:replace of the match alone");
+}
+
+/// Verifies: [DESIGN] RULES.md D1189 [F&O 3.1 §5.6.1.4, §5.6.2]: in a
+/// text of characters of one to four octets read where it lies, each
+/// match from each position and what replaces it are those of the text's
+/// characters. The cases are a class taken over characters of several octets, a match
+/// of no characters passed by one of them, the rest of a text taken, and
+/// a back-reference under the flag `i` matched by a case variant of
+/// other octets than what was captured, the Kelvin sign for `k`.
+#[test]
+fn a_text_of_longer_characters_read_where_it_lies_matches_as_its_characters() {
+    let cases = [
+        ("([^/]+)/", "", "ü€/\u{10348}/x"),
+        ("x*", "", "é€\u{10348}"),
+        ("(.)(.*)$", "s", "\u{10348}é\r\n€"),
+        ("(k)\\1", "i", "k\u{212A}k"),
+        ("(é+)b\\1", "i", "éÉbÉéb"),
+    ];
+    for (pattern, flag, text) in cases {
+        let regex = Regex::new(pattern, flag).unwrap();
+        let chars: Vec<char> = text.chars().collect();
+        searched(&regex, &mut regex.searcher(), &chars, &mut Counted::default());
+        lying(&regex, &chars, regex.replacement("[$1|$0]").ok().as_ref());
+    }
+    let again = Regex::new("(k)\\1", "i").unwrap();
+    let found = again.find_in(&Utf8::of("k\u{212A}k"), 0).unwrap().unwrap();
+    assert_eq!((found.get(0), found.get(1)), (Some((0, 4)), Some((0, 1))), "a sign of three octets after a letter of one");
 }

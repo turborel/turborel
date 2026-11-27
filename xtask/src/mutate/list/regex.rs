@@ -5,14 +5,21 @@
 
 use super::{Mutation, Package};
 
+/// The unit test of every search of a text read where it lies, over the corpus.
+const IN_PLACE: &str = "regex::searcher::tests::over_a_corpus_a_searcher_finds_what_the_first_matchers_find";
+/// The unit test of texts of characters of several octets read where they lie.
+const LONGER: &str = "regex::searcher::tests::a_text_of_longer_characters_read_where_it_lies_matches_as_its_characters";
+/// The unit test of a subject read where it lies.
+const SUBJECT: &str = "functions::regex::tests::a_subject_read_where_it_lies_counts_in_its_units";
+
 /// The mutations of regular expressions, in the order they run.
-pub const REGEX: [Mutation; 41] = [
+pub const REGEX: [Mutation; 51] = [
     Mutation {
         name: "regex-dot-all-splits-crlf",
         package: Package::Core,
         breaks: "under the flag s a dot matches a CR before an LF alone, so a..b matches a, CR, LF and b",
         file: "src/regex/text.rs",
-        original: "Inst::AnyButCrlf => !(c == '\\r' && text.at(at.saturating_add(1))? == Some('\\n')),",
+        original: "Inst::AnyButCrlf => !(c == '\\r' && text.at(text.after(at))? == Some('\\n')),",
         replacement: "Inst::AnyButCrlf => true,",
         integration: &[],
         unit: &["regex::tests::newlines_9_28"],
@@ -169,8 +176,8 @@ pub const REGEX: [Mutation; 41] = [
         package: Package::Core,
         breaks: "a match may begin before the one before it ends, so OCCURRENCES_REGEX of ana in banana is 2",
         file: "src/regex/searcher.rs",
-        original: "at = end.max(start.saturating_add(1));",
-        replacement: "at = start.saturating_add(1);",
+        original: "at = end.max(text.after(start));",
+        replacement: "at = text.after(start);",
         integration: &["regex_functions::occurrences_6_31"],
         unit: &[],
     },
@@ -430,5 +437,105 @@ pub const REGEX: [Mutation; 41] = [
         replacement: "while at <= text.len() {",
         integration: &[],
         unit: &["functions::regex::translate::tests::no_match_is_searched_for_at_the_end_of_a_subject_replaced"],
+    },
+    Mutation {
+        name: "regex-marks-step-an-octet",
+        package: Package::Core,
+        breaks: "the matcher that marks passes a character of a text read where it lies by one octet (D1189)",
+        file: "src/regex/bounded.rs",
+        original: "(pc, at) = (after, self.text.after(at));",
+        replacement: "(pc, at) = (after, at.saturating_add(1));",
+        integration: &[],
+        unit: &[IN_PLACE],
+    },
+    Mutation {
+        name: "regex-marks-start-at-each-octet",
+        package: Package::Core,
+        breaks: "the matcher that marks tries a match from within a character of a text read where it lies (D1189)",
+        file: "src/regex/bounded.rs",
+        original: "        start = text.after(start);\n    }\n    Ok(false)",
+        replacement: "        start = start.saturating_add(1);\n    }\n    Ok(false)",
+        integration: &[],
+        unit: &[IN_PLACE, LONGER],
+    },
+    Mutation {
+        name: "regex-threads-step-an-octet",
+        package: Package::Core,
+        breaks: "the matcher of threads passes a character of a text read where it lies by one octet (D1189)",
+        file: "src/regex/pike.rs",
+        original: "        next.seen.fill(false);\n        at = text.after(at);",
+        replacement: "        next.seen.fill(false);\n        at = at.saturating_add(1);",
+        integration: &[],
+        unit: &[IN_PLACE],
+    },
+    Mutation {
+        name: "regex-automaton-steps-an-octet",
+        package: Package::Core,
+        breaks: "the automaton passes a character of a text read where it lies by one octet (D1189)",
+        file: "src/regex/dfa.rs",
+        original: "            at = text.after(at);\n        }",
+        replacement: "            at = at.saturating_add(1);\n        }",
+        integration: &[],
+        unit: &[IN_PLACE],
+    },
+    Mutation {
+        name: "regex-counted-steps-an-octet",
+        package: Package::Core,
+        breaks: "the matcher that counts its steps passes a character of a text read where it lies by one octet (D1189)",
+        file: "src/regex/backtrack.rs",
+        original: "one(inst, self.text, at)?.then(|| self.text.after(at))",
+        replacement: "one(inst, self.text, at)?.then(|| at.saturating_add(1))",
+        integration: &[],
+        unit: &[LONGER],
+    },
+    Mutation {
+        name: "regex-back-reference-as-long-as-captured",
+        package: Package::Core,
+        breaks: "a back-reference matched by a case variant of other octets is taken to be as long as what was captured (D1189)",
+        file: "src/regex/backtrack.rs",
+        original: "(theirs, ours) = (self.text.after(theirs), self.text.after(ours));",
+        replacement: "(ours, theirs) = (ours.saturating_add(self.text.after(theirs).saturating_sub(theirs)), self.text.after(theirs));",
+        integration: &[],
+        unit: &[LONGER],
+    },
+    Mutation {
+        name: "regex-next-match-an-octet-on",
+        package: Package::Core,
+        breaks: "after a match of no characters the next is searched for an octet on, within a character (D1189)",
+        file: "src/regex/searcher.rs",
+        original: "            let (start, end) = next.get(0).unwrap_or((at, at));\n            at = end.max(text.after(start));",
+        replacement: "            let (start, end) = next.get(0).unwrap_or((at, at));\n            at = end.max(start.saturating_add(1));",
+        integration: &[],
+        unit: &[LONGER],
+    },
+    Mutation {
+        name: "regex-match-vector-not-cleared",
+        package: Package::Core,
+        breaks: "a match vector used again keeps the spans of the match before (D1189)",
+        file: "src/regex/searcher.rs",
+        original: "        found.spans.clear();\n",
+        replacement: "",
+        integration: &[],
+        unit: &[IN_PLACE],
+    },
+    Mutation {
+        name: "regex-slots-of-other-matchers-dropped",
+        package: Package::Core,
+        breaks: "the slots the matcher of threads or the one that counts found are not kept for the match vector (D1189)",
+        file: "src/regex/searcher.rs",
+        original: "self.kept.put(slots.unwrap_or_default());",
+        replacement: "drop(slots);",
+        integration: &[],
+        unit: &[IN_PLACE],
+    },
+    Mutation {
+        name: "regex-subject-octet-within-a-character",
+        package: Package::Core,
+        breaks: "a start position in octets within a character names that octet, not the next character (D1189)",
+        file: "src/functions/regex/subject.rs",
+        original: "return (units..text.len()).find(|&at| text.is_char_boundary(at)).unwrap_or(text.len());",
+        replacement: "return units;",
+        integration: &[],
+        unit: &[SUBJECT],
     },
 ];

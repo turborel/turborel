@@ -77,6 +77,20 @@ pub(super) struct Scratch {
     stack: Vec<Job>,
 }
 
+impl Scratch {
+    /// The slots of the match the last search found, which say where
+    /// its groups are.
+    pub(super) fn slots(&self) -> &[Option<usize>] {
+        &self.slots
+    }
+
+    /// Keeps `slots`, those of a match another matcher found, as its
+    /// own search would have left them.
+    pub(super) fn put(&mut self, slots: Slots) {
+        self.slots = slots;
+    }
+}
+
 /// What a search reads and keeps.
 struct Search<'a, T: Text + ?Sized> {
     program: &'a Program,
@@ -101,7 +115,9 @@ fn anchored(program: &Program) -> bool {
 /// positions than the text has, the match is one known to end within
 /// them (`regex/dfa.rs`), so a way that reads past them is not it. A
 /// program whose matches all begin at the text's start is tried from
-/// there alone. What the search keeps is `kept`'s, left for the next.
+/// there alone. What the search keeps is `kept`'s, left for the next,
+/// and the slots of a match found are left there too (`Scratch::slots`),
+/// so a match takes no memory of its own (RULES.md D1189).
 ///
 /// # Errors
 ///
@@ -112,15 +128,17 @@ pub(super) fn search<T: Text + ?Sized>(
     (from, positions): (usize, usize),
     capture: bool,
     kept: &mut Scratch,
-) -> Result<Option<Slots>> {
-    let starts = if anchored(program) { usize::from(from == 0) } else { positions };
+) -> Result<bool> {
+    let first_alone = anchored(program);
     kept.marks.clear();
     kept.marks.resize(program.insts.len().saturating_mul(positions).div_ceil(WORD), 0);
     kept.slots.clear();
     kept.slots.resize(if capture { program.slots } else { 0 }, None);
     kept.stack.clear();
     let mut s = Search { program, text, from, positions, capture, kept };
-    for start in from..from.saturating_add(starts) {
+    let last = from.saturating_add(positions.saturating_sub(1));
+    let mut start = from;
+    while start <= last && (start == 0 || !first_alone) {
         s.kept.slots.fill(None);
         s.kept.stack.push(Job::Try(0, start));
         while let Some(job) = s.kept.stack.pop() {
@@ -128,13 +146,14 @@ pub(super) fn search<T: Text + ?Sized>(
                 Job::Restore(slot, old) => s.set(slot, old),
                 Job::Try(pc, at) => {
                     if s.run(pc, at)? {
-                        return Ok(Some(s.kept.slots.clone()));
+                        return Ok(true);
                     }
                 }
             }
         }
+        start = text.after(start);
     }
-    Ok(None)
+    Ok(false)
 }
 
 impl<T: Text + ?Sized> Search<'_, T> {
@@ -218,7 +237,7 @@ impl<T: Text + ?Sized> Search<'_, T> {
                     if !within || !one(inst, self.text, at)? {
                         return Ok(false);
                     }
-                    (pc, at) = (after, at.saturating_add(1));
+                    (pc, at) = (after, self.text.after(at));
                 }
                 // No program with one runs here (`Regex::matcher`).
                 Inst::BackRef(_) => return Ok(false),

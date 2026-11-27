@@ -20,7 +20,7 @@ use crate::functions::strings::{character, text, whole};
 use crate::functions::{Arg, ScalarFunction};
 use crate::lexer::kw;
 use crate::params::ParameterType;
-use crate::regex::{Ascii, Captures, Emit, LobText, Regex, Replacement, Searcher, Text, zero_length};
+use crate::regex::{Captures, Emit, LobText, Regex, Replacement, Searcher, Text, zero_length};
 use crate::storage::{Column, Mask, Texts};
 use crate::value::lob::{CHUNK_OCTETS, LobBuilder, LobKind, MAX_LOB_LENGTH, TempLobs};
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
@@ -154,11 +154,11 @@ impl Translate {
     /// it becomes.
     fn of_texts(&self, operands: [&Value; 7], subjects: &Texts, rows: usize) -> Result<Column> {
         let Some((regex, asked)) = self.asked(operands)? else { return Ok(Column::Values(vec![Value::Null; rows])) };
-        let (mut searcher, mut with) = (regex.searcher(), None);
+        let (mut searcher, mut with, mut found) = (regex.searcher(), None, Captures::default());
         let (mut made, mut ends, mut nulls) = (String::new(), Vec::with_capacity(rows), Mask::none(rows));
         for n in 0..rows {
             let given = match subjects.get(n) {
-                Some(subject) => asked.of_text(subject, (&mut searcher, &mut with), &mut made)?,
+                Some(subject) => asked.of_text(subject, (&mut searcher, &mut with, &mut found), &mut made)?,
                 None => false,
             };
             if !given {
@@ -210,7 +210,7 @@ impl Asked<'_> {
             Chosen::Itself => return Ok(subject.clone()),
             Chosen::Of(which) => which,
         };
-        let mut job = Job { searcher, at, which, replacement: &self.replacement, with };
+        let mut job = Job { searcher, at, which, replacement: &self.replacement, with, found: &mut Captures::default() };
         if let Body::Lob(lob) = &counted.body {
             let mut out = Built { text: lob, builder: LobBuilder::new(LobKind::Character, temp), chars: 0 };
             job.run(lob, &mut out)?;
@@ -223,8 +223,14 @@ impl Asked<'_> {
 
     /// \[GR9\] (RULES.md D1188) As `of`, of the character string
     /// `subject` of a vector of them, what it becomes put after `out`:
-    /// false, and nothing put, if the result is null.
-    fn of_text(&self, subject: &str, (searcher, with): (&mut Searcher<'_>, &mut Option<Replacement>), out: &mut String) -> Result<bool> {
+    /// false, and nothing put, if the result is null. Each match is read
+    /// into `found`, kept from one subject to the next (RULES.md D1189).
+    fn of_text(
+        &self,
+        subject: &str,
+        (searcher, with, found): (&mut Searcher<'_>, &mut Option<Replacement>, &mut Captures),
+        out: &mut String,
+    ) -> Result<bool> {
         let counted = Subject::of_text(subject, self.units)?;
         let Some(at) = counted.start(self.start)? else { return Ok(false) };
         match self.chosen()? {
@@ -233,7 +239,9 @@ impl Asked<'_> {
                 out.push_str(subject);
                 Ok(true)
             }
-            Chosen::Of(which) => Job { searcher, at, which, replacement: &self.replacement, with }.put(&counted.body, out).map(|()| true),
+            Chosen::Of(which) => {
+                Job { searcher, at, which, replacement: &self.replacement, with, found }.put(&counted.body, out).map(|()| true)
+            }
         }
     }
 }
@@ -255,13 +263,15 @@ struct Job<'a, 'r> {
     replacement: &'a str,
     /// The replacement read, once a match is met.
     with: &'a mut Option<Replacement>,
+    /// The match being replaced, its memory used for each in turn.
+    found: &'a mut Captures,
 }
 
 /// Where a TRANSLATE_REGEX puts what it makes, in order.
 trait Out {
     /// Puts characters of the replacement.
     fn text(&mut self, t: &str) -> Result<()>;
-    /// Puts characters `from` to `to` of the subject.
+    /// Puts what lies from position `from` to position `to` of the subject.
     fn span(&mut self, from: usize, to: usize) -> Result<()>;
 }
 
@@ -277,7 +287,8 @@ impl Job<'_, '_> {
         let from = out.len();
         match body {
             Body::Chars(chars) => self.run(chars.as_slice(), &mut Chars { chars, out })?,
-            Body::Ascii(ascii) => self.run(ascii, &mut Octets { ascii: *ascii, out })?,
+            Body::Ascii(ascii) => self.run(ascii, &mut Octets { text: ascii.span(0, ascii.len()), out })?,
+            Body::Utf8(utf8) => self.run(utf8, &mut Octets { text: utf8.text(), out })?,
             Body::Lob(_) => return fail(Code::Api, "[DESIGN] a character large object's TRANSLATE_REGEX is made as one, not as a string"),
         }
         within_most(out.get(from..).unwrap_or_default())
@@ -299,29 +310,34 @@ impl Job<'_, '_> {
                 // the searcher that half its searches find nothing
                 // (RULES.md D1188).
                 while at < text.len() || (at == text.len() && self.with.is_none()) {
-                    let Some(mv) = self.searcher.find_in(text, at)? else { break };
-                    let (start, end) = mv.get(0).unwrap_or((at, at));
-                    at = end.max(start.saturating_add(1));
-                    self.replaced(text, &mv, &mut done, out)?;
+                    if !self.searcher.find_into(text, at, self.found)? {
+                        break;
+                    }
+                    let (start, end) = self.found.get(0).unwrap_or((at, at));
+                    at = end.max(text.after(start));
+                    self.replaced(text, &mut done, out)?;
                 }
             }
             Which::Nth(n) => {
                 if let Some(mv) = self.searcher.nth_in(text, self.at, n)? {
-                    self.replaced(text, &mv, &mut done, out)?;
+                    *self.found = mv;
+                    self.replaced(text, &mut done, out)?;
                 }
             }
         }
         out.span(done, text.len())
     }
 
-    /// [§9.29] Puts on `out` what is between the last match and `mv`, and
-    /// `mv` replaced as fn:replace replaces that match alone, the
-    /// replacement read at the first match, and `done` moved past it.
+    /// [§9.29] Puts on `out` what is between the last match and the one
+    /// found, and that one replaced as fn:replace replaces that match
+    /// alone, the replacement read at the first match, and `done` moved
+    /// past it.
     ///
     /// # Errors
     ///
     /// SQLSTATE 2201U if it matched no characters \[GR3\].
-    fn replaced<T: Text + ?Sized, O: Out>(&mut self, text: &T, mv: &Captures, done: &mut usize, out: &mut O) -> Result<()> {
+    fn replaced<T: Text + ?Sized, O: Out>(&mut self, text: &T, done: &mut usize, out: &mut O) -> Result<()> {
+        let mv = &*self.found;
         let Some((start, end)) = mv.get(0).filter(|(start, end)| end > start) else {
             return Err(zero_length("a match of the pattern is of no characters"));
         };
@@ -361,9 +377,11 @@ impl Out for Chars<'_> {
     }
 }
 
-/// A result made as a string, of a subject of ASCII read where it lies.
+/// A result made as a string, of a subject read where it lies, whose
+/// positions are its octets (RULES.md D1188, D1189). What lies between
+/// two is copied as it is, no character of it read.
 struct Octets<'a> {
-    ascii: Ascii<'a>,
+    text: &'a str,
     out: &'a mut String,
 }
 
@@ -373,7 +391,7 @@ impl Out for Octets<'_> {
         Ok(())
     }
     fn span(&mut self, from: usize, to: usize) -> Result<()> {
-        self.out.push_str(self.ascii.span(from, to));
+        self.out.push_str(self.text.get(from..to).unwrap_or_default());
         Ok(())
     }
 }

@@ -770,6 +770,7 @@ verification approach DO-178C expects (§8).
 | D1185 | A sort by a column under a collation of NO PAD by octets reads the column in place, its key marked to order by octets |
 | D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
 | D1188 | A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured |
+| D1189 | A character string of any characters is matched where it lies, by the octets its characters begin at, and a match over a vector takes no memory of its own |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -21183,6 +21184,61 @@ flags, in every text of at most three characters of two letters, CR, LF
 and a letter of two octets, from every position, holds a searcher kept
 across the texts to the first matchers
 (`over_a_corpus_a_searcher_finds_what_the_first_matchers_find`).
+
+#### D1189. A character string of any characters is matched where it lies, by the octets its characters begin at, and a match over a vector takes no memory of its own
+
+D1188 matched a string of ASCII where it lay. Of any other string it
+made a vector of characters first, four octets for each character,
+allotted, filled and freed for every subject. And each match found gave
+its captures as a copy of the searcher's slots and its match vector as
+a vector made anew, two more pieces of memory a match.
+
+A text's positions are now its own to step (`Text::after`,
+`Text::before`). Of a vector of characters and of a large object they
+count characters, as before. Of a string read where it lies (`Utf8`)
+a position is the octet a character begins at. The character there is
+decoded as it is read, one of ASCII by a single test of its octet, and
+the position after it is past its octets. No matcher adds one to a
+position to pass a character. The matcher that marks, the matcher of
+threads, the automaton and the matcher that counts its steps all step
+by the text, and so does a search of one match after another past a
+match of no characters. Where a match is known to end is a position of
+the same text, so the marks, which are of positions, need no change.
+
+A back-reference under the flag `i` is matched by case variants, and a
+variant may take other octets than the character captured, as the
+Kelvin sign takes three where `k` takes one. So the matcher that counts
+reads what was captured and what is matched against it a character of
+each in turn, each by its own positions, and what it matched is as long
+as the positions it passed (`backtrack.rs`, `again`).
+
+A regular expression function's subject that is a character string is
+read where it lies, whatever its characters (`subject.rs`,
+`Body::Utf8`). Its positions are octets, so a start position given in
+octets is the octet itself, moved to the next character if it falls
+within one, and one given in characters is found by passing that many
+characters. A position found is counted back into the units asked for.
+The first position, which most calls ask for, is the first character's
+in either units and needs no count. What lies between two positions is
+cut out of the string as it is. TRANSLATE_REGEX copies the spans
+between its matches that way, where it wrote each character of a vector
+again.
+
+A search leaves where its match's groups are in the searcher's own
+memory (`bounded::Scratch`). `Searcher::find_into` reads them into a
+match vector the caller keeps from one match to the next, and
+TRANSLATE_REGEX over a vector of subjects keeps one for the vector. A
+match found there takes no memory of its own. `find_in`, which gives a
+match vector of its own, is that with a vector made for it.
+
+A value that is no character string, a number given as a subject, is
+still made a vector of characters, and a large object is read a chunk
+at a time as before. Nothing any function gives changes. The corpus of
+D1188 holds every search of a text read where it lies, from every
+position, on each matcher and through the searcher, to the matchers
+over the text's characters, with each match after another and what
+replaces it (`over_a_corpus_a_searcher_finds_what_the_first_matchers_find`,
+`a_text_of_longer_characters_read_where_it_lies_matches_as_its_characters`).
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 

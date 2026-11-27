@@ -173,6 +173,42 @@ fn a_vector_of_subjects_is_translated_as_each_row_is() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1189 [ISO/IEC 9075-2:2023 §6.33 GR9b;
+/// §9.29]: TRANSLATE_REGEX of a subject not of ASCII, read where it
+/// lies, alone and in a vector, gives what its characters give. The
+/// cases are a group cut out between characters of several octets, each match of ALL of a
+/// character of two octets, an occurrence of one, matches of no ASCII
+/// character, and a start position in characters and in octets, one
+/// within a character naming the next.
+#[test]
+fn a_subject_not_of_ascii_is_translated_where_it_lies() {
+    // Each case is a subject, then the pattern, the replacement, ALL or
+    // OCCURRENCE and the units, then the occurrence and the start
+    // position, then what is wanted.
+    let cases: [(&str, [&str; 4], [i128; 2], &str); 8] = [
+        ("http://ü.test/é/x", ["^https?://(www\\.)?([^/]+)/.*$", "$2", kw::ALL, "CHARACTERS"], [1, 1], "ü.test"),
+        ("aébé€", ["é", "e", kw::ALL, "CHARACTERS"], [1, 1], "aebe€"),
+        ("aébé€", ["é", "<$0>", OCCURRENCE_WORD, "CHARACTERS"], [2, 1], "aéb<é>€"),
+        ("aébé€", ["[^a-z]", "-", kw::ALL, "OCTETS"], [1, 1], "a-b--"),
+        ("aébé€", ["é", "e", kw::ALL, "CHARACTERS"], [1, 3], "aébe€"),
+        ("aébé€", ["é", "e", kw::ALL, "OCTETS"], [1, 3], "aébe€"),
+        ("aébé€", ["é", "e", kw::ALL, "OCTETS"], [1, 2], "aebe€"),
+        ("aébé€", ["(.)€", "$1$1", kw::ALL, "OCTETS"], [1, 8], "aébé€"),
+    ];
+    for (subject, [pattern, replacement, every, units], [occurrence, from], wanted) in cases {
+        let mut consts = operands(pattern, replacement, every, occurrence);
+        (consts[0], consts[5]) = (chars(units), number(from));
+        let function = Translate::default();
+        let alone = function.call(&beside(&consts, chars(subject))).unwrap();
+        assert_eq!(format!("{alone:?}"), format!("{:?}", chars(wanted)), "{subject:?} {pattern:?} {units} from {from}");
+        let column = Column::Texts(Texts::new(format!("{subject}{subject}"), vec![subject.len(), subject.len() * 2], None));
+        let made = function.eval_batch(&over(&consts, &column), 2).unwrap().unwrap();
+        for row in made.values() {
+            assert_eq!(format!("{row:?}"), format!("{alone:?}"), "in a vector, {subject:?} {pattern:?}");
+        }
+    }
+}
+
 /// Verifies: [DESIGN] RULES.md D1188, D363 [ISO/IEC 9075-2:2023 §6.33
 /// GR9b i, §9.29 GR3]: over a vector of subjects a null pattern gives
 /// nulls; a pattern that matches no characters fails as the call of a
@@ -229,18 +265,18 @@ fn no_match_is_searched_for_at_the_end_of_a_subject_replaced() {
     let (units, every, one) = (chars("CHARACTERS"), chars(kw::ALL), number(1));
     let asked = Asked { units: &units, every: &every, replacement: Cow::Borrowed("$2"), start: 1, occurrence: &one };
     let regex = Regex::new("^https?://(www\\.)?([^/]+)/.*$", "s").unwrap();
-    let (mut searcher, mut with, mut out) = (regex.searcher(), None, String::new());
+    let (mut searcher, mut with, mut out, mut found) = (regex.searcher(), None, String::new(), Captures::default());
     assert!(searcher.asks_first(), "at first");
     for _ in 0..64_usize {
-        assert!(asked.of_text("http://www.a.test/b", (&mut searcher, &mut with), &mut out).unwrap());
+        assert!(asked.of_text("http://www.a.test/b", (&mut searcher, &mut with, &mut found), &mut out).unwrap());
     }
     assert_eq!(out, "a.test".repeat(64));
     assert!(!searcher.asks_first(), "every search found a match");
     for _ in 0..64_usize {
-        assert!(asked.of_text("ftp://a.test/b", (&mut searcher, &mut with), &mut out).unwrap());
+        assert!(asked.of_text("ftp://a.test/b", (&mut searcher, &mut with, &mut found), &mut out).unwrap());
     }
     assert!(searcher.asks_first(), "none found one");
     let empty = Regex::new("b*", "").unwrap();
-    let failed = asked.of_text("a", (&mut empty.searcher(), &mut None), &mut out).unwrap_err();
+    let failed = asked.of_text("a", (&mut empty.searcher(), &mut None, &mut found), &mut out).unwrap_err();
     assert_eq!(failed.sqlstate().as_str(), "2201U");
 }
