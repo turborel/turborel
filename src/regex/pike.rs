@@ -14,7 +14,7 @@ use crate::error::Result;
 pub(super) type Slots = Vec<Option<usize>>;
 
 /// A thread: where it is in the program, and what it has captured.
-struct Thread {
+pub(super) struct Thread {
     pc: usize,
     slots: Slots,
 }

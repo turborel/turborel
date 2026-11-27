@@ -50,6 +50,11 @@ path = "bench/hash.rs"
 harness = false
 
 [[bench]]
+name = "regex"
+path = "bench/regex.rs"
+harness = false
+
+[[bench]]
 name = "hashtable"
 path = "bench/hashtable.rs"
 harness = false
