@@ -180,7 +180,8 @@ A condition `column LIKE pattern` or `column NOT LIKE pattern` on a
 VARCHAR column is judged of the frozen strings where they lie, none read
 out to be searched, when the pattern is a constant with no `_` whose
 characters beside its `%`s take 253 octets at most. Strings kept as
-codes of their parts are matched by their codes. The
+codes of their parts are matched by their codes, and of few distinct
+strings kept once each, each is matched once for all its rows. The
 condition is judged after the query's other conditions on the group, and
 the other columns are read only of the rows it keeps. A pattern with
 `_`, a LIKE under a collation that folds or contracts characters, and a

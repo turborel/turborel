@@ -78,6 +78,22 @@ impl BytesLike {
     pub fn matches(&self, value: &[u8]) -> bool {
         self.0.matches(value)
     }
+
+    /// [X3.135-1986 §5.14 GR5] (RULES.md D1253) Whether each value of
+    /// the arena `text`, the `n`th ending at `ends[n]`, matches the
+    /// pattern: the arena searched at once by `kernels`, of a pattern of
+    /// a piece between two `%`s (RULES.md D1119), else each value alone.
+    pub fn matches_each(&self, (text, ends): (&[u8], &[usize]), kernels: &dyn Kernels) -> Vec<bool> {
+        self.0.arena((text, ends), kernels).unwrap_or_else(|| {
+            let mut start = 0_usize;
+            let alone = |&end: &usize| {
+                let value = text.get(start..end).unwrap_or_default();
+                start = end;
+                self.0.matches(value)
+            };
+            ends.iter().map(alone).collect()
+        })
+    }
 }
 
 // Unit tests: an arena's values matched as each alone (RULES.md R-TEST-1,

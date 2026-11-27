@@ -30,11 +30,12 @@
 //! comparison is, of a dictionary's entries, of texts coded by symbols in
 //! place and of plain texts.
 //!
-//! \[DESIGN\] (RULES.md D1251) A LIKE or NOT LIKE of a constant
+//! \[DESIGN\] (RULES.md D1251, D1253) A LIKE or NOT LIKE of a constant
 //! pattern of no `_` is judged of a VARCHAR column's texts where they
 //! lie, a chunk at a time, after the conjuncts that cost less a row:
 //! texts coded by symbols by the pattern's machine stepped a code at a
-//! time (`judged/coded.rs`), and other texts by their octets as written.
+//! time (`judged/coded.rs`), a dictionary's entries once each
+//! (`judged/entries.rs`), and other texts by their octets as written.
 //! Its column is never decoded to judge it. Of a CHARACTER column, and
 //! of a chunk that is malformed, it is not judged, and the filter judges
 //! it of the rows given.
@@ -46,6 +47,7 @@
 //! column's vector cannot be judged over is left to the filter.
 
 mod coded;
+mod entries;
 mod sketched;
 mod sorted;
 

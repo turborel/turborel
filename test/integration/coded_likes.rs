@@ -1,7 +1,7 @@
 //! LIKE and NOT LIKE of a constant pattern judged by a column store's
 //! scan of a VARCHAR column's texts where they lie, those coded by a
 //! table of symbols and those of a dictionary, before the filter's other
-//! columns are decoded [X3.135-1986 §5.14; RULES.md D1251]: what
+//! columns are decoded [X3.135-1986 §5.14; RULES.md D1251, D1253]: what
 //! the scan gives, and where it gives way to the filter.
 
 use turborel::db::{Database, Session};
@@ -110,7 +110,7 @@ fn every_way(db: &Database, sql: &str, wanted: &[String]) {
     }
 }
 
-/// Verifies: [X3.135-1986 §5.14 GR2a, GR4, GR5] (RULES.md D1251,
+/// Verifies: [X3.135-1986 §5.14 GR2a, GR4, GR5] (RULES.md D1251, D1253,
 /// D360) a LIKE or NOT LIKE of a constant pattern of no `_`, of a column
 /// store's VARCHAR column, is judged by the scan before the
 /// filter's other columns are decoded: EXPLAIN ANALYZE shows the scan

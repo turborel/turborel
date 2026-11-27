@@ -47,7 +47,7 @@ use super::super::group::{Group, Seal, Zone};
 use super::super::scan::Reading;
 use super::super::sketch::{Verdict, Verdicts};
 use super::super::{Chunk, padding};
-use super::{Against, KEPT_SHARE, Pred, sketched, sorted, text_keeps};
+use super::{Against, KEPT_SHARE, Pred, entries, sketched, sorted, text_keeps};
 use crate::error::Result;
 use crate::storage::Liked;
 use crate::storage::mask::index;
@@ -144,7 +144,9 @@ pub(super) fn liked<S: Seal>(
     for (zone, these) in chunks.by_ref() {
         let (first, before) = (zone.run.first, out.len());
         let judged = prepared.with(pages, (pred.column, zone, t), |chunk, _| {
-            Ok(liked_of(chunk, (pred.at, like, &mut stepped), (first, from), these, &mut out))
+            // A dictionary by its entries, where the rows asked are no fewer (RULES.md D1253).
+            Ok(entries::liked(chunk, (like, pages.kernels), (first, from), these, &mut out)
+                .or_else(|| liked_of(chunk, (pred.at, like, &mut stepped), (first, from), these, &mut out)))
         });
         match judged {
             Ok(judged) => or_all(judged, these, (before, &mut out)),
@@ -199,7 +201,7 @@ fn or_all(judged: Option<()>, these: &[u32], (before, out): (usize, &mut Vec<u32
 /// if the chunk holds no texts, or a text's codes or place are
 /// malformed, so it is decoded and raises what is malformed as it would
 /// have.
-fn liked_of(
+pub(super) fn liked_of(
     chunk: &Chunk<'_>,
     (at, like, stepped): (usize, &Liked, &mut Stepped),
     (first, from): (u32, u32),

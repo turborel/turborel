@@ -4,6 +4,7 @@
 //! (`value/like/machine.rs`), made once for the statement, which a scan
 //! steps over texts it holds coded, none decoded.
 
+use crate::kernels::Kernels;
 use crate::value::like::machine::Machine;
 use crate::value::{BytesLike, LikePattern};
 
@@ -32,6 +33,18 @@ impl Liked {
     /// pattern or, of NOT LIKE, does not.
     pub fn keeps(&self, text: &[u8]) -> bool {
         self.pattern.matches(text) != self.not
+    }
+
+    /// \[DESIGN\] (RULES.md D1253) As `keeps`, of each value of the
+    /// arena `text`, the `n`th ending at `ends[n]`, the arena searched
+    /// at once by `kernels` where the pattern has a piece between two
+    /// `%`s (`BytesLike::matches_each`).
+    pub fn keeps_each(&self, values: (&[u8], &[usize]), kernels: &dyn Kernels) -> Vec<bool> {
+        let mut each = self.pattern.matches_each(values, kernels);
+        for kept in &mut each {
+            *kept = *kept != self.not;
+        }
+        each
     }
 
     /// Whether NOT LIKE was written.

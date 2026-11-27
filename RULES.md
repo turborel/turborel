@@ -804,6 +804,7 @@ verification approach DO-178C expects (§8).
 | D1245 | A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1251 | A column store's scan judges a LIKE of a constant pattern of each chunk's texts where they lie, those coded by symbols by the pattern's machine stepped a code at a time |
+| D1253 | A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
 
 ### The project
@@ -22880,6 +22881,40 @@ taken as true of any other value, as a large object's, which the filter
 reads. Zone maps, Bloom filters and imprints pass over nothing by it, as
 the prefix's bounds do that, so the share of a table the planner prices
 a scan by (`scan_share`) is what it was.
+
+#### D1253. A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code
+
+A chunk kept as a dictionary holds each distinct text once, its entries'
+octets one after another, and a code a row (D31). The scan's LIKE
+(D1251) matched the entry of each row asked for, so an entry many rows
+share was searched once for each of them. A filter over a batch did the
+same of the texts it was given (`exec/batch/judge/texts.rs`).
+
+The scan now judges the entries (`engine/columns/judged/entries.rs`).
+The entries are one arena whose values end where the entries do, so the
+pattern's longest piece between two `%`s is searched for in all of it
+at once by the database's kernels (`BytesLike::matches_each`, D1119),
+which compare a vector of places at a time. An entry the search never
+stops in does not match, and one it stops in is matched whole by its
+pieces. A pattern of no piece between, as `abc%` is, is matched an
+entry at a time. A row is then kept by its code alone, and a null is
+left out.
+
+The entries are judged where the rows asked of the chunk are no fewer
+than its entries. Judging the entries searches each entry once, and a
+row at a time searches the entry of each row asked for, both by the same
+pieces over the same octets. So with as many rows as entries or more the
+entries are no more octets to search than the rows' entries, whatever
+kernels search them, and the arena search only makes them cheaper. With
+fewer rows, as an earlier conjunct leaves of a dictionary of many
+entries, each row's entry is matched alone and the entries no row asks
+for are never read. The bound is that comparison of two counts, so it
+has no constant to tune.
+
+A dictionary whose entries do not lie one after another within the
+octets the chunk holds, or one of whose codes is of no entry, is not
+judged by its entries nor a row at a time, and its rows are kept for the
+filter, whose decoding raises what is malformed (D1251).
 
 #### D1254. The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none
 
