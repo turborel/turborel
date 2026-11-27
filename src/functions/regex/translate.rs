@@ -292,7 +292,13 @@ impl Job<'_, '_> {
             Which::All => {
                 // Each match is found before it is replaced, as replacing one searches within it.
                 let mut at = self.at;
-                while at <= text.len() {
+                // Once a match is replaced the pattern is known to match no
+                // zero-length string (`Regex::replacement`), so no match
+                // begins at the subject's end, and none is searched for
+                // there: such a search of each subject would also tell
+                // the searcher that half its searches find nothing
+                // (RULES.md D1188).
+                while at < text.len() || (at == text.len() && self.with.is_none()) {
                     let Some(mv) = self.searcher.find_in(text, at)? else { break };
                     let (start, end) = mv.get(0).unwrap_or((at, at));
                     at = end.max(start.saturating_add(1));

@@ -11,10 +11,9 @@
 //!
 //! Before a search that asks what was captured, the automaton is a pass
 //! more over a text that matches, and the whole search of one that does
-//! not. On `bench/regex.rs` its pass cost a matching text about four
-//! tenths of the marking matcher's own, and saved a text with no match
-//! about two thirds of that matcher's search of it, which balance where
-//! about half the texts have no match. So the searcher counts what its
+//! not. On `bench/regex.rs` what the pass costs the texts that match and
+//! what it saves those that do not balance where about half the texts
+//! have no match. So the searcher counts what its
 //! searches for captures found, a window of them at a time, and asks the
 //! automaton first only while at least half of the last window found
 //! none. A search that asks only whether there is a match always asks it.
@@ -78,6 +77,12 @@ impl Searcher<'_> {
     /// The expression searched for.
     pub fn regex(&self) -> &Regex {
         self.regex
+    }
+
+    /// Whether its next search for captures asks the automaton first, as
+    /// what its last window of them found says.
+    pub fn asks_first(&self) -> bool {
+        self.found.asks
     }
 
     /// As `Regex::is_match`: a string of ASCII alone read where it lies.

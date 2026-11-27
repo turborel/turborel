@@ -6,7 +6,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of regular expressions, in the order they run.
-pub const REGEX: [Mutation; 40] = [
+pub const REGEX: [Mutation; 41] = [
     Mutation {
         name: "regex-dot-all-splits-crlf",
         package: Package::Core,
@@ -420,5 +420,15 @@ pub const REGEX: [Mutation; 40] = [
         replacement: "Inst::LoopCheck(_)] => *set == all || *set != all,",
         integration: &[],
         unit: &["regex::bounded::tests::the_rest_of_a_text_is_taken_without_walking_it"],
+    },
+    Mutation {
+        name: "translate-regex-searches-past-a-match",
+        package: Package::Core,
+        breaks: "a subject replaced is searched again at its end, so a searcher is told half its searches find nothing (D1188)",
+        file: "src/functions/regex/translate.rs",
+        original: "while at < text.len() || (at == text.len() && self.with.is_none()) {",
+        replacement: "while at <= text.len() {",
+        integration: &[],
+        unit: &["functions::regex::translate::tests::no_match_is_searched_for_at_the_end_of_a_subject_replaced"],
     },
 ];

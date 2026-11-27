@@ -215,3 +215,32 @@ fn a_match_is_replaced_as_the_match_alone_is() {
     assert_eq!(made("ba", "(c)|(a)", "[$1|$2]"), wanted("b[|a]"));
     assert_eq!(made("http://www.a.test/b", "^https?://(www\\.)?([^/]+)/.*$", "$2"), wanted("a.test"));
 }
+
+/// Verifies: [DESIGN] RULES.md D1188 [ISO/IEC 9075-2:2023 §9.29 GR3]:
+/// once a match of a subject is replaced, no match is searched for at
+/// the subject's end, where only one of no characters could begin and the
+/// pattern is known to have none: subjects that each match whole are a
+/// search each, every one finding a match, so their searcher stops
+/// asking its automaton first; subjects with no match keep it asking; and
+/// a pattern that matches no characters still fails at the end of a
+/// subject it has not matched before.
+#[test]
+fn no_match_is_searched_for_at_the_end_of_a_subject_replaced() {
+    let (units, every, one) = (chars("CHARACTERS"), chars(kw::ALL), number(1));
+    let asked = Asked { units: &units, every: &every, replacement: Cow::Borrowed("$2"), start: 1, occurrence: &one };
+    let regex = Regex::new("^https?://(www\\.)?([^/]+)/.*$", "s").unwrap();
+    let (mut searcher, mut with, mut out) = (regex.searcher(), None, String::new());
+    assert!(searcher.asks_first(), "at first");
+    for _ in 0..64_usize {
+        assert!(asked.of_text("http://www.a.test/b", (&mut searcher, &mut with), &mut out).unwrap());
+    }
+    assert_eq!(out, "a.test".repeat(64));
+    assert!(!searcher.asks_first(), "every search found a match");
+    for _ in 0..64_usize {
+        assert!(asked.of_text("ftp://a.test/b", (&mut searcher, &mut with), &mut out).unwrap());
+    }
+    assert!(searcher.asks_first(), "none found one");
+    let empty = Regex::new("b*", "").unwrap();
+    let failed = asked.of_text("a", (&mut empty.searcher(), &mut None), &mut out).unwrap_err();
+    assert_eq!(failed.sqlstate().as_str(), "2201U");
+}

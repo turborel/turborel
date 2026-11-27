@@ -21144,6 +21144,13 @@ groups, and only the others are searched again. `(^a)|(a)` after a `b`
 is one of the others. It matches `a` by its second group and that `a`
 alone by its first.
 
+Once a match of a subject is replaced the pattern is known to match no
+zero-length string, which `Regex::replacement` refuses, so no match
+begins at the subject's end and TRANSLATE_REGEX searches for none there.
+That search of each subject found nothing every time, which told the
+searcher that half its searches find nothing and kept it asking its
+automaton before every search of subjects that all match.
+
 A subject whose characters are all ASCII's is matched where it lies, its
 octets its characters (`regex::Ascii`), so no vector of characters is
 made of it.
