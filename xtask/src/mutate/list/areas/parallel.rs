@@ -37,7 +37,7 @@ const MERGED: &str = "exec::parallel::partitioned::merged::tests::lists_spilled_
 const SPILLED_WINDOWS: &str = "spilled_windows::partitions_past_the_grant_give_their_results_in_order";
 
 /// Mechanisms of parallel queries and grants whose removal must fail their tests.
-pub const PARALLEL: [Mutation; 26] = [
+pub const PARALLEL: [Mutation; 27] = [
     Mutation {
         name: "parallel-least-rows-ignored",
         package: Package::Core,
@@ -296,6 +296,16 @@ pub const PARALLEL: [Mutation; 26] = [
         original: "for run in 0..merged.runs.len() {",
         replacement: "for run in 1..merged.runs.len() {",
         integration: &[SPILLED_WINDOWS],
+        unit: &[],
+    },
+    Mutation {
+        name: "parallel-sort-ties-dropped",
+        package: Package::Core,
+        breaks: "a sort run in parallel that asks for its last row's peers gives its first rows alone (RULES.md D1229)",
+        file: "src/exec/parallel/sorted.rs",
+        original: "Box::new(WithTies { rows, left: n, keys, last: None })",
+        replacement: "Box::new(rows.take(n))",
+        integration: &[SAME_ROWS],
         unit: &[],
     },
 ];
