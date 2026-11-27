@@ -821,10 +821,10 @@ verification approach DO-178C expects (§8).
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1281 | A sort's first rows over a pair of groupings are taken from the second's table of each partition |
+| D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
-| D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
 
 ### The project
 
@@ -23655,6 +23655,43 @@ the same way.
 An analyzed plan counts the second grouping the groups its tables made,
 and the projection the rows the partitions kept (D1254).
 
+#### D1287. A chunk of 16-byte fields whose values 64 bits hold is read as integers
+
+A column of an exact numeric type of 19 to 38 digits is kept in 16-byte
+fields (D698) and was read a value at a time into a batch's values,
+whatever it held. An identifier is often declared with 19 or 20 digits
+while every value of it fits 64 bits. Such a column was tested by the
+filter above the scan, hashed in 128 bits and summed a value at a time,
+where a column of 18 digits is judged by the scan and computed by the
+kernels (D360, D362).
+
+A scan now reads a run of such a column as integers (`storage::Ints`),
+at the type's scale, if the least and the greatest value of each chunk
+the run reads fit 64 bits (`scan::ints_scale`). A chunk's zone holds
+both, so every value of the chunk fits. Fixed fields are narrowed in one
+loop that keeps each field's low half and tests at its end that every
+high half was its sign alone. A dictionary's entries are narrowed once a
+chunk (`prepared.rs`), and a constant once. A field 64 bits do not hold
+is never cut to them. The reading gives none, and the run is read as
+values, as before (`encoded/words.rs`). A constant of 16 bytes past 64
+bits would otherwise have read as 0. The bounds are tested first, so a
+column whose values do pass 64 bits pays that test alone and opens no
+chunk for it. The scan judges a conjunct on such a column wherever the
+run reads as integers, and leaves it to the filter where it does not
+(`judged.rs`).
+
+No operator reads a column's declared precision. Each reads the kind of
+a batch's column and its values (D696, D699). So a column's type, the
+types of its results, their values and the overflow of its sums are as
+they were. A sum of integers is added in 128 bits and judged against
+its result's precision at its end, as a sum of values is. One column may
+reach an operator as integers in one batch and as values in the next.
+Both hash alike and compare by value.
+
+Nothing stored changes, so data frozen before is read so with no
+reload. The grain is the chunk, so the chunks of a group that hold no
+value past 64 bits are integers though another chunk of it holds one.
+
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
 
 A batch's vector of integers, of approximate numbers or of datetimes
@@ -23771,42 +23808,6 @@ chunk whose entries were judged not to be text is not judged again. The
 chunks opened belong to the one scan that reads them, or to one decoding
 of a late column at a time (D361), so no two threads ask one cell at
 once, and the cell would still make the text once if they did.
-#### D1287. A chunk of 16-byte fields whose values 64 bits hold is read as integers
-
-A column of an exact numeric type of 19 to 38 digits is kept in 16-byte
-fields (D698) and was read a value at a time into a batch's values,
-whatever it held. An identifier is often declared with 19 or 20 digits
-while every value of it fits 64 bits. Such a column was tested by the
-filter above the scan, hashed in 128 bits and summed a value at a time,
-where a column of 18 digits is judged by the scan and computed by the
-kernels (D360, D362).
-
-A scan now reads a run of such a column as integers (`storage::Ints`),
-at the type's scale, if the least and the greatest value of each chunk
-the run reads fit 64 bits (`scan::ints_scale`). A chunk's zone holds
-both, so every value of the chunk fits. Fixed fields are narrowed in one
-loop that keeps each field's low half and tests at its end that every
-high half was its sign alone. A dictionary's entries are narrowed once a
-chunk (`prepared.rs`), and a constant once. A field 64 bits do not hold
-is never cut to them. The reading gives none, and the run is read as
-values, as before (`encoded/words.rs`). A constant of 16 bytes past 64
-bits would otherwise have read as 0. The bounds are tested first, so a
-column whose values do pass 64 bits pays that test alone and opens no
-chunk for it. The scan judges a conjunct on such a column wherever the
-run reads as integers, and leaves it to the filter where it does not
-(`judged.rs`).
-
-No operator reads a column's declared precision. Each reads the kind of
-a batch's column and its values (D696, D699). So a column's type, the
-types of its results, their values and the overflow of its sums are as
-they were. A sum of integers is added in 128 bits and judged against
-its result's precision at its end, as a sum of values is. One column may
-reach an operator as integers in one batch and as values in the next.
-Both hash alike and compare by value.
-
-Nothing stored changes, so data frozen before is read so with no
-reload. The grain is the chunk, so the chunks of a group that hold no
-value past 64 bits are integers though another chunk of it holds one.
 
 ## 2. Project layout
 
