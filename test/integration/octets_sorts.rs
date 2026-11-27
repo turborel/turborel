@@ -302,3 +302,75 @@ fn a_top_n_by_octets_tells_its_scan_a_bound_of_strings_7_17() {
         assert_eq!(rows(&shared, sql).unwrap(), wanted, "in parallel: {sql}");
     }
 }
+
+/// U of row `k` of table Z, null every 11th. The strings rise with the
+/// rows, so a group's are all past those of the groups before it, and
+/// each has one of `ENDS` after it.
+fn rising_of(k: usize) -> Option<String> {
+    (!k.is_multiple_of(11)).then(|| format!("u{k:05}{}", ENDS[k % 4]))
+}
+
+/// V of row `k` of table Z. The strings fall as the rows rise.
+fn falling_of(k: usize) -> String {
+    format!("v{:05}{}", MANY - k, ENDS[k % 4])
+}
+
+/// Verifies: [DESIGN] RULES.md D1187, D379 [ISO/IEC 9075-2:2023 §7.17
+/// GR5]: a FETCH FIRST by a column under a collation of NO PAD by
+/// octets passes over the groups and parts whose least or greatest,
+/// kept in the padded order, proves every string of them past the
+/// sort's bound by octets. Ascending by strings that rise with the rows,
+/// and descending by strings that fall, every group after the first is
+/// past the bound, and the scan gives under half of the table's rows,
+/// the first group and the rows not yet frozen. The other way round no
+/// group is past the bound and the scan gives over half. Each way the
+/// rows given are the first by octets, on one thread and in parallel.
+/// That the groups are passed over and not judged a row at a time is
+/// held by `group::tests::a_top_bound_skips_chunks_past_it`.
+#[test]
+fn a_top_n_by_octets_passes_over_the_groups_past_its_bound_7_17() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE COLLATION BYTES FOR SQL_TEXT FROM UCS_BASIC NO PAD
+           CREATE TABLE Z (K INTEGER PRIMARY KEY, U VARCHAR(40) COLLATE A.BYTES, V VARCHAR(40) COLLATE A.BYTES)
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    let text = |s: Option<String>| s.map_or("NULL".to_owned(), |s| format!("'{s}'"));
+    for first in (0..MANY).step_by(1000) {
+        let values: Vec<String> =
+            (first..first + 1000).map(|k| format!("({k}, {}, {})", text(rising_of(k)), text(Some(falling_of(k))))).collect();
+        a.run(&format!("INSERT INTO Z VALUES {}", values.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    let ordered = |of: &dyn Fn(usize) -> Option<String>, descending: bool| -> Vec<String> {
+        let mut ks: Vec<usize> = (0..MANY).collect();
+        ks.sort_by(|&x, &y| by_octets(of(x).as_ref(), of(y).as_ref(), (descending, false)).then(x.cmp(&y)));
+        ks.iter().map(ToString::to_string).collect()
+    };
+    let cases: [(&str, Vec<String>, bool); 4] = [
+        ("SELECT K FROM Z ORDER BY U FETCH FIRST 10 ROWS ONLY", ordered(&rising_of, false), true),
+        ("SELECT K FROM Z ORDER BY V DESC NULLS LAST FETCH FIRST 10 ROWS ONLY", ordered(&|k| Some(falling_of(k)), true), true),
+        ("SELECT K FROM Z ORDER BY U DESC NULLS LAST FETCH FIRST 10 ROWS ONLY", ordered(&rising_of, true), false),
+        ("SELECT K FROM Z ORDER BY V FETCH FIRST 10 ROWS ONLY", ordered(&|k| Some(falling_of(k)), false), false),
+    ];
+    let scanned = |sql: &str| {
+        let analyzed = a.analyzed(sql, &Params::new()).unwrap();
+        analyzed.operators.iter().find(|o| o.label.starts_with("SeqScan")).unwrap_or_else(|| panic!("no scan in\n{}", analyzed.text)).rows
+    };
+    for (sql, wanted, passed_over) in cases {
+        assert_eq!(rows(&a, sql).unwrap(), wanted[..10], "{sql}");
+        let given = usize::try_from(scanned(sql)).unwrap();
+        assert_eq!(given * 2 < MANY, passed_over, "{given} rows given: {sql}");
+        let shared = db.session("A");
+        for setting in WAYS[2] {
+            exec(&shared, setting).unwrap();
+        }
+        assert_eq!(rows(&shared, sql).unwrap(), wanted[..10], "in parallel: {sql}");
+    }
+}

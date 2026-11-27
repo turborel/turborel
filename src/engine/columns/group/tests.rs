@@ -195,7 +195,10 @@ fn scans_skip_chunks_a_condition_cannot_match() {
 /// bound yet, every chunk is a candidate; ascending, raised to 1,500, only
 /// the chunks of K up to it, every row of them kept, none judged; raised
 /// below the group's least, none, and the group's summary rules it out;
-/// descending, the chunks of K from the bound on.
+/// descending, the chunks of K from the bound on. (D1187) A bound of a
+/// key by octets, of the texts, rules out every chunk and the group
+/// where their greatest has the lesser octet, and none where the bound
+/// is a prefix of it or the least is the empty string.
 #[test]
 fn a_top_bound_skips_chunks_past_it() {
     let (pool, file) = file();
@@ -229,6 +232,16 @@ fn a_top_bound_skips_chunks_past_it() {
     descending.raise(&int(3500));
     let from = read(&descending);
     assert!((500..4000).contains(&from), "the chunks of K from 3,500: {from}");
+    let by_octets = |down: bool, bound: &str| {
+        let threshold = Arc::new(Threshold::new(down).by_octets());
+        threshold.raise(&Value::Char(bound.into()));
+        let texts = Conjunction(vec![Conjunct::Dynamic { column: 1, threshold }]);
+        let rows: u32 = candidates(&group, Some(&texts)).unwrap().iter().map(|(first, end)| end.saturating_sub(*first)).sum();
+        (rows, Summary::of(&group, group.header[0]).unwrap().may_match(Some(&texts)))
+    };
+    assert_eq!(by_octets(true, "u"), (0, false), "every text is before it by octets");
+    assert_eq!(by_octets(true, "t"), (4000, true), "the bound is a prefix of the greatest");
+    assert_eq!(by_octets(false, "a"), (4000, true), "the empty text is before it");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, frozen row groups: a group of no rows,

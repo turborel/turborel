@@ -17,12 +17,15 @@
 //! narrowed and counted by its octets as the sort compares them, and the
 //! test it is of a row is a comparison of octets. A group's and a part's
 //! least and greatest are kept in the padded order, which is not the
-//! key's, so such a bound passes over none of them (`may_match`), and
-//! a column store's scan judges each row by it instead.
+//! key's, so such a bound passes over one only where its end proves
+//! every string of it past the bound by octets (`octets::past`), and a
+//! column store's scan judges each row of the rest by it.
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::Mutex;
+
+mod octets;
 
 use super::{Condition, Conjunct};
 use crate::index::Probe;
@@ -213,14 +216,15 @@ impl Threshold {
 
     /// Whether a row whose value of the key is within `range`, its least
     /// and greatest not null, may be at or before the bound: true if either
-    /// is unknown, or the values do not compare; and true of a key by
-    /// octets, as the range's ends are of the padded order, not the
-    /// key's (RULES.md D1187).
+    /// is unknown, or the values do not compare. Of a key by octets the
+    /// range's ends are of the padded order, not the key's, and it is
+    /// passed over only where they prove every string of it past the
+    /// bound by octets (`octets::past`, RULES.md D1187).
     pub fn may_match(&self, range: Option<&(Value, Value)>) -> bool {
-        if self.octets {
-            return true;
-        }
         let (Some(bound), Some((least, greatest))) = (self.bound(), range) else { return true };
+        if self.octets {
+            return !octets::past(self.descending, (least, greatest), &bound);
+        }
         if self.descending { compare(greatest, &bound) != Some(Ordering::Less) } else { compare(least, &bound) != Some(Ordering::Greater) }
     }
 }
@@ -318,7 +322,8 @@ mod tests {
     /// two are equal; the test it is of a row compares octets, at most
     /// the bound's of an ascending key and at least them of a descending
     /// one, true of a row equal to it and of no null; and it passes over
-    /// no range, whose ends are of the padded order.
+    /// a range past it by octets, not one the padded order alone puts
+    /// past it, as a string alone is before the bound of it and a tab.
     #[test]
     fn a_threshold_by_octets_holds_a_string_ordered_by_its_octets() {
         let s = |t: &str| Value::Char(t.into());
@@ -334,9 +339,10 @@ mod tests {
         assert_eq!(at_most.columns(), [2]);
         assert!(kept(&at_most, "a\t") && kept(&at_most, "a") && kept(&at_most, ""), "at or before a and a tab");
         assert!(!kept(&at_most, "a ") && !kept(&at_most, "a\t ") && !at_most.matches_key(&[&Value::Null]), "past it, and a null");
+        assert!(up.may_match(Some(&(s("a"), s("a")))), "padded, a alone is past a and a tab, and by octets before it");
         up.raise(&s("a"));
         assert!(!kept(&up.row_test(2).unwrap(), "a\t"), "the string alone is before it with a tab");
-        assert!(up.may_match(Some(&(s("z"), s("zz")))), "no range is passed over");
+        assert!(!up.may_match(Some(&(s("z"), s("zz")))) && up.may_match(Some(&(s("a"), s("zz")))), "a range past it by octets");
         let down = Threshold::new(true).by_octets();
         for t in ["a", "a ", "a"] {
             down.raise(&s(t));
@@ -346,7 +352,7 @@ mod tests {
             kept(&at_least, "a ") && kept(&at_least, "b") && !kept(&at_least, "a") && !kept(&at_least, "a\t"),
             "at least a and a space"
         );
-        assert!(down.may_match(Some(&(s(""), s(" ")))));
+        assert!(!down.may_match(Some(&(s(""), s("A")))) && down.may_match(Some(&(s(""), s("a")))), "a prefix of the bound");
     }
 
     /// Verifies: [DESIGN] RULES.md D1187, D1241: a bound of a key by
