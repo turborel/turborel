@@ -777,6 +777,7 @@ verification approach DO-178C expects (§8).
 | D1204 | A relation whose column of a class of equalities is a key of it is joined to the class's other relations by the implied key, within the enumeration's budget |
 | D1205 | The unique index of a deferrable constraint is no key to the estimates |
 | D1206 | An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all |
+| D1212 | A table opened has its zones summed up only once one is asked for |
 | D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
 | D1216 | SUM of a value and a constant is computed from the value's sum and count, shared among such sums |
 | D1218 | A sort that reads its input whole passes it no row goal |
@@ -16067,8 +16068,8 @@ The first scan told a condition of a column kept, the first plan that
 weighs an index-only read of the table (`visible_share`), the first read
 that asks whether a row is visible to all, and the first count of its
 rows warm the table. Warming makes a zone not known for every block of row ids
-given so far, and the maintenance thread sums them up as it does a
-table's opened (D770, D771). Until a zone is summed up it prunes
+given so far, and the maintenance thread sums them up as it does those
+of a table opened once one is asked for (D770, D771, D1212). Until a zone is summed up it prunes
 nothing. From the warming on, every write keeps its zone as before, and
 a zone made for row ids given after it is known from its first row. A
 table stays warm while it is open. The planner's question of the share
@@ -20572,8 +20573,10 @@ table opens sees what was committed before it closed. A write after
 the save clears the flag before its index entries are written and
 marks the zone's segment to be saved again, and a row recovery writes
 does so too. A zone saved unsettled, or not visible, opens unsettled
-as before. So a database reaches its steady state once, after its
-first checkpoint, and keeps it from start to start.
+as before, and is summed up or settled once a zone of its table is
+asked for (D1212). So a table reaches its steady state once, after the
+first checkpoint that follows its zones' settling, and keeps it from
+start to start.
 
 #### D1164. A start that changes nothing records no catalog image
 
@@ -21600,6 +21603,61 @@ keys (D665) and takes fewer steps, each sound alone. The cost model
 needs no change. It prices each row hashed once whatever its keys
 (`HASH_ROW`), and counts a join's runtime filter once a class of
 equalities (D653), which is now what runs.
+#### D1212. A table opened has its zones summed up only once one is asked for
+
+A table opened with zones not known, stale or unsettled was noted for
+maintenance as the database opened (D31, D1163), whether or not
+anything read it. A table warmed once (D868) and closed before its
+zones were summed up was then summed up at every start, by a pass that
+decodes every row of each zone not known, on the cores the sessions run
+on and through the buffer pool they read through, until some start
+lasted long enough to finish it. A session that read other tables alone
+paid for it. Its queries shared their cores with the pass, and the pool
+filled with pages none of them read.
+
+A table now notes whether a zone of it was asked for since it was made
+or opened (`rows/zones/cold.rs`). The asks are those that warm a cold
+table (D868), which are a scan told a condition of a column kept, a
+read asking whether a row is visible to every reader, a count of its
+rows, and a plan weighing an index-only read. The zones of a table opened are wanted by the
+maintenance thread only once one was asked for (`rows/zones/summed.rs`),
+as its statistics are gathered only once a plan read them (D473). The
+table opened tells its database of its first ask (`spill/asks.rs`), through
+the work areas its store is attached to. A note is set and the
+maintenance job asked for, and the job, finding the note, notes each
+table with maintenance due. A transaction that wrote notes its tables
+as it ends, as before, but one that read alone collects nothing and
+notes none, and its commit is the path of every read by key, so nothing
+is asked there. The telling stands in for the noting the database's
+opening did, so a table opened is summed up as it was before, only
+later. The thread sums the zones up from then on, 64 a
+call, with the rests of D771. What it summed up is saved by each checkpoint as
+before, so a table closed part summed up goes on from there once asked
+again. A zone saved settled visible opens so (D1163), asked or not.
+
+A table made in this session is as before. One of the row store is
+cold until asked, and one of the column store is warm and asked from
+its first row. Its
+first ask tells nothing. A read that warms it leaves its zones for the
+commit of the next write to it, as before, so the maintenance thread
+does not start beside the statements of a session that only read a
+table it made, and the plans made of such a table do not change with
+when the thread ran. With the telling, a join was planned by an index
+or not, and read direct or not, from one run to the next. A write
+to a table opened and not asked keeps its zones, as a warm table's
+writes do, and leaves them due until one is asked for.
+`Database::maintain` sums up every table's zones now, asked or not, so
+a program that wants a database settled before it is used, or copied,
+calls it. An ask after the first reads one flag and writes nothing, so
+a read by an index, which asks of each row, costs what it did, and the
+commit of a transaction that read alone is as it was.
+
+A load into an empty table of the row store does not begin warm, though
+its zones would then be known as its rows are written and no pass
+would be owed later. Every write after the load would keep its zone,
+the cost D868 took from tables written and read by key alone, and an
+order entry's tables are loaded in bulk too. The pass is paid once, by
+the table whose zones are asked for.
 
 #### D1215. A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more
 
