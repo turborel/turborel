@@ -169,8 +169,11 @@ pub(super) struct Zones {
     /// Whether a zone was asked for since the table was made or opened:
     /// until one is, a table opened has none summed up (RULES.md D1212).
     asked: AtomicBool,
-    /// The work areas its store is attached to, once it is: told of the
-    /// first ask (`spill/asks.rs`).
+    /// Whether the table was opened, its zones due then held back until
+    /// one is asked for. Only such a table tells of its first ask.
+    held: AtomicBool,
+    /// The work areas its store is attached to, once it is, which are
+    /// told of the first ask (`spill/asks.rs`).
     work: Arc<RwLock<Option<Arc<WorkAreas>>>>,
     /// The table's row ids given so far: one past them.
     given: Arc<AtomicU64>,
@@ -292,6 +295,7 @@ impl Zones {
             unknown_below: AtomicU64::new(0),
             warm: AtomicBool::new(false),
             asked: AtomicBool::new(false),
+            held: AtomicBool::new(false),
             work: Arc::default(),
             given: Arc::default(),
             owed: Live::new(),

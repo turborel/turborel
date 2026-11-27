@@ -1,6 +1,6 @@
 //! A table opened whose zones are due has none summed up until one is
-//! asked for (RULES.md D1212): a database opened does no maintenance of a
-//! table nothing reads, sums up the zones of one a count asks, and keeps
+//! asked for (RULES.md D1212). A database opened does no maintenance of a
+//! table nothing reads, sums up the zones of one a scan asks, and keeps
 //! what it summed up from one start to the next.
 
 use std::path::Path;

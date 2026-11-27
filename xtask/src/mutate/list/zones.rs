@@ -8,7 +8,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of zone maintenance, in the order they run.
-pub const ZONES: [Mutation; 22] = [
+pub const ZONES: [Mutation; 23] = [
     Mutation {
         name: "zone-stale-inside",
         package: Package::Core,
@@ -207,7 +207,7 @@ pub const ZONES: [Mutation; 22] = [
         package: Package::Core,
         breaks: "zone maintenance: an ask of a table opened's zones is not noted, so they are never summed up and its scans never skip",
         file: "src/engine/rows/zones/cold.rs",
-        original: "        self.warm_cold();\n        // After it is warm: a table asked is never cold.\n        self.asked.store(true, Ordering::Release);",
+        original: "        self.warm_cold();\n        // After it is warm, so a table asked is never cold.\n        self.asked.store(true, Ordering::Release);",
         replacement: "        self.warm_cold();",
         integration: &[],
         unit: &["engine::rows::zones::asked::each_ask_of_a_zone_makes_an_opened_tables_wanted"],
@@ -231,5 +231,15 @@ pub const ZONES: [Mutation; 22] = [
         replacement: "    if st.work.maintenance().take() {",
         integration: &["zones_due::a_table_opened_is_summed_up_only_once_its_zones_are_asked_for"],
         unit: &[],
+    },
+    Mutation {
+        name: "zone-made-tells",
+        package: Package::Core,
+        breaks: "zone maintenance: a read of a table made in the session asks for the maintenance job, so its plans change with when the job ran",
+        file: "src/engine/rows/zones/cold.rs",
+        original: "work.filter(|_| self.held.load(Ordering::Acquire))",
+        replacement: "work",
+        integration: &[],
+        unit: &["engine::rows::zones::asked::the_first_ask_is_told_to_the_work_areas_once"],
     },
 ];

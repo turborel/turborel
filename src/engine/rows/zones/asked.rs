@@ -14,8 +14,8 @@ use crate::storage::{RowId, TableStorage};
 use crate::txn::NO_TRANSACTION;
 
 /// A table of `zones` zones, each full of rows, written cold and warmed
-/// after, so none of its zones is known, saved so and closed: its meta
-/// page and its rows' ids.
+/// after, so none of its zones is known, saved so and closed. Gives its
+/// meta page and its rows' ids.
 fn saved_unknown(files: &TableFiles, zones: usize) -> (PageId, Vec<RowId>) {
     let table = RowTable::create(files, &TYPES, TableOptions::default()).unwrap();
     let rows = u64::try_from(zones).unwrap().checked_mul(ZONE_ROWS).unwrap();
@@ -107,17 +107,21 @@ fn a_sum_up_saved_is_resumed_once_asked_again() {
     assert!(made.zones.asked() && made.maintenance_due(), "made warm: wanted as written");
 }
 
-/// Verifies: [DESIGN] RULES.md D1212: the first ask of a table's zones
-/// is told to the work areas its store is attached to, once: a table
-/// opened none of whose zones was asked for tells nothing, the first ask
-/// leaves a note, and an ask after it none.
+/// Verifies: [DESIGN] RULES.md D1212: the first ask of the zones of a
+/// table opened is told to the work areas its store is attached to,
+/// once: a table opened none of whose zones was asked for tells nothing,
+/// the first ask leaves a note, and an ask after it none; a table made
+/// in this session tells nothing as it is warmed. A regression test
+/// (R-TEST-7): it fails if a read of a table made in the session asks
+/// for the maintenance job, whose pass then changed the plans made
+/// beside it from one run to the next.
 #[test]
 fn the_first_ask_is_told_to_the_work_areas_once() {
     let files = files();
     let work = Arc::new(WorkAreas::new(MemoryBudget::new(1 << 20)));
     *files.work.write().unwrap() = Some(Arc::clone(&work));
     let (meta, ids) = saved_unknown(&files, 1);
-    assert!(work.maintenance().take(), "the warming of the table made");
+    assert!(!work.maintenance().take(), "a table made in this session tells nothing");
     let table = Arc::new(RowTable::open(&files, meta, &TYPES, TableOptions::default()).unwrap());
     assert!(!work.maintenance().take(), "none asked for");
     assert!(reads(&table, &equal(0, 5), ids[0]));

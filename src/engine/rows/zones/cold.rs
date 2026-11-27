@@ -34,9 +34,11 @@
 //!
 //! A table opened has its zones due summed up and settled only once one
 //! is asked for after it opens, by what warms a cold table (RULES.md
-//! D1212): the table notes the first ask and tells its database
+//! D1212). The table notes the first ask and tells its database
 //! (`spill/asks.rs`), whose maintenance job then notes the tables with
-//! maintenance due, and until then the maintenance
+//! maintenance due. A table made in this session tells nothing. Its
+//! zones a read asked wait for a write's commit, as they always did, so
+//! no plan of it changes with when the job ran. Until then the maintenance
 //! thread is not asked for, so a start does no pass over a table nothing
 //! reads. An ask after the first reads the note and writes nothing.
 
@@ -52,7 +54,7 @@ impl Zones {
     }
 
     /// Makes the table warm from its first row, of one that holds no row
-    /// yet: every zone made is known, and its zones are asked for from
+    /// yet. Every zone made is known, and its zones are asked for from
     /// the first, so the maintenance thread keeps them as it is written.
     pub(in crate::engine::rows) fn begin_warm(&self) {
         self.warm.store(true, Ordering::SeqCst);
@@ -60,34 +62,37 @@ impl Zones {
     }
 
     /// Whether a zone was asked for since the table was made or opened
-    /// (RULES.md D1212): only then is the maintenance thread asked to sum
+    /// (RULES.md D1212). Only then is the maintenance thread asked to sum
     /// up or settle its zones.
     pub(in crate::engine::rows) fn asked(&self) -> bool {
         self.asked.load(Ordering::Acquire)
     }
 
-    /// Notes the table opened, its zones read as saved: none asked for
-    /// yet, whatever made it warm (RULES.md D1212).
+    /// Notes the table opened, its zones read as saved, with none asked
+    /// for yet whatever made it warm (RULES.md D1212).
     pub(super) fn opened(&self) {
         self.asked.store(false, Ordering::Release);
+        self.held.store(true, Ordering::Release);
     }
 
-    /// Notes a zone asked for, warming the table if it is cold: a zone not
-    /// known for each block of the row ids given so far (see the module's
-    /// documentation). A table asked is warm, so every ask after the
-    /// first reads one flag and writes nothing, as a read of a row by an
-    /// index asks of each row (RULES.md D1212).
+    /// Notes a zone asked for, warming the table if it is cold, which
+    /// makes a zone not known for each block of the row ids given so far
+    /// (see the module's documentation). A table asked is warm, so every
+    /// ask after the first reads one flag and writes nothing, as a read
+    /// of a row by an index asks of each row (RULES.md D1212).
     pub(in crate::engine::rows) fn warm(&self) {
         if self.asked() {
             return;
         }
         self.warm_cold();
-        // After it is warm: a table asked is never cold.
+        // After it is warm, so a table asked is never cold.
         self.asked.store(true, Ordering::Release);
-        // [DESIGN] RULES.md D1212: no end of a transaction that read alone
-        // notes the table, so its database is told here, once.
+        // [DESIGN] RULES.md D1212: a table opened was noted as the database
+        // opened, before its zones were held back; it is told of here
+        // instead, once. A table made in this session tells nothing, so
+        // no plan of it depends on when the maintenance thread ran.
         let work = self.work.read().ok().and_then(|work| work.clone());
-        if let Some(work) = work {
+        if let Some(work) = work.filter(|_| self.held.load(Ordering::Acquire)) {
             work.maintenance().ask();
         }
     }

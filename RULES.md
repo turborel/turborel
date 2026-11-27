@@ -21270,31 +21270,38 @@ zones were summed up was then summed up at every start, by a pass that
 decodes every row of each zone not known, on the cores the sessions run
 on and through the buffer pool they read through, until some start
 lasted long enough to finish it. A session that read other tables alone
-paid for it: its queries shared their cores with the pass, and the pool
+paid for it. Its queries shared their cores with the pass, and the pool
 filled with pages none of them read.
 
 A table now notes whether a zone of it was asked for since it was made
-or opened (`rows/zones/cold.rs`): by a scan told a condition of a
-column kept, a read asking whether a row is visible to every reader, a
-count of its rows, or a plan weighing an index-only read, the asks that
-warm a cold table (D868). The zones of a table opened are wanted by the
+or opened (`rows/zones/cold.rs`). The asks are those that warm a cold
+table (D868), which are a scan told a condition of a column kept, a
+read asking whether a row is visible to every reader, a count of its
+rows, and a plan weighing an index-only read. The zones of a table opened are wanted by the
 maintenance thread only once one was asked for (`rows/zones/summed.rs`),
 as its statistics are gathered only once a plan read them (D473). The
-table tells its database of the first ask (`spill/asks.rs`), through
-the work areas its store is attached to: a note is set and the
+table opened tells its database of its first ask (`spill/asks.rs`), through
+the work areas its store is attached to. A note is set and the
 maintenance job asked for, and the job, finding the note, notes each
 table with maintenance due. A transaction that wrote notes its tables
 as it ends, as before, but one that read alone collects nothing and
 notes none, and its commit is the path of every read by key, so nothing
-is asked there. Before, a table that a read alone had warmed (D868)
-was not summed up until a write to it committed or the database was
-opened again. The thread sums the zones up from then on, 64 a
+is asked there. The telling stands in for the noting the database's
+opening did, so a table opened is summed up as it was before, only
+later. The thread sums the zones up from then on, 64 a
 call, with the rests of D771. What it summed up is saved by each checkpoint as
 before, so a table closed part summed up goes on from there once asked
 again. A zone saved settled visible opens so (D1163), asked or not.
 
-A table made in this session is as before: of the row store, cold until
-asked; of the column store, warm and asked from its first row. A write
+A table made in this session is as before. One of the row store is
+cold until asked, and one of the column store is warm and asked from
+its first row. Its
+first ask tells nothing. A read that warms it leaves its zones for the
+commit of the next write to it, as before, so the maintenance thread
+does not start beside the statements of a session that only read a
+table it made, and the plans made of such a table do not change with
+when the thread ran. With the telling, a join was planned by an index
+or not, and read direct or not, from one run to the next. A write
 to a table opened and not asked keeps its zones, as a warm table's
 writes do, and leaves them due until one is asked for.
 `Database::maintain` sums up every table's zones now, asked or not, so

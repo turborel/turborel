@@ -4,7 +4,8 @@
 //! garbage and notes the table then (`txn/collect.rs`). A transaction
 //! that read alone collects nothing, and its commit is the path of every
 //! read by key, so nothing is asked there. The engine tells here instead,
-//! once a table, as the first of its zones is asked for: the note is set
+//! once a table opened, as the first of its zones is asked for, in place
+//! of the noting the database's opening did before. The note is set
 //! and the maintenance job asked for, and the job, finding the note,
 //! notes each table that has maintenance due (`db/maintenance.rs`).
 //!
@@ -32,7 +33,7 @@ impl Asks {
     }
 
     /// Notes that a read made maintenance wanted, and asks for the job, if
-    /// it has one: with no lock held, as asking may start the job's thread.
+    /// it has one. No lock is held, as asking may start the job's thread.
     pub fn ask(&self) {
         self.asked.store(true, Ordering::Release);
         let job = lock_builtin(&self.job).clone();
@@ -41,8 +42,8 @@ impl Asks {
         }
     }
 
-    /// Whether a read made maintenance wanted since this was last asked:
-    /// forgotten from now on.
+    /// Whether a read made maintenance wanted since this was last asked.
+    /// The note is forgotten from now on.
     pub(crate) fn take(&self) -> bool {
         self.asked.load(Ordering::Acquire) && self.asked.swap(false, Ordering::AcqRel)
     }

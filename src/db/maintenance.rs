@@ -106,7 +106,7 @@ pub(super) fn maintained(db: &Database) -> Result<Option<Duration>> {
         st.collect_awaiting();
     }
     // [DESIGN] RULES.md D1212: a read made maintenance wanted, which no
-    // end of a transaction notes: each table with some due is noted.
+    // end of a transaction notes, so each table with some due is noted.
     if st.work.maintenance().take() {
         st.note_due_maintenance();
     }
