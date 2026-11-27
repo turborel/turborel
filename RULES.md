@@ -817,8 +817,10 @@ verification approach DO-178C expects (§8).
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1279 | A grouping by an expression counts no more groups than its table's sample shows the expression to take values |
+| D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 
@@ -23356,6 +23358,7 @@ numbers, so a set function whose state depends on the order of its
 values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
+
 #### D1270. A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch
 
 A leaf taken out of a B-link tree is freed once no operation that may
@@ -23434,6 +23437,32 @@ A split that fails after it took a page now gives back every page it
 took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
+
+#### D1276. A grouping whose statement thread's table went to the spill reads the spill at its end
+
+A grouping run in parallel merges the morsels of few groups on the
+statement's thread, in a table of its own (D356, D1247). At its end, if
+no wave was merged and none waits, it took every group to be in that
+table and gave the table's groups alone
+(`exec/parallel/grouped/waves.rs`, `finished`). That was so while a
+grouping past its grant gave way. Since the partitions are held in the
+spill (D1226) it is not. A table of the statement's thread that outgrows
+the grant is handed to the partitions, and where the grant cannot hold
+it even with every partition spilled, it is written to the spill as it
+is, with no wave merged. The end then still took the early path. It
+gave the groups of the statement thread's last table and never read the
+spill, so the statement returned some of its groups and no error.
+
+A statement reached this with few groups a morsel and a table of them,
+no more than EXECUTOR.MORSEL_ROWS groups, whose keys and states pass
+MEMORY.WORK_BYTES. That takes a small grant, or states of long strings.
+
+The end now takes the early path only if nothing was spilled. With a
+spill it hands the table over as it does any other and reads each
+partition back. A unit test hands every morsel whole under a grant the
+table passes, and a statement whose groups of one morsel pass the
+grant, by the states of many set functions, is compared with itself
+run alone.
 
 #### D1278. Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret
 
@@ -23604,6 +23633,56 @@ every row written, where a share of the sample does not. The
 statement's key writes each function by the address of its handle
 (D1299), and keeps the expression, so no handle is freed and its
 address taken while the key is kept.
+
+#### D1280. A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot
+
+A query with a DISTINCT set function is computed by two groupings
+(D340), and a set function without DISTINCT beside it is computed in
+parts (D341). The first grouping keeps a part of COUNT, SUM, AVG, MAX or
+MIN in that function's column of states (D1186). The second grouping,
+made in a table of the first's groups given as a batch (D1123), took
+each part as a value all the same. Every group of the first made a
+binary string of each part, its function's state written after a tag.
+The second kept an accumulator a group for each such function, sorted
+the batch's rows by group to feed them, and each accumulator read the
+bytes back. The first grouping holds a group for every distinct value
+of every group of the second, so a query with three set functions
+beside one DISTINCT function made and read three values for each of
+them, and spent more on that than on both groupings.
+
+A part's column now leaves the first's table as the column it is
+(`exec/table/merged.rs`, `GroupTable::into_parts`). The second's table
+keeps the function it merges in a column of the same kind, and the
+first's column is added to it slot by slot, each state to the group its
+group of the first fell in (`States::merge_part`). That is the loop by
+which a partition merges a morsel's column into its own (D1110), so a
+count, a total and an extreme are merged by the code that merged them
+before the second grouping saw them. No value is made of a part, no
+accumulator is kept for one, and the rows are not sorted.
+
+A column is taken so when three things hold (`GroupTable::merged_by`).
+The second's set function merges parts and has no filter. The column it
+names is one the first's table still keeps as a part's. And that column
+holds counts or exact totals, whose function writes its state, so each
+group's part is that state and never a result. Such states are of
+totals that do not depend on the order they are merged in, which is why
+they are written at all (D341), so merging them a column at a time
+gives what merging them in the order of the first's groups gave.
+
+Every other part is given as its value and merged by an accumulator, as
+before. That is a column that turned into accumulators when it was
+given integers of another scale, a set function no column holds, as a
+plug-in's or an extreme of texts, and a sum of approximate numbers,
+which writes no state and is computed whole. A second grouping that
+reads the first's groups a row at a time, as one with a filtered set
+function does, is unchanged too. In one pair some parts may be taken as
+columns and others as values.
+
+The groups, their order, each result, the warnings and the errors are
+as before. A null a set function eliminates warns where the first
+grouping is fed it. A sum past the digits an exact number holds raises
+what the partitions' merge raises of it. EXPLAIN shows the plan it
+showed.
 
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
 
