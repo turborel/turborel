@@ -125,7 +125,8 @@ impl Dfa {
         let len = text.len();
         let Some(mut state) = self.state(program, (Vec::new(), false, from == 0)) else { return Ok(Scan::GaveUp) };
         let mut last = None;
-        for at in from..len {
+        let mut at = from;
+        while at < len {
             if self.accepts(state) {
                 last = Some(at);
                 if first {
@@ -133,12 +134,13 @@ impl Dfa {
                 }
             }
             let Some(c) = text.at(at)? else { break };
-            let crlf = c == '\r' && text.at(at.saturating_add(1))? == Some('\n');
+            let crlf = c == '\r' && text.at(text.after(at))? == Some('\n');
             match self.step(program, state, (c, crlf)) {
                 Some(DEAD) => return Ok(last.map_or(Scan::None, Scan::Ends)),
                 Some(next) => state = next,
                 None => return Ok(Scan::GaveUp),
             }
+            at = text.after(at);
         }
         // The end of the text, where `$` holds: judged of the last state.
         let Some(key) = self.states.get(index(state)).map(|s| s.key.clone()) else { return Ok(Scan::GaveUp) };

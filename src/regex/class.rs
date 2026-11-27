@@ -122,6 +122,11 @@ impl CharSet {
         CharSet { ranges: out }
     }
 
+    /// Whether no character is in both it and `other`.
+    pub(super) fn apart(&self, other: &CharSet) -> bool {
+        self.intersection(other).ranges.is_empty()
+    }
+
     /// Whether `c` is in it.
     pub(crate) fn contains(&self, c: char) -> bool {
         let code = u32::from(c);

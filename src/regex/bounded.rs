@@ -52,6 +52,10 @@ const OCTET: usize = 8;
 /// The bits of a word of marks.
 const WORD: usize = 64;
 
+/// Where, after its fork, a loop of one instruction has that instruction
+/// (`compile/runs.rs`): past the position it keeps.
+const LOOP_TAKES: usize = 2;
+
 /// Work left: a way to try, or a slot to put back on going back.
 enum Job {
     Try(usize, usize),
@@ -75,6 +79,20 @@ pub(super) struct Scratch {
     marks: Vec<u64>,
     slots: Slots,
     stack: Vec<Job>,
+}
+
+impl Scratch {
+    /// The slots of the match the last search found, which say where
+    /// its groups are.
+    pub(super) fn slots(&self) -> &[Option<usize>] {
+        &self.slots
+    }
+
+    /// Keeps `slots`, those of a match another matcher found, as its
+    /// own search would have left them.
+    pub(super) fn put(&mut self, slots: Slots) {
+        self.slots = slots;
+    }
 }
 
 /// What a search reads and keeps.
@@ -101,7 +119,9 @@ fn anchored(program: &Program) -> bool {
 /// positions than the text has, the match is one known to end within
 /// them (`regex/dfa.rs`), so a way that reads past them is not it. A
 /// program whose matches all begin at the text's start is tried from
-/// there alone. What the search keeps is `kept`'s, left for the next.
+/// there alone. What the search keeps is `kept`'s, left for the next,
+/// and the slots of a match found are left there too (`Scratch::slots`),
+/// so a match takes no memory of its own (RULES.md D1189).
 ///
 /// # Errors
 ///
@@ -112,15 +132,17 @@ pub(super) fn search<T: Text + ?Sized>(
     (from, positions): (usize, usize),
     capture: bool,
     kept: &mut Scratch,
-) -> Result<Option<Slots>> {
-    let starts = if anchored(program) { usize::from(from == 0) } else { positions };
+) -> Result<bool> {
+    let first_alone = anchored(program);
     kept.marks.clear();
     kept.marks.resize(program.insts.len().saturating_mul(positions).div_ceil(WORD), 0);
     kept.slots.clear();
     kept.slots.resize(if capture { program.slots } else { 0 }, None);
     kept.stack.clear();
     let mut s = Search { program, text, from, positions, capture, kept };
-    for start in from..from.saturating_add(starts) {
+    let last = from.saturating_add(positions.saturating_sub(1));
+    let mut start = from;
+    while start <= last && (start == 0 || !first_alone) {
         s.kept.slots.fill(None);
         s.kept.stack.push(Job::Try(0, start));
         while let Some(job) = s.kept.stack.pop() {
@@ -128,13 +150,14 @@ pub(super) fn search<T: Text + ?Sized>(
                 Job::Restore(slot, old) => s.set(slot, old),
                 Job::Try(pc, at) => {
                     if s.run(pc, at)? {
-                        return Ok(Some(s.kept.slots.clone()));
+                        return Ok(true);
                     }
                 }
             }
         }
+        start = text.after(start);
     }
-    Ok(None)
+    Ok(false)
 }
 
 impl<T: Text + ?Sized> Search<'_, T> {
@@ -162,9 +185,44 @@ impl<T: Text + ?Sized> Search<'_, T> {
     /// characters between, so none of them is walked; no end if the match
     /// is known to end before the string does.
     fn rest(&self, pc: usize) -> Option<(usize, Option<usize>)> {
-        let (_, after) = self.program.rest.filter(|(first, _)| *first == pc)?;
+        let (_, after) = self.program.passed.rest.filter(|(first, _)| *first == pc)?;
         let end = self.text.len();
         Some((after, (end.saturating_sub(self.from) < self.positions).then_some(end)))
+    }
+
+    /// Where the search goes on from the fork at `pc`, met at `at`, that
+    /// prefers `first` to `second`. Of a loop the program runs through
+    /// (RULES.md D1190) that is past the loop, at `second`, and nowhere
+    /// if the loop was passed there before. Of any other fork it is
+    /// `first`, the other way kept to try.
+    fn forked(&mut self, (pc, at): (usize, usize), (first, second): (usize, usize)) -> Result<Option<(usize, usize)>> {
+        if !self.program.passed.runs.get(pc).copied().unwrap_or(false) {
+            self.kept.stack.push(Job::Try(second, at));
+            return Ok(Some((first, at)));
+        }
+        Ok(self.through(pc, at)?.map(|left| (second, left)))
+    }
+
+    /// \[DESIGN\] (RULES.md D1190) Of the loop whose fork is `pc`, one
+    /// the program runs through (`compile/runs.rs`), met at `at`, the
+    /// position it is left at, which is the first whose character its
+    /// instruction does not match, or the last the search reads to. No
+    /// fork is kept on the way, as leaving the loop any earlier fails at
+    /// once. The fork is marked at each position passed, as following
+    /// the forks marks it, and none is given if one of them was marked
+    /// before, since the way from there was followed already.
+    fn through(&mut self, pc: usize, mut at: usize) -> Result<Option<usize>> {
+        let Some(taken) = self.program.insts.get(pc.saturating_add(LOOP_TAKES)) else { return Ok(Some(at)) };
+        loop {
+            let within = at.saturating_sub(self.from).saturating_add(1) < self.positions;
+            if !within || !one(taken, self.text, at)? {
+                return Ok(Some(at));
+            }
+            at = self.text.after(at);
+            if !self.mark(pc, at) {
+                return Ok(None);
+            }
+        }
     }
 
     /// Follows one way from `pc` at `at` until it matches, true, or fails
@@ -186,10 +244,10 @@ impl<T: Text + ?Sized> Search<'_, T> {
             match inst {
                 Inst::Match => return Ok(true),
                 Inst::Jump(to) => pc = *to,
-                Inst::Split(first, second) => {
-                    self.kept.stack.push(Job::Try(*second, at));
-                    pc = *first;
-                }
+                Inst::Split(first, second) => match self.forked((pc, at), (*first, *second))? {
+                    Some(next) => (pc, at) = next,
+                    None => return Ok(false),
+                },
                 Inst::Save(slot) => {
                     if self.capture {
                         let old = self.kept.slots.get(*slot).copied().flatten();
@@ -218,7 +276,7 @@ impl<T: Text + ?Sized> Search<'_, T> {
                     if !within || !one(inst, self.text, at)? {
                         return Ok(false);
                     }
-                    (pc, at) = (after, at.saturating_add(1));
+                    (pc, at) = (after, self.text.after(at));
                 }
                 // No program with one runs here (`Regex::matcher`).
                 Inst::BackRef(_) => return Ok(false),
