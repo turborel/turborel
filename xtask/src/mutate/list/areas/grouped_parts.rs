@@ -341,7 +341,7 @@ pub const GROUPED_PARTS: [Mutation; 33] = [
         file: "src/exec/parallel/grouped/waves.rs",
         original: "if !self.waved && self.wave.is_empty() && self.spilled.is_none() {",
         replacement: "if !self.waved && self.wave.is_empty() {",
-        integration: &[],
+        integration: &["spilled_groups::a_table_of_few_groups_past_the_grant_gives_every_group"],
         unit: &["exec::parallel::grouped::waves::tests::a_table_of_the_statements_thread_past_the_grant_loses_no_group"],
     },
 ];
