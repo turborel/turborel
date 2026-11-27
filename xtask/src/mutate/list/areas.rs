@@ -81,6 +81,7 @@ mod transfer;
 mod tree_path;
 mod txn_layer;
 mod undo_memory;
+mod unread_texts;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
 mod first_groups;
@@ -344,6 +345,7 @@ fn closing() -> [&'static [Mutation]; 38] {
         &like_pieces::LIKE_PIECES,
         &like_coded::LIKE_CODED,
         &like_entries::LIKE_ENTRIES,
+        &unread_texts::UNREAD_TEXTS,
         &outer_steps::OUTER_STEPS,
         &mark_joins::MARK_JOINS,
         &skipping::SKIPPING,
