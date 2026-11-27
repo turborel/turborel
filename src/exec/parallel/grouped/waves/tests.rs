@@ -178,8 +178,8 @@ fn differing(made: &Waved, expected: &Waved) -> Option<(usize, usize, Option<Str
     (first.is_some() || made.rows.len() != expected.rows.len()).then_some((made.rows.len(), expected.rows.len(), first))
 }
 
-/// Verifies: [DESIGN] RULES.md D1247, D1226 a grouping whose morsels are
-/// all handed whole to the statement's thread, and whose table there
+/// Verifies: [DESIGN] RULES.md D1276, D1247, D1226 a grouping whose morsels
+/// are all handed whole to the statement's thread, and whose table there
 /// outgrows the grant and goes to the spill as it is, gives every group,
 /// in the order and with the values a grant that holds them gives. A
 /// regression test: with no wave merged the spill was forgotten at the

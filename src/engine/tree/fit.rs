@@ -13,6 +13,10 @@
 //! separator goes up the tree after the first, which takes the child's
 //! lock with it; until it is posted, its page is reached through the
 //! right link of the one left of it, as the B-link tree allows (§4).
+//!
+//! A split that fails after it took a page, its file refusing the next,
+//! gives back every page it took (RULES.md D1271): the old node is not
+//! yet written over, so the tree is as it was.
 
 use super::node::{self, Node};
 use super::{BLinkTree, Split, count};
@@ -43,5 +47,23 @@ impl BLinkTree {
         drop(page);
         count(&self.counters.splits);
         self.fitted(halves.left, splits)
+    }
+
+    /// \[DESIGN\] (RULES.md D1271) Gives back the pages of `splits`, those
+    /// a split took before it failed, as when its file had no room for
+    /// the next. The node split was not written over, so nothing links to
+    /// them, and each would stay allocated for good, one already written
+    /// holding a leaf's content that a leaf's number noted for a row
+    /// could be trusted to (`near.rs`). Each is emptied, so one that
+    /// cannot be freed is no node, and freed once no read holds it; a
+    /// failure costs its space.
+    pub(super) fn give_back(&self, splits: &[Split]) {
+        for split in splits {
+            if let Ok(mut page) = self.pool.write(self.file, split.right) {
+                page.clear();
+            }
+            // Unlinked and emptied, so a failure leaves only space taken.
+            let _ = self.pool.free_when_released(self.file, split.right);
+        }
     }
 }

@@ -9,7 +9,9 @@ use super::Row;
 use crate::index::Probe;
 use crate::value::{CompOp, Value, compare};
 
+mod liked;
 mod threshold;
+pub use liked::Liked;
 pub use threshold::Threshold;
 
 /// \[DESIGN\] A condition rows were chosen by through an index: their values
@@ -137,6 +139,18 @@ pub enum Conjunct {
         /// The constant's octets.
         octets: Vec<u8>,
     },
+    /// [X3.135-1986 §5.14] (RULES.md D1251) `column LIKE pattern` or
+    /// `column NOT LIKE pattern`, of a constant pattern of no `_`. A
+    /// column store's scan judges it of a VARCHAR column's texts in
+    /// place, those coded by a table of symbols by the pattern's
+    /// machine, and where it does not, gives every row, which the
+    /// filter judges as it judges every row given.
+    Like {
+        /// The column.
+        column: usize,
+        /// The pattern, whether NOT was written, and its machine.
+        like: Arc<Liked>,
+    },
 }
 
 impl Conjunct {
@@ -149,7 +163,8 @@ impl Conjunct {
             | Conjunct::NotIn { column, .. }
             | Conjunct::Dynamic { column, .. }
             | Conjunct::Spans { column, .. }
-            | Conjunct::Unpadded { column, .. } => vec![*column],
+            | Conjunct::Unpadded { column, .. }
+            | Conjunct::Like { column, .. } => vec![*column],
             Conjunct::Any(each) => {
                 let mut columns: Vec<usize> = each.iter().flat_map(Conjunct::columns).collect();
                 columns.sort_unstable();
@@ -182,6 +197,11 @@ impl Conjunct {
                 .first()
                 .and_then(|v| if let Value::Char(s) = v { Some(s.as_bytes().cmp(octets)) } else { None })
                 .is_some_and(|o| op.holds(o)),
+            // Unknown of a null [X3.135-1986 §5.14 GR4]. A value not a
+            // string held, as a large object's, is the filter's to read.
+            Conjunct::Like { like, .. } => {
+                key.first().is_some_and(|v| if let Value::Char(s) = v { like.keeps(s.as_bytes()) } else { !v.is_null() })
+            }
         }
     }
 
@@ -192,7 +212,8 @@ impl Conjunct {
     pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
         match self {
             Conjunct::Condition(c) => c.may_match(bounds),
-            Conjunct::Null { not: false, .. } => true,
+            // A LIKE's prefix's bounds are told beside it (`logical/pushed.rs`).
+            Conjunct::Null { not: false, .. } | Conjunct::Like { .. } => true,
             Conjunct::Null { column, not: true } => bounds.get(*column).is_some_and(Option::is_some),
             Conjunct::In { column, values } => {
                 bounds.get(*column).and_then(Option::as_ref).is_some_and(|r| values.iter().any(|v| within(CompOp::Eq, r, v)))
@@ -219,6 +240,7 @@ impl Conjunct {
             Conjunct::Dynamic { threshold, .. } => threshold.may_match(range),
             Conjunct::Spans { spans, .. } => meets(spans, range),
             Conjunct::Unpadded { op, octets, .. } => unpadded_within(*op, range, octets),
+            Conjunct::Like { .. } => true,
             Conjunct::Condition(c) => {
                 let Some(&column) = c.columns.first() else { return true };
                 let mut bounds = vec![None; column.saturating_add(1)];

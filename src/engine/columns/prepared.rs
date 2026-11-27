@@ -72,6 +72,10 @@ pub struct Prepared {
     spare: Vec<Vec<u8>>,
     /// What is read and made of the group's sketches (`sketch.rs`).
     pub(super) sketches: super::sketch::Held,
+    /// The steps of the scan's LIKEs by the tables of symbols its chunks
+    /// are coded by (`fsst/stepped.rs`, RULES.md D1251), kept from group
+    /// to group, as each is found again by its table.
+    pub(super) stepped: super::fsst::Stepped,
     /// How many chunks were opened, as a test counts them.
     #[cfg(test)]
     pub(super) opened: usize,

@@ -310,6 +310,15 @@ impl Model {
         self.rels.get(rel)?.probes.iter().filter(|(c, _)| *c == column).map(|(_, cost)| *cost).reduce(f64::min)
     }
 
+    /// \[DESIGN\] (RULES.md D1232) The distinct values of `column`, a
+    /// key of an inner join's equality of a class, as the class's member of
+    /// its relation counts them.
+    pub(super) fn key_distinct(&self, column: usize) -> Option<f64> {
+        let rel = self.rel_of(column)?;
+        let class = self.conjuncts.iter().find_map(|c| c.key.filter(|&(a, b)| a == column || b == column).and(c.class))?;
+        self.classes.members().get(class)?.iter().find(|(r, _)| *r == rel).map(|&(_, distinct)| distinct)
+    }
+
     /// The relations of `s`'s columns hold `column`.
     pub(super) fn holds(&self, s: Set, column: usize) -> bool {
         self.rel_of(column).is_some_and(|r| members(s).any(|m| m == r))

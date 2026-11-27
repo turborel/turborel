@@ -16,6 +16,7 @@ use std::sync::Arc;
 use super::Batched;
 use super::pending::Pending;
 use crate::engine::columns::group::Group;
+use crate::engine::columns::judged::KEPT_SHARE;
 use crate::engine::columns::scan::{column_at, column_of_run};
 use crate::error::Result;
 use crate::storage::{BATCH_ROWS, Batch, Column, Late};
@@ -25,12 +26,6 @@ use crate::value::Value;
 /// held: half a batch, so a batch made of kept rows is at least half as
 /// large as one of a whole run.
 const KEPT_ROWS: usize = BATCH_ROWS >> 1_u32;
-
-/// \[DESIGN\] The share of a run's rows, one in this many, past which the
-/// run is given whole and the filter selects the rows kept of it: so many
-/// rows are read as cheaply decoded whole as at their places, and a
-/// batch of them selected costs less than one gathered.
-const KEPT_SHARE: usize = 8;
 
 impl Batched {
     /// The batch of the run `from` to `to` of the group being read, if one

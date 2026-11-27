@@ -264,7 +264,7 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                 }
                 again = self.last == Some(id);
                 self.last = Some(id);
-                let page = tree.pool.read(tree.file, id.0)?;
+                let page = tree.page(self.entered.within(), id)?;
                 (take(&Node::parse(&page)?, (&self.lower, &self.upper), &mut self.ready, most)?, None)
             }
             Next::Descend => self.descended(most)?,
@@ -320,7 +320,7 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
         let track_low = matches!(self.direction, Direction::Backward);
         let mut path = Path { track_low, tallied, ..Path::default() };
         let (bounds, ready) = ((&self.lower, &self.upper), &mut self.ready);
-        let (leaf, taken) = self.tree.descend(target, 0, &mut path, |leaf| take(leaf, bounds, ready, most))?;
+        let (leaf, taken) = self.tree.descend((self.entered.within(), target), 0, &mut path, |leaf| take(leaf, bounds, ready, most))?;
         self.last = Some(leaf);
         Ok((taken, path.low))
     }
@@ -380,14 +380,14 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
         let tree = &*self.tree;
         let (found, further, high) = match self.next {
             Next::Done => return Ok(None),
-            Next::Leaf(id) => tally(&Node::parse(&tree.pool.read(tree.file, id.0)?)?, &self.lower, &self.upper)?,
+            Next::Leaf(id) => tally(&Node::parse(&tree.page(self.entered.within(), id)?)?, &self.lower, &self.upper)?,
             Next::Descend => {
                 let target = match &self.lower {
                     Bound::Included(key) | Bound::Excluded(key) => Target::Key(key),
                     Bound::Unbounded => Target::First,
                 };
                 let mut path = Path { tallied: matches!(target, Target::Key(_)), ..Path::default() };
-                tree.descend(target, 0, &mut path, |leaf| tally(leaf, &self.lower, &self.upper))?.1
+                tree.descend((self.entered.within(), target), 0, &mut path, |leaf| tally(leaf, &self.lower, &self.upper))?.1
             }
         };
         // Keys of a leaf merged into the next since it was counted are at

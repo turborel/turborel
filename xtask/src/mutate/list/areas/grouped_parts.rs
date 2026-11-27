@@ -367,7 +367,7 @@ pub const GROUPED_PARTS: [Mutation; 36] = [
     Mutation {
         name: "spilled-table-of-the-statements-thread-lost",
         package: Package::Core,
-        breaks: "a grouping whose statement thread's table went to the spill with no wave merged gives the last such table's groups alone (RULES.md D1247, D1226)",
+        breaks: "a grouping whose statement thread's table went to the spill with no wave merged gives the last such table's groups alone (RULES.md D1276)",
         file: "src/exec/parallel/grouped/waves.rs",
         original: "if !self.waved && self.wave.is_empty() && self.spilled.is_none() {",
         replacement: "if !self.waved && self.wave.is_empty() {",

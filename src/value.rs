@@ -17,7 +17,7 @@ mod distinct;
 mod held;
 pub mod interval;
 pub mod json;
-mod like;
+pub(crate) mod like;
 pub mod lob;
 pub mod multisets;
 pub(crate) mod nested;

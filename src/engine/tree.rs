@@ -86,6 +86,7 @@ use counts::{Counters, count};
 use node::{CHILD, ENTRY_OVERHEAD, HEADER, KeyRef, Node, Shape};
 pub use pin::Pinned;
 pub use placed::Placed;
+use reclaim::Within;
 pub(crate) use reclaim::{Entered, Epochs};
 pub use scan::{Direction, Lent, Scan, Visit, Visited, scan_of, scan_owned};
 pub use sorted::SortedChange;
@@ -385,8 +386,15 @@ impl BLinkTree {
     /// Goes down from the root, locking nothing, to the node at `level`
     /// that `target` is in, moving right past splits; `path` remembers the
     /// way. What `at` finds in that node, read under its latch, and its
-    /// page.
-    fn descend<R>(&self, target: Target<'_>, level: u8, path: &mut Path, at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<(PageId, R)> {
+    /// page. The caller is in the tree's epoch, so no page it is sent to
+    /// is freed under it (`reclaim.rs`, RULES.md D1270).
+    fn descend<R>(
+        &self,
+        (_within, target): (Within<'_>, Target<'_>),
+        level: u8,
+        path: &mut Path,
+        at: impl FnOnce(&Node<'_>) -> Result<R>,
+    ) -> Result<(PageId, R)> {
         let mut id = PageId(self.root.load(Ordering::Acquire));
         let mut expected = None;
         let tally = path.tallied.then_some(&self.tally);
@@ -439,7 +447,13 @@ impl BLinkTree {
     /// With `held` locked, moves right along its level to the node covering
     /// `key`, locking the next node before releasing the last (§5,
     /// move.right). What `at` finds in that node.
-    fn move_right<'t, R>(&'t self, held: &mut NodeLock<'t>, key: &[u8], at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<R> {
+    fn move_right<'t, R>(
+        &'t self,
+        within: Within<'_>,
+        held: &mut NodeLock<'t>,
+        key: &[u8],
+        at: impl FnOnce(&Node<'_>) -> Result<R>,
+    ) -> Result<R> {
         loop {
             let right = {
                 // Through the frame it owns (`disk/buffer/owned.rs`).
@@ -452,7 +466,7 @@ impl BLinkTree {
                 }
                 node.right.ok_or_else(|| corrupt("a node with a high key has no right neighbour"))?
             };
-            *held = self.lock(right)?;
+            *held = self.lock(within, right)?;
             count(&self.counters.right_moves);
         }
     }
@@ -503,9 +517,17 @@ impl BLinkTree {
             }
         };
         let mut splits = vec![Split { separator: halves.separator, right: new, level: node.level }];
-        *page = self.fitted(halves.right, &mut splits)?;
+        let right = self.fitted(halves.right, &mut splits).map(|right| *page = right);
         drop(page);
-        *self.pool.write(self.file, id)? = self.fitted(halves.left, &mut splits)?;
+        let written = right.and_then(|()| self.fitted(halves.left, &mut splits)).and_then(|left| {
+            *self.pool.write(self.file, id)? = left;
+            Ok(())
+        });
+        // Not written over, the old node links to none of the new pages.
+        if let Err(e) = written {
+            self.give_back(&splits);
+            return Err(e);
+        }
         count(&self.counters.splits);
         Ok(splits)
     }
@@ -515,22 +537,23 @@ impl BLinkTree {
     /// from as far as the separator needs (§5). Past the top of the path, a
     /// new root takes it if the split's level is the root's, and `None` is
     /// returned; else the parent is found again from the root.
-    fn lock_parent(&self, path: &mut Path, split: &Split) -> Result<Option<(NodeLock<'_>, usize)>> {
+    fn lock_parent(&self, within: Within<'_>, path: &mut Path, split: &Split) -> Result<Option<(NodeLock<'_>, usize)>> {
         let level = split.level.checked_add(1).ok_or_else(|| corrupt("it is too tall"))?;
         loop {
             if let Some(parent) = path.stack.pop() {
-                let mut held = self.lock(parent)?;
-                let at =
-                    self.move_right(&mut held, &split.separator, |node| match (node.level == level, node.search(&split.separator)?) {
+                let mut held = self.lock(within, parent)?;
+                let at = self.move_right(within, &mut held, &split.separator, |node| {
+                    match (node.level == level, node.search(&split.separator)?) {
                         (true, Err(at)) => Ok(at),
                         (false, _) | (true, Ok(_)) => Err(corrupt("a separator's parent is not one level up, or holds it already")),
-                    })?;
+                    }
+                })?;
                 return Ok(Some((held, at)));
             }
             if self.grow(split)? {
                 return Ok(None);
             }
-            let (parent, ()) = self.descend(Target::Key(&split.separator), level, path, |_| Ok(()))?;
+            let (parent, ()) = self.descend((within, Target::Key(&split.separator)), level, path, |_| Ok(()))?;
             path.stack.push(parent);
         }
     }
@@ -540,7 +563,7 @@ impl BLinkTree {
     /// entry the separator, with the right half. Under the meta page's lock,
     /// the highest in the locking order. Whether it did.
     fn grow(&self, split: &Split) -> Result<bool> {
-        let _meta = self.lock(self.meta)?;
+        let _meta = self.lock_meta()?;
         let root = PageId(self.root.load(Ordering::Acquire));
         let root_level = Node::parse(&self.pool.read(self.file, root.0)?)?.level;
         if root_level != split.level {

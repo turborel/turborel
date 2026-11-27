@@ -2,8 +2,9 @@
 //! boundary of keys alike, the peer groups found of the partitioning's
 //! bytes alone, a partition's last peer group, a frame's prefix sum off
 //! by one, the place LAG takes under IGNORE NULLS, and a frame's readers
-//! let go of the partition before's segments, and the groups a window
-//! computes on several threads cut at partition starts.
+//! let go of the partition before's segments, the groups a window
+//! computes on several threads cut at partition starts, and a lane's
+//! places of nulls holding no number (D1289).
 
 use super::super::{Mutation, Package};
 
@@ -20,7 +21,7 @@ const FRAMES: &str = "exec::window::batched::frames::tests::frames_found_at_once
 
 /// Mechanisms whose removal must fail the requirements of windows over
 /// batches.
-pub const WINDOWS_BATCHED: [Mutation; 7] = [
+pub const WINDOWS_BATCHED: [Mutation; 8] = [
     Mutation {
         name: "window-boundary-alike",
         package: Package::Core,
@@ -90,5 +91,15 @@ pub const WINDOWS_BATCHED: [Mutation; 7] = [
         replacement: ".skip(need.max(1)).find(|_| true)",
         integration: &[PARALLEL],
         unit: &[],
+    },
+    Mutation {
+        name: "window-lane-null-places",
+        package: Package::Core,
+        breaks: "a lane keeps in a null's place the number its vector held there, which a sum over a frame adds",
+        file: "src/exec/window/batched/lanes.rs",
+        original: "            Some(mask) => units.extend(u.iter().enumerate().map(|(r, &unit)| if mask.get(r) { 0_i64 } else { unit })),",
+        replacement: "            Some(_) => units.extend_from_slice(u),",
+        integration: &[],
+        unit: &["exec::window::batched::lanes::tests::a_lane_holds_no_number_in_a_nulls_place"],
     },
 ];

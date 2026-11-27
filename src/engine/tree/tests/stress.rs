@@ -91,7 +91,7 @@ fn work(tree: &BLinkTree, t: u64, model: &mut BTreeMap<[u8; 8], Vec<u8>>) {
             7 => {
                 // From a leaf noted for another key: often not the key's.
                 let other = owned(seq.next(THREADS), seq.next(KEYS));
-                let noted = tree.descend(Target::Key(&other), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
+                let noted = leaf_of(tree, u64::from_be_bytes(other));
                 hints::note(u64::from_be_bytes(k), noted.0);
                 let mut near = Near::default();
                 let found = tree.get_near(&k, &mut near).unwrap();
