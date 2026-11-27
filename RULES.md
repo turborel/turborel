@@ -21653,6 +21653,24 @@ rows. Each morsel keeps its rows equal to the bound, and the runs are
 merged in morsel order as before, so rows of equal keys come in the
 order the serial sort gives them.
 
+No result and no plan depends on the order the threads narrow the
+bound in, nor on when a scan reads it. The plan is chosen before any
+morsel is read and reads no bound. A row among the first of all is
+never past the bound, whatever it holds when the row is judged, as the
+bound is never before the last of those rows, so every morsel's run
+holds each such row of its morsel. A morsel's run is its own first rows
+in the order of its rows, and the runs are merged in morsel order, so
+the rows given and the order of peers are those of the keys and the
+rows' places alone. What does vary from run to run is how many rows a
+scan reads before the bound narrows, which EXPLAIN ANALYZE counts of a
+part, and no more than that.
+
+The scan judges the bound as the test the bound gives of a row
+(`Threshold::row_test`, `Pred::now` in `engine/columns/judged.rs`), a
+conjunct judged as any other the scan is told. The bound chooses the
+kind of test by the kind of value it holds, so a bound of another kind
+of key is judged by the same loop.
+
 A run the scan judged and kept one row in eight or more of is given
 whole, and its late columns were then decoded with it (D366), as those
 rows were taken to be the ones kept. Under a sort's bound the sort
