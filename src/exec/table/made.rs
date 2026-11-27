@@ -44,6 +44,10 @@ pub(in crate::exec) struct Made {
     /// The keyed hashes its groups are placed by, if its table took them
     /// (RULES.md D357).
     keyed: Option<Vec<u64>>,
+    /// \[DESIGN\] (RULES.md D1260) Whether two of its groups may hold one
+    /// key, as rows handed on ungrouped do. A table merges such groups
+    /// one at a time, each made before the next is looked for.
+    repeats: bool,
 }
 
 impl Made {
@@ -54,6 +58,11 @@ impl Made {
         let states = self.states.iter().map(Sent::bytes).sum::<usize>();
         let keyed = self.keyed.as_ref().map_or(0, |k| k.capacity().saturating_mul(size_of::<u64>()));
         words.saturating_add(keyed).saturating_add(places).saturating_add(states).saturating_add(self.keys.bytes())
+    }
+
+    /// Whether two of its groups may hold one key (RULES.md D1260).
+    pub(in crate::exec) fn repeats(&self) -> bool {
+        self.repeats
     }
 
     /// How many groups of partition `part` it holds.
@@ -145,6 +154,7 @@ impl GroupTable {
             places: Vec::new(),
             starts: Vec::new(),
             keyed: self.keyed,
+            repeats: self.apart,
         })
     }
 
@@ -200,7 +210,9 @@ impl GroupTable {
     /// `made` into its own, a column at a time: each looked up by its key
     /// and hash; those new, no two of one key as they are one table's,
     /// appended lane by lane and placed; then each set function's states
-    /// merged in one loop.
+    /// merged in one loop. Groups that may share a key (`Made::repeats`)
+    /// are found or made one at a time, in their order, their states
+    /// merged in the same loop after.
     fn absorb_places(&mut self, made: &Made, places: &[u32]) -> Result<()> {
         let base = self.hashes.len();
         let (mut groups, mut fresh) = std::mem::take(&mut self.merging);
@@ -208,7 +220,15 @@ impl GroupTable {
         fresh.clear();
         for &i in places {
             let at = crate::storage::mask::index(i);
-            let found = self.find(made.hashes.get(at).copied().unwrap_or(0), Key::Group(&made.keys, at));
+            let hash = made.hashes.get(at).copied().unwrap_or(0);
+            if made.repeats {
+                // A key held twice finds the group its first made
+                // (RULES.md D1260).
+                let first = made.firsts.get(at).copied().unwrap_or(u64::MAX);
+                groups.push(self.found_or_made(hash, Key::Group(&made.keys, at), first));
+                continue;
+            }
+            let found = self.find(hash, Key::Group(&made.keys, at));
             groups.push(found.unwrap_or_else(|| narrow(base.saturating_add(fresh.len()))));
             if found.is_none() {
                 fresh.push(i);

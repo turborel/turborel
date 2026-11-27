@@ -124,6 +124,9 @@ pub(in crate::exec) struct GroupTable<S: Columns = Vec<States>> {
     /// The groups a merge found or made and the places of those it made,
     /// kept between merges for their room (`made.rs`).
     merging: (Vec<u32>, Vec<u32>),
+    /// \[DESIGN\] (RULES.md D1260) Whether its groups were appended with
+    /// none looked for (`unplaced`), so two of them may hold one key.
+    apart: bool,
 }
 
 impl GroupTable {
@@ -144,6 +147,7 @@ impl GroupTable {
             limit,
             taken: 0,
             merging: (Vec::new(), Vec::new()),
+            apart: false,
         }
     }
 
@@ -151,12 +155,21 @@ impl GroupTable {
     /// made at once: a morsel's table, given the groups the morsel before
     /// it made, grows no vector a group at a time.
     pub(in crate::exec) fn with_room(width: usize, aggs: &[AggCall], seed: &Seed, room: usize) -> GroupTable {
+        let mut table = GroupTable::unplaced(width, aggs, seed, room);
+        (table.slots, table.apart) = (Slots::with_room(room), false);
+        table
+    }
+
+    /// \[DESIGN\] (RULES.md D1260) As `with_room`, with no slots: a table
+    /// its groups are only appended to (`appended`), which finds none of
+    /// them and is handed on to one that does.
+    pub(in crate::exec) fn unplaced(width: usize, aggs: &[AggCall], seed: &Seed, room: usize) -> GroupTable {
         let mut table = GroupTable::new(width, aggs, seed, usize::MAX);
         table.keys = Keys::with_room(width, room).of_seed(seed);
         table.hashes.reserve(room);
         table.firsts.reserve(room);
         table.states.iter_mut().for_each(|states| states.reserve(room));
-        table.slots = Slots::with_room(room);
+        table.apart = true;
         table
     }
 
@@ -183,6 +196,7 @@ impl GroupTable<()> {
             limit: usize::MAX,
             taken: 0,
             merging: (Vec::new(), Vec::new()),
+            apart: false,
         }
     }
 }
@@ -244,6 +258,21 @@ impl<S: Columns> GroupTable<S> {
         if length > MAX_PROBE {
             self.rekeyed();
         }
+        g
+    }
+
+    /// \[DESIGN\] (RULES.md D1260) Makes a group of `key`, of hash `hash`,
+    /// its first row the `first`th, fed nothing, with no look for a group
+    /// of that key and no slot taken: its number. A table filled so may
+    /// hold a key in several groups and finds none, so it is only handed
+    /// on, made or frozen, to a table that finds each key's group and
+    /// merges them there (`made.rs`).
+    pub(in crate::exec) fn appended(&mut self, hash: u64, key: Key<'_>, first: u64) -> u32 {
+        let g = narrow(self.hashes.len());
+        self.keys.push(key);
+        self.hashes.push(hash);
+        self.firsts.push(first);
+        self.states.grow();
         g
     }
 

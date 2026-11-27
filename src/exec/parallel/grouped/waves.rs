@@ -25,6 +25,14 @@
 //! each partition's table written by the thread that merged it, and merged
 //! back a partition at a time at the end (`spilled.rs`), so the threads'
 //! work is kept and the grouping does not give way.
+//!
+//! \[DESIGN\] (RULES.md D1260) Where the morsels' tables do not reduce
+//! their rows, the morsels stop making them (`Reduction`). A morsel's
+//! table that ends with nearly a group a row found nothing to merge, and
+//! its lookups and slots were spent for nothing, as the partition finds
+//! every key again. Such a grouping's morsels hand each row on as a group
+//! of its own, and one morsel in several still makes a table, so data
+//! that begins to reduce is seen.
 
 mod spilled;
 
@@ -59,6 +67,55 @@ const DIRECT_ROWS: usize = 2;
 /// so, the grouping's groups few too (RULES.md D1247).
 fn few(still: bool, (groups, taken): (usize, usize), degree: usize) -> bool {
     still && groups.saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= taken
+}
+
+/// \[DESIGN\] (RULES.md D1260) The groups a thousand rows of a morsel
+/// must leave for the next morsels to be handed on ungrouped. The break
+/// is where the lookups and slots a table spends on a morsel's rows cost
+/// what the rows it would have merged cost the partition after: appended,
+/// put in partition order and found again there. Of integer keys that is
+/// near 800 groups a thousand rows, as the shares of those steps in a
+/// profile of a grouping with a group a row give it. A key of text costs
+/// more to carry than to look up, so the bound is set above that.
+const APART_PER_MILLE: usize = 900;
+
+/// \[DESIGN\] (RULES.md D1260) The morsels of which one makes a table
+/// though the others do not, to see whether the rows reduce now. One in
+/// sixteen gives back a sixteenth of what the others save, and data that
+/// turns to few groups is grouped apart again within sixteen morsels.
+const PROBE_EVERY: usize = 16;
+
+/// The parts of a ratio told in a thousand.
+const MILLE: usize = 1000;
+
+/// \[DESIGN\] (RULES.md D1260) What the morsels' tables tell of their
+/// rows: the groups a thousand rows left in the table made last, none
+/// while no table is made yet. The workers measure it of the rows they
+/// group, and no estimate enters it.
+struct Reduction {
+    left: AtomicUsize,
+}
+
+impl Reduction {
+    /// Nothing told yet.
+    fn new() -> Reduction {
+        Reduction { left: AtomicUsize::new(0) }
+    }
+
+    /// Whether morsel `m` hands its rows on ungrouped: the table made
+    /// last left more than `APART_PER_MILLE` groups a thousand rows, and
+    /// `m` is not one of those that probe.
+    fn apart(&self, m: usize) -> bool {
+        !m.is_multiple_of(PROBE_EVERY) && self.left.load(Ordering::Relaxed) > APART_PER_MILLE
+    }
+
+    /// Tells that a morsel's table took `rows` rows and ended with
+    /// `groups` groups.
+    fn tell(&self, rows: usize, groups: usize) {
+        if let Some(left) = groups.saturating_mul(MILLE).checked_div(rows) {
+            self.left.store(left, Ordering::Relaxed);
+        }
+    }
 }
 
 /// A partition's groups between waves, frozen; none before its first.
@@ -205,14 +262,18 @@ fn grouped(
 ) -> Work<Handed> {
     let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
     // The groups the morsel last grouped made, the room the next is given.
-    let room = AtomicUsize::new(0);
+    let (room, reduction) = (AtomicUsize::new(0), Reduction::new());
     Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
         let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
-        let expected = room.load(Ordering::Relaxed);
-        let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed), expected)?;
+        let (expected, apart) = (room.load(Ordering::Relaxed), reduction.apart(m));
+        let asked = (&runner, first_of(&making, m), &making.seed);
+        let table = morsel_groups(read, &making.spec.aggs, batches, asked, (expected, apart))?;
         room.store(table.len(), Ordering::Relaxed);
+        if !apart {
+            reduction.tell(table.taken, table.len());
+        }
         let few = few(still.load(Ordering::Relaxed), (table.len(), table.taken), degree);
         if forced.map_or(few, |named| named(m)) {
             return table.frozen().map(Handed::Whole);
@@ -313,7 +374,7 @@ impl Waves<'_> {
             if !self.limit.take(bytes) {
                 self.limit.give(bytes);
                 let Some(spilled) = &self.spilled else { return Ok(false) };
-                return spilled.write_parts(&made);
+                return spilled.write_parts(self.regrouped(made)?.as_ref());
             }
         }
         self.wave.push(made);
@@ -322,6 +383,27 @@ impl Waves<'_> {
             return Ok(true);
         }
         self.merged()
+    }
+
+    /// \[DESIGN\] (RULES.md D1260) `made`, a morsel's groups about to be
+    /// written to the spill as they are, grouped first if its rows were
+    /// handed on ungrouped. A partition read back is split by its groups'
+    /// hashes where it outgrows the grant, and rows of one key share a
+    /// hash, so a key the morsel held many times must be one group there,
+    /// as the morsel's table would have made it.
+    ///
+    /// # Errors
+    ///
+    /// As `GroupTable::absorb_whole` or `GroupTable::made`.
+    fn regrouped(&self, made: Arc<Made>) -> Result<Arc<Made>> {
+        if !made.repeats() {
+            return Ok(made);
+        }
+        let grouping = self.grouping;
+        let width = grouping.read.as_ref().map_or(0, |read| read.groups.len());
+        let mut table = GroupTable::new(width, &grouping.spec.aggs, &grouping.seed, usize::MAX);
+        table.absorb_whole(&made)?;
+        table.made(PARTS, grouping.lanes()).map(Arc::new)
     }
 
     /// Merges the wave into the partitions, held in memory while the grant

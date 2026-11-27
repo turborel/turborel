@@ -9,7 +9,7 @@ use super::super::super::pipeline::Pipeline;
 use super::super::super::probe::PARTS;
 use super::super::super::{Held, Limit};
 use super::super::{Ordered, grouping_of, read_of};
-use super::{Forced, How, few, waved_as};
+use super::{Forced, How, Reduction, few, waved_as};
 use crate::db::{Database, Session};
 use crate::exec::Db;
 use crate::physical::{PhysicalPlanner, Plan};
@@ -208,4 +208,26 @@ fn a_wide_lead_merges_and_spills_as_a_narrow_one() {
             assert_eq!(led(&a, sql, lead, 3), narrow, "a lead of {lead}, a grant of {grant}");
         }
     }
+}
+
+/// Verifies: [DESIGN] (RULES.md D1260) morsels make tables until one
+/// tells what its rows left; they hand their rows on ungrouped after
+/// a table that left more than 900 groups a thousand rows, but the
+/// morsels that probe, one in sixteen; a table that left 900 or fewer
+/// has them make tables again, and one of no rows tells nothing.
+#[test]
+fn morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing() {
+    let reduction = Reduction::new();
+    assert!((0..40).all(|m| !reduction.apart(m)), "nothing told yet");
+    reduction.tell(2048, 2040);
+    assert!(reduction.apart(1) && reduction.apart(15) && reduction.apart(17) && reduction.apart(31));
+    assert!(!reduction.apart(0) && !reduction.apart(16) && !reduction.apart(32), "the morsels that probe");
+    reduction.tell(0, 0);
+    assert!(reduction.apart(1), "a morsel of no rows tells nothing");
+    reduction.tell(1000, 901);
+    assert!(reduction.apart(1));
+    reduction.tell(1000, 900);
+    assert!(!reduction.apart(1), "at the bound a table is made");
+    reduction.tell(2048, 7);
+    assert!((0..40).all(|m| !reduction.apart(m)), "rows that reduce are grouped in their morsel");
 }

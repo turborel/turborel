@@ -811,6 +811,7 @@ verification approach DO-178C expects (§8).
 | D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
+| D1260 | Morsels whose tables reduce nothing hand their rows to the partitions ungrouped |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 
 ### The project
@@ -23101,6 +23102,52 @@ Opening it again recovers it from its last checkpoint and its log.
 
 For this a commit pays one load of the `open` mark, in its
 transaction's drop, and takes no lock.
+
+#### D1260. Morsels whose tables reduce nothing hand their rows to the partitions ungrouped
+
+A grouping run in parallel groups each morsel in a table of its own and
+hands the table's groups to the partitions, which merge them (D355,
+D356). The table pays where it reduces: many rows leave as few groups,
+and the partitions merge few. Where nearly every row of a morsel is a
+group of its own, the table found nothing to merge. Every lookup missed
+and every slot was taken for a group the partition finds again by the
+same hash, so the morsel's table was work done twice.
+
+The morsels of such a grouping now hand their rows on ungrouped
+(`exec/batch/groups/morsel.rs`, `rows_apart`). Each row is made a group
+of its own: its key appended, its hash kept, its first row its own
+number, its set functions fed its one row. No group is looked for and no
+slot is taken (`exec/table.rs`, `appended`). What is handed on has the
+form a morsel's groups always had, so the partitions merge it, hold it
+and spill it as before, and a key the morsel held twice is merged there.
+The groups, their order and their results are unchanged. Only where a
+row is first grouped differs.
+
+Whether to group is the workers' own measurement, never the planner's
+estimate (`exec/parallel/grouped/waves.rs`, `Reduction`). Each morsel's
+table tells the groups it ended with of the rows it took. After a table
+that left more than 900 groups a thousand rows the next morsels are
+handed on ungrouped. The bound comes from what the steps cost. A table
+spends a lookup and a slot on each row, and saves, for each row it
+merges, the appending, the ordering by partition and the lookup the
+partition would spend on it. With the shares those steps take of a
+grouping of integer keys with a group a row, the two are equal near 800
+groups a thousand rows. A key of text costs more to carry than to look
+up, so the bound is set above that.
+
+One morsel in sixteen still makes a table. It gives back a sixteenth of
+what the others save, and data that turns to few groups is grouped in
+its morsels again within sixteen of them.
+
+Two things follow from rows of one key arriving as several groups. A
+partition's table merges such groups one at a time, each made before the
+next is looked for, where a morsel's groups, no two of a key, are made
+together (`exec/table/made.rs`, `repeats`), and the spill's form of a
+morsel's groups tells which they are. And a morsel that must go to the
+spill as it is, the grant holding nothing more, is grouped first
+(`waves.rs`, `regrouped`). A partition read back is split by its groups'
+hashes where it outgrows the grant, and rows of one key share a hash, so
+a key held many times must be one group there.
 
 #### D1262. A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold
 

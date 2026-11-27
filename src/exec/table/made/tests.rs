@@ -91,6 +91,47 @@ fn partitions_merged_by_columns_hold_what_the_morsels_hold() {
     }
 }
 
+/// Verifies: [DESIGN] (RULES.md D1260) a morsel whose rows are each made
+/// a group of their own, none looked for, a key held three times among
+/// them, gives its partitions' tables the groups a morsel grouped in a
+/// table gives them: every key once, its first row the earliest, its
+/// counts and sums merged, of integers and of texts, whole and split
+/// among partitions.
+#[test]
+fn rows_appended_apart_merge_into_the_groups_a_table_makes() {
+    for text in [false, true] {
+        let keyed = |n: i128| if text { vec![exact(n % 700), Value::Char(format!("k{} ", n % 700).into())] } else { vec![exact(n % 700)] };
+        let keys: Vec<Vec<Value>> = (0..2100).map(keyed).collect();
+        let (width, seed) = (if text { 2 } else { 1 }, Seed::fixed(0x5EED));
+        let fed = |table: &mut GroupTable, g: u32, (n, key): (u64, &Vec<Value>)| {
+            let units = if let Some(Value::Exact(d)) = key.first() { d.units } else { 7 };
+            let (mut total, mut value) = (Vec::new(), Vec::new());
+            put_value(&mut total, &exact(units));
+            put_value(&mut value, &exact(units));
+            table.merge_written(g, (n, &[1_i128.to_le_bytes().to_vec(), total, value.clone(), value])).unwrap();
+        };
+        let (mut apart, mut tabled) = (GroupTable::unplaced(width, &calls(), &seed, 0), GroupTable::with_room(width, &calls(), &seed, 0));
+        for (n, key) in (100_u64..).zip(&keys) {
+            let hash = hash_values(&seed, key);
+            let own = apart.appended(hash, Key::Values(key), n);
+            fed(&mut apart, own, (n, key));
+            let found = tabled.found_or_made(hash, Key::Values(key), n);
+            fed(&mut tabled, found, (n, key));
+        }
+        assert_eq!((apart.len(), tabled.len()), (2100, 700), "a group a row, and a group a key");
+        let (handed, grouped) = (apart.made(8, &[]).unwrap(), tabled.made(8, &[]).unwrap());
+        for p in 0..8 {
+            let merged = |made: &Made| {
+                let mut table = GroupTable::new(width, &calls(), &seed, usize::MAX);
+                table.reserve(made, made.groups_of(p));
+                table.absorb(made, p).unwrap();
+                table.finished().unwrap().iter().map(|(first, row)| format!("{first} {row:?}")).collect::<Vec<_>>()
+            };
+            assert_eq!(merged(&handed), merged(&grouped), "partition {p}, text keys: {text}");
+        }
+    }
+}
+
 /// Verifies: [DESIGN] (RULES.md D1113) groups split by the hashes of
 /// their first lane alone put every group of a value of it in one
 /// partition, in each morsel alike, of integers and of texts, and the
