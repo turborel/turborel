@@ -803,6 +803,7 @@ verification approach DO-178C expects (§8).
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
 | D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
+| D1261 | A partition's table taken up for a wave makes its slots for the wave's groups at once |
 
 ### The project
 
@@ -22636,6 +22637,28 @@ count raises nothing and is not finished.
 A sort with a key that names a grouping column or a constant sorts the
 batch of every column, as before. A column of results is made at its
 length, so its values do not move as it fills.
+
+#### D1261. A partition's table taken up for a wave makes its slots for the wave's groups at once
+
+A grouping run in parallel merges its morsels' groups into its
+partitions' tables in waves (D355, D356). Between waves a partition's
+groups are held frozen, their keys, hashes, first rows and states, with
+no slots, which are made anew from the hashes as the table is taken up.
+They were made for the groups the table held. The wave's groups then
+came, and though room was made for them in every other vector, the slots
+doubled as they filled, and each doubling placed every group again. Of a
+grouping of very many groups the partitions placed each group three
+times or more a wave.
+
+The table is now taken up with its slots made for the groups it holds
+and those the wave may add, which the wave's morsels tell before the
+first is merged (`exec/table/made.rs`, `thawed`, `reserve`;
+`exec/table/slots.rs`, `rebuilt_for`). Each group is placed once a wave.
+A table made new for a wave is given its slots the same way.
+
+The slots are not kept between waves. Held frozen they would take two
+words a group of the grant for as long as the partition waits, to save
+the one placement a wave that is left.
 
 ## 2. Project layout
 

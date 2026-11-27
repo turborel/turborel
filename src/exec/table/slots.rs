@@ -11,6 +11,11 @@
 //! its table keeps, no key hashed again. Each probe's length is told, so a
 //! table whose probe grows past `MAX_PROBE` hashes its keys anew (RULES.md
 //! D357).
+//!
+//! \[DESIGN\] (RULES.md D1261) A table told how many groups it may yet
+//! take makes its slots for them at once (`rebuilt_for`, `reserve`), so
+//! its groups are placed one time, where doubling as they come would
+//! place each again at every doubling.
 
 /// \[DESIGN\] (RULES.md D357) The longest probe a table takes before it
 /// hashes its keys anew by SipHash: 128 slots, eight times sixteen, far
@@ -42,6 +47,12 @@ pub(super) struct Probe {
     pub(super) length: usize,
 }
 
+/// The slots `groups` groups take: twice as many and one more, a power
+/// of two, so at most half of them are full.
+fn wanted(groups: usize) -> usize {
+    groups.saturating_add(1).saturating_mul(2).max(LEAST_SLOTS).next_power_of_two()
+}
+
 /// The high half of `hash`, as a slot keeps it.
 fn half(hash: u64) -> u64 {
     hash >> GROUP_BITS
@@ -58,8 +69,14 @@ impl Slots {
     /// Empty slots for `groups` groups, none of them placed again as
     /// they come.
     pub(super) fn with_room(groups: usize) -> Slots {
-        let wanted = groups.saturating_add(1).saturating_mul(2).max(LEAST_SLOTS).next_power_of_two();
+        let wanted = wanted(groups);
         Slots { slots: vec![EMPTY; wanted], mask: u64::try_from(wanted).unwrap_or(u64::MAX).saturating_sub(1) }
+    }
+
+    /// How many slots.
+    #[cfg(test)]
+    pub(super) fn len(&self) -> usize {
+        self.slots.len()
     }
 
     /// The bytes it holds.
@@ -120,7 +137,23 @@ impl Slots {
     /// Makes the slots anew for the groups of `hashes`, room for twice as
     /// many and one more, each placed in turn.
     pub(super) fn rebuilt(&mut self, hashes: &[u64]) {
-        let wanted = hashes.len().saturating_add(1).saturating_mul(2).max(LEAST_SLOTS).next_power_of_two();
+        self.rebuilt_for(hashes, 0);
+    }
+
+    /// \[DESIGN\] (RULES.md D1261) Room for `groups` groups in all, those
+    /// of `hashes` placed again if the slots must grow for it, and not
+    /// touched if they hold that many already.
+    pub(super) fn reserve(&mut self, groups: usize, hashes: &[u64]) {
+        if wanted(groups) > self.slots.len() {
+            self.rebuilt_for(hashes, groups.saturating_sub(hashes.len()));
+        }
+    }
+
+    /// \[DESIGN\] (RULES.md D1261) As `rebuilt`, with room for `more`
+    /// groups more than those of `hashes`, so none is placed again as
+    /// that many come.
+    pub(super) fn rebuilt_for(&mut self, hashes: &[u64], more: usize) {
+        let wanted = wanted(hashes.len().saturating_add(more));
         self.slots.clear();
         self.slots.resize(wanted, EMPTY);
         self.slots.shrink_to_fit();
@@ -152,6 +185,37 @@ mod tests {
             assert_eq!(slots.find(hash, |g| g == group).found, Some(group));
         }
         assert_eq!(slots.find(7, |_| true).found, None);
+    }
+
+    /// Verifies: [DESIGN] (RULES.md D1261) slots made with room for groups
+    /// yet to come take them with no growth, every group found after, by
+    /// the room asked when they are made anew and by a reserve after; a
+    /// reserve of no more than they hold leaves them as they are, and
+    /// slots made with no room grow as the groups come.
+    #[test]
+    fn slots_made_for_groups_to_come_do_not_grow() {
+        let hashes: Vec<u64> = (0_u64..3000).map(|n| n.wrapping_mul(0x9E37_79B9_7F4A_7C15)).collect();
+        let (held, coming) = hashes.split_at(1000);
+        let filled = |slots: &mut Slots| {
+            for (group, &hash) in (1000_u32..).zip(coming) {
+                slots.place(hash, group, &hashes);
+            }
+            (0_u32..).zip(&hashes).all(|(group, &hash)| slots.find(hash, |g| g == group).found == Some(group))
+        };
+        let mut roomy = Slots::default();
+        roomy.rebuilt_for(held, coming.len());
+        let made = roomy.slots.len();
+        assert_eq!(made, 8192, "twice 3001, a power of two");
+        assert!(filled(&mut roomy) && roomy.slots.len() == made, "no growth");
+        let mut reserved = Slots::of(held);
+        assert_eq!(reserved.slots.len(), 2048);
+        reserved.reserve(1000, held);
+        assert_eq!(reserved.slots.len(), 2048, "room it has is not made again");
+        reserved.reserve(3000, held);
+        assert_eq!(reserved.slots.len(), made);
+        assert!(filled(&mut reserved) && reserved.slots.len() == made);
+        let mut tight = Slots::of(held);
+        assert!(filled(&mut tight) && tight.slots.len() == made, "grown by doubling to the same size");
     }
 
     /// Verifies: [DESIGN] (RULES.md D356) a probe that starts at the last

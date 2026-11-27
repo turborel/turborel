@@ -201,7 +201,7 @@ fn keys_grouped_unpadded_tell_trailing_spaces_apart() {
             assert!(table.find(hash_values(&seed, &values), Key::Values(&values)).is_some(), "{what}: found by its values");
         }
         assert_eq!((table.len(), padded.len()), (4, 3), "{what}: 'a' and 'a ' apart unpadded, one padded");
-        let thawed = GroupTable::thawed(table.made(1, &[]).unwrap(), &[], &seed).unwrap();
+        let thawed = GroupTable::thawed(table.made(1, &[]).unwrap(), (&[], &seed), 0).unwrap();
         assert_eq!(thawed.len(), 4);
         let mut thawed = thawed;
         let spaced = [text("a "), text("x")];

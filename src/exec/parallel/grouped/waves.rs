@@ -277,13 +277,16 @@ impl Waves<'_> {
 fn thawed_and_merged(grouping: &Grouping, (frozen, p): (&Frozen, usize), wave: &[Arc<Made>]) -> Result<GroupTable> {
     let read = grouping.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
     let held = frozen.get(p).and_then(|slot| slot.lock().unwrap_or_else(PoisonError::into_inner).take());
+    // Each of the wave's groups may be new, so room for all is made once,
+    // in the slots too, which are placed as the table is taken up
+    // (RULES.md D1261).
+    let coming: usize = wave.iter().map(|made| made.groups_of(p)).sum();
     let mut table = match held {
-        Some(made) => GroupTable::thawed(made, &grouping.spec.aggs, &grouping.seed)?,
+        Some(made) => GroupTable::thawed(made, (&grouping.spec.aggs, &grouping.seed), coming)?,
         None => GroupTable::new(read.groups.len(), &grouping.spec.aggs, &grouping.seed, usize::MAX),
     };
-    // Each of the wave's groups may be new, so room for all is made once.
     if let Some(first) = wave.first() {
-        table.reserve(first, wave.iter().map(|made| made.groups_of(p)).sum());
+        table.reserve(first, coming);
     }
     for made in wave {
         if made.groups_of(p) > 0 {
