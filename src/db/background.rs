@@ -238,11 +238,12 @@ impl Database {
         Ok(())
     }
 
-    /// What a commit that wrote the tables `tables` leaves due: a
-    /// checkpoint, a fold of kept totals, the queue of embeddings after
-    /// commit of those tables, a sync of the log.
-    pub(super) fn written(&self, tables: &[crate::catalog::QualifiedName]) {
-        self.checkpoint_if_due();
+    /// What a commit that wrote the tables `tables`, its record at `at`
+    /// if it logged one, leaves due: a checkpoint, a fold of kept totals,
+    /// the queue of embeddings after commit of those tables, a sync of the
+    /// log.
+    pub(super) fn written(&self, tables: &[crate::catalog::QualifiedName], at: Option<crate::log::Lsn>) {
+        self.checkpoint_if_due(at);
         self.fold_if_due();
         if let Ok(st) = self.snapshot()
             && st.embedders.watching()

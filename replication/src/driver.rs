@@ -46,6 +46,7 @@ use std::time::Duration;
 
 use turborel::db::Standby;
 use turborel::error::{Code, Result, SqlError};
+use turborel::log::marks::{ByteMarks, place};
 
 pub use self::job::{DriverJob, JOB_LABEL};
 pub use self::log::{GroupLog, GroupLogs, Joined, Make, OpenJournal, Retention};
@@ -140,6 +141,8 @@ struct Core {
     first: Lsn,
     /// The log: the record at position n at index n − first − 1.
     records: Vec<Vec<u8>>,
+    /// Their bytes, by the same index (turborel's RULES.md D1231).
+    marks: ByteMarks,
     /// The bytes of records kept before a checkpoint at least.
     retain_bytes: u64,
     /// Through where the consensus said the log is committed, serving.
@@ -192,6 +195,7 @@ impl Driver {
             transport: parts.transport,
             watch: parts.watch,
             first: parts.first,
+            marks: ByteMarks::of(parts.records.iter().map(Vec::as_slice)),
             records: parts.records,
             retain_bytes: parts.retain_bytes,
             committed: Lsn(0),
@@ -437,25 +441,17 @@ impl Core {
                 self.journal.persist(at, &record)?;
                 let kept = self.index(at).ok_or_else(|| misuse("a record persisted at a position let go"))?;
                 self.records.truncate(kept);
+                self.marks.truncate(kept);
+                self.marks.push(record.len());
                 self.records.push(record);
             }
             Output::Truncate { after } => {
                 self.journal.truncate(after)?;
-                self.records.truncate(self.index(after).map_or(0, |n| n.saturating_add(1)));
+                let kept = self.index(after).map_or(0, |n| n.saturating_add(1));
+                self.records.truncate(kept);
+                self.marks.truncate(kept);
             }
-            Output::Retain { through } => {
-                self.journal.retain(through)?;
-                if through > self.first {
-                    let gone = self.index(through).map_or(self.records.len(), |n| n.saturating_add(1)).min(self.records.len());
-                    self.records.drain(..gone);
-                    self.first = through;
-                } else if through < self.first {
-                    // The log begun again before where it was let go: a
-                    // state transfer's records follow.
-                    self.records.clear();
-                    self.first = through;
-                }
-            }
+            Output::Retain { through } => self.retain(through)?,
             Output::PersistState(state) => self.journal.persist_state(&state)?,
             Output::Mark { at, mark } => self.journal.mark(at, &mark)?,
             Output::Reach(configuration) => self.transport.reconfigure(&configuration)?,
@@ -541,9 +537,34 @@ impl Core {
         Lsn(self.first.0.saturating_add(u64::try_from(self.records.len()).unwrap_or(u64::MAX)))
     }
 
+    /// The records through `through` let go, as the journal lets them go.
+    fn retain(&mut self, through: Lsn) -> Result<()> {
+        self.journal.retain(through)?;
+        if through > self.first {
+            let gone = self.index(through).map_or(self.records.len(), |n| n.saturating_add(1)).min(self.records.len());
+            self.records.drain(..gone);
+            self.marks.drain_front(gone);
+            self.first = through;
+        } else if through < self.first {
+            // The log begun again before where it was let go: a state
+            // transfer's records follow.
+            self.records.clear();
+            self.marks.drain_front(self.marks.len());
+            self.first = through;
+        }
+        Ok(())
+    }
+
     /// The position after the last held: a log's end.
     fn end(&self) -> Lsn {
         position(self.first, self.records.len())
+    }
+
+    /// The bytes of the records held from `from` to `to`: those let go
+    /// before them count as before the first (turborel's RULES.md D1231).
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        let first = self.first.0.saturating_add(1);
+        self.marks.between(place(first, from.0), place(first, to.0))
     }
 }
 

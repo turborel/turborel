@@ -540,7 +540,8 @@ impl Session {
         // may leave a checkpoint, a fold of kept totals, embeddings, or a sync of the log its commit did not wait for, due.
         self.db.maintain_if_due();
         if wrote {
-            self.db.written(&tables);
+            // [DESIGN] RULES.md D1231: the log counted to its commit's record, the log itself not asked.
+            self.db.written(&tables, self.stop.served().last_committed());
         }
         ended
     }

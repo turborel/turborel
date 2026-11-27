@@ -13,6 +13,7 @@
 //! sealed through them (`sealed`).
 
 mod file;
+pub mod marks;
 pub mod record;
 pub mod sealed;
 
@@ -223,6 +224,15 @@ pub trait Log: Send + Sync {
     }
     /// The position after the last record appended.
     fn end(&self) -> Lsn;
+    /// \[DESIGN\] The bytes of the records appended from position `from` to
+    /// position `to`, as the log's own layout tells them (RULES.md D1231):
+    /// none if `to` comes first. A log whose positions are its bytes
+    /// answers from the positions alone; one whose positions number its
+    /// records, from the marks it keeps as it appends (`marks.rs`). Asked
+    /// at each commit that wrote, by the checkpoint's count of the log's
+    /// bytes (CHECKPOINT.AFTER_BYTES, RULES.md D1137), so it takes no lock
+    /// the appends contend for where the layout spares it.
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64;
 }
 
 /// \[DESIGN\] (RULES.md D882) The records of a run laid end to end in
@@ -248,6 +258,8 @@ pub struct MemoryLog {
 struct MemoryState {
     /// The records kept, oldest first.
     records: VecDeque<(Lsn, Vec<u8>)>,
+    /// Their bytes (RULES.md D1231).
+    marks: marks::ByteMarks,
     /// The last position given.
     last: u64,
 }
@@ -268,6 +280,7 @@ impl Log for MemoryLog {
         state.last = state.last.checked_add(1).ok_or_else(|| SqlError::new(Code::Api, "[DESIGN] the log has no position left"))?;
         let lsn = Lsn(state.last);
         state.records.push_back((lsn, record.to_vec()));
+        state.marks.push(record.len());
         Ok(lsn)
     }
     fn sync(&self, through: Lsn) -> Result<()> {
@@ -293,10 +306,18 @@ impl Log for MemoryLog {
         let mut state = lock_builtin(&self.state);
         while state.records.front().is_some_and(|(lsn, _)| *lsn < before) {
             state.records.pop_front();
+            state.marks.drain_front(1);
         }
         Ok(())
     }
     fn end(&self) -> Lsn {
         Lsn(lock_builtin(&self.state).last.saturating_add(1))
+    }
+    /// Positions are consecutive: a position's place is its distance from
+    /// the first kept.
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        let state = lock_builtin(&self.state);
+        let first = state.records.front().map_or(state.last.saturating_add(1), |(lsn, _)| lsn.0);
+        state.marks.between(marks::place(first, from.0), marks::place(first, to.0))
     }
 }
