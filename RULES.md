@@ -802,6 +802,7 @@ verification approach DO-178C expects (§8).
 | D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
+| D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
 
 ### The project
 
@@ -22607,6 +22608,34 @@ the projection over the part takes the rows the partitions kept for the
 sort, as those are the rows that leave the part. Both take the time of
 the part's run and of each row pulled. A part that gives way, and a sort
 whose rows are not taken from the tables, count every group in both.
+
+#### D1256. A sort by set functions alone picks its first groups of a partition before their rows are made
+
+A sort that asks for its first rows over a grouping run in parallel takes
+them from each partition's table (D1124). The partition gave every group
+as a batch first, each set function finished of each group into a column
+of results, and then kept the few rows the sort asks. Of a grouping of
+very many groups, finishing every function of every group and holding
+the columns of results was most of what the partition did, to keep a few
+rows.
+
+Where every key of the sort names a set function, the partition now
+picks before it makes (`exec/parallel/grouped/top.rs`, `picked_of`). It
+finishes the columns of those functions alone, takes its first rows by
+them and by the first rows' numbers, and makes the rows of the groups
+picked from its table (`exec/table/given.rs`, `row`). The rows and their
+order are those the batch of every column gave, as the keys and the tie
+by first row are the same.
+
+A set function that no key names is still finished of every group, with
+no value kept (`checked_but`). Its result may raise, as a sum past the
+range of its type does [ISO/IEC 9075:1992 §6.5 GR2b iv], and the plan run
+alone finishes every group and raises it, so the part raises it too. A
+count raises nothing and is not finished.
+
+A sort with a key that names a grouping column or a constant sorts the
+batch of every column, as before. A column of results is made at its
+length, so its values do not move as it fills.
 
 ## 2. Project layout
 

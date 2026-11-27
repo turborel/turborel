@@ -19,6 +19,15 @@
 //! the last row under the sort's own keys, which the number would part,
 //! so such a sort reads the grouping's rows as before.
 //!
+//! \[DESIGN\] (RULES.md D1256) A sort whose every key names a set
+//! function picks its groups before their rows are made. The partition
+//! finishes those functions' columns alone, takes its first rows by them
+//! and the first rows' numbers, and makes only the picked groups' rows of
+//! its table. The other set functions are finished of every group for
+//! the error one may raise, which the plan run alone would raise, and no
+//! value of them is kept. A key that names a grouping column sorts every
+//! column of the groups, as before.
+//!
 //! \[EXTENSION\] (RULES.md D378, D1254) An analyzed plan counts the
 //! projection and the grouping, and the first rows are taken under those
 //! counts as under none, so the statement analyzed runs as the statement
@@ -89,6 +98,11 @@ struct Counts {
 /// `plan` under an analyzed plan's count of it, and that count.
 fn uncounted(plan: &Plan) -> (&Plan, Option<Arc<NodeCount>>) {
     if let Plan::Counted(c) = plan { (&c.input, Some(Arc::clone(&c.count))) } else { (plan, None) }
+}
+
+/// The whole number `value` is, if it is one that counts groups.
+fn number_of(value: &Value) -> Option<usize> {
+    if let Value::Exact(d) = value { usize::try_from(d.units).ok() } else { None }
 }
 
 /// Adds `more` to `counted`.
@@ -171,6 +185,9 @@ impl Top {
     /// As a set function's `finish`, or the sort, fails.
     pub(super) fn of_table(&self, table: GroupTable) -> Result<Vec<Row>> {
         add(&self.counts.made, table.len());
+        if let Some(sorted_by) = self.sorted_by(table.width()) {
+            return self.picked_of(&table, &sorted_by).map_err(|e| table.finished().err().unwrap_or(e));
+        }
         let (batch, firsts) = table.into_batch()?;
         let rows = batch.rows;
         let mut held: Vec<Option<Column>> = batch.columns.into_iter().map(Some).collect();
@@ -196,6 +213,57 @@ impl Top {
         let first = first_of_morsel(&self.keys, batches, (self.most, None), (&self.run.0, self.run.1))?;
         add(&self.counts.given, first.len());
         Ok(first)
+    }
+
+    /// \[DESIGN\] (RULES.md D1256) The set function each of the sort's own
+    /// keys names, by its place among the grouping's, of a table whose
+    /// keys are `width` columns, if every key names one. A key that names
+    /// a grouping column or a constant is sorted by with every column of
+    /// the groups made, as `of_table` makes them.
+    fn sorted_by(&self, width: usize) -> Option<Vec<usize>> {
+        let named = |key: &SortKey| match self.columns.get(key.column) {
+            Some(Pick::Column(c)) => c.checked_sub(width),
+            Some(Pick::Const(_)) | None => None,
+        };
+        self.own().iter().map(named).collect::<Option<Vec<usize>>>().filter(|by| !by.is_empty())
+    }
+
+    /// \[DESIGN\] (RULES.md D1256) The first rows of the groups of `table`
+    /// picked before they are made. A batch holds the sort keys' columns
+    /// alone, the set functions' results at `sorted_by`, with each group's
+    /// first row's number and its own number after them. The first rows
+    /// under the keys are taken of that, and only those groups' rows are
+    /// made of the table and projected. Every other set function is
+    /// finished of every group for the error it may raise, no value kept.
+    fn picked_of(&self, table: &GroupTable, sorted_by: &[usize]) -> Result<Vec<Row>> {
+        let rows = table.len();
+        let mut columns = sorted_by.iter().map(|&agg| table.results_of(agg)).collect::<Result<Vec<Column>>>()?;
+        table.checked_but(sorted_by)?;
+        let narrow = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
+        columns.push(Column::Ints(Ints::new(
+            table.firsts().iter().map(|&first| i64::try_from(first).unwrap_or(i64::MAX)).collect(),
+            0,
+            None,
+        )));
+        columns.push(Column::Ints(Ints::new((0..rows).map(narrow).collect(), 0, None)));
+        let mut keys: Vec<SortKey> = self.own().iter().enumerate().map(|(at, key)| SortKey { column: at, ..*key }).collect();
+        keys.push(SortKey::ascending(sorted_by.len()));
+        let batches = Box::new(std::iter::once(Ok((Batch { columns, rows }, None))));
+        let first = first_of_morsel(&keys, batches, (self.most, None), (&self.run.0, self.run.1))?;
+        add(&self.counts.given, first.len());
+        first.into_iter().map(|picked| self.made_of(table, picked)).collect()
+    }
+
+    /// The projection's row of the group `picked` names last, a row of
+    /// `picked_of`'s batch, made of `table`, with the group's first row's
+    /// number after it.
+    fn made_of(&self, table: &GroupTable, mut picked: Row) -> Result<Row> {
+        let group = picked.pop().as_ref().and_then(number_of).ok_or_else(|| broken("a picked group has no number"))?;
+        let first = picked.pop().ok_or_else(|| broken("a picked group has no first row"))?;
+        let whole = table.row(group)?;
+        let mut row = self.columns.iter().map(|pick| pick.value(&whole)).collect::<Result<Row>>()?;
+        row.push(first);
+        Ok(row)
     }
 
     /// [X3.135-1986 §8.3 GR3b] The first rows of `rows`, the partitions'

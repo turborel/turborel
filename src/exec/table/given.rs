@@ -8,7 +8,8 @@
 
 use super::GroupTable;
 use crate::error::Result;
-use crate::storage::Batch;
+use crate::exec::broken;
+use crate::storage::{Batch, Column, Row};
 
 impl GroupTable {
     /// Whether its groups are in the order of their first rows, as the
@@ -33,6 +34,49 @@ impl GroupTable {
         let mut columns = self.keys.into_columns();
         columns.extend(results);
         Ok((Batch { columns, rows }, self.firsts))
+    }
+
+    /// \[DESIGN\] (RULES.md D1256) The results of its set function at
+    /// `agg` of every group, as a column, a group a row, and no other
+    /// column made.
+    ///
+    /// # Errors
+    ///
+    /// As the set function's `finish`; SQLCODE -910 of no such function.
+    pub(in crate::exec) fn results_of(&self, agg: usize) -> Result<Column> {
+        self.states.get(agg).ok_or_else(|| broken("a set function a table does not compute"))?.results(self.len())
+    }
+
+    /// \[DESIGN\] (RULES.md D1256) Finishes every group's result of each
+    /// set function but those at `made`, keeping none, so a result that
+    /// raises raises as it does when every group is given.
+    ///
+    /// # Errors
+    ///
+    /// As a set function's `finish`.
+    pub(in crate::exec) fn checked_but(&self, made: &[usize]) -> Result<()> {
+        let mut rest = self.states.iter().enumerate().filter(|(agg, _)| !made.contains(agg));
+        rest.try_for_each(|(_, states)| states.checked(self.len()))
+    }
+
+    /// Group `g`'s row, its grouping values then each set function's
+    /// result, as `finished` gives it.
+    ///
+    /// # Errors
+    ///
+    /// As a set function's `finish`.
+    pub(in crate::exec) fn row(&self, g: usize) -> Result<Row> {
+        let mut row = self.keys.values(g);
+        row.reserve(self.states.len());
+        for states in &self.states {
+            row.push(states.finish(g)?);
+        }
+        Ok(row)
+    }
+
+    /// Each group's first row's number, in the order the groups were made.
+    pub(in crate::exec) fn firsts(&self) -> &[u64] {
+        &self.firsts
     }
 }
 
