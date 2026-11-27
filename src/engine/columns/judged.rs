@@ -45,12 +45,18 @@
 //! not judged of that run, and its column is not decoded to judge it
 //! (`judged/proved.rs`).
 //!
+//! \[DESIGN\] (RULES.md D1294) The keys of a hash join's runtime filter
+//! (`Conjunct::Among`) are asked of a column of integers after the
+//! comparisons and before a LIKE, once a run where the column is kept as
+//! runs, while they keep few rows of a run (`judged/among.rs`).
+//!
 //! A scan is told only conjuncts every row its filter keeps satisfies, of a
 //! condition that cannot raise an error (`logical/pushed.rs`), and the
 //! filter still judges every row the scan gives (RULES.md D15). So a row
 //! left out here is one the filter would have left out, and a conjunct a
 //! column's vector cannot be judged over is left to the filter.
 
+mod among;
 mod coded;
 mod entries;
 mod proved;
@@ -124,13 +130,18 @@ impl Judgment {
                 let columns = c.columns();
                 let [column] = columns.as_slice() else { return None };
                 let column = *column;
-                types.get(column).filter(|t| judged_type(t))?;
+                let t = types.get(column).filter(|t| judged_type(t))?;
+                // A join's keys are asked of integers alone (RULES.md D1294).
+                if matches!(c, Conjunct::Among { .. }) && !matches!(t, DataType::Exact { .. }) {
+                    return None;
+                }
                 Some(Pred { at, column, conjunct: c.clone(), of_null: c.matches_key(&[&Value::Null]) })
             })
             .collect();
         // A LIKE goes last, as it reads every code of a text where a
-        // comparison reads a code or two, so the others leave it fewer rows.
-        preds.sort_by_key(Pred::liked);
+        // comparison reads a code or two, so the others leave it fewer
+        // rows; a join's keys before it and after the rest (RULES.md D1294).
+        preds.sort_by_key(Pred::rank);
         Judgment { preds }
     }
 
@@ -139,7 +150,7 @@ impl Judgment {
     /// one `order` leaves out after the rest, as they were, and a LIKE
     /// after them all (RULES.md D1251).
     pub fn order_by(&mut self, order: &[usize]) {
-        self.preds.sort_by_key(|p| (p.liked(), order.iter().position(|&at| at == p.at).unwrap_or(usize::MAX)));
+        self.preds.sort_by_key(|p| (p.rank(), order.iter().position(|&at| at == p.at).unwrap_or(usize::MAX)));
     }
 
     /// Whether it judges nothing.
@@ -171,6 +182,7 @@ impl Judgment {
         given: Option<Vec<u32>>,
     ) -> Result<Judged> {
         let (mut kept, mut decoded) = (given, Vec::<(usize, Column)>::new());
+        let all = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
         for pred in &self.preds {
             if kept.as_ref().is_some_and(Vec::is_empty) {
                 break;
@@ -180,32 +192,53 @@ impl Judgment {
             let Some(pred) = pred.now() else { continue };
             let pred = &*pred;
             let Some(t) = types.get(pred.column) else { continue };
+            // A comparison the bounds of the run's parts prove keeps every
+            // row (RULES.md D1293), and a join's keys are asked only while
+            // that leaves few rows of a run (RULES.md D1294): neither's
+            // column is decoded to judge it.
+            if pred.passed(group, t, (from, to))? {
+                continue;
+            }
             // A LIKE is judged in place or left to the filter, its
             // column not decoded to judge it (RULES.md D1251).
             if let Conjunct::Like { like, .. } = &pred.conjunct {
                 kept = coded::liked(group, (pages, &mut *prepared), (pred, like, t), (from, to), kept.as_deref())?.or(kept);
                 continue;
             }
-            // A comparison the bounds of the run's parts prove keeps every
-            // row, its column not decoded to judge it (RULES.md D1293).
-            if proved::proved(group, (pred, t), (from, to))? {
-                continue;
-            }
             if let Some(rows) = coded::kept(group, (pages, &mut *prepared), (pred, t), (from, to), kept.as_deref())? {
                 kept = Some(rows);
                 continue;
             }
-            if !decoded.iter().any(|(c, _)| *c == pred.column) {
-                decoded.push((pred.column, column_of_run(group, (pages, &mut *prepared), (pred.column, t), (from, to))?));
-            }
-            let at = decoded.iter().position(|(c, _)| *c == pred.column).unwrap_or(0);
-            if let Some(rows) = decoded.get(at).and_then(|(_, column)| pred.kept(column, kept.as_deref(), pages.kernels)) {
+            let asked = kept.as_ref().map_or(all, Vec::len);
+            let read = (pages, &mut *prepared);
+            if let Some(rows) = by_vector(group, read, (pred, t), (from, to), (kept.as_deref(), &mut decoded))? {
+                pred.counted(asked, rows.len());
                 kept = Some(rows);
             }
         }
-        let all = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
         Ok(Judged { kept: kept.unwrap_or_else(|| rows_of(0..all)), decoded })
     }
+}
+
+/// The rows of `given`, or of all, that `pred` keeps of its column's
+/// vector of the run `from` to `to` of `group`, decoded once for the run
+/// and held in `decoded`; none if it is not a vector `pred` is judged of.
+///
+/// # Errors
+///
+/// As decoding a chunk.
+fn by_vector<S: Seal>(
+    group: &Group,
+    (pages, prepared): Reading<'_, '_, S>,
+    (pred, t): (&Pred, &DataType),
+    (from, to): (u32, u32),
+    (given, decoded): (Option<&[u32]>, &mut Vec<(usize, Column)>),
+) -> Result<Option<Vec<u32>>> {
+    if !decoded.iter().any(|(c, _)| *c == pred.column) {
+        decoded.push((pred.column, column_of_run(group, (pages, prepared), (pred.column, t), (from, to))?));
+    }
+    let at = decoded.iter().position(|(c, _)| *c == pred.column).unwrap_or(0);
+    Ok(decoded.get(at).and_then(|(_, column)| pred.kept(column, given, pages.kernels)))
 }
 
 /// Whether the scan judges `conjunct`: a comparison with a constant, IS
@@ -219,7 +252,9 @@ fn judged_conjunct(conjunct: &Conjunct) -> bool {
         // A sort's bound is the test it is of a row as a run is judged
         // (`Pred::now`, RULES.md D1241), and a LIKE is judged of texts
         // coded by symbols (RULES.md D1251).
-        Conjunct::Dynamic { .. } | Conjunct::Like { .. } => true,
+        // The keys of a join's filter are asked of integers (RULES.md
+        // D1294).
+        Conjunct::Dynamic { .. } | Conjunct::Like { .. } | Conjunct::Among { .. } => true,
         // A join's spans pass over groups and parts alone (RULES.md D600).
         Conjunct::Spans { .. } => false,
     }
@@ -233,7 +268,12 @@ fn judged_leaf(conjunct: &Conjunct) -> bool {
         | Conjunct::In { .. }
         | Conjunct::NotIn { .. }
         | Conjunct::Unpadded { .. } => true,
-        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } | Conjunct::Like { .. } => false,
+        Conjunct::Condition(_)
+        | Conjunct::Any(_)
+        | Conjunct::Dynamic { .. }
+        | Conjunct::Spans { .. }
+        | Conjunct::Among { .. }
+        | Conjunct::Like { .. } => false,
     }
 }
 
@@ -272,6 +312,10 @@ impl Pred {
     /// The rows of `given`, or of all, of `column` it keeps; none if the
     /// column is not a vector it judges.
     fn kept(&self, column: &Column, given: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {
+        if let Some(members) = self.among() {
+            let Column::Ints(ints) = column else { return None };
+            return Some(among::kept(members, ints, given));
+        }
         if let Conjunct::Null { not, .. } = self.conjunct {
             let (len, nulls) = shape(column)?;
             return Some(rows(len, given).into_iter().filter(|&r| nulls.is_some_and(|n| n.get(index(r))) != not).collect());
@@ -297,14 +341,27 @@ impl Pred {
             | Conjunct::Any(_)
             | Conjunct::Dynamic { .. }
             | Conjunct::Spans { .. }
+            | Conjunct::Among { .. }
             | Conjunct::Unpadded { .. }
             | Conjunct::Like { .. } => None,
         }
     }
 
-    /// Whether it is a LIKE (RULES.md D1251).
-    fn liked(&self) -> bool {
-        matches!(self.conjunct, Conjunct::Like { .. })
+    /// Where it is judged among the others: a LIKE last (RULES.md
+    /// D1251), a join's keys before it (RULES.md D1294), the rest first.
+    fn rank(&self) -> u8 {
+        match self.conjunct {
+            Conjunct::Like { .. } => 2,
+            Conjunct::Among { .. } => 1,
+            Conjunct::Condition(_)
+            | Conjunct::Null { .. }
+            | Conjunct::In { .. }
+            | Conjunct::NotIn { .. }
+            | Conjunct::Any(_)
+            | Conjunct::Dynamic { .. }
+            | Conjunct::Spans { .. }
+            | Conjunct::Unpadded { .. } => 0,
+        }
     }
 
     /// \[DESIGN\] (RULES.md D1295) Its list of constants folded to
@@ -319,6 +376,7 @@ impl Pred {
             | Conjunct::Any(_)
             | Conjunct::Dynamic { .. }
             | Conjunct::Spans { .. }
+            | Conjunct::Among { .. }
             | Conjunct::Unpadded { .. }
             | Conjunct::Like { .. } => None,
         }
@@ -453,7 +511,7 @@ fn text_keeps(conjunct: &Conjunct, order: &dyn Fn(Against<'_>) -> Option<Orderin
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::In { .. } | Conjunct::NotIn { .. } | Conjunct::Unpadded { .. } => {
             leaf_text_keeps(conjunct, order)
         }
-        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } | Conjunct::Like { .. } => None,
+        Conjunct::Dynamic { .. } | Conjunct::Spans { .. } | Conjunct::Among { .. } | Conjunct::Like { .. } => None,
     }
 }
 
@@ -473,7 +531,12 @@ fn leaf_text_keeps(conjunct: &Conjunct, order: &dyn Fn(Against<'_>) -> Option<Or
         Conjunct::Unpadded { op, octets, .. } => Some(holds(*op, order(Against::Unpadded(octets)))),
         Conjunct::In { values, .. } => values.iter().try_fold(false, |any, v| Some(any | equal(v)?)),
         Conjunct::NotIn { values, .. } => values.iter().try_fold(true, |all, v| Some(all & apart(v)?)),
-        Conjunct::Condition(_) | Conjunct::Any(_) | Conjunct::Dynamic { .. } | Conjunct::Spans { .. } | Conjunct::Like { .. } => None,
+        Conjunct::Condition(_)
+        | Conjunct::Any(_)
+        | Conjunct::Dynamic { .. }
+        | Conjunct::Spans { .. }
+        | Conjunct::Among { .. }
+        | Conjunct::Like { .. } => None,
     }
 }
 

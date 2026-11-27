@@ -162,6 +162,7 @@ fn asked(condition: &Conjunct) -> Option<(usize, &[Value])> {
         | Conjunct::Any(_)
         | Conjunct::Dynamic { .. }
         | Conjunct::Spans { .. }
+        | Conjunct::Among { .. }
         | Conjunct::Unpadded { .. }
         | Conjunct::Like { .. } => None,
     }

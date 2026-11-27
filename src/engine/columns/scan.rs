@@ -128,11 +128,14 @@ pub(super) fn both(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
 /// each, whose values may match: by their least and greatest values, or,
 /// for IS NULL and IS NOT NULL, their nulls; of a conjunct of several
 /// columns, those of the parts of each that it may match with the others'
-/// values anywhere in the group (RULES.md D511); of a LIKE, every row.
+/// values anywhere in the group (RULES.md D511); of a LIKE and of a
+/// join's keys, every row.
 fn kept_by(group: &Group, condition: &Conjunct) -> Result<Vec<(u32, u32)>> {
     // A LIKE passes over no part and reads no zone to say so, as the
-    // bounds of its prefix, told beside it, do that (RULES.md D1251).
-    if matches!(condition, Conjunct::Like { .. }) {
+    // bounds of its prefix, told beside it, do that (RULES.md D1251); nor
+    // do a join's keys, whose range and spans are told beside them
+    // (RULES.md D1294).
+    if matches!(condition, Conjunct::Like { .. } | Conjunct::Among { .. }) {
         return Ok(vec![(0, group.rows)]);
     }
     let columns = condition.columns();
@@ -179,6 +182,7 @@ fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Ve
             | Conjunct::Any(_)
             | Conjunct::Dynamic { .. }
             | Conjunct::Spans { .. }
+            | Conjunct::Among { .. }
             | Conjunct::Unpadded { .. }
             | Conjunct::Like { .. } => condition.may_match(&bounds),
         };
