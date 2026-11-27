@@ -40,3 +40,26 @@ fn a_top_bound_is_told_its_scan_where_its_rows_are_the_scans() {
     assert_eq!(told_column(&Deferred::all(4)), None, "read whole");
     assert!(!Deferred::all(0).any());
 }
+
+/// Verifies: [DESIGN] (RULES.md D1221) a reader that finds its rows by a
+/// key asks for them in any order only where it says so, the filters it
+/// tells kept beside, and a projection of columns asks the same of its
+/// input; what a filter, a projection that computes, runtime filters
+/// judged, a top-N or a join's left operand asks of its own input is in
+/// order again.
+#[test]
+fn any_order_is_asked_of_the_readers_operand_and_under_its_columns() {
+    assert!(!Deferred::all(3).any_order() && !Deferred::default().any_order());
+    assert!(!Deferred::all(3).in_any_order(false).any_order());
+    let asked = Deferred::all(3).in_any_order(true);
+    assert!(asked.any_order());
+    assert!(asked.clone().with_told(Vec::new()).any_order(), "the filters told beside it");
+    let cond = Cond::IsNull(Expr::Column(0), false);
+    assert!(!asked.filtered(&cond).any_order(), "a filter's input");
+    assert!(asked.projected(&[Expr::Column(1), Expr::Column(0)]).any_order(), "the input of a projection of columns");
+    assert!(!Deferred::all(3).projected(&[Expr::Column(1)]).any_order(), "which asks no more than it was asked");
+    assert!(!asked.projected(&[Expr::Neg(Box::new(Expr::Column(1)))]).any_order(), "a computed projection's input");
+    assert!(!asked.judged(&[0]).any_order(), "under runtime filters");
+    assert!(!asked.topped(&[0], None).any_order(), "a top-N's input");
+    assert!(!asked.left_of(&[JoinKey { left: 0, right: 0, nulls: false }], 3).any_order(), "a join's left operand");
+}

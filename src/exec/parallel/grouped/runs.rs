@@ -13,6 +13,10 @@
 //! them, with the runs read back from the spill (RULES.md D1226). A run
 //! read to its end gives back what it held. A partition whose groups go
 //! to the spill gives them there as rows.
+//!
+//! \[DESIGN\] (RULES.md D1221) A parent that finds the groups by a key no
+//! two of them share is given the partitions' batches as they are, one
+//! after another, as no row it gives shows the order they came in.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -133,21 +137,25 @@ impl Iterator for Ordered {
     }
 }
 
-/// \[DESIGN\] (RULES.md D1220) The groups of `held` and `given`, a
-/// grouping's partitions', as batches of the columns `columns`, in the
-/// order of their first rows, the grant `limit` held while they are read:
-/// of runs of batches alone, made of those batches (`Merged`); of any
-/// other, of their rows gathered.
+/// \[DESIGN\] (RULES.md D1220, D1221) The groups of `held` and `given`,
+/// a grouping's partitions', as batches of the columns `columns`, the
+/// grant `limit` held while they are read. Runs of batches alone give
+/// batches made of those (`Merged`) in the order of their first rows if
+/// `ordered`, else the runs' own batches, one after another (`Handed`).
+/// Any other runs give their rows gathered, in that order.
 ///
 /// # Errors
 ///
 /// As reading a run back fails.
-pub(super) fn batches((held, given): (Vec<Run>, Vec<Given>), columns: &[usize], limit: &Limit) -> Result<Batches> {
+pub(super) fn batches((held, given): (Vec<Run>, Vec<Given>), (columns, ordered): (&[usize], bool), limit: &Limit) -> Result<Batches> {
     if !given.is_empty() || held.iter().any(|run| matches!(run, Run::Rows(_))) {
         return Ok(gathered(limit.keeping(Box::new(Ordered::of(held, given)?)), columns));
     }
     let runs: Vec<(Batch, Vec<u64>)> =
         held.into_iter().filter_map(|run| if let Run::Columns(batch, firsts) = run { Some((batch, firsts)) } else { None }).collect();
+    if !ordered {
+        return Ok(Box::new(Handed { runs: runs.into_iter(), width: columns.len(), _held: limit.clone() }));
+    }
     let mut order = BinaryHeap::with_capacity(runs.len());
     for (at, (_, firsts)) in runs.iter().enumerate() {
         order.extend(firsts.first().map(|&first| Reverse((first, at))));
@@ -196,6 +204,28 @@ impl Iterator for Merged {
             rows = rows.saturating_add(1);
         }
         (rows > 0).then(|| Ok((Batch { columns: made.into_columns(), rows }, None)))
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1221) Runs of batches given as they are, each
+/// run's batch whole and one after another, to a parent no row of which
+/// shows their order. No group is moved and none is compared with
+/// another's. A run of no group gives no batch.
+struct Handed {
+    runs: std::vec::IntoIter<(Batch, Vec<u64>)>,
+    /// The columns of a group's row, the first of a run's batch.
+    width: usize,
+    /// The grant the runs are held in.
+    _held: Limit,
+}
+
+impl Iterator for Handed {
+    type Item = Result<Kept>;
+
+    fn next(&mut self) -> Option<Result<Kept>> {
+        let (mut batch, _) = self.runs.find(|(batch, _)| batch.rows > 0)?;
+        batch.columns.truncate(self.width);
+        Some(Ok((batch, None)))
     }
 }
 

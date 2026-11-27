@@ -99,16 +99,17 @@ pub(super) fn part_layout(part: &Plan) -> Option<(Vec<usize>, usize)> {
 
 /// The batches of `part`, a part run in parallel that is a grouping, or
 /// a filter over one (`part_layout`): its groups, made by the part's
-/// threads, as batches.
+/// threads, as batches, in the order of their first rows if `ordered`,
+/// else in any (RULES.md D1221).
 ///
 /// # Errors
 ///
 /// As the part's rows; SQLCODE -910 of a part that gives no batches.
-pub(super) fn part_batches(part: Parallel, (db, tx): (&Db, TxId)) -> Result<Batches> {
+pub(super) fn part_batches(part: Parallel, (db, tx): (&Db, TxId), ordered: bool) -> Result<Batches> {
     let (columns, _) = part_layout(&part.input).ok_or_else(|| broken("a part run in parallel that gives no batches"))?;
     // Its partitions' groups as batches, no row made between (RULES.md
     // D1220); of a part that gives way, the rows of its plan run alone.
-    match crate::exec::parallel::grouped_batches(&part.input, (db, tx, part.degree), &[], &columns)? {
+    match crate::exec::parallel::grouped_batches(&part.input, (db, tx, part.degree), &[], (&columns, ordered))? {
         Held::Kept(batches) => Ok(batches),
         Held::GaveWay => Ok(gathered(execute(part.input, db, tx), &columns)),
     }

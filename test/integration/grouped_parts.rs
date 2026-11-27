@@ -12,7 +12,8 @@ use crate::common::{exec, rows};
 
 /// Tables C, of the column store in groups of 2048, and R, of the row
 /// store, alike: K, a key; G, one of 500, null for every 41st; N, a
-/// number, null for every 13th.
+/// number, null for every 13th. And D, of the column store, of as many
+/// rows: K, a key; A, one of 7; B, one of 5, so 35 pairs of them.
 fn tables() -> (Database, Session) {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
@@ -20,7 +21,8 @@ fn tables() -> (Database, Session) {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE C (K INTEGER PRIMARY KEY, G INTEGER, N INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)
-           CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, N INTEGER)",
+           CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, N INTEGER)
+           CREATE TABLE D (K INTEGER PRIMARY KEY, A INTEGER, B INTEGER) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
     )
     .unwrap();
     let a = db.session("A");
@@ -31,6 +33,8 @@ fn tables() -> (Database, Session) {
             .collect();
         a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
     }
+    let pairs: Vec<String> = (0_i64..7000).map(|k| format!("({k}, {}, {})", k % 7, k % 5)).collect();
+    a.run(&format!("INSERT INTO D VALUES {}", pairs.join(", "))).unwrap();
     a.commit().unwrap();
     db.maintain().unwrap();
     (db, a)
@@ -206,6 +210,43 @@ fn a_grouping_run_in_parallel_gives_its_tables_groups() {
     ] {
         let (alone, together, shown) = both(&a, sql);
         assert!(shown.contains("Parallel"), "{sql}\n{shown}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+}
+
+/// Whether `shown`, a plan, has a grouping that is a part run in
+/// parallel: the line after a `Parallel` line begins with `Aggregate`.
+fn grouped_part(shown: &str) -> bool {
+    let lines: Vec<&str> = shown.lines().map(str::trim_start).collect();
+    lines
+        .windows(2)
+        .any(|pair| pair.first().is_some_and(|l| l.starts_with("Parallel")) && pair.get(1).is_some_and(|l| l.starts_with("Aggregate")))
+}
+
+/// Verifies: [ISO/IEC 9075:1992 §7.5 GR1] (RULES.md D1221) a join that
+/// builds of a grouping run in parallel on keys holding every grouping
+/// column, which is handed the partitions' groups in any order, gives the
+/// rows the plan run alone gives, in its order: an inner join and a LEFT
+/// join of a derived table, whose projection lies between, a semi join
+/// on the key and a set function, and a grouping of two columns keyed by
+/// both. A join on one of two grouping columns finds several groups of a
+/// key and gives them in the order the plan run alone does, and so does
+/// a FULL join its unmatched groups.
+#[test]
+fn a_join_keyed_by_a_groupings_columns_gives_the_plans_rows() {
+    let (_db, a) = tables();
+    for sql in [
+        "SELECT C.K, X.G, X.S FROM C JOIN (SELECT G, SUM(N) AS S FROM C GROUP BY G) AS X ON X.G = C.K",
+        "SELECT R.K, X.G, X.S FROM R JOIN (SELECT G, SUM(N) AS S FROM R GROUP BY G) AS X ON X.G = R.K",
+        "SELECT C.K, X.S FROM C LEFT JOIN (SELECT G, COUNT(*) AS S FROM C GROUP BY G) AS X ON X.G = C.K",
+        "SELECT K, N FROM C WHERE (K, N) IN (SELECT G, MIN(N) FROM C GROUP BY G)",
+        "SELECT D.K, X.S FROM D JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.A = D.B AND X.B = D.A",
+        "SELECT D.K, X.B, X.S FROM D JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.A = D.B",
+        "SELECT C.K, X.G, X.S FROM C FULL JOIN (SELECT G, SUM(N) AS S FROM C GROUP BY G) AS X ON X.G = C.K + 6700",
+    ] {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(grouped_part(&shown) && !shown.contains("IndexNestedLoop"), "{sql}\n{shown}");
         assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
         assert_eq!(alone, together, "{sql}");
     }

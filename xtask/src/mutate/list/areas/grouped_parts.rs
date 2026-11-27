@@ -12,7 +12,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 25] = [
+pub const GROUPED_PARTS: [Mutation; 26] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -260,7 +260,17 @@ pub const GROUPED_PARTS: [Mutation; 25] = [
         file: "src/exec/parallel/grouped/runs.rs",
         original: "self.order.extend(firsts.get(*next).map(|&first| Reverse((first, at))));",
         replacement: "self.order.extend(firsts.get(*next).map(|_| Reverse((0, at))));",
-        integration: &["grouped_parts::a_grouping_run_in_parallel_gives_its_tables_groups"],
+        integration: &["grouped_parts::a_join_keyed_by_a_groupings_columns_gives_the_plans_rows"],
         unit: &["exec::parallel::grouped::runs::tests::runs_of_batches_are_given_as_batches_in_one_order"],
+    },
+    Mutation {
+        name: "groups-in-any-order-keyed-by-some",
+        package: Package::Core,
+        breaks: "a join keyed by some of a grouping's columns, which finds several groups of a key, is handed them in any order (RULES.md D1221)",
+        file: "src/exec/batch/parted.rs",
+        original: "(0..groups.len()).all(|column| keyed.contains(&column))",
+        replacement: "(0..groups.len()).any(|column| keyed.contains(&column))",
+        integration: &["grouped_parts::a_join_keyed_by_a_groupings_columns_gives_the_plans_rows"],
+        unit: &["exec::batch::parted::tests::keys_holding_every_grouping_column_find_one_group"],
     },
 ];

@@ -89,12 +89,37 @@ fn runs_of_batches_are_given_as_batches_in_one_order() {
         )
     };
     let expected: Vec<String> = (0_i64..6000).map(|n| format!("{:?}", exact(n))).collect();
-    let (given, sizes, typed) = numbers(batches((vec![stepped(1, 3000), stepped(0, 3000)], Vec::new()), &[0], &limit()).unwrap());
+    let (given, sizes, typed) = numbers(batches((vec![stepped(1, 3000), stepped(0, 3000)], Vec::new()), (&[0], true), &limit()).unwrap());
     assert_eq!(given, expected);
     assert_eq!(sizes, [BATCH_ROWS, BATCH_ROWS, 6000_usize.saturating_sub(BATCH_ROWS.saturating_mul(2))]);
     assert!(typed, "integers stay a vector of integers");
     let rows = Run::Rows((0_i64..6000).step_by(2).map(|n| (u64::try_from(n).unwrap(), vec![exact(n)])).collect());
-    let (mixed, _, _) = numbers(batches((vec![stepped(1, 3000), rows], Vec::new()), &[0], &limit()).unwrap());
+    let (mixed, _, _) = numbers(batches((vec![stepped(1, 3000), rows], Vec::new()), (&[0], true), &limit()).unwrap());
     assert_eq!(mixed, expected);
-    assert_eq!(numbers(batches((Vec::new(), Vec::new()), &[0], &limit()).unwrap()).0, Vec::<String>::new());
+    assert_eq!(numbers(batches((Vec::new(), Vec::new()), (&[0], true), &limit()).unwrap()).0, Vec::<String>::new());
+}
+
+/// Verifies: [DESIGN] (RULES.md D1221) runs of batches asked for in any
+/// order are given as they are, each run's batch whole and one after
+/// another, a run of no group giving none, in vectors of the columns'
+/// types; and runs with rows among them are given in the order of their
+/// first rows, gathered, whatever order is asked.
+#[test]
+fn runs_asked_in_any_order_are_handed_over_as_they_are() {
+    let numbers = |batches: Batches| -> Vec<Vec<String>> {
+        batches.map(|kept| kept.unwrap().0).map(|batch| batch.values(0).iter().map(|v| format!("{v:?}")).collect()).collect()
+    };
+    let of = |from: i64, count: i64| -> Vec<String> {
+        (0..count).map(|n| format!("{:?}", exact(from.saturating_add(n.saturating_mul(2))))).collect()
+    };
+    let handed = batches((vec![stepped(1, 3000), stepped(0, 0), stepped(0, 3000)], Vec::new()), (&[0], false), &limit()).unwrap();
+    let handed: Vec<Batch> = handed.map(|kept| kept.unwrap().0).collect();
+    assert!(handed.iter().all(|batch| matches!(batch.columns.first(), Some(Column::Ints(_)))), "integers stay a vector of integers");
+    assert_eq!(handed.iter().map(|batch| batch.rows).collect::<Vec<_>>(), [3000, 3000], "each run whole, the empty one left out");
+    let given = numbers(Box::new(handed.into_iter().map(|batch| Ok((batch, None)))));
+    assert_eq!(given, [of(1, 3000), of(0, 3000)], "one run after another, no group moved");
+    let rows = Run::Rows((0_i64..6000).step_by(2).map(|n| (u64::try_from(n).unwrap(), vec![exact(n)])).collect());
+    let mixed: Vec<String> = numbers(batches((vec![stepped(1, 3000), rows], Vec::new()), (&[0], false), &limit()).unwrap()).concat();
+    assert_eq!(mixed, (0_i64..6000).map(|n| format!("{:?}", exact(n))).collect::<Vec<_>>(), "rows among them, in order");
+    assert_eq!(numbers(batches((Vec::new(), Vec::new()), (&[0], false), &limit()).unwrap()), Vec::<Vec<String>>::new());
 }

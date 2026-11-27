@@ -778,6 +778,7 @@ verification approach DO-178C expects (§8).
 | D1216 | SUM of a value and a constant is computed from the value's sum and count, shared among such sums |
 | D1218 | A sort that reads its input whole passes it no row goal |
 | D1220 | A parent that reads by batch takes a parallel grouping's groups as batches made of its partitions' own |
+| D1221 | A join that builds of a grouping on keys holding every grouping column is handed its partitions' groups in any order |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1227 | A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read |
@@ -21538,6 +21539,52 @@ result is unchanged. A grouping any of whose partitions gives rows, one
 under a HAVING condition or a pair among them (D1125), or reads a run
 back from the spill (D1226), gives its rows gathered as before. A part
 that gives way is grouped alone and its rows gathered.
+
+#### D1221. A join that builds of a grouping on keys holding every grouping column is handed its partitions' groups in any order
+
+A grouping run in parallel gives its groups in the order of their first
+rows, as the plan run alone does, whatever partition made each. A parent
+that reads by batch was given them so too (D1220). The statement's
+thread took the partitions' groups one at a time, the earliest first row
+next, and put each into a new batch. Of a grouping of very many groups
+that was one thread's work on every group, done after the part's threads
+had finished.
+
+A hash join that builds of the grouping keeps no order of what it
+builds. It finds the built rows by their keys. Where the join's keys
+hold every grouping column, no two groups share a key, so a probing row
+finds one group at most, and the order the groups were built in shows in
+no row the join gives. Such a join now asks the grouping for its groups
+in any order (`exec/batch/parted.rs`, `keyed_whole`), and the grouping
+hands it each partition's batch as it is, one after another
+(`exec/parallel/grouped/runs.rs`, `Handed`). No group is compared with
+another's first row and none is copied to a batch between.
+
+The joins that ask are those that give a built row only when a key
+found it. They are an inner join, a LEFT join that probes, and a semi
+join, read alone (`exec/batch/joined/held.rs`, `read_keyed`) or as a
+step of a pipeline run in parallel (`exec/parallel/probe.rs`). A RIGHT
+or FULL join gives its unmatched built rows in the order built, and a
+product pairs them in it, so they read the groups in order as before.
+
+The request is kept narrow, so that no result's order can differ from
+the plan's run alone.
+
+- Every grouping column must be a key's right column. A join on some of
+  them finds several groups of a key and gives them in the order built.
+- Every grouping column must be grouped by the default collation. Two
+  strings are then one group exactly where the join finds them equal
+  [X3.135-1986 §5.11 GR5]. A column grouped by another collation may
+  make two groups of strings one key matches.
+- The operand must be the grouping itself, or projections of columns
+  over it, which give a row of each group in the order they are given
+  it. A key's column is then the grouping's column the projection
+  names. What a filter, a projection that computes a value or another
+  join asks of its own input is in order again (`exec/batch/late.rs`,
+  `Deferred`).
+- A DISTINCT, a grouping under a HAVING condition, a pair of groupings,
+  and one any of whose partitions gives rows or reads a run back from
+  the spill (D1125, D1226) give their groups in order as before.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 

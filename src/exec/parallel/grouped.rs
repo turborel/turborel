@@ -297,10 +297,10 @@ pub(super) fn grouped_asked(
     Ok(Held::Kept(done.limit.keeping(rows)))
 }
 
-/// \[DESIGN\] (RULES.md D1220) As `grouped_told`, the groups given as
-/// batches of the columns `columns`, every column of a group's row, in
-/// the order of their first rows: of partitions that give their tables'
-/// groups as batches, made of those with no row between (`runs.rs`).
+/// \[DESIGN\] (RULES.md D1220, D1221) As `grouped_told`, the groups given
+/// as batches of the columns `columns`, every column of a group's row, in
+/// the order of their first rows if `ordered`, else in any. Partitions
+/// that give their tables' groups as batches give these (`runs.rs`).
 ///
 /// # Errors
 ///
@@ -309,10 +309,10 @@ pub(in crate::exec) fn grouped_batches(
     plan: &Plan,
     (db, tx, degree): (&Db, TxId, usize),
     told: &[Told],
-    columns: &[usize],
+    (columns, ordered): (&[usize], bool),
 ) -> Result<Held<Batches>> {
     let Held::Kept(done) = finished_runs(plan, (db, tx, degree), told, None)? else { return Ok(Held::GaveWay) };
-    runs::batches((done.runs, done.given), columns, &done.limit).map(Held::Kept)
+    runs::batches((done.runs, done.given), (columns, ordered), &done.limit).map(Held::Kept)
 }
 
 /// A grouping's partitions finished: the grouping, each partition's
