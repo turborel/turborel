@@ -160,3 +160,60 @@ fn ctrl_c_cancels_the_statement_running() {
     std::io::Read::read_to_string(&mut out, &mut rest).unwrap();
     assert_eq!(rest, "", "the run ended there");
 }
+
+/// Verifies: [DESIGN] RULES.md D46, D1148: Ctrl-C (SIGINT) during an import
+/// over several connections cancels every job, not the first connection
+/// alone: the import stops short of the file's rows, told once, and the
+/// run fails.
+#[cfg(unix)]
+#[test]
+fn ctrl_c_cancels_each_job_of_an_import() {
+    use std::fmt::Write as _;
+    use std::time::{Duration, Instant};
+    let db = Database::new();
+    db.schema("CREATE SCHEMA AUTHORIZATION X CREATE TABLE T (K INTEGER)").unwrap();
+    let server = start(&db, &[]);
+    let scratch = turborel_test_support::Scratch::new("cli-jobs-ctrl-c");
+    let path = scratch.path("rows.csv");
+    // A row committed at a time: too many to import before Ctrl-C.
+    let all = 300_000_u32;
+    let text = (1..=all).fold(String::new(), |mut text, k| {
+        writeln!(text, "{k}").unwrap();
+        text
+    });
+    std::fs::write(&path, text).unwrap();
+    let port = server.address.port().to_string();
+    let file = path.display().to_string();
+    let args = ["-p", &port, "-U", "X", "--import", &file, "--table", "T", "--batch", "1", "--jobs", "3"];
+    let mut child = Command::new(env!("CARGO_BIN_EXE_turborel"))
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // A session of its own each time, so each sees what is committed.
+    let count = || {
+        let session = db.session("X");
+        let mut counted = session.open_cursor("SELECT COUNT(*) FROM T").unwrap();
+        counted.fetch().unwrap().unwrap().iter().map(ToString::to_string).collect::<String>()
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while count() == "0" {
+        assert!(Instant::now() < deadline, "no row imported");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let status = loop {
+        assert!(Command::new("kill").args(["-INT", &child.id().to_string()]).status().unwrap().success());
+        std::thread::sleep(Duration::from_millis(200));
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "not cancelled");
+    };
+    assert_eq!(status.code(), Some(1));
+    let mut err = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut err).unwrap();
+    assert_eq!(err.lines().count(), 1, "told once: {err}");
+    assert!(err.starts_with(&format!("turborel: {file}: ")) && (err.contains("-920") || err.contains("Ctrl-C")), "{err}");
+    assert_ne!(count(), all.to_string(), "every job stopped");
+}

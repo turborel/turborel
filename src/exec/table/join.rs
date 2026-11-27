@@ -160,9 +160,9 @@ impl JoinTable {
         direct::Dense::of(numbers, misses).map(|dense| JoinTable { dense: Some(Box::new(dense)), ..JoinTable::default() })
     }
 
-    /// The table of the rows of one key column, `place` of `batch`, of
-    /// whole numbers dense in their span, direct; none of another, so it
-    /// is hashed (RULES.md D601).
+    /// The table of the rows of one key column, the one of `places` of
+    /// `batch`, of whole numbers dense in their span, direct; none of
+    /// another, so it is hashed (RULES.md D601).
     ///
     /// # Errors
     ///

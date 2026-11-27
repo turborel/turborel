@@ -650,7 +650,7 @@ verification approach DO-178C expects (§8).
 | D1009 | A breakpoint's condition is evaluated by the debugger's session over the paused frame's values |
 | D1010 | Detaching, dropping the debugger and the target's end let the target go on; a cancel ends the pause |
 | D1011 | A pause ends by itself after DEBUGGER.PAUSE_TIMEOUT_MS, a database setting |
-| D1012 | The stack is one thread's: a function run on another thread is not debugged |
+| D1012 | The stack is one thread's, and a function run on another thread is not debugged |
 | D1013 | A debugger's request its target's state refuses fails with SQLSTATE TBD01 |
 | D1014 | Each statement of a plain triggered action pauses as a frame of its trigger of its own |
 | D1015 | A statement first looks at how many debuggers the process has attached, a static |
@@ -689,7 +689,7 @@ verification approach DO-178C expects (§8).
 | D1075 | A hashed semi join's or antijoin's probe is a step of its left operand's pipeline |
 | D1076 | A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline |
 | D1077 | NOT IN of columns that hold no null is an antijoin hashed on their equality |
-| D1080 | A hash join's operand read by its morsels is joined, hashed, placed in its table and summed up in its filters by those threads, the table in parts of the hashes' high bits |
+| D1080 | A hash join's operand read by its morsels is put together by those threads, its table in parts of the hashes' high bits |
 | D1081 | A pipeline run in parallel carries the probing table's unread columns late across a hash join's probe |
 | D1082 | A grouping by a deterministic expression has no more groups than the columns it reads take values together |
 | D1083 | A parallel probe holds its pairs as row numbers gathered on the kernels, and pairs a key of one column of integers in its units |
@@ -777,8 +777,13 @@ verification approach DO-178C expects (§8).
 | D1205 | The unique index of a deferrable constraint is no key to the estimates |
 | D1206 | An inner hash join hashes one equality a column, the others of that column judged of the matched rows or, where the operand's joins imply them, not at all |
 | D1215 | A FETCH FIRST with no ORDER BY over a grouping asks it for that many groups, and the grouping makes no more |
+| D1216 | SUM of a value and a constant is computed from the value's sum and count, shared among such sums |
+| D1218 | A sort that reads its input whole passes it no row goal |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
+| D1227 | A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read |
+| D1228 | A second grouping crossing the first's partitions holds its groups of a grant of its own and spills them by key past it |
+| D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 
 ### The project
@@ -16154,6 +16159,7 @@ own that the thread holds as well, so no table made later can have the
 same one. Whether a transaction has ended in a table is a flag beside
 the bookkeeping's lock (`opens.rs`, `Opened`), set as the map lets it go
 and read with no lock by whatever still holds it, a thread or a `Near`.
+
 Bookkeeping of ended transactions goes from the thread as it next keeps
 one. Until then the thread holds it, so a transaction's end leaves it
 holding nothing a database at rest must not keep. A commit takes its
@@ -16368,16 +16374,16 @@ projection. A plan is kept for one generation of the definitions, so
 what it keeps of them stays true. Each read borrows the table, the index
 and the counts from the snapshot and holds none. An entry found by an
 exact key has that key, so the row is checked against the probe's values
-in place of the entry's key decoded. A covering read of a row every
-reader sees still decodes the key, as its values are the row given. A
-read that gives columns of its row, is not covering and gives no row id
-reads the values of the columns it reads alone
-(`TableStorage::get_listed`, D862) into a row kept with its plan, with
-no row of the table's width made. What its table keeps from read to
-read (`storage::Near`) is kept with the plan too, taken by one
-execution at a time. A
-row gone for every reader has its entry taken back as before (D837),
-its key decoded only then.
+in place of the entry's key decoded.
+
+A covering read of a row every reader sees still decodes the key, as its
+values are the row given. A read that gives columns of its row, is not
+covering and gives no row id reads the values of the columns it reads
+alone (`TableStorage::get_listed`, D862) into a row kept with its plan,
+with no row of the table's width made. What its table keeps from read to
+read (`storage::Near`) is kept with the plan too, taken by one execution
+at a time. A row gone for every reader has its entry taken back as
+before (D837), its key decoded only then.
 
 The read is told to the table as before, by the condition of the
 key's columns and the probe (`TableStorage::read_by_condition`). The
@@ -16927,7 +16933,7 @@ job a second later, once until its pass begins. The pass collects every
 table awaiting as far as the horizon lets, due or not, waiting for a
 collection under way, and then does the maintenance noted. A run of the
 job before the second is up, as for maintenance a commit noted, makes
-no pass: commits of a busy table note maintenance nearly every time, and
+no pass. Commits of a busy table note maintenance nearly every time, and
 a pass with each run would be a collection at every commit again, on the
 job's thread.
 `Database::maintain` does the same at once. Under JOBS.POLICY MANUAL the
@@ -16939,10 +16945,10 @@ chose for a busy table. A sweep of it on the in-repo order entry bench
 at one session, over 1, 4, 16, 64, 256 and 1024 commits, counted the
 allocations a commit makes, which no load on the machine moves. They
 fall from 1 to 4 to 16 to 64 and are level from there, and a commit's
-time follows them within the spread of the runs, about a sixth under a
-collection at each end. A larger batch saves nothing more and holds more
-versions, so the bound stays the one rule for quiet and busy tables. The
-sweep's figures are in the commit that made the change.
+time follows them within the spread of the runs. A larger batch saves
+nothing more and holds more versions, so the bound stays the one rule
+for quiet and busy tables. The sweep's figures are in the commit that
+made the change.
 
 The semantics hold for these reasons.
 
@@ -16965,8 +16971,7 @@ The semantics hold for these reasons.
 A commit wrote its records to the log's segment with one positional
 write (D470, D882), whether or not it then waited for a sync. With
 LOG.COMMIT_SYNC OFF that write was the one call into the system a commit
-made, about a seventh of it, and many sessions' writes took the file's
-lock in turn.
+made, and many sessions' writes took the file's lock in turn.
 
 The database's file log now writes its segments through a buffer
 (`log/file/buffered.rs`, `FileLogOptions::buffer`, 64 KiB). An append
@@ -16989,7 +16994,7 @@ buffer at each sync asked of it. Under LOG.SYNC_AFTER_MS 0 the log sync
 job is asked for a second after a commit left unsynced and only has the
 log write its buffer.
 
-What a failure may lose is what LOG.COMMIT_SYNC OFF promised before: a
+What a failure may lose is what LOG.COMMIT_SYNC OFF promised before. A
 commit that did not wait is lost by a failure before the log's next
 sync, with every commit after it, so recovery finds a prefix of the
 commits (D25). The log's next sync comes within LOG.SYNC_AFTER_MS as
@@ -17022,7 +17027,7 @@ itself are not buffered. Their options leave the buffer at 0.
 
 The buffer is 64 KiB. A sweep on the in-repo order entry bench at one
 session, of none, 4, 16, 64 and 256 KiB, showed no difference between
-the sizes beyond the spread of the runs, and little against none: at one
+the sizes beyond the spread of the runs, and little against none. At one
 session a commit's write of its own is a small write over zeros already
 there. What the buffer takes away is that write from each commit, and
 with it the file's lock each session's commit took in turn. 64 KiB
@@ -17055,7 +17060,7 @@ The table's storage, lock, seal and indexes were found again for each
 row, the column types were copied for each table, the row replaced was
 read whole a second time by the write, each index's key was compared
 between the two versions, and the log record was made from both rows
-whole. On the order entry bench it was a third of a payment's commit.
+whole.
 
 The application now finds what a table's writes need once
 (`State::writing`), tells it the columns the increments add to
@@ -17096,7 +17101,7 @@ Leaving the stamps to the first reader or to collection was weighed and
 not done. The statuses of a store's transactions (D440) already let a
 reader resolve a version left unstamped, and a slot is taken again only
 once every table of its commit is stamped, so readers would be safe. A
-checkpoint is not: its image must hold stamps, since recovery resolves
+checkpoint is not. Its image must hold stamps, since recovery resolves
 an unstamped version by the log, and redoes only commits whose records
 lie after the checkpoint (`db/recovery.rs`). Stamps left to collection
 would have every checkpoint stamp each table's backlog with the gate
@@ -17114,8 +17119,7 @@ A commit that found a table's batch due collected it (D451, D920). The
 fixed costs of a collection were then paid once a batch, but the work a
 version takes, its undo slot released, its values freed, its index
 entries and its deleted row taken out of their trees, was still the
-committer's, before its reply: on the order entry bench at one session a
-quarter of a new order's commit.
+committer's, before its reply.
 
 The end of a transaction that finds a batch due now leaves the table
 noted and asks for the maintenance job at once, whose pass collects
@@ -17135,7 +17139,7 @@ bounding the versions held to five batches.
 
 The work is not less. It is the job's thread's, not the committer's, so
 a commit is shorter and the database uses more of a second processor
-while commits come. The semantics hold as D920's do: the horizon rule
+while commits come. The semantics hold as D920's do. The horizon rule
 is unchanged, and a collection only comes at another moment.
 
 #### D926. A database following takes back the entries its image's checkpoint saw awaiting collection as it replays them, and notes what a replay leaves
@@ -17453,8 +17457,10 @@ prefix and count, bounds the slots by the header's hints (D847), and
 compares heads before tails, as `Node::search` does, with no node
 built. A key found in a leaf of its tree that is in the tree, not
 marked taken out, is the key's entry, with no check of the leaf's
-range. A split and a merge move keys only right (D814), and write the
-leaf they move them to before they take them from the first, under the
+range.
+
+A split and a merge move keys only right (D814), and write the leaf
+they move them to before they take them from the first, under the
 first's latch, so a key in two leaves at once has one value in both,
 and a key found in any leaf of the tree is found where a descent would
 find it. A key not found in a leaf noted or remembered says nothing, as
@@ -17495,7 +17501,7 @@ moment before, as it would had it read a moment earlier.
 
 A descent read each inner node from the thread's copy of it (D807), but
 parsed the copy's header into a node, searched it through fallible
-steps, and counted its holders, about a fifth of a fetch's time. A read
+steps, and counted its holders, at each level of each fetch. A read
 by key and a probe from a key now first walk the copies alone
 (`BLinkTree::leaf_by_copies`). Each level's copy must be current, be an
 inner node of the tree not taken out whose range holds the key, and be
@@ -17542,13 +17548,11 @@ the check reads the whole of it, the string and the zeros past it. The
 zeros are UTF-8, so the array is UTF-8 exactly when the string is, and
 the string is then cut at its length, which ends a character. Aligning
 the array leaves it 32 octets of the 40, where an unaligned one would
-have 38. Measured over strings of 2 to 38 ASCII octets, on the build
-server, a `String` lends its text in 0.9 ns, an unaligned array of 38
-checked to its length in 9 to 16 ns, an aligned array of 32 checked to
-its length in 4 to 8 ns, and an aligned array of 32 checked whole in
-3.3 ns whatever the length. Twelve characters of two octets take 25 to
-37 ns in any of them. The octets of either form are read with no check
-in 1.5 ns. The aligned array of 32 was chosen. In the order entry
+have 38. Measured over strings of 2 to 38 ASCII octets, an aligned
+array of 32 checked whole costs the same whatever the length, and less
+than either array checked to its length. Characters of two octets cost
+the same in each form, and the octets of either form read with no check
+cost least. The aligned array of 32 was chosen. In the order entry
 load every string fits it but the data of customers and about seven in
 ten of the data of stock and of items.
 
@@ -17685,20 +17689,21 @@ row.
 `Connection::export_with` writes rows by a `Layout`: `Delimited` for CSV
 and tab-separated text, `Native` for the protocol's frames, or the
 program's own. It prepares the query. A query whose columns may hold a
-large object, one of a large object type or of a composite type of
-one, a structured type or an extension's, opens its cursor and fetches
-256 rows at a time within the transaction. That is a reply's longest
-body over the longest value sent whole, so a batch held while its large
+large object, one of a large object type or of a composite type of one,
+a structured type or an extension's, opens its cursor and fetches 256
+rows at a time within the transaction. That is a reply's longest body
+over the longest value sent whole, so a batch held while its large
 objects are read is at most a reply's body for each such column. Each
-batch is written before the next is fetched. A large object a column
-holds is read a chunk at a time as it is written, its locator freed once
-read, so the server holds no more than a batch's. One within a row, an
-array, a multiset or a structured value is read whole, as its value's
-text needs it all. A query whose columns hold none is executed once and
-its Rows replies written as they come, as before. Under autocommit, a
-transaction the export began is committed once its last large object is
-read, or rolled back if the export failed. A failed write closes the
-cursor and leaves the connection of use.
+batch is written before the next is fetched.
+
+A large object a column holds is read a chunk at a time as it is
+written, its locator freed once read, so the server holds no more than a
+batch's. One within a row, an array, a multiset or a structured value is
+read whole, as its value's text needs it all. A query whose columns hold
+none is executed once and its Rows replies written as they come, as
+before. Under autocommit, a transaction the export began is committed
+once its last large object is read, or rolled back if the export failed.
+A failed write closes the cursor and leaves the connection of use.
 
 In delimited text a CLOB or NCLOB is written as its text, and a BLOB, as
 every binary string, as its octets in upper case hexits, two to each,
@@ -17740,14 +17745,15 @@ position, and `inputs` gives the types of those an execution takes
 values for, which callers that pass values use. Of a CALL of an
 SQL-invoked procedure each `?` an argument simply contains has the mode
 and the position of that argument's parameter, and `procedure` gives
-the procedure's specific name [ISO/IEC 9075-2:2023 §20.10 GR7e]. The
-parser keeps, of each argument, the numbers of the `?`s read within it,
-so several of an IN argument's expression each take that parameter's,
-and named arguments keep the order they are written in. A `?` of any
-other statement is IN, of no position, and so is one of a procedure
-written in Rust, which has no specific name. DESCRIBE INPUT and
-DESCRIBE OUTPUT set PARAMETER_MODE to Table 33's code, 1 IN, 2 INOUT
-and 4 OUT, PARAMETER_ORDINAL_POSITION, and the three
+the procedure's specific name [ISO/IEC 9075-2:2023 §20.10 GR7e].
+
+The parser keeps, of each argument, the numbers of the `?`s read within
+it, so several of an IN argument's expression each take that
+parameter's, and named arguments keep the order they are written in. A
+`?` of any other statement is IN, of no position, and so is one of a
+procedure written in Rust, which has no specific name. DESCRIBE INPUT
+and DESCRIBE OUTPUT set PARAMETER_MODE to Table 33's code, 1 IN, 2
+INOUT and 4 OUT, PARAMETER_ORDINAL_POSITION, and the three
 PARAMETER_SPECIFIC items, of each top-level item of a CALL, and SET
 DESCRIPTOR sets none of them [§20.5 SR3a]. A parameter left to its
 default value holds no `?` (D979).
@@ -17773,27 +17779,28 @@ client's `parameters` gives the modes told, else the inputs, each IN.
 A `<parameter default>` of a procedure's IN or INOUT parameter (Features
 T522 and T523) is read, a value expression or NULL, with no host or
 dynamic parameter [ISO/IEC 9075-2:2023 §11.60 SR19], and an OUT
-parameter's is refused [SR16e ii]. The routine descriptor keeps its
-text as written [GR3c vi], logged and checkpointed with the rest, and
+parameter's is refused [SR16e ii]. The routine descriptor keeps its text
+as written [GR3c vi], logged and checkpointed with the rest, and
 PARAMETERS shows it as PARAMETER_DEFAULT, a last column, as the 2006
 draft's view has none. It is bound as the body is, under the owner of
-the procedure's schema, in a scope of the routine's path and horizon
-and of no parameter, its type one the parameter's takes by store
-assignment [SR16e i]. The tables, columns and routines it names join
-the body's, after the body's SQL-data access is checked, so a drop of
-one is refused without CASCADE [§11.23 SR7d, §11.31 SR7f, §11.62 SR4c
-ii]. A CALL's candidates are the procedures of the name with at least
-as many parameters as arguments, each parameter past those written, or
-named by none, of a default [§9.18 SR9b, SR9d], and of those of the
-schema first in the path the one of fewest parameters is invoked
-[SR9e to SR9g]. Such a parameter, and one given DEFAULT, takes its
-default, bound again from the kept text as at definition and evaluated
-in the row of the CALL's arguments, so the compiled and the direct
-paths take it as any argument; with no default it is null [GR3b ii]. An
-INOUT parameter given DEFAULT has no target, so its value out goes
-nowhere [SR9h iii 2]. NULL of an IN parameter is the null value, as it
-is of a procedure written in Rust, whose parameters have no default. A
-function's default stays refused, SQLCODE -900 (T525).
+the procedure's schema, in a scope of the routine's path and horizon and
+of no parameter, its type one the parameter's takes by store assignment
+[SR16e i]. The tables, columns and routines it names join the body's,
+after the body's SQL-data access is checked, so a drop of one is refused
+without CASCADE [§11.23 SR7d, §11.31 SR7f, §11.62 SR4c ii].
+
+A CALL's candidates are the procedures of the name with at least as many
+parameters as arguments, each parameter past those written, or named by
+none, of a default [§9.18 SR9b, SR9d], and of those of the schema first
+in the path the one of fewest parameters is invoked [SR9e to SR9g]. Such
+a parameter, and one given DEFAULT, takes its default, bound again from
+the kept text as at definition and evaluated in the row of the CALL's
+arguments, so the compiled and the direct paths take it as any argument;
+with no default it is null [GR3b ii]. An INOUT parameter given DEFAULT
+has no target, so its value out goes nowhere [SR9h iii 2]. NULL of an IN
+parameter is the null value, as it is of a procedure written in Rust,
+whose parameters have no default. A function's default stays refused,
+SQLCODE -900 (T525).
 
 ### Plans
 
@@ -17809,6 +17816,7 @@ it, then described as EXPLAIN ANALYZE describes it (D622,
 `db/explain/unrun.rs`). The text is that of EXPLAIN ANALYZE without
 what ran: a line naming the statement and its table, the plan below
 it, and lines that say what the change would do beside (D983, D984).
+
 A row of values that reads nothing has no plan, as it is evaluated
 (D419), so its INSERT shows the head line alone. A positioned change
 shows its cursor's row in place of a plan, its cursor declared, open
@@ -18007,7 +18015,7 @@ A `Session` is of one thread; another may hold only its `Stop`, as a
 server does to cancel its statements. So a debugger and its target share
 a link (`debugger::Link`) hung on the target's Stop (`stop/debugged.rs`):
 an atomic flag, and behind a lock the link itself. Each statement a
-program runs looks at the flag first (`Run::debugged`): with none
+program runs looks at the flag first (`Run::debugged`). With none
 attached that is one relaxed load and one branch, and nothing else is
 made. Attached, the run pushes a frame on the link's stack as its first
 statement is looked at, and pops it as it ends.
@@ -18016,7 +18024,7 @@ statement is looked at, and pops it as it ends.
 
 Compiled procedures (D841) and the straight CALL of a prepared one run
 their bodies with no step to pause at. A session with a debugger
-attached runs them interpreted: `compiled_procedures` and `call_direct`
+attached runs them interpreted. `compiled_procedures` and `call_direct`
 each look at the same flag first, and the interpreted path gives the
 same results (D841), so only the time differs. Detached, the next call
 runs compiled again.
@@ -18072,7 +18080,7 @@ minutes, is long enough to read a frame and short enough that no lock is
 held for long. It is the database's setting, not a session's, so the
 session paused cannot lengthen it; 0 goes on at once.
 
-#### D1012. The stack is one thread's: a function run on another thread is not debugged
+#### D1012. The stack is one thread's, and a function run on another thread is not debugged
 
 A function a parallel query evaluates may run on a worker thread of its
 own, with no frame beneath it and no way to stop its siblings. The link
@@ -18115,7 +18123,7 @@ invocation what it never paid before. So the process counts the
 debuggers attached (`stop/debugged.rs`, `ATTACHED`), raised as one
 attaches and lowered as it detaches or its target ends, and a statement,
 a CALL and a triggered action's statement look at that static first, one
-relaxed load: with none attached, no host is asked, no session's state
+relaxed load. With none attached, no host is asked, no session's state
 is reached and nothing is made. Only while one is anywhere does a
 statement look at its own session's flag.
 
@@ -18380,11 +18388,11 @@ before the probing side is split (D292). An operand that was itself a
 part was read by its morsels. Any other was read through the row
 executor, one row of values at a time, and its rows pushed into vectors
 of values. Over the column store that undid everything its scan by
-batch does: no condition was judged on the encoded column, no column
+batch does. No condition was judged on the encoded column, no column
 was decoded late, and every value of every row the scan read was made,
 kept or not. Such an operand is the usual one, as D291 keeps a filtered
 scan of the column store off the workers. So a join whose built operand
-was a filtered scan of a large table ran many times slower in a part
+was a filtered scan of a large table ran slower in a part
 than alone, where the serial join reads the operand by batch.
 
 Now an operand that gives batches (`stream::layout`) and whose tables
@@ -18789,14 +18797,15 @@ over it. Its probe is now a step of its left operand's pipeline
 is built once for every morsel (`exec/batch/joined/shared.rs`). Each
 batch of a morsel keeps the rows a built row matches, or of an antijoin
 those none matches, selected (`exec/batch/joined/semi/step.rs`), and a
-pipeline read a row at a time judges each row so. The first built row
-that matches decides. A left row of a null key matches nothing. A semi
-join tells its left's scans its keys' runtime filters, an antijoin none
-(D369). The rows a morsel keeps and their order are the serial join's,
-so the part gives the plan's rows in its order (D290). A join whose
-condition beyond its keys a worker cannot evaluate alone ends its
-pipeline as before. One planned to build its left is no step: its right
-is the part (D1070).
+pipeline read a row at a time judges each row so.
+
+The first built row that matches decides. A left row of a null key
+matches nothing. A semi join tells its left's scans its keys' runtime
+filters, an antijoin none (D369). The rows a morsel keeps and their
+order are the serial join's, so the part gives the plan's rows in its
+order (D290). A join whose condition beyond its keys a worker cannot
+evaluate alone ends its pipeline as before. One planned to build its
+left is no step. Its right is the part (D1070).
 
 #### D1076. A LEFT outer join's probe on its keys alone is a step of its left operand's pipeline
 
@@ -18807,13 +18816,14 @@ no condition beyond them and none of an operand's own (D15), is now a
 step of its left operand's pipeline (`exec/parallel/pipeline.rs`). Its
 right operand is built once for every morsel, and each left row is
 joined with the built rows of its key, or with nulls if none has it
-(`exec/batch/joined/shared/outer.rs`), which depends on no other
-morsel. A morsel gives the rows the serial join gives of its rows, in
-their order, so the part gives the plan's rows in its order (D290). The
-join tells its left no runtime filter, as it gives every left row. Its
-built operand, and that of a semi join that is a step (D1075), is a part
-run in parallel by its rows alone, its morsels gathered by batch into
-the join's table, so a condition of its own, as a LIKE, is judged on the
+(`exec/batch/joined/shared/outer.rs`), which depends on no other morsel.
+
+A morsel gives the rows the serial join gives of its rows, in their
+order, so the part gives the plan's rows in its order (D290). The join
+tells its left no runtime filter, as it gives every left row. Its built
+operand, and that of a semi join that is a step (D1075), is a part run
+in parallel by its rows alone, its morsels gathered by batch into the
+join's table, so a condition of its own, as a LIKE, is judged on the
 part's threads. A LEFT join with a condition beyond its keys, and a
 RIGHT or FULL join, whose unmatched right rows no one morsel knows, end
 their pipelines as before.
@@ -18977,8 +18987,8 @@ list of every row is made when all are asked of, since a kept run is
 given on as the span of its places. A run that holds no row asked of
 is not judged. The rows kept, and their order, are what judging each
 row gives. A comparison of integers known as runs is still judged once
-a run, not by the kernel over every row: measured on TPC-H, the kernel
-was the slower of the two.
+a run, not by the kernel over every row, which was measured the slower
+of the two.
 
 #### D1086. An equality of an expression of each operand's columns is a hash join on the keys computed once a row
 
@@ -18994,7 +19004,7 @@ operand's columns alone with one of the right's alone is lifted so
 (`physical/collated.rs`), unless both are columns alone, which the join
 keys as they are. Each key is computed once a row of its operand, the
 join is planned as any, by either store and in parallel, and its rows
-are the nested loop's: a null key matches none, or a null if the
+are the nested loop's. A null key matches none, or a null if the
 condition is IS NOT DISTINCT FROM. An expression lifted is
 deterministic and holds no subquery, so a row's key is the value the
 condition compares of it with every row of the other operand. A
@@ -19012,7 +19022,7 @@ cache makes that read a trip to memory, and most of a probe's time
 waits on it, even for the rows no built row matches. Laying out the
 table another way (located a batch at a time, a slot of one row
 holding its row and key) left that read where it was and gained
-nothing, measured on TPC-H.
+nothing when measured.
 
 A parallel build of one key sums its keys in a Bloom filter as it is
 built (D1080). A probe of such a table (`batch/joined/shared/probing.rs`)
@@ -19023,7 +19033,7 @@ costs a read from cache instead of one from memory. A table that fits
 in a thread's share of the last level, 4 MiB (36 MiB shared by 8
 threads on the reference machine, rounded down), is not screened, as
 its directory read is a cache read already. The filter judges itself
-as a runtime filter does (D369): after its first batches, if it kept
+as a runtime filter does (D369). After its first batches, if it kept
 most rows, it stops being asked. The pairs a probe gives are those it
 gives unscreened, as the filter keeps every row whose key the table
 may hold, and a LEFT join's row it drops is paired with nulls as one
@@ -19128,9 +19138,8 @@ A table opened has no statistics, and they were left to the maintenance
 thread once a plan had asked for them (D35, D473). The first plans
 after a start were therefore made without them, on the fixed
 selectivities. A grouping of a table of sixty million rows was planned
-as a sort and a streamed grouping on one thread, and ran for minutes
-where the plan made with statistics runs for a second, and joins
-planned so were worse.
+as a sort and a streamed grouping on one thread, where the plan made
+with statistics groups it in parts, and joins planned so were worse.
 
 The plan that first asks for the statistics of a table opened now
 gathers them itself, and plans asking meanwhile wait for that pass, so
@@ -19220,7 +19229,7 @@ The planner priced a fetch of a frozen row as one of four columns
 (D1091), whatever it read. A frozen row read by its id reads one chunk
 of each column asked for, each on a page of its own, so a fetch of one
 column costs less than a fetch of the tree's row and one of every
-column of a wide table several times more. One figure could not be
+column of a wide table more. One figure could not be
 right for both, and a join that fetched one column of a frozen table
 was priced as if it read four.
 
@@ -19365,18 +19374,19 @@ alone, and the first's states merge (`physical::first_level`). The
 first's groups are split among the partitions by the hash of their
 values of the second's columns alone (`GroupTable::made`), the same of
 a value in every morsel, so each partition holds every group of the
-first that a group of the second takes. The thread finishing a
-partition orders its groups by their first rows and groups them again
-(`exec/parallel/grouped/regrouped.rs`), each set function taking its
-values in that order, as the serial plan feeds them. A group of the
-second is numbered by its first group of the first, so the statement's
-thread merges only the second's groups, in the order the plan run alone
-gives them. A HAVING condition over the pair is judged of the second's
-groups by the same thread. A join's runtime filters (D1063) are of the
-second's columns, so the part's pipeline is told none. The results,
-their order and the warnings are as before. EXPLAIN shows both
-groupings under one `Parallel`, and EXPLAIN ANALYZE counts the first's
-groups as its partitions finish them.
+first that a group of the second takes.
+
+The thread finishing a partition orders its groups by their first rows
+and groups them again (`exec/parallel/grouped/regrouped.rs`), each set
+function taking its values in that order, as the serial plan feeds
+them. A group of the second is numbered by its first group of the
+first, so the statement's thread merges only the second's groups, in
+the order the plan run alone gives them. A HAVING condition over the
+pair is judged of the second's groups by the same thread. A join's
+runtime filters (D1063) are of the second's columns, so the part's
+pipeline is told none. The results, their order and the warnings are as
+before. EXPLAIN shows both groupings under one `Parallel`, and EXPLAIN
+ANALYZE counts the first's groups as its partitions finish them.
 
 A grouping by no column is left as it was, as its one group would be
 one partition's and one thread's.
@@ -19395,7 +19405,7 @@ morsels at a time, four for each thread, and each morsel is joined by a
 thread through the join and every index join below it of the chain, as
 one thread joins them. A morsel of probes takes a sixteenth of
 EXECUTOR.MORSEL_ROWS of left rows, a probe costing a walk of the index
-and a read of its row: a sweep of 1, 4, 16 and 64 measured 16 the
+and a read of its row. A sweep of 1, 4, 16 and 64 measured 16 the
 fastest. The morsels' rows are given in the order of their numbers, so
 each left row's matches come where they would alone, and the first
 error in that order is the one raised, after the rows before it.
@@ -19426,6 +19436,7 @@ one batch by the thread that read them, and the statement's thread
 takes the morsels' batches in the order of their numbers, so the rows
 are held in the order the part alone gives them. They are put in their
 table by those threads too, as a hash join's built operand is (D1080).
+
 Each morsel's rows are charged to the join's work grant as its thread
 gathers them (D1150). Once a morsel outgrows the grant, or the rows
 taken are on course to, the batches taken so far are given on, then the
@@ -19440,7 +19451,7 @@ than the plan's, and a left asked for in an order are read as before.
 #### D1116. An analyzed grouping over another that crosses its partitions passes the counts of the projections between them
 
 EXPLAIN ANALYZE wraps each operator in a count (D378). Of a grouping
-crossing another's partitions (D1133), as TPC-H Q13 groups customers by
+crossing another's partitions (D1133), as a query groups customers by
 their count of orders, a projection between the two was wrapped too.
 The pair was found by the projections down from the second grouping,
 and a count is no projection, so the part no longer saw a pair. It took
@@ -19459,9 +19470,9 @@ with no time of its own, as a step of a pipeline is.
 
 D1112 groups the right operand of a LEFT join first, by its columns of
 the join's equalities, and merges what those groups computed in the
-grouping above, by the left operand's columns. TPC-H Q13 groups its
-customers by their key: each group above held one joined row, and the
-grouping hashed and merged 1.5 million rows into 1.5 million groups to
+grouping above, by the left operand's columns. Of a query that groups
+its customers by their key, each group above held one joined row, and
+the grouping hashed and merged every row into a group of its own to
 give them back as they were.
 
 The grouping above is now a projection of the joined rows
@@ -19494,7 +19505,7 @@ row, by an expression that warns as it gives the null, so the
 statement's warning is the one it was.
 
 COUNT of a column that may hold a null is left as it was, by D1112's
-own condition: a right row whose column is null counts nothing below,
+own condition. A right row whose column is null counts nothing below,
 and its warning would differ. The projection changes nothing below.
 Every other shape keeps the grouping above: grouping columns that hold
 no key, a key that may hold a null, a deferrable key, a key or a
@@ -19506,8 +19517,8 @@ equating strings, whose equal strings may differ as values.
 A pattern of no `_` is matched by its pieces (D1074), each piece between
 its first and its last searched for by the library's substring search.
 That search made its searcher again for each value it searched, so of
-TPC-H Q13's `'%special%requests%'` over fifteen million comments the
-making took a third of the time the matching took.
+a pattern as `'%special%requests%'` over many short comments the making
+took a large part of the matching's time.
 
 Each piece between is now made once, as its pattern is, into a finder
 (`value/like/finder.rs`). The finder reads the eight bytes from a place
@@ -19525,7 +19536,7 @@ search over pieces and values.
 #### D1119. A LIKE of a piece between two `%`s searches a batch's whole text at once, on vector instructions where the processor has them
 
 A batch keeps its strings one after another in one arena, each row's end
-noted. A pattern of a piece between two `%`s, as TPC-H Q13's
+noted. A pattern of a piece between two `%`s, as
 `'%special%requests%'`, was matched a value at a time, each value's
 pieces searched for alone (D1074, D1118). A comment is a few dozen
 bytes, so the search spent much of itself starting, finishing a word
@@ -19565,7 +19576,7 @@ pieces made once for its conjunct.
 
 #### D1120. The sums and counts of a grouping of few groups are fed by lanes, and a batch's dictionary places made a column at a time
 
-A grouping of few groups, as TPC-H Q1 groups its lines into four, gives
+A grouping of few groups, as one of a table's lines into four, gives
 each group many rows in turn. A typed SUM, AVG or COUNT state added
 each row's value to its group's total, and the add of one row waited on
 the store of the row before it of the same group. Each row also matched
@@ -19573,7 +19584,7 @@ the set function's kind, and COUNT(*) asked a boxed closure whether the
 row was null.
 
 A sum of at most 64 groups, of a vector with no null, is now fed in
-lanes: rows go in turn to four partial totals and counts of each group,
+lanes. Rows go in turn to four partial totals and counts of each group,
 so the adds of a lane do not wait on the others, and the partials are
 added to the groups' states once the batch is fed
 (`exec/table/states/typed/few.rs`). COUNT(*) of at most 64 groups
@@ -19884,7 +19895,7 @@ SUBSTRING of a column of a character string type, of a constant start
 and of no length or a constant one not negative, is now judged to raise
 nothing (`functions/strings.rs`), as only a substring of negative length
 raises [ISO/IEC 9075:1992 §6.7 GR1d]. A comparison with a quiet
-subquery, which reads no parameter, is not made a semi join (D773): run
+subquery, which reads no parameter, is not made a semi join (D773). Run
 once and compared as a constant it costs no join, and the filter
 holding it runs in the part below it. One compared with a column an
 index of its table holds, or one that reads a parameter, as a
@@ -19892,7 +19903,7 @@ transaction's bound of keys does, is joined as before, so the index may
 be probed from its row (`optimizer/unnesting/scalar.rs`).
 
 The left of a semi join that builds its left is now marked as a hash
-join's built operand is: it is held by batch whatever its store, so a
+join's built operand is. It is held by batch whatever its store, so a
 table kept by column is read in parallel there too.
 
 #### D1133. A count over another grouping's groups crosses its partitions, each partition's counts merged by the statement's thread
@@ -19900,8 +19911,8 @@ table kept by column is read in parallel there too.
 A grouping over another runs as one part when it groups by some of the
 first's grouping columns (D1113). A grouping that groups by a set
 function's result of the first, or by an expression a projection
-between the two computes, as TPC-H Q13 groups customers by their count
-of orders, stayed above the part: each of the first's groups came to
+between the two computes, as a query groups customers by their count
+of orders, stayed above the part. Each of the first's groups came to
 the statement's thread as a row, went through the projections and was
 grouped again there, a row at a time.
 
@@ -19913,21 +19924,22 @@ groups them again, and writes each group's states
 (`exec/parallel/grouped/regrouped.rs`). The statement's thread merges
 the states of each group of the partitions and numbers it by the least
 of their numbers, the first row of the group of all, so the groups come
-in the order the serial grouping gives them. Its HAVING condition is
-judged after the merge. A count is the same whatever order its rows are
-counted in. Another set function's state, as a sum of approximate
-numbers or an extreme of values a collation holds equal, could differ
-by the order its partitions are merged in, so a grouping of one stays
-above the part. A projection that fails in a partition gives the part
-way to the serial plan, which meets the rows in their order and raises
-what it raises (D15).
+in the order the serial grouping gives them.
+
+Its HAVING condition is judged after the merge. A count is the same
+whatever order its rows are counted in. Another set function's state,
+as a sum of approximate numbers or an extreme of values a collation
+holds equal, could differ by the order its partitions are merged in, so
+a grouping of one stays above the part. A projection that fails in a
+partition gives the part way to the serial plan, which meets the rows
+in their order and raises what it raises (D15).
 
 #### D1134. A partition looks up every morsel's groups, as its morsels come to it out of their keys' order
 
 A grouping run in parallel merges each partition's groups of the
 morsels, each group looked up in the partition's table before it is
 made. A grouping by one integer column of a table kept in the order of
-that column, as TPC-H Q18 groups lines by their order, has morsels of
+that column, as a query groups lines by their order, has morsels of
 keys apart from one another, so a morsel's lookups mostly miss. A
 partition's table was made to keep the least and greatest of its keys,
 and a morsel's groups lying wholly below or above them were made with
@@ -19938,7 +19950,7 @@ are handed over, which is the order the threads finish them, not the
 order of their keys. So a morsel mostly lands in a gap between the
 morsels merged before it, inside their least and greatest keys though
 apart from every key there, and one pair of keys cannot see the gaps.
-It was taken out: every morsel's groups are looked up, as before.
+It was taken out. Every morsel's groups are looked up, as before.
 
 #### D1135. A HAVING condition comparing a grouping's one set function with a constant is judged of that value alone
 
@@ -20265,14 +20277,26 @@ split into N contiguous ranges of bytes of about equal size, each
 beginning just after a line break, the first after the header, and each
 job imports its range on a connection of its own. Contiguous ranges
 keep each job's records a run of the file's, so its groups hold
-neighbouring rows, as rows striped across jobs would not. One pass
-over the file, to the last range's beginning, counts the lines, records
-and, of CSV, quotes before each range, so a range that would begin
-within a quoted field is found before any row is imported, and the
-import is refused saying to use one job. Standard input and any file
-that is not a regular one cannot be read in ranges, and are refused.
-The rows said are every job's, and a job that fails stops the others at
-their next record.
+neighbouring rows, as rows striped across jobs would not. Splitting
+reads only the header and, from each range's share of the bytes, up to
+the next line break, so the jobs begin at once: a pass over the file
+before them, even on a thread a range, made the built-in import slower
+than as many split streams. Of CSV, each range's quotes are counted
+side by side, on a thread a range, beside the jobs; a range begins
+within a quoted field just when the quotes before it are odd in number
+[RFC 4180 §2 rules 5-7]. A batch commits as its last record is read, so
+each job reads that record of its first batch, or the end of a batch of
+all, only once the count is told: a range found to begin within a
+quoted field is found before any row is committed, and the import is
+refused saying to use one job, its jobs' failures not told. The lines
+and records before a range are counted only when a job tells a record,
+so it is told by its place in the whole file. Standard input and any
+file that is not a regular one cannot be read in ranges, and are
+refused. The rows said are every job's, and a job that fails stops the
+others at their next record. Each job's connection is proved by the
+password typed for the first, not asked for again. Ctrl-C cancels each
+job's statement and stops each at its next record, and the import is
+told once.
 
 #### D1149. A load's group held in memory is charged to the budget until it is logged
 
@@ -20296,24 +20320,27 @@ match thousands of rows makes millions of rows of one morsel of 16,384,
 so a plan that joined two tables on a key of few values, as a plan made
 before any statistics may, grew the server past its memory budget until
 the kernel killed it. A morsel read row by row is now made a row at a
-time as it is asked for (`exec/parallel/rows.rs`): a probe's matches of
+time as it is asked for (`exec/parallel/rows.rs`). A probe's matches of
 a row are held as their built rows' numbers, each joined as it is read.
+
 What a thread gathers of a morsel is charged to the grant a batch's
-worth at a time, and stays charged until the reader has taken it, so
-the morsels running ahead are held within the grant too
+worth at a time, and stays charged until the reader has taken it, so the
+morsels running ahead are held within the grant too
 (`exec/parallel/charged.rs`). A morsel that outgrows the grant is given
 up and its charge given back. A stream's reader then reads the rest of
 that morsel's read as its thread left it, after the rows the thread
 gathered, a row or a batch at a time, holding none, while the threads go
 on with those after it. It never reads the morsel again, since a split's
-part is read once: an index scan's entries are taken by the morsel that
-reads them. A sort writes the rows its thread gathered and then the
-rest of that read to its runs, or the morsel's run if it outgrew the
-grant only once sorted; a window's or a set operation's partitions put its rows in their lists, which
-spill; a join's build gives way to the serial join, which partitions.
-A grouping's morsel is fed its rows as they are made and holds its
-groups alone. Every answer, and its order, is the one the plan gives
-alone.
+part is read once.
+
+An index scan's entries are taken by the morsel that reads them. A sort
+writes the rows its thread gathered and then the rest of that read to
+its runs, or the morsel's run if it outgrew the grant only once sorted;
+a window's or a set operation's partitions put its rows in their lists,
+which spill; a join's build gives way to the serial join, which
+partitions. A grouping's morsel is fed its rows as they are made and
+holds its groups alone. Every answer, and its order, is the one the plan
+gives alone.
 
 #### D1151. A probe of a table built for a pipeline's morsels makes its pairs a batch at a time
 
@@ -20347,7 +20374,7 @@ no more rows than it scans is gathered whole, as before. One whose
 joins multiply its rows past what is left is given up and read by the
 reader as it is given, as a morsel past the grant is (D1150), so a
 result of billions of rows holds a few morsels' rows whatever the
-grant. A thread never waits for the reader: a worker so held would hold
+grant. A thread never waits for the reader. A worker so held would hold
 its thread from every other statement while a client is slow.
 
 #### D1154. A hash join of streams probed by batch stops at each batch of pairs it makes
@@ -20554,7 +20581,7 @@ file `opened` in its directory, durably, before anything else runs, and
 its clean close takes it out once its image is durable
 (`db/files/running.rs`). Opened while the file is there, its last image
 is taken as not clean, and it is recovered from it as from the image
-the open recorded before. The log alone cannot tell a crash: a
+the open recorded before. The log alone cannot tell a crash. A
 transaction open at the crash may have logged nothing yet. A database
 recovered, or made, records its image again, not clean, as before.
 
@@ -20627,8 +20654,8 @@ count holds only of one reaching it.
 A scan reads the columns its statement uses, and each operator carried
 every column its input gave. A column a filter alone reads, or a join's
 key, was copied into each row of every join above it, though nothing
-read it again. TPC-H's query 9 matches the names of its parts with LIKE
-and copied each name once for every line item joined to the part, at
+read it again. A query that matches the names of its parts with LIKE
+copied each name once for every line item joined to the part, at
 every join, and each join's keys at every join above.
 
 A plan is now walked from the top, once it is planned, with the columns
@@ -20651,6 +20678,7 @@ columns, gives the null itself. An operand whose columns holding a
 value are not known here, as an index's scan, is left as it is, and the
 join over it is the one put under the projection. The join or the sort
 carries a vector of nulls in its place, which costs nothing to copy.
+
 Such a vector is charged to a work area only once its values are made
 (`storage/batch/held.rs`). It was charged a value a row, so an operand
 mostly of nulls outgrew its work area and was joined row by row. A filter's
@@ -20681,17 +20709,18 @@ that sum a column, the null lane that counts it and the extremes taken
 a vector at a time all apply. Once the morsel's batches are fed, each
 state is written into the morsel's one group, which is made of its
 first row, numbered as before. The morsels' groups are then merged in
-morsel order as before, so a function keeping its first value keeps
-the first row's, and a grant refused gives way as before. A morsel of
-no rows makes no group, and the set functions of no rows are one row
-as before. A set function whose accumulator writes no state, as a sum
-or an average of approximate or DECFLOAT numbers, is not run in
-parallel at all (D53, `physical/parallel.rs`): its total depends on the
-order its values are added in, so partial totals merged would differ
-from the plan run alone. It keeps its serial plan, fed in the input's
-order, and a morsel that met one anyway would be grouped as before.
-DISTINCT and filtered set functions are not read by batch, so they
-never come here.
+morsel order as before, so a function keeping its first value keeps the
+first row's, and a grant refused gives way as before.
+
+A morsel of no rows makes no group, and the set functions of no rows
+are one row as before. A set function whose accumulator writes no
+state, as a sum or an average of approximate or DECFLOAT numbers, is
+not run in parallel at all (D53, `physical/parallel.rs`). Its total
+depends on the order its values are added in, so partial totals merged
+would differ from the plan run alone. It keeps its serial plan, fed in
+the input's order, and a morsel that met one anyway would be grouped as
+before. DISTINCT and filtered set functions are not read by batch, so
+they never come here.
 
 #### D1171. A chunk of runs gives its values and its runs' ends of one reading, unpacked a block at a time
 
@@ -20739,8 +20768,8 @@ decoded as values, its texts made strings, whatever the query read. A
 table of a hundred columns and wide strings takes about 1.6 MB a group
 so decoded, and of a table of a hundred million rows its headers take
 more than the cache holds by default (D1090). Each scan then read and
-decoded every header again, about a seventh of a grouping of two of its
-columns, and a header read for one query was given up before the next.
+decoded every header again, and a header read for one query was given up
+before the next.
 
 A header is now read for the columns its reader asks for (`group::read`,
 `group/wanted.rs`). A scan asks for the columns it reads and those its
@@ -20770,23 +20799,24 @@ and phrases of a web log, took the judging longer than the reading.
 The judging is now a kernel (`Kernels::utf8`, D354), its portable body
 `str::from_utf8`. `turborel-simd` judges 32 bytes a step on AVX2 and on
 AVX-512's level, as Keiser and Lemire, "Validating UTF-8 In Less Than
-One Instruction Per Byte" (2021), §5, judge them: each byte's high
+One Instruction Per Byte" (2021), §5, judge them. Each byte's high
 nibble and the byte before's high and low nibbles each look up the
 errors their pair may make, the errors all three allow are the pair's,
 and the bytes two and three back say where a continuation must be. A
 step of no octet above 127 looks nothing up. A step whose last bytes
 begin a character the next must end, and the text's end must end every
-character (`simd/src/x86/utf8.rs`). The text so judged is given as a
-`str` only where `str::from_utf8` gives one: the contract tests
-(`turborel-test-support`, `kernels.rs`) hold every set to it, of every
-pair of octets and every lead of three and four with every second octet
-at each place on and across a lane's and a step's edges, of text cut
-within its characters, and of octets of no structure. A column's texts
-read by the varying fields, an FSST chunk, a constant or a dictionary
-are judged by the set the table opened with (D570). A dictionary's
-entries, made text as its chunk is opened, are judged once from the
-first entry's start to the last's end, each entry then a slice of them,
-as the varying fields are (D1131).
+character (`simd/src/x86/utf8.rs`).
+
+The text so judged is given as a `str` only where `str::from_utf8`
+gives one. The contract tests (`turborel-test-support`, `kernels.rs`)
+hold every set to it, of every pair of octets and every lead of three
+and four with every second octet at each place on and across a lane's
+and a step's edges, of text cut within its characters, and of octets of
+no structure. A column's texts read by the varying fields, an FSST
+chunk, a constant or a dictionary are judged by the set the table
+opened with (D570). A dictionary's entries, made text as its chunk is
+opened, are judged once from the first entry's start to the last's end,
+each entry then a slice of them, as the varying fields are (D1131).
 
 #### D1180. A bare COUNT(*) of a table that holds groups adds its groups' rows from its directory and reads only the tree
 
@@ -20842,14 +20872,15 @@ the pieces in place of the scan's batches (`exec/batch/count.rs`). A
 piece given whole adds its rows to each COUNT(*), its least to each MIN
 and its greatest to each MAX, and its nulls raise the warning of a null
 taken out [X3.135-1986 §5.8 GR1]. A batch is fed as the scan's is. MIN
-and MAX are fed so only of a column of exact numbers or a datetime: a
-summary's bounds are compared as values are, and a text's MIN and MAX
+and MAX are fed so only of a column of exact numbers or a datetime.
+
+A summary's bounds are compared as values are, and a text's MIN and MAX
 are taken by its collation (§9.15), while an approximate number's
 bounds would also need NaN and signed zero ordered as the set functions
-order them. A bare COUNT(*) stays D1180's. EXPLAIN adds the line
-`-- summarized by storage: <table>`, and the planner keeps the
-aggregation whole, as D351 keeps a count. Rejected: COUNT of a column
-from a group's rows less its nulls, whose accumulator takes values, not
+order them. A bare COUNT(*) stays D1180's. EXPLAIN adds the line `--
+summarized by storage: <table>`, and the planner keeps the aggregation
+whole, as D351 keeps a count. Rejected: COUNT of a column from a
+group's rows less its nulls, whose accumulator takes values, not
 counts; keeping bounds of a group exact as its rows are deleted, which
 every delete of a frozen row would have to write.
 
@@ -20860,7 +20891,7 @@ operand (D60), a binary string, and every operator that reads vectors
 gave way to rows for it. Under UCS_BASIC or SQL_TEXT with NO PAD the key
 is the text's own octets, so a key was built of each row to say what the
 row already said. A table whose character columns were all of such a
-collation ran its text queries many times slower than under the default.
+collation ran its text queries slower than under the default.
 
 The two pad characteristics differ in two cases alone [ISO/IEC
 9075-2:2023 §4.3.2, §8.2 GR3b]. Strings that differ only in trailing
@@ -21516,6 +21547,117 @@ HAVING, grouping sets, a DISTINCT set function and a sort give whole
 groups; a null eliminated, a sum past its range and a division by zero
 in a later group are raised still; and groups past the work area are
 whole. Mutations in `xtask/src/mutate/list/areas/first_groups.rs`.
+#### D1216. SUM of a value and a constant is computed from the value's sum and count, shared among such sums
+
+A statement of many sums of one column, each with a constant of its
+own added, evaluated each sum's argument a row, one vector of the
+column and its constant a batch for each. Repeats of one call were
+shared already, by their label, as the binder registers them. Calls
+whose arguments differ by a constant shared nothing.
+
+The sum of x + c over the rows where x is not null is the sum of x and
+c times the number of those rows. The rule `share_shifted_sums`
+(`optimizer/shifted.rs`) rewrites SUM(x + c) and SUM(c + x) as SUM(x) +
+c * COUNT(x), SUM(x - c) as SUM(x) - c * COUNT(x) and SUM(c - x) as
+c * COUNT(x) - SUM(x), in a projection over the grouping, which then
+computes one SUM(x) and one COUNT(x) for all of them, found by their
+labels among the calls the statement wrote. Both are fed the column as
+it is.
+
+The rewrite holds only where the two forms cannot differ, in value, in
+null or in what they raise (D15).
+
+It takes exact numbers, x of an exact type and c an exact literal.
+Exact arithmetic is exact, and both forms have the scale of x + c, the
+greater of the two scales. An approximate or DECFLOAT x or c is left, as
+their sums round and the two forms round apart.
+
+c is a literal that is not null, so x + c is null exactly where x is.
+COUNT(x) is then the number of values summed [ISO/IEC 9075-2:2023 §10.9
+GR7a, GR7c], the nulls eliminated raise the same warning, and of no
+value SUM(x) is null [GR7d ii], so the value computed of it is null and
+not c times 0.
+
+SUM raises once its result is past the range of its type [GR7d vi], 38
+digits at the argument's scale, summed on the way in 128 bits and judged
+once (D15). D1060's `total_fits` shows that a SUM cannot raise when its
+argument's declared digits and the 19 digits that count a statement's
+rows are within 38. The rule takes a SUM only if that holds of x + c and
+of x. Then SUM(x + c), SUM(x), c * COUNT(x) and their sum or difference
+are all within 38 digits, and x + c is within its own, so neither form
+raises, and no appeal to an order of evaluation is made. A SUM of a
+wider value is left.
+
+A filter clause goes to both shared calls, which are shared among the
+sums of one value under one filter. DISTINCT is left. So is AVG, which
+truncates its quotient toward zero at two digits past its argument's
+scale [X3.135-1986 §5.8 SR9c], so AVG(x + c) is not AVG(x) + c where the
+mean is below zero. Of -1, -1 and 1 with c of 1 the first is 0.66 and
+the second 0.67.
+
+x is columns and constants under arithmetic, negation and casts, so one
+evaluation of it for a row stands for each the sums made. A call or a
+subquery in it leaves the SUM as written. A grouping that makes groups
+before its rows, as grouping sets do, is left.
+
+Tests in `test/integration/rewrites/shifted.rs`: each form gives what it
+gives with the rule off, of both stores, by batches and row by row, with
+nulls and their warning, scales, a filter clause, groups, a group of
+nulls alone and no rows, and the plan shows one sum and one count; each
+case left is left and gives the same; and the mean's counterexample.
+Mutations `shifted-sum-minus-added`, `shifted-sum-unbounded`,
+`shifted-sum-distinct` and `shifted-sum-unshared`.
+#### D1218. A sort that reads its input whole passes it no row goal
+
+A FETCH FIRST tells the plan under it how many of its first rows are
+read (D552), and a node that gives its rows as it reads them passes the
+count to its input, which is then priced by the share of it read. A
+sort passed it on as it was, on the ground that an input read in the
+sort's order gives the sort's first rows as its own. That holds of such
+an input alone. When the input did not give the order, the planner put
+a sort over it and kept the plan it had made of the input under the
+goal, though the sort reads every row of it before it gives one.
+
+So a statement that sorts a grouping's results and keeps the first few,
+ORDER BY a set function with FETCH FIRST, planned its grouping for a
+few rows. Of a table kept in the order of the grouping column that
+picked the grouping streamed over the ordered read, priced at the rows
+of the few groups asked, over the grouping by hash run in parallel, and
+then read the whole table on one thread, a row at a time.
+
+The planner now builds a sort's input under the goal as before, and if
+that plan does not give the sort's order, builds it again with no goal
+(`physical/ordered.rs` `read_for_sort`). A grouping asked an order by
+every one of its columns did the same one level down, its input built
+under the goal and then hashed, or sorted and streamed, when it did not
+give the order. That input too is built again with no goal
+(`physical/streamed.rs` `grouped`). An input that gives the order keeps
+the goal, and a streamed grouping under FETCH FIRST with no sort between
+stops its read as before (D551).
+
+Each node `goals::passes` lets a goal through was read against what its
+executor does. A scan, a projection and a filter give rows as they read
+them. A product and a hash join probe by their left operand and build
+their right, which is planned whole. UNION ALL reads its operands in
+turn. A grouping or DISTINCT passes a goal only to an input read in its
+keys' order, and plans a hashed one's input whole. A window, a set
+operation other than UNION ALL, an outer, semi or mark join stop it.
+The sort was the one that passed a goal to an input it reads whole. The
+other places that put a sort over a plan, a window's, a row pattern's, a
+merge join's operand and a partitioned table's part, are under nodes
+that stop the goal or over a read of one table, whose plan a goal
+changes only when it is read in an order asked.
+
+Tests in `test/integration/streamed_grouping.rs`: the grouping under a
+sort and FETCH FIRST is the plan of the same statement without FETCH
+FIRST, a part run in parallel, under HAVING too, and a grouping whose
+own order is asked stays streamed with no sort. Mutation
+`row-goal-under-sort`. The second site, the grouping's input built again
+in `grouped`, has no test that tells it from the code before and no
+mutation. Its input under a goal differs from its input with none only
+when something below the grouping plans otherwise for a few rows, as a
+join's left operand may, and no statement was found whose plan shows
+that difference there. It was changed by reading, as the same defect.
 
 #### D1225. A node stopped waits for its driver's turn in flight before its database is deposed
 
@@ -21550,7 +21692,7 @@ to pass over either.
 A grouping run in parallel by batch merges its morsels in waves into 64
 partitions, each partition's table frozen between waves and held of the
 statement's grant (D355, D356). Once the tables held passed the grant,
-the grouping gave way: the threads' work was dropped and the plan run
+the grouping gave way. The threads' work was dropped and the plan run
 again on the statement's thread alone, as a grouping a row at a time
 that spills its rows (D38). Of a grouping of tens of millions of groups
 at a grant of a few GiB, that rerun was most of the statement's time.
@@ -21619,6 +21761,76 @@ holds no more than the grant at the end, where holding its finished rows
 until the statement read them outgrew the memory the server was given.
 Of a grouping that keeps the first rows a sort asks of its tables
 (D1124), a part's run holds those rows alone.
+
+#### D1227. A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read
+
+A window function split by row, EXCEPT and INTERSECT run in parallel
+split their rows into 64 partitions by key, each held in a list of its
+share of the grant that spills, and run the serial operator over each
+partition on a thread, in a share of the grant too (D295). The
+partitions' results, though, were each gathered whole as rows and
+merged into one more vector of every row before the statement read the
+first, none of it charged to the grant. A window over a table of a
+hundred million rows held them all twice at the end, past the memory
+the server was given, at any grant.
+
+Each partition's thread now pushes its result into a list of its own
+share of the grant, which spills past it as the partition's input does
+(`exec/parallel/partitioned.rs`), and the statement's thread merges the
+lists as it reads them (`partitioned/merged.rs`): of each list's next
+row, the least by the window's sort keys, or, of a set operation, by the
+place of the first operand's row carried after its columns, a tie taken
+from the earlier partition. A window's partitions are never tied, as
+its sort keys begin with its partitioning, and the place is a number
+each row has alone, so the rows come in the order the plan alone gives
+them. No more of the result is held at once than the lists hold in
+memory, one grant in all, and a row of each.
+
+A window computed over batches (D560) computes its partitions in
+pieces up to its work area and gives them as they are done; it gathers
+no partition's result, and is as it was.
+#### D1228. A second grouping crossing the first's partitions holds its groups of a grant of its own and spills them by key past it
+
+A second grouping over a first that crosses its partitions, by a set
+function's result of the first or an expression of one (D1133), has
+each partition's thread group its own groups of the first again and
+write their states, and the statement's thread merges the states of each
+group of all. Every partition's groups were gathered in one list, then
+merged into a table of every group, neither charged to any grant. Of a
+second grouping of many groups, each of them came from up to 64
+partitions, and the list held them all before the merge began.
+
+The groups the partitions give are now held of a work grant of the
+second grouping's own, made of the budget when the first are given, as
+a second operator's would be (`exec/parallel/grouped/regrouped/
+crossing.rs`). Once they pass it, those held and every partition's
+after are written to the spill, each to one of 64 runs by the hash of
+its key as the grouping compares keys, so all of a key's groups share a
+run: its grouping values, then each state as a binary string. At the end
+each run is read back and merged alone, its groups finished, numbered by
+their least firsts and kept as the HAVING condition keeps them, and
+written to a run of their own in that order, which the statement's
+thread merges with the others as it reads them, as a spilled first
+grouping's are (D1226). No more is held at once than one run's groups.
+
+A run whose groups alone pass the grant is still merged whole: the
+groups of one key cannot be parted, and a run holds a 64th of the keys.
+#### D1229. A sort that asks for its last row's peers is run in parallel, each morsel sorted whole
+
+FETCH FIRST n ROWS WITH TIES asks for the first n rows of a sort and
+every row after them that is a peer of the n-th under the sort's keys
+[ISO/IEC 9075-2:2023 §7.17 GR5, GR6]. The planner kept such a sort out
+of a part run in parallel, and the part gave way had it met one, so the
+sort read and sorted every row on the statement's thread alone.
+
+It is now run in parallel as a whole sort is (D294): each morsel sorted
+whole by a thread, since which of a morsel's rows are peers of the n-th
+is known only once every run is merged, and the runs merged in memory
+or, past the grant, from the spill (`exec/parallel/sorted.rs`). The
+first n rows of the merge are given, then each row after them while it
+is a peer of the n-th, which ends at the first that is not. Each sort is
+stable and the runs are merged in the order of their morsels, so the
+peers given are those the plan run alone gives, in its order.
 
 #### D1230. A structure's tally counts a miss only when the pool evicted a page for it
 

@@ -14,6 +14,7 @@ mod hoisting;
 mod late_fetch;
 mod pregrouped;
 mod pushdown;
+mod shifted;
 
 use turborel::db::{Database, Session};
 use turborel::params::Params;

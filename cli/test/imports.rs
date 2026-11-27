@@ -2,14 +2,18 @@
 //! turn with the statements named, what each did said, its failures told
 //! (RULES.md D59).
 
+use std::cell::Cell;
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use turborel::db::Database;
-use turborel_cli::{Importing, Input, Io, Terminal};
+use turborel_cli::{Credentials, Dialer, Importing, Input, Io, Server, Terminal, Tls};
+use turborel_client::agent::Agent;
 use turborel_client::import::{Dialect, Import};
 
-use crate::common::{Closed, Running, Scratch, command, options, ran, start};
+use crate::common::{Closed, Running, Scratch, command, options, pki, ran, start};
+use crate::sessions::with_passwords;
 
 /// A server of a database where X has table T, of a key K and a string S.
 fn served() -> (Database, Running) {
@@ -175,4 +179,41 @@ fn a_file_is_imported_by_jobs() {
     standard.import = Some(Importing { jobs: 2, ..into_t(false) });
     let run = ran(&standard, "", false);
     assert!(run.err.contains("standard input") || run.err.contains("cannot read"), "{}", run.err);
+}
+
+/// Verifies: [DESIGN] RULES.md D1148: an import over several connections,
+/// its user proved by a password typed, proves each job by that password,
+/// not asking for it again.
+#[test]
+fn a_password_typed_proves_each_job() {
+    let pki = pki("cli-import-typed");
+    let (db, server) = with_passwords(&pki);
+    db.schema("CREATE SCHEMA AUTHORIZATION ANN CREATE TABLE T (K INTEGER PRIMARY KEY, S VARCHAR(5))").unwrap();
+    let text = (1..=600_u32).fold("K,S\n".to_owned(), |mut text, k| {
+        writeln!(text, "{k},s").unwrap();
+        text
+    });
+    let rows = file(&pki.scratch, "rows.csv", &text);
+    let mut given = options(&server, vec![Input::Import(rows), command("SELECT COUNT(*) FROM T")]);
+    given.user = "ann".into();
+    given.credentials = Credentials::Ask;
+    let tls = Tls { roots: Some(pki.authority.clone()), system: false, name: Some("localhost".into()), identity: None };
+    given.server = Server::Tcp { host: "127.0.0.1".into(), port: server.address.port(), tls: Some(tls) };
+    given.import = Some(Importing { jobs: 3, ..into_t(false) });
+    let connection = turborel_cli::connect(&given, || Ok("ann's".into())).unwrap();
+    let asked = Rc::new(Cell::new(0_u32));
+    let counted = Rc::clone(&asked);
+    let ask = Box::new(move || {
+        counted.set(counted.get().saturating_add(1));
+        Err(std::io::Error::other("asked again"))
+    });
+    let mut agent = Agent::connected(Dialer::new(given.clone(), ask).with_typed(Some("ann's".into())), connection);
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let io =
+        Io { input: &mut std::io::empty(), typed: false, out: &mut out, err: &mut err, interrupts: None, terminal: Terminal::default() };
+    let succeeded = turborel_cli::run(&mut agent, &given, io);
+    agent.terminate().unwrap();
+    assert!(succeeded, "{}", String::from_utf8_lossy(&err));
+    assert!(String::from_utf8(out).unwrap().starts_with("OK, 600 rows imported\n"));
+    assert_eq!(asked.get(), 0, "not asked again");
 }
