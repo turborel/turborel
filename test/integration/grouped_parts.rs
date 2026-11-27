@@ -147,8 +147,8 @@ fn a_join_over_a_grouping_reads_it_by_batch() {
 /// alone gives, in its order: of counts that many groups tie on, where
 /// the earlier group comes first, by a set function and then a key, past
 /// an offset, by a key with a null, of a column given twice, of more rows
-/// than there are groups, and of the row store, whose groups are made of
-/// rows.
+/// than there are groups, of a projection that gives constants beside
+/// its columns, and of the row store, whose groups are made of rows.
 #[test]
 fn the_first_rows_of_a_sort_over_a_grouping_are_the_plans() {
     let (_db, a) = tables();
@@ -160,6 +160,7 @@ fn the_first_rows_of_a_sort_over_a_grouping_are_the_plans() {
             "SELECT G, MAX(K) FROM {t} GROUP BY G ORDER BY G DESC FETCH FIRST 3 ROWS ONLY",
             "SELECT G, G, COUNT(*) FROM {t} GROUP BY G ORDER BY 3 DESC FETCH FIRST 4 ROWS ONLY",
             "SELECT N, COUNT(*) FROM {t} GROUP BY N ORDER BY 2 DESC FETCH FIRST 1000 ROWS ONLY",
+            "SELECT 1, G, COUNT(*), 'x' FROM {t} GROUP BY G ORDER BY 3 DESC FETCH FIRST 6 ROWS ONLY",
         ] {
             let sql = shape.replace("{t}", table);
             let (alone, together, shown) = both(&a, &sql);
