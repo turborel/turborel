@@ -6,8 +6,8 @@
 //! governs only the rows.
 
 use turborel::db::{Database, Session};
-use turborel::params::Params;
-use turborel::value::Value;
+use turborel::params::{Load, Params};
+use turborel::value::{Decimal, Value};
 
 use crate::common::{Rng, both_ways, exec, sorted};
 
@@ -195,4 +195,53 @@ fn a_grouping_among_the_relations_is_enumerated() {
     let (join, grouping) = (physical.find("HashJoin").unwrap_or(usize::MAX), physical.find("Aggregate").unwrap_or(0));
     let table = physical.find("SeqScan Q.A").unwrap_or(0);
     assert!(join < table && table < grouping, "the grouping is the hash join's built side: {physical}");
+}
+
+/// Schema T: a district's row, the lines of its last orders and the
+/// stock they name, of one warehouse, so the warehouse key holds one value
+/// in every table; the order lines alone counted by the statistics pass.
+fn one_warehouse() -> Database {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION T
+           CREATE TABLE DISTRICT (D_W_ID INTEGER NOT NULL, D_ID INTEGER NOT NULL, D_NEXT_O_ID INTEGER, PRIMARY KEY (D_W_ID, D_ID))
+           CREATE TABLE ORDER_LINE (OL_W_ID INTEGER NOT NULL, OL_D_ID INTEGER NOT NULL, OL_O_ID INTEGER NOT NULL,
+             OL_NUMBER INTEGER NOT NULL, OL_I_ID INTEGER, PRIMARY KEY (OL_W_ID, OL_D_ID, OL_O_ID, OL_NUMBER))
+           CREATE TABLE STOCK (S_W_ID INTEGER NOT NULL, S_I_ID INTEGER NOT NULL, S_QUANTITY INTEGER, PRIMARY KEY (S_W_ID, S_I_ID))",
+    )
+    .unwrap();
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    let s = db.session("T");
+    let n = |v: i64| Value::Exact(Decimal::new(i128::from(v), 0));
+    let p = s.prepare("INSERT INTO DISTRICT VALUES (?, ?, ?)").unwrap();
+    s.execute_prepared_rows(&p, &(1..=10).map(|d| vec![n(1), n(d), n(3001)]).collect::<Vec<_>>(), Load::Ending).unwrap();
+    let p = s.prepare("INSERT INTO STOCK VALUES (?, ?, ?)").unwrap();
+    s.execute_prepared_rows(&p, &(1..=100_000).map(|i| vec![n(1), n(i), n(10 + i * 7 % 91)]).collect::<Vec<_>>(), Load::Ending).unwrap();
+    let p = s.prepare("INSERT INTO ORDER_LINE VALUES (?, ?, ?, ?, ?)").unwrap();
+    let line = |d: i64, o: i64, l: i64| vec![n(1), n(d), n(o), n(l), n(1 + (o * 31 + l * 977 + d) % 100_000)];
+    let rows: Vec<Vec<Value>> = (1..=2).flat_map(|d| (1..=3000).flat_map(move |o| (1..=10).map(move |l| line(d, o, l)))).collect();
+    s.execute_prepared_rows(&p, &rows, Load::Ending).unwrap();
+    s.commit().unwrap();
+    db.analyze("T.ORDER_LINE").unwrap();
+    db
+}
+
+/// Verifies: [DESIGN] RULES.md D1232: a merge join is priced by the pairs
+/// its key matches, each judged by the rest of its condition, and a key of
+/// one value on both sides by the whole product. The stock level query's
+/// district is joined to its order lines by the warehouse and district,
+/// not merged by the warehouse, a key of one value, with every line of the
+/// warehouse judged for the district's row; the rows are the greedy
+/// order's.
+#[test]
+fn a_merge_join_by_a_key_of_one_value_is_priced_as_its_product() {
+    let db = one_warehouse();
+    let s = db.session("T");
+    let sql = "SELECT COUNT(DISTINCT S_I_ID) FROM DISTRICT, ORDER_LINE, STOCK WHERE D_W_ID = 1 AND D_ID = 2 \
+        AND OL_W_ID = D_W_ID AND OL_D_ID = D_ID AND OL_O_ID < D_NEXT_O_ID AND OL_O_ID >= D_NEXT_O_ID - 20 \
+        AND S_W_ID = OL_W_ID AND S_I_ID = OL_I_ID AND S_QUANTITY < 15";
+    let explained = s.explain(sql, &Params::new()).unwrap();
+    let plan = explained.split("-- physical:").last().unwrap();
+    assert!(!plan.contains("MergeJoin"), "{plan}");
+    assert_eq!(agree(&s, sql).len(), 1);
 }
