@@ -198,7 +198,7 @@ fn a_wide_lead_keeps_the_order_states_are_merged_in() {
 fn a_wide_lead_merges_and_spills_as_a_narrow_one() {
     let (db, a) = table();
     let sql = "SELECT G, COUNT(*), SUM(V), MIN(V), MAX(K) FROM (SELECT MOD(K, 6000) AS G, K, V FROM T) AS Q GROUP BY G";
-    for (grant, spilled) in [(1_i128 << 20, false), (1_i128 << 17, true)] {
+    for (grant, spilled) in [(1_048_576_i128, false), (131_072_i128, true)] {
         set(&db, "MEMORY.WORK_BYTES", grant);
         let narrow = led(&a, sql, 2, 3);
         assert_eq!(narrow.rows.len(), 6000);
