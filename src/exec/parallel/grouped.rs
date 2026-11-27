@@ -316,7 +316,7 @@ pub(super) fn grouped_asked(
 }
 
 /// The grouping `plan` is, a grouping or DISTINCT, under the HAVING
-/// condition and the second grouping `over` it, its keys hashed by
+/// condition and the second grouping `outer` over it, its keys hashed by
 /// `seed`, and its input.
 ///
 /// # Errors
