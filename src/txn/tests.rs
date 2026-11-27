@@ -158,6 +158,10 @@ impl Log for Watching {
     fn end(&self) -> Lsn {
         self.records.end()
     }
+
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        self.records.bytes_between(from, to)
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md R-ERR-4, D470: a transaction's state is not

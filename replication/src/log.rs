@@ -19,6 +19,7 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use turborel::error::{Code, Result, SqlError};
+use turborel::log::marks::ByteMarks;
 use turborel::log::{Log, LogCapabilities, Records};
 
 use crate::{Consensus, Input, Journal, LogJournal, Lsn, Output, Recovered, ReplicaEvent, Role};
@@ -43,6 +44,8 @@ struct Driven {
     /// The log's records: the one at position n at index n − 1, as the
     /// consensus had them persisted.
     records: Vec<Vec<u8>>,
+    /// Their bytes, by the same index (turborel's RULES.md D1231).
+    marks: ByteMarks,
     /// Through where the consensus said the log is committed.
     committed: Lsn,
     /// Whether the consensus serves as primary, so takes appends.
@@ -105,7 +108,8 @@ impl ReplicatedLog {
     pub fn alone(consensus: Box<dyn Consensus>, journal: Box<dyn Journal>, records: Vec<Vec<u8>>) -> Result<ReplicatedLog> {
         let durable = journal.durable();
         let held = Lsn(u64::try_from(records.len()).unwrap_or(u64::MAX));
-        let mut driven = Driven { consensus, journal, records, committed: Lsn(0), serving: false, failed: None };
+        let marks = ByteMarks::of(records.iter().map(Vec::as_slice));
+        let mut driven = Driven { consensus, journal, records, marks, committed: Lsn(0), serving: false, failed: None };
         driven.step(Input::Opened(held))?;
         driven.answer()?;
         for _ in 0..TICKS_ALONE {
@@ -156,11 +160,15 @@ impl Driven {
             Output::Persist { at, record } => {
                 self.journal.persist(at, &record)?;
                 self.records.truncate(before(at));
+                self.marks.truncate(before(at));
+                self.marks.push(record.len());
                 self.records.push(record);
             }
             Output::Truncate { after } => {
                 self.journal.truncate(after)?;
-                self.records.truncate(usize::try_from(after.0).unwrap_or(usize::MAX));
+                let kept = usize::try_from(after.0).unwrap_or(usize::MAX);
+                self.records.truncate(kept);
+                self.marks.truncate(kept);
             }
             Output::PersistState(state) => self.journal.persist_state(&state)?,
             Output::Mark { at, mark } => self.journal.mark(at, &mark)?,
@@ -286,5 +294,10 @@ impl Log for ReplicatedLog {
 
     fn end(&self) -> Lsn {
         self.driven().end()
+    }
+
+    /// Positions number the records from 1.
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        self.driven().marks.between(before(from), before(to))
     }
 }

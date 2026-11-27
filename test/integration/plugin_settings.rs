@@ -281,6 +281,10 @@ impl Log for Logged {
     fn end(&self) -> Lsn {
         self.0.end()
     }
+
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        self.0.bytes_between(from, to)
+    }
 }
 
 /// A diagnostics sink that drops every event, "notedsink".

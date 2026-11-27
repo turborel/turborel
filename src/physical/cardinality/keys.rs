@@ -8,7 +8,10 @@
 //! true of a null [X3.135-1986 §5.11 GR2], so a probe of all of them by
 //! equalities finds at most one row. A deferred constraint may be broken
 //! until it is checked [ISO/IEC 9075-2:2023 §4.25.2], and a period's key
-//! is unique only of rows whose periods overlap, so neither is one.
+//! is unique only of rows whose periods overlap, so neither is one. A
+//! deferrable constraint has a unique index as any other has, which holds
+//! two rows of one key until the check, so that index is no key either
+//! (RULES.md D1205).
 //!
 //! A referential constraint not deferrable and of no period whose
 //! referencing columns are NOT NULL gives each referencing row exactly
@@ -44,7 +47,8 @@ impl TableKeys {
     /// among them.
     fn of(desc: &TableDesc, indexed: impl Iterator<Item = Vec<usize>>) -> TableKeys {
         let immediate = |name: &QualifiedName| desc.constraints.iter().any(|c| &c.name == name && !c.attributes.deferrable);
-        let mut unique: Vec<Vec<usize>> = indexed.collect();
+        let late = deferrable_keys(desc);
+        let mut unique: Vec<Vec<usize>> = indexed.filter(|key| !late.contains(key)).collect();
         for c in desc.constraints.iter().filter(|c| !c.attributes.deferrable) {
             let constrained = match &c.kind {
                 ConstraintKind::Unique { columns, period: None, .. } => Some(columns.clone()),
@@ -85,6 +89,17 @@ impl TableKeys {
             to == table && !columns.is_empty() && columns.iter().zip(referenced).all(|(c, r)| pairs.contains(&(*c, *r)))
         })
     }
+}
+
+/// \[DESIGN\] (RULES.md D1205) The keys of the indexes of `desc`'s
+/// deferrable UNIQUE and PRIMARY KEY constraints, which may hold two rows
+/// of one key until the constraint is checked.
+fn deferrable_keys(desc: &TableDesc) -> Vec<Vec<usize>> {
+    let key = |kind: &ConstraintKind| match kind {
+        ConstraintKind::Unique { columns, period, .. } => Some(desc.key_columns(columns, period.as_deref())),
+        ConstraintKind::NotNull(_) | ConstraintKind::ForeignKey(_) | ConstraintKind::Check { .. } | ConstraintKind::Connection(_) => None,
+    };
+    desc.constraints.iter().filter(|c| c.attributes.deferrable).filter_map(|c| key(&c.kind)).collect()
 }
 
 impl Estimates<'_> {

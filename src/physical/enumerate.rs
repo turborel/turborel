@@ -156,7 +156,7 @@ impl PhysicalPlanner<'_> {
         }
         let Some(model) = self.model(&query, want) else { return Outcome::Greedy };
         let conjuncts: Vec<(usize, Set)> = model.conjuncts.iter().map(|c| (c.op, c.reads)).collect();
-        let graph = Graph::new(n, &query.shapes, &conjuncts);
+        let graph = Graph::new(n, &query.shapes, &conjuncts).implying(&model.stars, self.setting(DP_BUDGET));
         let wanted = if want.is_empty() { Order::None } else { Order::Want };
         let Some(written) = written_cost(&graph, &model, &query, wanted) else { return Outcome::Greedy };
         let mut space = Space::new(&graph, &model);
@@ -182,7 +182,7 @@ impl PhysicalPlanner<'_> {
     /// the FROM clause's order, its top join telling the order and the
     /// algorithm, if the plan is shown.
     fn restored(&self, cx: &Context<'_>, done: Realized, algorithm: Algorithm) -> Built {
-        let Realized { mut plan, layout, order, shape } = done;
+        let Realized { mut plan, layout, order, shape, .. } = done;
         if self.shown {
             annotate(&mut plan, &format!("  (join order by {}: {shape})", algorithm.name()));
         }
