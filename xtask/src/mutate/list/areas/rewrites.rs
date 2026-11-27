@@ -12,7 +12,9 @@
 //! column fetched late that something above the grouping reads, of a
 //! table whose key is not determined or whatever the fetch reads, and the
 //! rows not sorted again; of D1172, a COUNT of a column that may hold a
-//! null or a COUNT DISTINCT taken to count rows.
+//! null or a COUNT DISTINCT taken to count rows; of D1216, a constant
+//! subtracted added, a sum that could pass its range or a DISTINCT one
+//! taken apart, and each sum given a sum and count of its own.
 
 use super::super::{Mutation, Package};
 
@@ -34,8 +36,14 @@ const KEPT_CARRIED: &str = "rewrites::late_fetch::carried_columns_every_group_ne
 /// The test of COUNT of values never null.
 const COUNTED: &str = "rewrites::counted_rows::counts_of_values_never_null_count_rows";
 
+/// The test of sums of a value and a constant.
+const SHIFTED: &str = "rewrites::shifted::sums_of_a_value_and_a_constant_share_its_sum_and_count";
+
+/// The test of sums the rule leaves.
+const UNSHIFTED: &str = "rewrites::shifted::sums_that_could_differ_are_left";
+
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 36] = [
+pub const REWRITES: [Mutation; 40] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -394,6 +402,46 @@ pub const REWRITES: [Mutation; 36] = [
         original: "a.func.0.name() == kw::COUNT && !a.distinct && a.distribution.is_none()",
         replacement: "a.func.0.name() == kw::COUNT && a.distribution.is_none()",
         integration: &[COUNTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "shifted-sum-minus-added",
+        package: Package::Core,
+        breaks: "SUM of a value less a constant is its sum less the constant times its count (RULES.md D1216)",
+        file: "src/optimizer/shifted.rs",
+        original: "Shift::Minus => Expr::Arith(sum, ArithOp::Sub, product),",
+        replacement: "Shift::Minus => Expr::Arith(sum, ArithOp::Add, product),",
+        integration: &[SHIFTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "shifted-sum-unbounded",
+        package: Package::Core,
+        breaks: "a SUM that could pass its type's range is not taken apart (RULES.md D1216)",
+        file: "src/optimizer/shifted.rs",
+        original: "if !total_fits(a, self.types) || !total_fits(&of_value, self.types) {",
+        replacement: "if a.arg.is_none() {",
+        integration: &[UNSHIFTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "shifted-sum-distinct",
+        package: Package::Core,
+        breaks: "a DISTINCT SUM is not taken apart (RULES.md D1216)",
+        file: "src/optimizer/shifted.rs",
+        original: "!= Some(Standard::Sum) || a.distinct || a.distribution.is_some()",
+        replacement: "!= Some(Standard::Sum) || a.distribution.is_some()",
+        integration: &[UNSHIFTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "shifted-sum-unshared",
+        package: Package::Core,
+        breaks: "the SUMs of one value and filter share one sum and one count of it (RULES.md D1216)",
+        file: "src/optimizer/shifted.rs",
+        original: "if let Some(at) = kept.iter().position(same) {",
+        replacement: "if let Some(at) = kept.iter().position(same).filter(|_| false) {",
+        integration: &[SHIFTED],
         unit: &[],
     },
 ];

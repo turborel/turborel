@@ -340,9 +340,9 @@ fn a_crash_keeps_the_increments_committed_alone() {
 /// The update records `log` holds, each its row id, the row before and
 /// the row after, as text.
 fn updates(log: &dyn turborel::log::Log) -> Vec<(u64, String, String)> {
-    let updated = |change: Change| match change {
-        Change::Update { row, before, after, .. } => Some((row, format!("{before:?}"), format!("{after:?}"))),
-        _ => None,
+    let updated = |change: Change| {
+        let Change::Update { row, before, after, .. } = change else { return None };
+        Some((row, format!("{before:?}"), format!("{after:?}")))
     };
     crate::logs::records(log).into_iter().filter_map(|(_, record)| updated(record.change)).collect()
 }
