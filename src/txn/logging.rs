@@ -371,14 +371,18 @@ impl Txn {
         })
     }
 
-    /// Writes the abort record, if a record of the transaction may have
-    /// reached the log; the records it holds go unwritten (`txn/pending.rs`).
-    /// Not synced: a transaction without a commit record is undone by
+    /// Drops the records it holds, which go unwritten, and writes the abort
+    /// record, if a record of the transaction may have reached the log.
+    /// Both are done under the gate its rollback undid its changes under,
+    /// so no checkpoint writes a record of it after (`Txn::drop_held`,
+    /// RULES.md D1250). Not synced: a transaction without a commit record is undone by
     /// recovery either way, and a failure to write it cannot matter for the
     /// same reason. Not written while the database is held (`Held`): a deposed
     /// database's log is its replica's, which may serve again, in a later
-    /// view, for the database opened again (RULES.md D57).
+    /// view, for the database opened again (RULES.md D57), and the primary
+    /// promoted there aborts each transaction its log leaves open.
     pub(super) fn log_abort(&self) {
+        self.drop_held();
         if self.origin.shared.held().is_some() {
             return;
         }

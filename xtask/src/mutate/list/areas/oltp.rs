@@ -6,7 +6,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of the OLTP paths whose removal must fail their tests.
-pub const OLTP: [Mutation; 33] = [
+pub const OLTP: [Mutation; 35] = [
     Mutation {
         name: "oltp-cut-log-recovered",
         package: Package::Core,
@@ -342,5 +342,28 @@ pub const OLTP: [Mutation; 33] = [
         replacement: "owed, evicted: false })",
         integration: &[],
         unit: &["disk::buffer::tally::tests::a_tally_counts_the_misses_that_evict"],
+    },
+    Mutation {
+        name: "oltp-held-rollback-kept",
+        package: Package::Core,
+        breaks: "a rollback leaves the records it holds in its buffer, so a checkpoint taken before the transaction is dropped writes them with no abort record after, and recovery puts their rows back over what was committed since (D1250)",
+        file: "src/txn/pending.rs",
+        original: "        let base = held.base;\n        held.truncate_from(base);",
+        replacement: "        let base = held.base.saturating_add(held.count());\n        held.truncate_from(base);",
+        integration: &[],
+        unit: &[
+            "txn::tests::a_rollback_leaves_no_record_for_a_checkpoint_to_write",
+            "db::rollback::tests::a_row_rolled_back_keeps_what_was_committed_after_through_a_crash",
+        ],
+    },
+    Mutation {
+        name: "oltp-held-first-after-end",
+        package: Package::Core,
+        breaks: "a write in flight notes the first record of a transaction dropped meanwhile, which nothing forgets, so every later image starts at it and the log is kept from it (D1250)",
+        file: "src/txn/pending.rs",
+        original: "(!ends && !held.pinned && !held.over)",
+        replacement: "(!ends && !held.pinned)",
+        integration: &[],
+        unit: &["txn::tests::a_transaction_dropped_as_its_records_are_written_holds_no_log"],
     },
 ];

@@ -127,11 +127,13 @@ fn a_statement_reads_at_a_snapshot_of_its_own() {
 }
 
 /// A log, in memory, that notes as each record is appended whether the
-/// transaction it watches has its state locked.
+/// transaction it watches has its state locked, and drops the transaction
+/// given it to end before the record is appended.
 #[derive(Default)]
 struct Watching {
     tx: OnceLock<std::sync::Weak<Txn>>,
     locked: Mutex<Vec<bool>>,
+    ending: Mutex<Option<Txn>>,
     records: crate::log::MemoryLog,
 }
 
@@ -140,6 +142,7 @@ impl Log for Watching {
         self.records.capabilities()
     }
     fn append(&self, record: &[u8]) -> Result<Lsn> {
+        drop(lock_builtin(&self.ending).take());
         if let Some(tx) = self.tx.get().and_then(std::sync::Weak::upgrade) {
             let locked = matches!(tx.state.try_lock(), Err(std::sync::TryLockError::WouldBlock));
             lock_builtin(&self.locked).push(locked);
@@ -225,6 +228,78 @@ fn a_transactions_first_record_and_stop_last_until_it_ends() {
     assert_eq!(shared.oldest_logged(), None, "forgotten as the writer ended");
     assert!(shared.stop_of(writer_id).is_none());
     assert!(more.iter().all(|tx| shared.stop_of(tx.id).is_some()), "the others still open");
+}
+
+/// The record of row `row` of a table deleted.
+fn deletion(row: u64) -> crate::log::record::Change {
+    let table = QualifiedName { auth: "A".into(), ident: "T".into() };
+    crate::log::record::Change::Delete { table, generation: 0, row, before: Vec::new() }
+}
+
+/// The records `log` holds, in order: of each, its transaction, and
+/// whether it is an abort record.
+fn logged(log: &dyn Log) -> Vec<(TxId, bool)> {
+    let types = crate::value::types::TypeRegistry::default();
+    let read = |bytes: Vec<u8>| crate::log::record::Record::decode(&bytes, &types).unwrap();
+    let records = log.read_from(Lsn(0)).map(|at| read(at.unwrap().1));
+    records.map(|record| (record.tx, matches!(record.change, crate::log::record::Change::Abort))).collect()
+}
+
+/// Verifies: [X3.135-1986 §8.9]; [DESIGN] RULES.md D25, D470, D1250, a
+/// transaction rolled back and kept after, as its session keeps it until
+/// the rollback's call ends: the records it held are dropped as it rolls
+/// back, so a checkpoint's write of what open transactions hold, made
+/// before the transaction is dropped, writes none of them and notes no
+/// first record the log would be kept from; one whose first record a
+/// checkpoint wrote before has its abort record as its last, the records
+/// it held since unwritten, and its first forgotten as it is dropped.
+/// Regression test (R-TEST-7): the records stayed in its buffer until it
+/// was dropped, a checkpoint between wrote them with no abort record
+/// after, and recovery, reading them as of a transaction a crash
+/// interrupted, put its rows back over what was committed there since.
+#[test]
+fn a_rollback_leaves_no_record_for_a_checkpoint_to_write() {
+    let mut st = State::with_builtins(Box::new(MemoryCatalog::default()));
+    let log: Arc<dyn Log> = Arc::new(crate::log::MemoryLog::default());
+    st.log = Some(Arc::clone(&log));
+    let held = st.begin();
+    held.log_change(deletion(1)).unwrap();
+    st.rollback(&held).unwrap();
+    st.tx.write_held().unwrap();
+    assert!(logged(&*log).is_empty(), "held as it rolled back: no record of it is written after");
+    assert_eq!(st.tx.oldest_logged(), None, "and none holds the log");
+    let written = st.begin();
+    written.log_change(deletion(2)).unwrap();
+    st.tx.write_held().unwrap();
+    written.log_change(deletion(3)).unwrap();
+    st.rollback(&written).unwrap();
+    st.tx.write_held().unwrap();
+    assert_eq!(logged(&*log), [(written.id, false), (written.id, true)], "its abort record is its last");
+    assert!(st.tx.oldest_logged().is_some(), "its first, until it is dropped");
+    drop((held, written));
+    assert_eq!(st.tx.oldest_logged(), None);
+}
+
+/// Verifies: [DESIGN] RULES.md D25, D470, D1250, a transaction dropped
+/// while a checkpoint writes the records it holds, after the write took
+/// them and before it notes their first: the record is written, and no
+/// first is noted for a transaction that is over, so nothing holds the
+/// log from it. Regression test (R-TEST-7): the drop found no first
+/// noted, the write noted one after, and nothing forgot it, so every
+/// later checkpoint's image started at that record, the log was kept
+/// from it, and recovery read from it.
+#[test]
+fn a_transaction_dropped_as_its_records_are_written_holds_no_log() {
+    let shared = Arc::new(Transactions::default());
+    let log = Arc::new(Watching::default());
+    let watched: Arc<dyn Log> = log.clone();
+    let tx = shared.begin(Some(&watched), (LockWait::NoWait, Reading::Serializable, Arc::default()), UndoSpace::default());
+    tx.log_change(deletion(1)).unwrap();
+    *lock_builtin(&log.ending) = Some(tx);
+    shared.write_held().unwrap();
+    assert!(lock_builtin(&log.ending).is_none(), "dropped as its record was appended");
+    assert_eq!(logged(&log.records).len(), 1, "taken before it was dropped: written");
+    assert_eq!(shared.oldest_logged(), None, "over: no first is noted for it");
 }
 
 /// Verifies: [DESIGN] RULES.md D29: maintenance is due from a table's note,
