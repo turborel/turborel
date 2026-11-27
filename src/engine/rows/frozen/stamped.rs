@@ -40,7 +40,7 @@ use crate::engine::rows::{RowTable, corrupt, key};
 use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::lanes::Records;
-use crate::storage::{Loaded, Loading, Row, RowId};
+use crate::storage::{Loaded, Loading, Newest, Row, RowId};
 use crate::sync::{lock_builtin, read, write};
 use crate::txn::{NO_TRANSACTION, Timestamp, TxId};
 
@@ -142,6 +142,20 @@ impl RowTable {
             return Maker::Committed(stamp);
         }
         self.maker(&Version { maker: Maker::Open(stamp & !OPEN), deleted: false, older: None, record: &[] })
+    }
+
+    /// \[DESIGN\] The newest state of row `id`, held by no version in the
+    /// tree, for UNIQUE, as of `tx`: its frozen values, pending if a load
+    /// of another transaction still open made its group, so a key check
+    /// rests on no row that may yet be rolled back (RULES.md D1236).
+    pub(in crate::engine::rows) fn frozen_newest(&self, tx: TxId, id: RowId) -> Result<Newest> {
+        let directory = self.frozen.directory()?;
+        let maker = directory.holding(id).map(|e| self.group_maker(e));
+        let row = self.frozen_in(&directory, id, None)?;
+        Ok(match maker {
+            Some(Maker::Open(by)) if by != tx => Newest { row: None, pending: Some(row), writer: Some(by), stamp: 0 },
+            _ => Newest::of(row),
+        })
     }
 
     /// The groups `reader` sees: the directory itself if none is stamped.

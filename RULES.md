@@ -771,6 +771,7 @@ verification approach DO-178C expects (§8).
 | D1203 | A set function compared with a constant keeps the groups its column's statistics give |
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
+| D1236 | A key of a row in another transaction's open load is pending to a UNIQUE check |
 
 ### The project
 
@@ -21157,6 +21158,21 @@ tables' pages, which does not fit beside what the pool holds. The
 lookups are counted as before, so LEAST_LOOKUPS and the window are
 unchanged. A hit costs nothing more, and a miss only notes which way the
 pool found its frame (`disk/buffer/tally.rs`).
+
+#### D1236. A key of a row in another transaction's open load is pending to a UNIQUE check
+
+A UNIQUE check at a statement's end reads the newest state of each other
+row its key's entries name. A row a load wrote straight into a frozen
+group (D533) has no version in the tree, and its state was read from its
+group as if it stood, whoever made the group. So a row of another
+transaction's open load was taken as a committed holder of its key, and
+an insert of that key failed as a duplicate (SQLSTATE 23000) though the
+load might yet roll back. The newest state of a frozen row now tells
+the group's maker: a row of a group of another transaction still open
+is that transaction's change pending, as a version in the tree made by
+it is, so the check fails the statement as a key another transaction is
+changing does (SQLCODE -911), and an insert of the key after the load
+rolls back goes in.
 
 ## 2. Project layout
 
