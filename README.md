@@ -28,9 +28,11 @@ command-line client.
   [partitioned tables](doc/sql/23-partitioning.md) and large objects.
 - A cost-based optimizer and
   [parallel](doc/operator/04-settings.md#parallel-queries), vectorized
-  execution within one memory budget, spilling to disk past it, each plan
-  shown by [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze).
-- Indexes by B-link trees, hash tables and R-trees, over expressions too.
+  execution within one memory budget, spilling to disk past it, with
+  [EXPLAIN ANALYZE](doc/sql/statements/explain.md#explain-analyze) showing
+  what each operator did.
+- Indexes by B-link trees and hash tables, over expressions too, and
+  R-trees over coordinates and geometries.
 - Analytic SQL with window functions, grouping sets, recursive queries and
   row pattern recognition.
 - Exact numbers of up to 38 digits, DECFLOAT, arrays, multisets, row,
@@ -49,18 +51,18 @@ command-line client.
 - [Property graphs](doc/sql/20-property-graphs.md) queried by GRAPH_TABLE
   and [GQL](doc/sql/statements/execute-gql.md), with
   [graph algorithms](doc/sql/21-graph-algorithms.md).
-- Stored procedures, functions and triggers in SQL/PSM, with
+- Stored procedures and functions in SQL/PSM, triggers, and
   [a routine debugger](doc/user/11-debugging.md).
 - Replication over mutual TLS, online
   [backups](doc/operator/10-backups.md) and recovery to a point in time.
-- Compression and encryption at rest, with roles and privileges.
-- [Plug-ins](doc/client/04-plugins.md) of every kind, storage engines,
-  index methods, types and functions among them, run as processes of
-  their own from signed packages.
-- A [native protocol](doc/client/05-protocol.md) over TCP, Unix sockets or
-  Windows named pipes with TLS, and a
+- Compression and encryption at rest, and roles with privileges.
+- External [plug-ins](doc/client/04-plugins.md) of many kinds, storage
+  engines, index methods, data types and functions among them, run as
+  processes of their own and installed from signed packages.
+- A [native protocol](doc/client/05-protocol.md) over TCP with TLS, Unix
+  sockets or Windows named pipes, and a
   [client library](doc/client/02-library-connections.md) that pools
-  connections and fails over.
+  connections and chooses among several servers.
 - [Monitoring](doc/operator/11-monitoring.md) of connections, statements,
   tables and indexes.
 
@@ -76,7 +78,7 @@ target/release/turborel --socket turborel.sock -U ann -W             # from anot
 A password is proved over a Unix socket, a named pipe or TLS, never over
 plain TCP, so a server of this machine is reached at its socket.
 [Getting Started](doc/user/02-getting-started.md) goes on from here, and
-[Running the Server](doc/operator/02-turboreld.md) covers TCP and TLS.
+[Connections](doc/operator/06-network.md) covers TCP and TLS.
 
 ```
 cargo test --workspace   # the tests
