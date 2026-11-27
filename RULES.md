@@ -774,6 +774,8 @@ verification approach DO-178C expects (§8).
 | D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
 | D1187 | A top-N by a key that orders strings by their octets tells its scan a bound that holds a string, judged of each row by octets |
 | D1188 | A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured |
+| D1189 | A character string of any characters is matched where it lies, by the octets its characters begin at, and a match over a vector takes no memory of its own |
+| D1190 | A greedy loop of one class before a character outside it is run through by the matcher that marks, no fork kept |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -802,10 +804,16 @@ verification approach DO-178C expects (§8).
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
 | D1245 | A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked |
+| D1246 | A run's workers number one fewer than its degree, the statement's thread the last, and a thread's runs keep their workers |
+| D1247 | A grouping stops handing morsels whole once the statement thread's table holds more groups than a morsel has rows |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1251 | A column store's scan judges a LIKE of a constant pattern of each chunk's texts where they lie, those coded by symbols by the pattern's machine stepped a code at a time |
 | D1253 | A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
+| D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
+| D1258 | An abort record that cannot be appended stops the database |
+| D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
+| D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 
 ### The project
 
@@ -2419,7 +2427,9 @@ clearing or reading anything, so a database is open in one place at a
 time.
 
 A failed sync stops changes, because it may have lost logged data and a
-later sync could succeed without it. The file log never retries. Row
+later sync could succeed without it. The file log never retries. An abort
+record that cannot be appended after its transaction's records stops them
+too (D1258). Row
 changes, writing commits, definitions and checkpoints are refused
 (SQLCODE -915), reads and rollbacks go on, and reopening recovers from the
 log.
@@ -21397,6 +21407,100 @@ and a letter of two octets, from every position, holds a searcher kept
 across the texts to the first matchers
 (`over_a_corpus_a_searcher_finds_what_the_first_matchers_find`).
 
+#### D1189. A character string of any characters is matched where it lies, by the octets its characters begin at, and a match over a vector takes no memory of its own
+
+D1188 matched a string of ASCII where it lay. Of any other string it
+made a vector of characters first, four octets for each character,
+allotted, filled and freed for every subject. And each match found gave
+its captures as a copy of the searcher's slots and its match vector as
+a vector made anew, two more pieces of memory a match.
+
+A text's positions are now its own to step (`Text::after`,
+`Text::before`). Of a vector of characters and of a large object they
+count characters, as before. Of a string read where it lies (`Utf8`)
+a position is the octet a character begins at. The character there is
+decoded as it is read, one of ASCII by a single test of its octet, and
+the position after it is past its octets. No matcher adds one to a
+position to pass a character. The matcher that marks, the matcher of
+threads, the automaton and the matcher that counts its steps all step
+by the text, and so does a search of one match after another past a
+match of no characters. Where a match is known to end is a position of
+the same text, so the marks, which are of positions, need no change.
+
+A back-reference under the flag `i` is matched by case variants, and a
+variant may take other octets than the character captured, as the
+Kelvin sign takes three where `k` takes one. So the matcher that counts
+reads what was captured and what is matched against it a character of
+each in turn, each by its own positions, and what it matched is as long
+as the positions it passed (`backtrack.rs`, `again`).
+
+A regular expression function's subject that is a character string is
+read where it lies, whatever its characters (`subject.rs`,
+`Body::Utf8`). Its positions are octets, so a start position given in
+octets is the octet itself, moved to the next character if it falls
+within one, and one given in characters is found by passing that many
+characters. A position found is counted back into the units asked for.
+The first position, which most calls ask for, is the first character's
+in either units and needs no count. What lies between two positions is
+cut out of the string as it is. TRANSLATE_REGEX copies the spans
+between its matches that way, where it wrote each character of a vector
+again.
+
+A search leaves where its match's groups are in the searcher's own
+memory (`bounded::Scratch`). `Searcher::find_into` reads them into a
+match vector the caller keeps from one match to the next, and
+TRANSLATE_REGEX over a vector of subjects keeps one for the vector. A
+match found there takes no memory of its own. `find_in`, which gives a
+match vector of its own, is that with a vector made for it.
+
+A value that is no character string, a number given as a subject, is
+still made a vector of characters, and a large object is read a chunk
+at a time as before. Nothing any function gives changes. The corpus of
+D1188 holds every search of a text read where it lies, from every
+position, on each matcher and through the searcher, to the matchers
+over the text's characters, with each match after another and what
+replaces it (`over_a_corpus_a_searcher_finds_what_the_first_matchers_find`,
+`a_text_of_longer_characters_read_where_it_lies_matches_as_its_characters`).
+
+#### D1190. A greedy loop of one class before a character outside it is run through by the matcher that marks, no fork kept
+
+The matcher that marks (D1188) follows a loop as it follows any fork.
+At each character it marks the fork, keeps the way out of the loop to
+try later, and marks and follows the loop's instructions, five of them
+for a loop of one class. A pattern that takes a part of a text up to a
+delimiter, as `[^/]+/` takes a host name, spent most of its search
+there, and nearly every way out it kept failed at its first
+instruction.
+
+A program now knows the loops it runs through (`compile/runs.rs`,
+`Program::runs`). Such a loop is greedy and of one instruction that
+matches a character by what the character is alone, and the next
+character asked for after the loop, positions kept for groups between
+them or not, is one that instruction never matches. `[^/]+/`, `a*b` and
+`(\d+)\.` each have one. At a position where the loop's instruction
+matches the character, the way out comes to that next instruction with
+the same character and fails. Where the loop's instruction fails, the
+way out is the only way. So the first way that can match leaves the
+loop at the first character it does not take, and every way out before
+that fails at once and changes nothing, no group's position either, as
+a way that fails puts back what it kept.
+
+The matcher that marks follows such a loop to that character with no
+fork kept (`bounded.rs`, `through`). It marks the loop's fork at each
+position it passes, as following the forks did, so a way that comes to
+the loop at a position passed before stops there and a search still
+takes time within the product of the text's length and the program's.
+It reads no further than where a match is known to end.
+
+A loop stays a loop of forks where the proof does not hold. That is a
+reluctant loop, a loop of more than one instruction, a loop of the
+wildcard that looks for an LF after a CR, and a loop followed by an
+assertion, a fork, a back-reference or the match before any character
+is asked for. The other matchers follow every loop as before, and the
+corpus of D1188 holds the matcher that marks to them over patterns
+with such loops and without
+(`a_loop_of_a_class_before_a_character_outside_it_is_run_through`).
+
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 
 The groups n rows fall into by columns of D distinct combinations are
@@ -22702,6 +22806,95 @@ returns (`exec/parallel/run.rs`). A statement that ends early with no
 cancel, as a FETCH FIRST met does, waits for at most a morsel's work on
 each thread, which no stop bounds, as the statement has not stopped.
 
+#### D1246. A run's workers number one fewer than its degree, the statement's thread the last, and a thread's runs keep their workers
+
+A run of morsels let no more morsels run at once than its degree (D290),
+but it was offered to every worker of the pool, and its reader, the
+statement's thread, took morsels too while it waited. With as many
+workers as the degree, one thread more than the degree took turns at
+the run's morsels, and where the reader worked on a result between two
+morsels, merging a morsel's groups or making rows, it worked beside a
+full degree of workers. One thread more than the processors a statement
+was given is no harm by itself. The harm is the order of the results. A
+run gives its results in the order of its morsels and takes no morsel
+more than its window past the one its reader waits for, so a morsel on
+a thread that shares its processor holds back every thread that has one
+to itself, once they have taken the window's morsels.
+
+The workers of the pool now run one morsel fewer of a run at once than
+its degree, and the reader's thread is the last of the degree's
+(`exec/parallel/run.rs`). It takes a morsel itself whenever it has to
+wait for one, as before, so a reader with nothing to do between results
+works as a worker does, and one that works on its results does so
+beside one worker fewer. No measure of the reader's work is taken and
+no threshold decides. A reader that waits has just found no morsel to
+take, so no worker could have taken one in its place, and nothing is
+lost by counting it always. A run of degree 1 is offered to no worker
+and is its reader's alone, as before, and one of degree 2 has one
+worker beside its reader.
+
+Which workers serve a run is fixed as it is offered
+(`threads/pool.rs`). A job is served by as many workers as it asks,
+numbered on from its first and round past the pool's last. The jobs one
+thread offers are served by the same workers, the lowest numbers of a
+thread offering alone, so the threads busy for a statement are the same
+from one of its runs to the next and from one statement of a session's
+thread to the next. Jobs of other threads offered meanwhile are
+numbered on past them, so statements running at once spread over the
+pool before they share a worker. Whatever places threads on processors,
+the system's scheduler or a tool that pins them, then meets as many
+busy threads as the degree, the same ones, where it met one more, a
+different set each run.
+
+The rows a statement gives, their order and its errors are as before,
+as each morsel's result is still given in the order of the morsels.
+EXECUTOR.DEGREE keeps its meaning, the most threads a statement's query
+runs on at once, its own among them, which the executor now keeps.
+
+#### D1247. A grouping stops handing morsels whole once the statement thread's table holds more groups than a morsel has rows
+
+A morsel whose groups are few beside its rows is handed whole to the
+statement's thread, which merges it into one table of its own (D356),
+on the reckoning that merging a group costs what grouping a row or two
+does, so that thread keeps up. The test was of the morsel alone. A
+grouping by a column most of whose rows hold one value, the others many
+values, passed it with every morsel, a few hundred groups of some
+thousands of rows, and the statement's thread merged every group of the
+grouping into one table by itself. That table is not a morsel's. It
+holds every group there is, so each merge looks a key up outside the
+processor's cache, each new key is added to lanes that grow by copying,
+and the groups are finished by that one thread at the end. The rows
+cost less than reckoned too, as a run of one value is taken with no
+lookup. The statement's thread was busy without pause and the workers
+waited on it.
+
+What makes the merge cheap is that the grouping has few groups in all,
+which no morsel can tell and the statement thread's table can. So the
+morsel's test stands and the grouping's is added
+(`exec/parallel/grouped/waves.rs`). Morsels are handed whole while that
+table holds no more groups than a morsel has rows, EXECUTOR.MORSEL_ROWS.
+No table a thread makes of a morsel holds more, so up to there the
+reckoning compares like with like. Once the table holds more, the
+statement's thread takes it to the partitions, as a morsel of many
+groups after it always did, and from then on no morsel is handed whole.
+The grouping then runs as one of many groups does, its morsels split
+among the partitions and merged by the threads, each partition's table
+given its room once.
+
+The threads group morsels ahead of the one the statement's thread
+reads, so as the table passes the bound some morsels have already been
+handed whole and others not, by how fast each thread was. That much
+depends on timing, and nothing a statement can see does. A morsel
+handed whole after the bound is merged into a new table of the
+statement's thread, in its order, and that table is taken to the
+partitions before the next morsel that was split, so each partition
+still merges its morsels in the order of their numbers. The groups,
+their order, each set function's value, the warnings and the errors are
+those of the plan run alone, whichever morsels were handed whole. The plan is chosen before
+any morsel is read and does not change. What a grouping holds of its
+grant at a moment may differ by a few morsels' groups, as it already
+did by the morsels grouped ahead.
+
 #### D1250. A record of a transaction reaches the log only while it may still commit, or with its abort record after it
 
 A transaction holds its records until its commit, and a checkpoint, its
@@ -22935,6 +23128,196 @@ the projection over the part takes the rows the partitions kept for the
 sort, as those are the rows that leave the part. Both take the time of
 the part's run and of each row pulled. A part that gives way, and a sort
 whose rows are not taken from the tables, count every group in both.
+
+#### D1256. A sort by set functions alone picks its first groups of a partition before their rows are made
+
+A sort that asks for its first rows over a grouping run in parallel takes
+them from each partition's table (D1124). The partition gave every group
+as a batch first, each set function finished of each group into a column
+of results, and then kept the few rows the sort asks. Of a grouping of
+very many groups, finishing every function of every group and holding
+the columns of results was most of what the partition did, to keep a few
+rows.
+
+Where every key of the sort names a set function, the partition now
+picks before it makes (`exec/parallel/grouped/top.rs`, `picked_of`). It
+finishes the columns of those functions alone, takes its first rows by
+them and by the first rows' numbers, and makes the rows of the groups
+picked from its table (`exec/table/given.rs`, `row`). The rows and their
+order are those the batch of every column gave, as the keys and the tie
+by first row are the same.
+
+A set function that no key names is still finished of every group, with
+no value kept (`checked_but`). Its result may raise, as a sum past the
+range of its type does [ISO/IEC 9075:1992 §6.5 GR2b iv], and the plan run
+alone finishes every group and raises it, so the part raises it too. A
+count raises nothing and is not finished.
+
+A sort with a key that names a grouping column or a constant sorts the
+batch of every column, as before. A column of results is made at its
+length, so its values do not move as it fills.
+
+#### D1258. An abort record that cannot be appended stops the database
+
+A rollback appends its abort record after the records of its transaction
+already in the log, and ignored a failure of that append, on the ground
+that recovery undoes a transaction with no commit record either way.
+D1250 shows where that ground gives way. The records then stand in the
+log with no end, the transaction is rolled back in memory and its locks
+released, and if the log takes records again the next writer of its rows
+commits after them. Recovery that reads so far back puts the rows back
+over that commit.
+
+Whether a log takes records after it refused one is the log's own
+matter. The file log mostly does not. A write that fails, of the records
+its buffer held or of the zeros written ahead, leaves the segment
+refusing appends until the log is opened again (`BlockFile::publish`),
+and a segment is begun only after an append that succeeded. Yet a change
+of the log's formats begins one before the next append
+(`rotate_for_formats`), and a record's own encoding can fail with
+nothing written. A log is a plug-in, and `Log::append` promises nothing
+of the appends after one that failed.
+
+So the rule is kept above the log. A rollback whose abort record cannot
+be appended, a record of its transaction having reached the log, stops
+the database as a failed sync does (`Txn::log_abort`,
+`Transactions::stop_changes`, D25). It takes no row change, no commit
+that wrote, no definition and no checkpoint (SQLCODE -915, naming the
+abort record) until it is opened again and recovered. Recovery then
+undoes the transaction as one a crash interrupted, and rightly, nothing
+having been committed over its rows since. Reads and rollbacks go on. A
+transaction that would write those rows makes that write after the locks
+on them are released, which follows the stop, and every row change,
+load and commit record asks first whether the database takes changes. A
+commit written and not yet synced as the database stops is in doubt, as
+after a failed sync. The stop is told to the sink with the first change
+refused.
+
+The abort record is still not synced. The sync of a later commit makes
+it durable first, being before it in the log, and a crash that loses it
+loses every commit after it.
+
+A commit record that cannot be appended needs no rule of its own. Its
+transaction is rolled back, the run that failed having noted that a
+record of it may have reached the log (`TxLog::write`), so its abort
+record is appended after whatever was, or the database stops by this
+rule. It stops so even where the log refused the whole run, as how
+much of a run reached a log that failed is not known above it. With
+the file log nothing is lost by that, a segment that refused a write
+taking no append until the log is opened again.
+
+#### D1259. A transaction dropped without its end is rolled back by its drop, or stops the database
+
+A transaction ends by its commit or its rollback. One dropped with
+neither released its table locks, its row waits and its snapshot, and
+did nothing more. No change was undone, no engine was told, no end
+record was written, and the records it held were discarded. Its versions
+stayed in the row store as those of an open transaction. Readers went on
+reading the versions before them. The next writer of one of its rows was
+refused as by a writer still at work (SQLCODE -911) for the life of the
+process, or with LOCKS.WAIT ON waited for an end already given. A
+checkpoint captured the versions, the log holding no record of them, and
+after a crash recovery had nothing to undo them by. The versions before
+them were in the undo store, which does not outlive the process, so
+every read of the table then failed (SQLCODE -916), its committed rows
+with it.
+
+A session's drop left its transaction so when no call could be entered:
+the session left busy by a panic in a call's entry, its database
+retired (D57) or opened again in place since. A client's disconnection,
+a server's stop and a panic within a statement do not come to this. The
+call's own guard is dropped first, and the session then rolls back. The
+same state was reached where a commit or a rollback returned before it
+undid anything, on a poisoned lock or a snapshot refused.
+
+The drop now ends it (`txn/release.rs`). A transaction dropped still
+open, its `open` mark not yet cleared by the release every commit and
+every rollback makes, that joined an engine is rolled back by the steps
+a session's rollback takes (`Txn::undo_whole`). Under the gate its
+changes are undone, each engine it joined is told, the records it holds
+are dropped and its abort record is written (D1250, D1258). One that
+joined nothing, as the transactions that only hold a table's lock for a
+definition, is left as it was. A session dropped with no call to enter
+ends its transaction itself, its cursors closed first
+(`Session::end_unentered`).
+
+A rollback in a drop runs where nobody chose, so it may wait for nothing
+its thread holds. It takes the gate, the transaction's own state, its
+engines' latches and the log. A transaction is held by its session
+alone, as its own, as the one its running call notes and in a routine's
+host, and by the database's list of commits in doubt, which are not
+open. No executor, cursor or plan holds one. So the last reference to an
+open transaction that joined an engine is dropped in one of three
+places. The first is the start of a session's drop, where a session
+rolled back before too. The second is the end of a call that ends a
+transaction, when the end returned early (`Session::rollback_in`,
+`Session::commit_in`). The third is the return of a function that began
+a transaction of its own, which ends it on every path but a failure of
+the end itself (`db/assertions.rs`). The thread is in no engine at any
+of them, and the gate taken again by its holder does not wait
+(`sync::Gate`).
+
+Where the rollback cannot be trusted, or fails, the database stops
+taking changes as after a failed sync (`Transactions::stop_changes`,
+D1258) and the tables whose locks the transaction holds are marked
+damaged (D19). That is so while a panic unwinds, when a second panic
+would end the process, with the lock of the transaction's state
+poisoned, its bookkeeping left half changed, with its commit under way,
+its participants already taken, when a change cannot be undone or an
+engine refuses, and when the rollback itself panics, which the drop
+catches. A database stopped takes no checkpoint, so no image holds a
+version left so, and commits nothing, so nothing is committed over one.
+Opening it again recovers it from its last checkpoint and its log.
+
+For this a commit pays one load of the `open` mark, in its
+transaction's drop, and takes no lock.
+
+#### D1262. A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold
+
+A run gives its results in the order of its morsels and took no morsel
+more than two a thread past the one its reader waits for (D290), so
+that a reader stopping early left little read for nothing. Where the
+morsels of a run cost unevenly, as under a filter that keeps the rows
+of some and few of others, or its reader works in bursts, the threads
+that finished early had taken the window's morsels and waited for the
+one slow morsel the reader wanted, most of the processors idle
+meanwhile.
+
+A reader that holds all its input stops early of nothing, so its run
+may lead it further. A grouping read by batch now asks its run a lead
+(`exec/parallel/run.rs`, `Lead`, `grouped/waves.rs`), sixteen morsels
+a thread in place of two. A sweep of 2 to 128 a thread, over groupings
+of few groups and of many, whose morsels cost unevenly, and a join's
+probe that makes several rows of each, on eight threads and on two,
+falls to sixteen and is level past it, so the least that is level is
+taken, as a longer lead only holds more. A stream stays at two, as its reader sets its
+pace and the rows held ahead of it are bounded by the window (D1153).
+A sort, a join's build and the partitioned operators stay at two as
+well, their morsels charged to the grant as they are gathered (D1150).
+
+What the threads of a grouping hold ahead of the statement's thread was
+charged to nothing until it was read (D1155), which two morsels a
+thread kept small. So the lead is metered. Each morsel's groups count
+their bytes as its thread lands them and no longer once the reader is
+given them, and a thread takes a morsel past the two a thread only
+while the bytes so held are fewer than what the grant has left, its
+bytes less those the grouping holds. At any moment, then, the bytes the
+grouping holds and the bytes held ahead of its reader are within the
+grant, but for the one morsel each thread is grouping at that moment,
+as before. Of a small MEMORY.WORK_BYTES the lead narrows itself to the
+two a thread it was.
+
+The meter is apart from the grant's own count and decides nothing else.
+The reader charges each morsel's groups as it takes them, in the order
+of the morsels, as before, and by those charges alone a wave is merged,
+a partition written to the spill or the grouping gives way. So how many
+waves a grouping merges and how often it spills are the same whatever
+its lead, and whatever the threads' timing. The order of the results is
+kept as it was. Each partition merges its morsels in the order of their
+numbers, so a set function whose state depends on the order of its
+values, as MIN of strings equal under their collation and different in
+their octets, gives what the plan run alone gives. Timing changes when
+a thread waits, and nothing a statement can see.
 
 ## 2. Project layout
 

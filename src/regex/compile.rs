@@ -5,6 +5,7 @@
 //! 9075-2:2023 §9.28 GR9a i] that `regex/text.rs` finds.
 
 mod rest;
+mod runs;
 
 use super::class::{CharSet, fixed_escape, not_newline};
 use super::flags::{Flag, Flags};
@@ -61,9 +62,23 @@ pub(super) struct Program {
     pub(super) slots: usize,
     /// How many loops keep a position.
     pub(super) loops: usize,
-    /// The loop that takes the rest of any text, if it has one
-    /// (`compile/rest.rs`): its first instruction and the one after it.
+    /// What is known of its loops that a matcher that goes back passes
+    /// without following their forks, kept apart so a program is no
+    /// larger for it.
+    pub(super) passed: Box<Passed>,
+}
+
+/// \[DESIGN\] (RULES.md D1188, D1190) The loops of a program a matcher
+/// that goes back passes without following their forks.
+#[derive(Debug, Clone)]
+pub(super) struct Passed {
+    /// The loop that takes the rest of any text, if the program has one
+    /// (`compile/rest.rs`), as its first instruction and the one after
+    /// it.
     pub(super) rest: Option<(usize, usize)>,
+    /// Of each instruction, whether it is the fork of a loop the program
+    /// runs through with no fork kept (`compile/runs.rs`).
+    pub(super) runs: Vec<bool>,
 }
 
 /// Compiles `parsed` under `flags`, `.` matching newlines under `s`, `^`
@@ -85,7 +100,8 @@ pub(super) fn compile(parsed: &Parsed, flags: Flags) -> Result<Program> {
     c.emit(Inst::Save(1))?;
     c.emit(Inst::Match)?;
     let slots = parsed.groups.saturating_add(1).saturating_mul(SLOTS_PER_GROUP);
-    Ok(Program { rest: rest::rest(&c.insts), insts: c.insts, slots, loops: c.loops })
+    let known = Box::new(Passed { rest: rest::rest(&c.insts), runs: runs::runs(&c.insts) });
+    Ok(Program { passed: known, insts: c.insts, slots, loops: c.loops })
 }
 
 struct Compiler {

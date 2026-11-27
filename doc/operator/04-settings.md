@@ -218,11 +218,14 @@ are read in morsels, parts of about EXECUTOR.MORSEL_ROWS rows, each
 taken by whichever thread is free, and the operators over them, a
 grouping, DISTINCT, a sort, a hash join, window functions, EXCEPT and
 INTERSECT, are made of each morsel's part. The threads are the
-database's workers, `turborel-exec-1` and on, EXECUTOR.WORKERS of
+database's workers, `turborel-exec-0` and on, EXECUTOR.WORKERS of
 them, 0 for as many as the machine runs at once, shared by every
 statement; the statement's own thread works beside them. A statement
 takes at most EXECUTOR.DEGREE threads, its own among them, 0 for as
-many as the workers, 1 for its own thread alone. The planner runs a
+many as the workers, 1 for its own thread alone. Its own thread is
+always one of them, so it takes one worker fewer than its degree, the
+lowest-numbered while no other statement runs in parallel, and the same
+ones from one statement to the next. The planner runs a
 part on several only if its tables hold at least
 EXECUTOR.PARALLEL_MIN_ROWS rows, so a query of a few rows, as one by a
 key, stays on its own thread. A grouping or DISTINCT of so many
@@ -230,7 +233,8 @@ groups, as the optimizer estimates them, that each morsel holds
 nearly as many groups as rows runs on several only when enough threads
 share its work. Its morsels' groups are merged a few morsels at a time,
 so it holds about what its groups hold, and a morsel of few groups is
-merged on the statement's thread at once. A query of DISTINCT set
+merged on the statement's thread at once, while the groups merged there
+are no more than a morsel has rows. A query of DISTINCT set
 functions, computed by two groupings, runs both in one part: the first
 grouping's groups are split among the threads by the query's grouping
 columns alone, so each thread makes the second grouping's groups of its

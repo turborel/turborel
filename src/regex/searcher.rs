@@ -9,6 +9,11 @@
 //! texts it is given: a call over a vector of texts makes one for the
 //! vector. A search of one text alone makes no automaton.
 //!
+//! \[DESIGN\] (RULES.md D1189) A search leaves where its match's groups
+//! are in the searcher (`bounded::Scratch`), which a caller reads into a
+//! match vector it keeps from one match to the next (`find_into`), so
+//! a match of a vector's subject takes no memory of its own.
+//!
 //! Before a search that asks what was captured, the automaton is a pass
 //! more over a text that matches, and the whole search of one that does
 //! not. On `bench/regex.rs` what the pass costs the texts that match and
@@ -18,7 +23,7 @@
 //! automaton first only while at least half of the last window found
 //! none. A search that asks only whether there is a match always asks it.
 
-use super::{Ascii, Captures, Matcher, Regex, Text, backtrack, bounded, dfa, pike};
+use super::{Ascii, Captures, Matcher, Regex, Text, Utf8, backtrack, bounded, dfa, pike};
 use crate::error::Result;
 
 /// Searches of a regular expression, and its automaton, if it has one and
@@ -85,7 +90,8 @@ impl Searcher<'_> {
         self.found.asks
     }
 
-    /// As `Regex::is_match`: a string of ASCII alone read where it lies.
+    /// As `Regex::is_match`, the string read where it lies, one of
+    /// ASCII alone by its octets as they are (RULES.md D1188, D1189).
     ///
     /// # Errors
     ///
@@ -94,8 +100,7 @@ impl Searcher<'_> {
         if let Some(ascii) = Ascii::of(text) {
             return self.is_match_in(&ascii);
         }
-        let chars: Vec<char> = text.chars().collect();
-        self.is_match_in(chars.as_slice())
+        self.is_match_in(&Utf8::of(text))
     }
 
     /// As `Regex::is_match_in`.
@@ -104,7 +109,7 @@ impl Searcher<'_> {
     ///
     /// As `Regex::is_match_in`.
     pub fn is_match_in<T: Text + ?Sized>(&mut self, text: &T) -> Result<bool> {
-        Ok(self.search(text, 0, false)?.is_some())
+        self.search(text, 0, false)
     }
 
     /// As `Regex::find_in`.
@@ -113,9 +118,25 @@ impl Searcher<'_> {
     ///
     /// As `Regex::find_in`.
     pub fn find_in<T: Text + ?Sized>(&mut self, text: &T, from: usize) -> Result<Option<Captures>> {
-        let Some(slots) = self.search(text, from, true)? else { return Ok(None) };
-        let spans = slots.chunks(2).map(|pair| if let [Some(a), Some(b)] = pair { Some((*a, *b)) } else { None }).collect();
-        Ok(Some(Captures { spans }))
+        let mut found = Captures::default();
+        Ok(self.find_into(text, from, &mut found)?.then_some(found))
+    }
+
+    /// \[DESIGN\] (RULES.md D1189) As `find_in`, the match vector put in
+    /// `found`, whose memory is used again. It gives whether there is a
+    /// match, and with none `found` holds no span.
+    ///
+    /// # Errors
+    ///
+    /// As `Regex::find_in`.
+    pub fn find_into<T: Text + ?Sized>(&mut self, text: &T, from: usize, found: &mut Captures) -> Result<bool> {
+        found.spans.clear();
+        if !self.search(text, from, true)? {
+            return Ok(false);
+        }
+        let spans = self.kept.slots().chunks(2).map(|pair| if let [Some(a), Some(b)] = pair { Some((*a, *b)) } else { None });
+        found.spans.extend(spans);
+        Ok(true)
     }
 
     /// As `Regex::each`.
@@ -132,7 +153,7 @@ impl Searcher<'_> {
         while given < most && at <= text.len() {
             let Some(next) = self.find_in(text, at)? else { break };
             let (start, end) = next.get(0).unwrap_or((at, at));
-            at = end.max(start.saturating_add(1));
+            at = end.max(text.after(start));
             given = given.saturating_add(1);
             if !f(next)? {
                 break;
@@ -156,9 +177,10 @@ impl Searcher<'_> {
         Ok(last)
     }
 
-    /// The first match in `text` beginning at `from` or after: each slot of
-    /// where its groups are if `capture`, else none of them.
-    fn search<T: Text + ?Sized>(&mut self, text: &T, from: usize, capture: bool) -> Result<Option<pike::Slots>> {
+    /// Whether `text` has a match beginning at `from` or after. The first
+    /// one's slots, of where its groups are, are left in what the
+    /// searcher keeps if `capture`, else none of them.
+    fn search<T: Text + ?Sized>(&mut self, text: &T, from: usize, capture: bool) -> Result<bool> {
         let regex = self.regex;
         let mut end = text.len();
         let asked = !capture || self.found.asks;
@@ -168,26 +190,41 @@ impl Searcher<'_> {
                     if capture {
                         self.found.count(true);
                     }
-                    return Ok(None);
+                    return Ok(false);
                 }
                 dfa::Scan::Ends(at) => {
                     if !capture {
-                        return Ok(Some(Vec::new()));
+                        return Ok(true);
                     }
                     end = at;
                 }
                 dfa::Scan::GaveUp => self.dfa = None,
             }
         }
-        let slots = match regex.matcher(end, from) {
-            Matcher::Backtrack => backtrack::search(&regex.program, text, from, regex.caseless.then_some(&regex.table)),
-            Matcher::Bounded(positions) => bounded::search(&regex.program, text, (from, positions), capture, &mut self.kept),
-            Matcher::Pike => pike::search(&regex.program, text, from, capture),
-        }?;
+        let found = match regex.matcher(end, from) {
+            Matcher::Backtrack => {
+                let slots = backtrack::search(&regex.program, text, from, regex.caseless.then_some(&regex.table))?;
+                self.kept_of(slots)
+            }
+            Matcher::Bounded(positions) => bounded::search(&regex.program, text, (from, positions), capture, &mut self.kept)?,
+            Matcher::Pike => {
+                let slots = pike::search(&regex.program, text, from, capture)?;
+                self.kept_of(slots)
+            }
+        };
         if capture {
-            self.found.count(slots.is_none());
+            self.found.count(!found);
         }
-        Ok(slots)
+        Ok(found)
+    }
+
+    /// Keeps `slots`, what a matcher that gives its match's slots found,
+    /// where the matcher that marks leaves its own, and gives whether
+    /// there is a match.
+    fn kept_of(&mut self, slots: Option<pike::Slots>) -> bool {
+        let found = slots.is_some();
+        self.kept.put(slots.unwrap_or_default());
+        found
     }
 }
 

@@ -52,7 +52,7 @@ pub(crate) use unicode::general_category;
 pub use lob_text::LobText;
 pub(crate) use replace::zero_length;
 pub use replace::{Emit, Replacement};
-pub use text::{Ascii, Text, Window};
+pub use text::{Ascii, Text, Utf8, Window};
 
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
 
@@ -92,9 +92,10 @@ enum Matcher {
     Pike,
 }
 
-/// A match: where it, and each group of it, begins and ends, characters
-/// from 0, its end excluded.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A match, as where it and each group of it begins and ends, in
+/// positions of the text searched (`Text`), its end excluded. One with
+/// no span is what a search fills (`Searcher::find_into`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Captures {
     spans: Vec<Option<(usize, usize)>>,
 }

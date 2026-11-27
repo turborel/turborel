@@ -153,7 +153,7 @@ pub const READERS: [Mutation; 21] = [
         name: "first-kept-by-writer",
         package: Package::Core,
         breaks: "read-only path: a transaction that logged a record keeps its first after it ends, holding the log",
-        file: "src/txn.rs",
+        file: "src/txn/release.rs",
         original: "        if self.forget_held() {",
         replacement: "        if !self.forget_held() {",
         integration: &[],

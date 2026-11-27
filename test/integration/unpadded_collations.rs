@@ -263,6 +263,26 @@ fn a_range_passes_over_no_zone_of_the_padded_order() {
     assert_eq!(count("S = 'a'"), all);
 }
 
+/// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §8.2 GR3d] EXPLAIN shows a
+/// grouping column with the collation its groups are told apart by where
+/// that is not the default: a column of a collation of NO PAD with
+/// COLLATE and the name of the collation that orders it, in the plan as
+/// bound and as run, and of the first grouping of a DISTINCT set
+/// function's pair; a column grouped under the default with none.
+#[test]
+fn explain_shows_the_collation_a_grouping_groups_under_8_2() {
+    let (_db, a) = tables();
+    let whole = |sql: &str| a.explain(sql, &turborel::params::Params::new()).unwrap();
+    let unpadded = whole("SELECT S, COUNT(*) FROM C GROUP BY S");
+    let (bound, run) = unpadded.split_once("-- physical:").unwrap();
+    assert!(bound.contains("Aggregate group by [C.S COLLATE UCS_BASIC]"), "as bound: {bound}");
+    assert!(run.contains("Aggregate group by [C.S COLLATE UCS_BASIC]"), "as run: {run}");
+    let pair = physical(&a, "SELECT COUNT(DISTINCT S) FROM C");
+    assert!(pair.contains("Aggregate group by [C.S COLLATE UCS_BASIC] computing []"), "the first of the pair: {pair}");
+    let padded = physical(&a, "SELECT P, COUNT(*) FROM C GROUP BY P");
+    assert!(padded.contains("group by [C.P] computing"), "the default collation is not named: {padded}");
+}
+
 /// Verifies: [DESIGN] RULES.md D1183: the operators that read no string in
 /// place still compare sort keys, and so unpadded: a window's partition and
 /// order, UNION, INTERSECT and EXCEPT, IN and a quantified comparison of a
