@@ -533,6 +533,7 @@ mod tests {
             input: Box::new(one_row(row.clone())),
             est: 0.0_f64,
             streamed: false,
+            first: None,
         };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey::ascending(1)];

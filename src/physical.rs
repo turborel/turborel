@@ -314,6 +314,9 @@ pub enum Plan {
         /// so each group is made and given as its last row passes, none
         /// held (`exec/group/streamed.rs`, RULES.md D550).
         streamed: bool,
+        /// \[DESIGN\] (RULES.md D1215) How many of its groups, any of them, a
+        /// FETCH FIRST over it asks for as it runs (`exec/limit/bounded.rs`).
+        first: Option<usize>,
     },
     /// Each `<value expression>` applied to each row [X3.135-1986 §5.25 GR2].
     Project {

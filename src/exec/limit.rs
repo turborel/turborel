@@ -38,7 +38,7 @@ pub(super) fn limited(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let drain = input.can_raise();
     let rows = |most: Option<Most>| {
         let input = match most {
-            Some(most) => bounded::bounded(*input, most),
+            Some(most) => bounded::bounded(*input, most, db),
             None => *input,
         };
         super::execute(input, db, tx)
