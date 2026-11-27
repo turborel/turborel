@@ -27,7 +27,7 @@ const REST: &str = "exec::batch::judge::vetted::tests::a_conjunct_judged_of_the_
 
 /// Mechanisms whose removal must fail the requirements of a filter
 /// passing over what its scan judged exactly.
-pub const VETTED: [Mutation; 17] = [
+pub const VETTED: [Mutation; 18] = [
     Mutation {
         name: "vetted-like-stopped-early-said-exact",
         package: Package::Core,
@@ -93,8 +93,18 @@ pub const VETTED: [Mutation; 17] = [
         package: Package::Core,
         breaks: "a conjunct judged of its column decoded is not said to be judged exactly, so the filter judges it again",
         file: JUDGED,
-        original: "                reached.note(bit, Reach::Every);",
-        replacement: "                reached.note(bit, Reach::Part);",
+        original: "                kept = Some(rows);\n                reached.note(bit, Reach::Every);",
+        replacement: "                kept = Some(rows);\n                reached.note(bit, Reach::Part);",
+        integration: &[],
+        unit: &[LIKE_SAID],
+    },
+    Mutation {
+        name: "vetted-proved-conjunct-not-said",
+        package: Package::Core,
+        breaks: "a comparison a run's bounds prove of every row is not said to be judged exactly, so the filter judges it again",
+        file: JUDGED,
+        original: "                reached.note(bit, Reach::Every);\n                continue;",
+        replacement: "                reached.note(bit, Reach::Part);\n                continue;",
         integration: &[],
         unit: &[LIKE_SAID],
     },

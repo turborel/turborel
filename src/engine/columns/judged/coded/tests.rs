@@ -332,8 +332,9 @@ fn vetted(judgment: &Judgment, group: &Group, pages: &Pages<'_, Plain>, types: &
 /// are exactly those it is true of, and those kept from it on are every
 /// row the comparison keeps, the LIKE false of some, nulls among them. A
 /// comparison told beside the LIKE is said by its own place whether the
-/// LIKE is or not, and a LIKE of a CHARACTER column, which the scan does
-/// not judge, never is.
+/// LIKE is or not, of a run its parts' bounds prove it of (RULES.md
+/// D1293) as of the last run, whose column is decoded to judge it, and a
+/// LIKE of a CHARACTER column, which the scan does not judge, never is.
 #[test]
 fn a_like_is_said_judged_exactly_only_of_a_run_judged_to_its_end() {
     let (pool, file) = file();
