@@ -2,13 +2,14 @@
 //! D550 to D552): a grouping by a collation kept hashed, a batch's runs
 //! cut by their keys, set functions that cannot raise letting FETCH FIRST
 //! stop, a row goal passed through a filter, and none passed to the input
-//! of a sort that reads it whole (D1218).
+//! of a sort that reads it whole (D1218), and a sort of a grouping's input
+//! weighed by the rows of the plan built (D1208).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the streamed groupings' and row
 /// goals' requirements.
-pub const ORDERS: [Mutation; 5] = [
+pub const ORDERS: [Mutation; 6] = [
     Mutation {
         name: "streamed-collated",
         package: Package::Core,
@@ -58,5 +59,15 @@ pub const ORDERS: [Mutation; 5] = [
         replacement: "b",
         integration: &["streamed_grouping::a_sort_that_reads_every_group_passes_no_row_goal"],
         unit: &[],
+    },
+    Mutation {
+        name: "streamed-sort-weighed-by-logical-rows",
+        package: Package::Core,
+        breaks: "sorting a grouping's input first is weighed by the logical input's rows, not those of the plan built",
+        file: "src/physical/streamed.rs",
+        original: "let n = input.est().unwrap_or_else(|| self.card(g.input).rows);",
+        replacement: "let n = self.card(g.input).rows;",
+        integration: &[],
+        unit: &["physical::streamed::tests::a_sort_first_is_weighed_by_the_rows_of_the_plan_built"],
     },
 ];
