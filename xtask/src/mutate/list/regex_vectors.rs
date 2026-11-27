@@ -1,6 +1,7 @@
 //! The mutations of regular expression functions over vectors (RULES.md
 //! R-TEST-9): the entries of a dictionary a function over its codes runs
-//! (D1291).
+//! (D1291), and what a searcher
+//! leaves for the next (D1292).
 
 use super::{Mutation, Package};
 
@@ -12,9 +13,11 @@ const CODES: &str = "functions::regex::tests::a_vector_of_codes_is_run_as_each_r
 const UNREAD: &str = "functions::regex::tests::an_entry_no_row_reads_is_not_run";
 /// The unit test of a dictionary of more entries than rows.
 const MORE_ENTRIES: &str = "functions::regex::tests::a_dictionary_of_more_entries_than_rows_is_run_a_row_at_a_time";
+/// The unit test of what a searcher done leaves for the next.
+const LEFT: &str = "regex::searcher::tests::a_searcher_takes_up_what_the_last_one_left";
 
 /// The mutations of regular expression functions over vectors, in the order they run.
-pub const REGEX_VECTORS: [Mutation; 6] = [
+pub const REGEX_VECTORS: [Mutation; 10] = [
     Mutation {
         name: "regex-entries-translated-unread",
         package: Package::Core,
@@ -74,5 +77,45 @@ pub const REGEX_VECTORS: [Mutation; 6] = [
         replacement: "coded.codes.get(n).is_some_and(|_| found.get(n) == Some(&true))",
         integration: &[],
         unit: &[CODES],
+    },
+    Mutation {
+        name: "regex-searcher-takes-nothing-up",
+        package: Package::Core,
+        breaks: "a searcher of text after text takes up nothing a searcher left (D1292)",
+        file: "src/regex.rs",
+        original: "let left = self.left.take().unwrap_or_else(|| {",
+        replacement: "let left = None.unwrap_or_else(|| {",
+        integration: &[],
+        unit: &[LEFT],
+    },
+    Mutation {
+        name: "regex-searcher-leaves-nothing",
+        package: Package::Core,
+        breaks: "a searcher done leaves nothing for the next (D1292)",
+        file: "src/regex/searcher.rs",
+        original: "        if self.lasting {\n            self.regex.left.leave(",
+        replacement: "        if false {\n            self.regex.left.leave(",
+        integration: &[],
+        unit: &[LEFT],
+    },
+    Mutation {
+        name: "regex-searcher-forgets-what-it-found",
+        package: Package::Core,
+        breaks: "a searcher done leaves its automaton and forgets what its searches found (D1292)",
+        file: "src/regex/searcher.rs",
+        original: "self.regex.left.leave(Left { dfa: self.dfa.take(), found: self.found,",
+        replacement: "self.regex.left.leave(Left { dfa: self.dfa.take(), found: Found::default(),",
+        integration: &[],
+        unit: &[LEFT],
+    },
+    Mutation {
+        name: "regex-search-of-one-text-leaves",
+        package: Package::Core,
+        breaks: "a search of one text alone leaves a searcher with no automaton for the next (D1292)",
+        file: "src/regex.rs",
+        original: "kept: bounded::Scratch::default(), lasting: false }",
+        replacement: "kept: bounded::Scratch::default(), lasting: true }",
+        integration: &[],
+        unit: &[LEFT],
     },
 ];

@@ -823,6 +823,7 @@ verification approach DO-178C expects (§8).
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1290 | MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states |
 | D1291 | A regular expression function over a dictionary's codes is run once of each entry a row reads |
+| D1292 | What a searcher keeps is left with its expression for the next searcher |
 
 ### The project
 
@@ -23726,6 +23727,40 @@ Over a vector of codes they now run once of each entry a row reads
 Which error a statement raises when several of its rows would raise
 one is that of the entry met first, where it was that of the row met
 first. The standard orders neither.
+
+#### D1292. What a searcher keeps is left with its expression for the next searcher
+
+A call over a vector of texts makes one searcher for the vector (D1188),
+which keeps the expression's automaton, what its last window of
+searches found and its scratch from one text to the next. The next
+vector's searcher began with none of it. It built the automaton's
+states again from the texts it read, and asked the automaton first for
+a window of searches before it learned again what the last searcher
+knew, that most of the column's texts match. A column is some tens of
+thousands of vectors.
+
+A searcher of text after text now leaves what it kept with its
+expression as it is dropped (`searcher::Leavings`), and
+`Regex::searcher` takes up what one left before it makes anything anew.
+The automaton's states and the window's verdict so last as long as the
+expression does, the statement's plan.
+
+- A searcher takes one `Left` out and puts one back, so the expression
+  holds no more of them than the searchers that were at work on it at
+  one time, the threads of the statements that share it. Each is within
+  the bound of one searcher (`dfa::OCTETS_MOST`,
+  `bounded::MARKS_OCTETS`).
+- Two searchers at work at once hold states of their own, and the lock
+  is taken to take one up and to leave one, never during a search.
+- An automaton that outgrew its states is left as none, so the
+  expression's next searchers ask none, where each vector's searcher
+  grew one to the bound before it gave up.
+- A search of one text alone (`Regex::once`) takes up nothing and
+  leaves nothing, as it makes no automaton.
+- A copy of an expression starts with nothing left.
+
+What a search finds is unchanged, as an automaton's states are of its
+program alone and the scratch is cleared by each search.
 
 ## 2. Project layout
 
