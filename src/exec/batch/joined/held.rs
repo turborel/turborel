@@ -201,7 +201,7 @@ fn read_asked(right: Plan, (keys, filtered, asked): (&[JoinKey], &[usize], Defer
         .iter()
         .map(|k| columns.iter().position(|&c| c == k.right).ok_or_else(|| broken("a join key the right operand's batch lacks")))
         .collect::<Result<_>>()?;
-    let mut batches: Batches = if stream::reads_by_batch(&right, db) {
+    let mut batches: Batches = if super::super::parted::built_by_batch(&right, db) {
         stream::batches_with(right, (db, tx), &asked)?
     } else {
         runtime::applied(gathered(execute(right, db, tx), &columns), asked.filters().to_vec(), &columns, (db, false))

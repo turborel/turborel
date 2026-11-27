@@ -21550,6 +21550,15 @@ next, and put each into a new batch. Of a grouping of very many groups
 that was one thread's work on every group, done after the part's threads
 had finished.
 
+A join did not read the grouping it builds of by batch at all. It asked
+whether the operand's tables read by batch, which a grouping by hash
+answers only as the operand of a join inside it, so the join took the
+groups a row at a time, each made by the statement's thread (D1125), and
+put the rows back into a batch for its table. A join now reads such an
+operand by batch (`exec/batch/parted.rs`, `built_by_batch`), a grouping
+by hash run in parallel alone or under projections, whatever its tables
+are read by, as its partitions give batches either way.
+
 A hash join that builds of the grouping keeps no order of what it
 builds. It finds the built rows by their keys. Where the join's keys
 hold every grouping column, no two groups share a key, so a probing row

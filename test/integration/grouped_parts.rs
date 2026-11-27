@@ -13,7 +13,8 @@ use crate::common::{exec, rows};
 /// Tables C, of the column store in groups of 2048, and R, of the row
 /// store, alike: K, a key; G, one of 500, null for every 41st; N, a
 /// number, null for every 13th. And D, of the column store, of as many
-/// rows: K, a key; A, one of 7; B, one of 5, so 35 pairs of them.
+/// rows: K, a key; A, one of 7; B, one of 60, so 420 pairs of them, more
+/// than a morsel's thread merges alone, so the partitions hold them.
 fn tables() -> (Database, Session) {
     let db = Database::new();
     db.set_job_policy(JobPolicy::Manual).unwrap();
@@ -33,7 +34,7 @@ fn tables() -> (Database, Session) {
             .collect();
         a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
     }
-    let pairs: Vec<String> = (0_i64..7000).map(|k| format!("({k}, {}, {})", k % 7, k % 5)).collect();
+    let pairs: Vec<String> = (0_i64..7000).map(|k| format!("({k}, {}, {})", k % 7, k % 60)).collect();
     a.run(&format!("INSERT INTO D VALUES {}", pairs.join(", "))).unwrap();
     a.commit().unwrap();
     db.maintain().unwrap();
@@ -230,9 +231,10 @@ fn grouped_part(shown: &str) -> bool {
 /// rows the plan run alone gives, in its order: an inner join and a LEFT
 /// join of a derived table, whose projection lies between, a semi join
 /// on the key and a set function, and a grouping of two columns keyed by
-/// both. A join on one of two grouping columns finds several groups of a
-/// key and gives them in the order the plan run alone does, and so does
-/// a FULL join its unmatched groups.
+/// both, as a step of a pipeline run in parallel and run alone over the
+/// first rows of a sort. A join on one of two grouping columns finds
+/// several groups of a key and gives them in the order the plan run alone
+/// does, either way, and so does a FULL join its unmatched groups.
 #[test]
 fn a_join_keyed_by_a_groupings_columns_gives_the_plans_rows() {
     let (_db, a) = tables();
@@ -241,8 +243,12 @@ fn a_join_keyed_by_a_groupings_columns_gives_the_plans_rows() {
         "SELECT R.K, X.G, X.S FROM R JOIN (SELECT G, SUM(N) AS S FROM R GROUP BY G) AS X ON X.G = R.K",
         "SELECT C.K, X.S FROM C LEFT JOIN (SELECT G, COUNT(*) AS S FROM C GROUP BY G) AS X ON X.G = C.K",
         "SELECT K, N FROM C WHERE (K, N) IN (SELECT G, MIN(N) FROM C GROUP BY G)",
-        "SELECT D.K, X.S FROM D JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.A = D.B AND X.B = D.A",
-        "SELECT D.K, X.B, X.S FROM D JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.A = D.B",
+        "SELECT D.K, X.S FROM D JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.A = D.A AND X.B = D.B",
+        "SELECT D.K, X.A, X.S FROM D JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.B = D.A",
+        "SELECT L.K, X.S FROM (SELECT K, A, B FROM D ORDER BY K FETCH FIRST 6000 ROWS ONLY) AS L \
+         JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.A = L.A AND X.B = L.B",
+        "SELECT L.K, X.A, X.S FROM (SELECT K, A, B FROM D ORDER BY K FETCH FIRST 6000 ROWS ONLY) AS L \
+         JOIN (SELECT A, B, COUNT(*) AS S FROM D GROUP BY A, B) AS X ON X.B = L.A",
         "SELECT C.K, X.G, X.S FROM C FULL JOIN (SELECT G, SUM(N) AS S FROM C GROUP BY G) AS X ON X.G = C.K + 6700",
     ] {
         let (alone, together, shown) = both(&a, sql);

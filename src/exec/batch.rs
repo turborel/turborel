@@ -46,6 +46,7 @@ pub(super) use joined::{Filters, Frame, SharedTable, TABLE_ROW_BYTES, dense_want
 pub(crate) use judge::bound_by;
 pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
 pub(super) use late::{Deferred, resolved};
+pub(super) use parted::built_by_batch;
 use project::Place;
 pub(super) use project::{projectable, projected, vector_of};
 pub(super) use runtime::{Told, taken as runtime_taken, wanted};

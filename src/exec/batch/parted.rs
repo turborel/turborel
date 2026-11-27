@@ -59,22 +59,38 @@ pub(super) fn grouping_in(input: &Plan) -> Option<&Plan> {
 /// with one key, so such a grouping is not one of these, and neither is
 /// a DISTINCT.
 pub(super) fn keyed_whole(plan: &Plan, keys: &[JoinKey]) -> bool {
-    let mut keyed: Vec<usize> = keys.iter().map(|k| k.right).collect();
+    let (part, keyed) = under(plan, keys.iter().map(|k| k.right).collect());
+    let Some(Plan::Aggregate { groups, collations, .. }) = grouping_of(part) else { return false };
+    collations.iter().all(Option::is_none) && (0..groups.len()).all(|column| keyed.contains(&column))
+}
+
+/// The operator under the projections and an analyzed plan's counts
+/// over `plan`, and of the columns `columns` of `plan`'s rows those a
+/// projection names of that operator's, as it numbers them.
+fn under(plan: &Plan, mut columns: Vec<usize>) -> (&Plan, Vec<usize>) {
     let mut part = plan;
-    // Each key's column, as the operator under a projection gives it.
     loop {
         if let Plan::Counted(c) = part {
             part = &c.input;
         } else if let Plan::Project { exprs, input, .. } = part {
-            let under = |c: &usize| if let Some(Expr::Column(of)) = exprs.get(*c) { Some(*of) } else { None };
-            keyed = keyed.iter().filter_map(under).collect();
+            let named = |c: &usize| if let Some(Expr::Column(of)) = exprs.get(*c) { Some(*of) } else { None };
+            columns = columns.iter().filter_map(named).collect();
             part = input;
         } else {
-            break;
+            return (part, columns);
         }
     }
-    let Some(Plan::Aggregate { groups, collations, .. }) = grouping_of(part) else { return false };
-    collations.iter().all(Option::is_none) && (0..groups.len()).all(|column| keyed.contains(&column))
+}
+
+/// \[DESIGN\] (RULES.md D1221) Whether a join reads `plan`, the operand
+/// it builds of, by batch. It does where every table `plan` scans reads
+/// by batch (`stream::reads_by_batch`), and where `plan` is a grouping by
+/// hash run in parallel, alone or under projections. Such a grouping's
+/// partitions give their groups as batches whatever its tables are read
+/// by (RULES.md D1125), so a row made of each group would only be put
+/// back into a batch for the join's table.
+pub(in crate::exec) fn built_by_batch(plan: &Plan, db: &State) -> bool {
+    stream::reads_by_batch(plan, db) || matches!(grouping_of(under(plan, Vec::new()).0), Some(Plan::Aggregate { .. }))
 }
 
 /// The batches of `plan`, a part run in parallel: a grouping's groups
@@ -209,5 +225,36 @@ mod tests {
         assert!(!keyed_whole(&swapped(), &[key(0), key(1)]), "a key of a set function's column and one grouping column");
         let made = project(vec![Expr::Neg(Box::new(Expr::Column(0))), Expr::Column(1)], plain());
         assert!(!keyed_whole(&made, &[key(0), key(1)]), "a key of a value the projection computes");
+    }
+
+    /// Verifies: [DESIGN] (RULES.md D1221) a join reads the operand it
+    /// builds of by batch where it is a grouping by hash run in parallel,
+    /// alone, under projections or under an analyzed plan's counts,
+    /// whatever its tables are read by; not a grouping run alone, a
+    /// DISTINCT, a grouping under its HAVING condition, nor a part that
+    /// is no grouping, none of whose tables read by batch.
+    #[test]
+    fn a_grouping_run_in_parallel_is_built_of_by_batch() {
+        let st = crate::exec::tests::state();
+        let values = || Plan::Values { rows: Vec::new(), detail: String::new() };
+        let counted = |input: Plan| Plan::Counted(Box::new(Counted { count: Arc::new(NodeCount::default()), input }));
+        let project = |input: Plan| Plan::Project {
+            exprs: vec![Expr::Neg(Box::new(Expr::Column(0)))],
+            detail: String::new(),
+            input: Box::new(input),
+        };
+        assert!(built_by_batch(&part(grouping(1, Vec::new())), &st));
+        assert!(built_by_batch(&counted(project(part(counted(grouping(2, vec![None, Some(unpadded_scalar())]))))), &st));
+        assert!(!built_by_batch(&grouping(1, Vec::new()), &st), "a grouping run alone");
+        assert!(!built_by_batch(&part(Plan::Distinct { input: Box::new(values()), est: 0.0_f64, streamed: false }), &st));
+        let having = Plan::Filter {
+            cond: crate::logical::Cond::IsNull(Expr::Column(0), false),
+            detail: String::new(),
+            input: Box::new(grouping(1, Vec::new())),
+            est: 0.0_f64,
+            of_read: false,
+        };
+        assert!(!built_by_batch(&part(having), &st), "under its HAVING condition");
+        assert!(!built_by_batch(&part(values()), &st), "a part that is no grouping");
     }
 }

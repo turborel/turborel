@@ -30,7 +30,7 @@ use super::run::Morsels;
 use super::{Held, Limit};
 use crate::error::Result;
 use crate::exec::Db;
-use crate::exec::batch::{SharedTable, TABLE_ROW_BYTES, layout, reads_by_batch, whole_keyed};
+use crate::exec::batch::{SharedTable, TABLE_ROW_BYTES, built_by_batch, layout, whole_keyed};
 use crate::exec::{Runner, Seed, execute};
 use crate::physical::{JoinKey, Plan};
 use crate::storage::{Batch, Row};
@@ -102,8 +102,9 @@ pub(super) fn built(right: &Plan, keys: &[JoinKey], (db, tx): (&Db, TxId), limit
         return parallel_built(pipeline, keys, (db, tx), (p.degree, limit));
     }
     // An operand that gives batches is read by batch, as the serial join
-    // reads it (RULES.md D1050).
-    if let Some(shape) = layout(right, db).filter(|_| crate::exec::batched(db) && reads_by_batch(right, db)) {
+    // reads it (RULES.md D1050), a grouping run in parallel among them
+    // (RULES.md D1221).
+    if let Some(shape) = layout(right, db).filter(|_| crate::exec::batched(db) && built_by_batch(right, db)) {
         return batch_built(right, shape, keys, (db, tx), limit);
     }
     let mut rows = Vec::new();
