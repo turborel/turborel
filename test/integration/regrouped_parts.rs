@@ -5,11 +5,12 @@
 //! gives, in its order.
 
 use turborel::db::{Database, Session};
+use turborel::functions::{Accumulator, AggregateFunction};
 use turborel::params::Params;
 use turborel::threads::JobPolicy;
-use turborel::value::{Decimal, Value};
+use turborel::value::{DataType, Decimal, MAX_EXACT_PRECISION, Spelled, Value};
 
-use crate::common::{exec, rows};
+use crate::common::{exec, function_calls, rows};
 
 /// Tables C, of the column store in groups of 2048, and R, of the row
 /// store, alike: K, a key; G, one of 50, null for every 41st; H, one of
@@ -244,6 +245,84 @@ fn the_first_rows_of_a_sort_over_a_pair_are_the_second_groupings() {
     ] {
         let (alone, together, shown) = both(&a, sql);
         assert!(regrouped_part(&shown), "{sql}\n{shown}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+}
+
+/// TOTAL, a plug-in's sum of whole numbers, nulls left out, whose
+/// accumulator writes its state: a part of it is kept in no column of
+/// states.
+struct Total;
+
+/// TOTAL's sum so far.
+struct Totalled(i128);
+
+impl AggregateFunction for Total {
+    fn name(&self) -> &'static str {
+        "TOTAL"
+    }
+    fn result_type(&self, _arg: Option<DataType>) -> turborel::error::Result<DataType> {
+        Ok(DataType::Exact { precision: MAX_EXACT_PRECISION, scale: 0, spelled: Spelled::Numeric })
+    }
+    fn accumulator(&self, _result: DataType) -> Box<dyn Accumulator> {
+        Box::new(Totalled(0))
+    }
+}
+
+impl Accumulator for Totalled {
+    fn update(&mut self, v: &Value) -> turborel::error::Result<()> {
+        if let Value::Exact(d) = v {
+            self.0 += d.units;
+        }
+        Ok(())
+    }
+    fn write_state(&self, out: &mut Vec<u8>) -> bool {
+        out.extend_from_slice(&self.0.to_le_bytes());
+        true
+    }
+    fn merge(&mut self, state: &[u8]) -> turborel::error::Result<()> {
+        self.0 += <[u8; 16]>::try_from(state).map_or(0, i128::from_le_bytes);
+        Ok(())
+    }
+    fn finish(&self) -> turborel::error::Result<Value> {
+        Ok(Value::Exact(Decimal::new(self.0, 0)))
+    }
+}
+
+/// Verifies: [ISO/IEC 9075-2:2023 §10.9 GR7b i] (RULES.md D1280, D341)
+/// set functions without DISTINCT beside a DISTINCT one, whose parts the
+/// second grouping of the pair merges from the first's columns of states,
+/// give the groups the plan run alone gives, in their order: counts,
+/// exact sums and means, least and greatest integers, of groups with
+/// nulls and of the null group, under a HAVING condition of a merged sum
+/// too. A part no column holds beside them is merged as before and gives
+/// the plan's result: a plug-in's set function that writes its state, a
+/// text's greatest value, a sum of approximate numbers, which writes no
+/// state, and the parts of two DISTINCT arguments, grouped again of rows.
+#[test]
+fn parts_merged_from_their_columns_give_the_plans_groups() {
+    let (db, a) = tables();
+    db.register_aggregate_function(Box::new(Total)).unwrap();
+    function_calls(&a);
+    for sql in [
+        "SELECT G, SUM(N), COUNT(*), AVG(N), MIN(N), MAX(N), COUNT(N), COUNT(DISTINCT H) FROM C GROUP BY G",
+        "SELECT H, COUNT(DISTINCT G), SUM(K), AVG(K + N), MAX(K), COUNT(*) FROM C GROUP BY H",
+        "SELECT G, SUM(N), COUNT(DISTINCT H) FROM C GROUP BY G HAVING SUM(N) > 500",
+        "SELECT G, TOTAL(N), SUM(N), COUNT(DISTINCT H), COUNT(*) FROM C GROUP BY G",
+    ] {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(regrouped_part(&shown), "{sql}\n{shown}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+    let (_texts, t) = texts();
+    for sql in [
+        "SELECT B, MAX(V), SUM(N), COUNT(*), COUNT(DISTINCT K / 2) FROM T GROUP BY B",
+        "SELECT B, SUM(F), COUNT(N), COUNT(DISTINCT N) FROM T GROUP BY B",
+        "SELECT B, SUM(N), COUNT(DISTINCT N), COUNT(DISTINCT V) FROM T GROUP BY B",
+    ] {
+        let (alone, together, _) = both(&t, sql);
         assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
         assert_eq!(alone, together, "{sql}");
     }

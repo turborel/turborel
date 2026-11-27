@@ -819,6 +819,7 @@ verification approach DO-178C expects (§8).
 | D1271 | A split that is refused a page gives back those it took |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
+| D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 
 ### The project
 
@@ -23541,6 +23542,56 @@ order, gave the row store's results too
 (`test/integration/window_nulls.rs`, which stays as the requirement's
 test). Which step kept the store's numbers from the lane there was not
 found. The lane's own test shows the place it now clears.
+
+#### D1280. A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot
+
+A query with a DISTINCT set function is computed by two groupings
+(D340), and a set function without DISTINCT beside it is computed in
+parts (D341). The first grouping keeps a part of COUNT, SUM, AVG, MAX or
+MIN in that function's column of states (D1186). The second grouping,
+made in a table of the first's groups given as a batch (D1123), took
+each part as a value all the same. Every group of the first made a
+binary string of each part, its function's state written after a tag.
+The second kept an accumulator a group for each such function, sorted
+the batch's rows by group to feed them, and each accumulator read the
+bytes back. The first grouping holds a group for every distinct value
+of every group of the second, so a query with three set functions
+beside one DISTINCT function made and read three values for each of
+them, and spent more on that than on both groupings.
+
+A part's column now leaves the first's table as the column it is
+(`exec/table/merged.rs`, `GroupTable::into_parts`). The second's table
+keeps the function it merges in a column of the same kind, and the
+first's column is added to it slot by slot, each state to the group its
+group of the first fell in (`States::merge_part`). That is the loop by
+which a partition merges a morsel's column into its own (D1110), so a
+count, a total and an extreme are merged by the code that merged them
+before the second grouping saw them. No value is made of a part, no
+accumulator is kept for one, and the rows are not sorted.
+
+A column is taken so when three things hold (`GroupTable::merged_by`).
+The second's set function merges parts and has no filter. The column it
+names is one the first's table still keeps as a part's. And that column
+holds counts or exact totals, whose function writes its state, so each
+group's part is that state and never a result. Such states are of
+totals that do not depend on the order they are merged in, which is why
+they are written at all (D341), so merging them a column at a time
+gives what merging them in the order of the first's groups gave.
+
+Every other part is given as its value and merged by an accumulator, as
+before. That is a column that turned into accumulators when it was
+given integers of another scale, a set function no column holds, as a
+plug-in's or an extreme of texts, and a sum of approximate numbers,
+which writes no state and is computed whole. A second grouping that
+reads the first's groups a row at a time, as one with a filtered set
+function does, is unchanged too. In one pair some parts may be taken as
+columns and others as values.
+
+The groups, their order, each result, the warnings and the errors are
+as before. A null a set function eliminates warns where the first
+grouping is fed it. A sum past the digits an exact number holds raises
+what the partitions' merge raises of it. EXPLAIN shows the plan it
+showed.
 
 ## 2. Project layout
 
