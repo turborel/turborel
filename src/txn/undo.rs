@@ -212,6 +212,11 @@ impl UndoLog {
         UndoLog { list: SpillList::sharing(space), targets: Vec::new(), loading: None }
     }
 
+    /// Whether it holds no entry and no load to undo.
+    pub(super) fn is_empty(&self) -> bool {
+        self.list.is_empty() && self.loading.is_none()
+    }
+
     /// Begins a segment, as a statement begins: its entries' place.
     pub(crate) fn mark(&mut self) -> usize {
         self.list.mark()

@@ -553,8 +553,8 @@ impl Drop for Session {
     fn drop(&mut self) {
         // [EXTENSION] Its debugger, if one is attached, told it ended (RULES.md D1010).
         self.stop.debugged().end();
-        // A session dropped by a plug-in while a call on it runs cannot end its transaction here.
-        let Ok(call) = self.enter() else { return };
+        // [DESIGN] RULES.md D1259: with no call to enter, its transaction is ended all the same.
+        let Ok(call) = self.enter() else { return self.end_unentered() };
         let st = call.state();
         // Drop cannot return an error. A failed commit has rolled back, and a
         // failed undo has marked its tables damaged, so neither goes unnoticed.
