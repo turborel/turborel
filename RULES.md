@@ -788,6 +788,8 @@ verification approach DO-178C expects (§8).
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 | D1231 | The log's bytes since a checkpoint are told by the log from its positions, no counter shared by the appends |
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
+| D1246 | A run's workers number one fewer than its degree, the statement's thread the last, and a thread's runs keep their workers |
+| D1247 | A grouping stops handing morsels whole once the statement thread's table holds more groups than a morsel has rows |
 
 ### The project
 
@@ -22020,6 +22022,95 @@ keeps few of them, so such a run now leaves its late columns late
 The rows given, their order and the errors are as before. EXPLAIN shows
 `Parallel` over such a sort, and EXPLAIN ANALYZE counts fewer rows of
 its scan.
+
+#### D1246. A run's workers number one fewer than its degree, the statement's thread the last, and a thread's runs keep their workers
+
+A run of morsels let no more morsels run at once than its degree (D290),
+but it was offered to every worker of the pool, and its reader, the
+statement's thread, took morsels too while it waited. With as many
+workers as the degree, one thread more than the degree took turns at
+the run's morsels, and where the reader worked on a result between two
+morsels, merging a morsel's groups or making rows, it worked beside a
+full degree of workers. One thread more than the processors a statement
+was given is no harm by itself. The harm is the order of the results. A
+run gives its results in the order of its morsels and takes no morsel
+more than its window past the one its reader waits for, so a morsel on
+a thread that shares its processor holds back every thread that has one
+to itself, once they have taken the window's morsels.
+
+The workers of the pool now run one morsel fewer of a run at once than
+its degree, and the reader's thread is the last of the degree's
+(`exec/parallel/run.rs`). It takes a morsel itself whenever it has to
+wait for one, as before, so a reader with nothing to do between results
+works as a worker does, and one that works on its results does so
+beside one worker fewer. No measure of the reader's work is taken and
+no threshold decides. A reader that waits has just found no morsel to
+take, so no worker could have taken one in its place, and nothing is
+lost by counting it always. A run of degree 1 is offered to no worker
+and is its reader's alone, as before, and one of degree 2 has one
+worker beside its reader.
+
+Which workers serve a run is fixed as it is offered
+(`threads/pool.rs`). A job is served by as many workers as it asks,
+numbered on from its first and round past the pool's last. The jobs one
+thread offers are served by the same workers, the lowest numbers of a
+thread offering alone, so the threads busy for a statement are the same
+from one of its runs to the next and from one statement of a session's
+thread to the next. Jobs of other threads offered meanwhile are
+numbered on past them, so statements running at once spread over the
+pool before they share a worker. Whatever places threads on processors,
+the system's scheduler or a tool that pins them, then meets as many
+busy threads as the degree, the same ones, where it met one more, a
+different set each run.
+
+The rows a statement gives, their order and its errors are as before,
+as each morsel's result is still given in the order of the morsels.
+EXECUTOR.DEGREE keeps its meaning, the most threads a statement's query
+runs on at once, its own among them, which the executor now keeps.
+
+#### D1247. A grouping stops handing morsels whole once the statement thread's table holds more groups than a morsel has rows
+
+A morsel whose groups are few beside its rows is handed whole to the
+statement's thread, which merges it into one table of its own (D356),
+on the reckoning that merging a group costs what grouping a row or two
+does, so that thread keeps up. The test was of the morsel alone. A
+grouping by a column most of whose rows hold one value, the others many
+values, passed it with every morsel, a few hundred groups of some
+thousands of rows, and the statement's thread merged every group of the
+grouping into one table by itself. That table is not a morsel's. It
+holds every group there is, so each merge looks a key up outside the
+processor's cache, each new key is added to lanes that grow by copying,
+and the groups are finished by that one thread at the end. The rows
+cost less than reckoned too, as a run of one value is taken with no
+lookup. The statement's thread was busy without pause and the workers
+waited on it.
+
+What makes the merge cheap is that the grouping has few groups in all,
+which no morsel can tell and the statement thread's table can. So the
+morsel's test stands and the grouping's is added
+(`exec/parallel/grouped/waves.rs`). Morsels are handed whole while that
+table holds no more groups than a morsel has rows, EXECUTOR.MORSEL_ROWS.
+No table a thread makes of a morsel holds more, so up to there the
+reckoning compares like with like. Once the table holds more, the
+statement's thread takes it to the partitions, as a morsel of many
+groups after it always did, and from then on no morsel is handed whole.
+The grouping then runs as one of many groups does, its morsels split
+among the partitions and merged by the threads, each partition's table
+given its room once.
+
+The threads group morsels ahead of the one the statement's thread
+reads, so as the table passes the bound some morsels have already been
+handed whole and others not, by how fast each thread was. That much
+depends on timing, and nothing a statement can see does. A morsel
+handed whole after the bound is merged into a new table of the
+statement's thread, in its order, and that table is taken to the
+partitions before the next morsel that was split, so each partition
+still merges its morsels in the order of their numbers. The groups,
+their order, each set function's value, the warnings and the errors are
+those of the plan run alone, whichever morsels were handed whole. The plan is chosen before
+any morsel is read and does not change. What a grouping holds of its
+grant at a moment may differ by a few morsels' groups, as it already
+did by the morsels grouped ahead.
 
 ## 2. Project layout
 
