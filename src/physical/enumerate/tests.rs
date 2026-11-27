@@ -327,18 +327,3 @@ fn stars_are_taken_only_within_the_budget() {
     let other = starred(&six, &few, &all_keyed, with_first);
     assert!(other.connected(bit(0), bit(5)) && other.connected(bit(0), bit(3)) && !other.connected(bit(1), bit(3)));
 }
-
-/// Verifies: [X3.135-1986 §5.11]; [DESIGN] RULES.md D1206: columns are
-/// equal by the equalities judged if a chain of them joins the two, in
-/// either direction of each, and a column is equal to itself; columns no
-/// chain joins are not.
-#[test]
-fn equalities_judged_chain_their_columns() {
-    let pairs = [(0_usize, 1_usize), (2, 1), (3, 4)];
-    assert!(super::realize::chained(&pairs, 0, 2));
-    assert!(super::realize::chained(&pairs, 2, 0));
-    assert!(super::realize::chained(&pairs, 4, 3));
-    assert!(super::realize::chained(&pairs, 5, 5));
-    assert!(!super::realize::chained(&pairs, 0, 3));
-    assert!(!super::realize::chained(&[], 0, 1));
-}

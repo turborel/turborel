@@ -18,7 +18,7 @@ use super::model::{Model, Order};
 use super::space::{Method, Space, Tree};
 use crate::logical::{Cond, Expr, OuterJoin, SortKey, and_all, judged_by_sets, map_cond_columns, render_cond, render_expr, split_and};
 use crate::physical::indexed::{EquiKind, Equijoin, alike, index_join};
-use crate::physical::join::{JoinKey, Parted, hashed, hashed_outer, implied, judged, single};
+use crate::physical::join::{JoinKey, Parted, chained, hashed, hashed_outer, implied, judged, single};
 use crate::physical::semi::{Semi, semi_plan};
 use crate::physical::shown::Shown;
 use crate::physical::{MergeJoin, PhysicalPlanner, Plan};
@@ -53,24 +53,6 @@ fn equated_below(kind: Kind, (l, r): (&Realized, &Realized), conds: &[Cond]) -> 
         Kind::Left | Kind::Semi | Kind::Anti => l.equated.clone(),
         Kind::Full => Vec::new(),
     }
-}
-
-/// Whether the equalities `pairs` make the columns `a` and `b` equal,
-/// each to the next of a chain of them.
-pub(super) fn chained(pairs: &[(usize, usize)], a: usize, b: usize) -> bool {
-    let mut seen = vec![a];
-    let mut at = 0_usize;
-    while let Some(&from) = seen.get(at) {
-        for &(x, y) in pairs {
-            for (near, far) in [(x, y), (y, x)] {
-                if near == from && !seen.contains(&far) {
-                    seen.push(far);
-                }
-            }
-        }
-        at = at.saturating_add(1);
-    }
-    seen.contains(&b)
 }
 
 /// The shape of a join of `l` and `r`.

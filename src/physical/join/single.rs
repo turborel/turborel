@@ -15,7 +15,7 @@
 //! condition beyond their keys pair by pair inside the match.
 
 use super::JoinKey;
-use crate::logical::{Cond, Expr};
+use crate::logical::{Cond, Expr, LogicalPlan, split_and};
 use crate::value::CompOp;
 
 /// `keys` parted in the keys hashed, no two of one left column or of one
@@ -76,6 +76,77 @@ pub(in crate::physical) fn implied(
     let by_left = |k: &JoinKey| k.left == moved.left && rights(k.right, moved.right);
     let by_right = |k: &JoinKey| k.right == moved.right && lefts(k.left, moved.left);
     keys.iter().any(|k| by_left(k) || by_right(k))
+}
+
+/// Whether the equalities `pairs` make the columns `a` and `b` equal,
+/// each to the next of a chain of them.
+pub(in crate::physical) fn chained(pairs: &[(usize, usize)], a: usize, b: usize) -> bool {
+    let mut seen = vec![a];
+    let mut at = 0_usize;
+    while let Some(&from) = seen.get(at) {
+        for &(x, y) in pairs {
+            for (near, far) in [(x, y), (y, x)] {
+                if near == from && !seen.contains(&far) {
+                    seen.push(far);
+                }
+            }
+        }
+        at = at.saturating_add(1);
+    }
+    seen.contains(&b)
+}
+
+/// The equalities of two of its columns true of every row `plan` gives,
+/// as its filters state them: those of the filters over it and, through
+/// each product, over its left operand, whose columns are the product's
+/// first. A conjunct of a filter is true of each row the filter gives
+/// [X3.135-1986 §5.21 GR2], whatever plan runs it.
+fn equated_in(plan: &LogicalPlan) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut at = plan;
+    loop {
+        if let LogicalPlan::Filter { cond, input } = at {
+            let mut conjuncts = Vec::new();
+            split_and(cond.clone(), &mut conjuncts);
+            out.extend(conjuncts.iter().filter_map(|c| {
+                let Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)) = c else { return None };
+                Some((*a, *b))
+            }));
+            at = input;
+        } else if let LogicalPlan::Product { left, .. } = at {
+            at = left;
+        } else {
+            return out;
+        }
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1206) The keys `keys` and the rest `rest` of the
+/// condition of an inner hash join of `left`, `width` columns wide, and
+/// `right`, planned without the enumeration, as it hashes and judges
+/// them: one key a column (`single`, by `rank`), and another added to
+/// the rest (`judged`), unless the filters of an operand imply it
+/// (`implied`, `equated_in`). One implied stays a key. It is true of
+/// every pair the others match, so it needs no filter over the join, and
+/// its column is still read above the operand, which a key dropped would
+/// leave to be put under a projection (RULES.md D1167), a call more a
+/// level as a deep chain is read. The filters are read only if a column
+/// repeats.
+pub(super) fn parted(
+    (keys, mut rest): (Vec<JoinKey>, Vec<Cond>),
+    (left, right, width): (&LogicalPlan, &LogicalPlan, usize),
+    rank: impl Fn(JoinKey) -> f64,
+) -> (Vec<JoinKey>, Vec<Cond>) {
+    let (mut keys, moved) = single(keys, rank);
+    if moved.is_empty() {
+        return (keys, rest);
+    }
+    let (lefts, rights) = (equated_in(left), equated_in(right));
+    let stays = |m: &JoinKey| !implied(&keys, *m, |a, b| chained(&lefts, a, b), |a, b| chained(&rights, a, b));
+    let (judged_after, hashed): (Vec<JoinKey>, Vec<JoinKey>) = moved.into_iter().partition(stays);
+    rest.extend(judged_after.into_iter().map(|m| judged(m, width)));
+    keys.extend(hashed);
+    (keys, rest)
 }
 
 #[cfg(test)]
@@ -158,5 +229,20 @@ mod tests {
         assert!(!implied(&[key(0, 0)], key(1, 0), no, yes));
         assert!(!implied(&[key(0, 2)], key(1, 0), yes, no));
         assert!(!implied(&[], key(0, 1), yes, yes));
+    }
+
+    /// Verifies: [X3.135-1986 §5.11]; [DESIGN] RULES.md D1206: columns are
+    /// equal by the equalities judged if a chain of them joins the two, in
+    /// either direction of each, and a column is equal to itself; columns no
+    /// chain joins are not.
+    #[test]
+    fn equalities_judged_chain_their_columns() {
+        let pairs = [(0_usize, 1_usize), (2, 1), (3, 4)];
+        assert!(chained(&pairs, 0, 2));
+        assert!(chained(&pairs, 2, 0));
+        assert!(chained(&pairs, 4, 3));
+        assert!(chained(&pairs, 5, 5));
+        assert!(!chained(&pairs, 0, 3));
+        assert!(!chained(&[], 0, 1));
     }
 }

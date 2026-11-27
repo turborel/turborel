@@ -6,7 +6,7 @@
 //! hash join hashes (D1206): every key of a column hashed, the key of
 //! fewest distinct values kept, a moved key judged nowhere by either
 //! path, and an equality taken for implied though no join below judged
-//! it.
+//! it or no filter of the operand states it.
 
 use super::super::{Mutation, Package};
 
@@ -31,7 +31,7 @@ const ONE_KEY: &str = "single_keys::an_inner_hash_join_hashes_one_key_of_a_colum
 const STAYS: &str = "single_keys::an_equality_no_join_below_judged_stays_in_the_filter";
 
 /// Mechanisms of the implied edges whose removal must fail their tests.
-pub const IMPLIED_EDGES: [Mutation; 10] = [
+pub const IMPLIED_EDGES: [Mutation; 11] = [
     Mutation {
         name: "implied-edges-of-any-column",
         package: Package::Core,
@@ -116,9 +116,19 @@ pub const IMPLIED_EDGES: [Mutation; 10] = [
         name: "single-keys-greedy-key-unjudged",
         package: Package::Core,
         breaks: "an equality the join planned without the enumeration does not hash is judged nowhere",
-        file: "src/physical/join.rs",
-        original: "rest.extend(moved.into_iter().map(|k| judged(k, width)));",
-        replacement: "rest.extend(moved.into_iter().filter(|k| k.nulls).map(|k| judged(k, width)));",
+        file: SINGLE_FILE,
+        original: "rest.extend(judged_after.into_iter().map(|m| judged(m, width)));",
+        replacement: "rest.extend(judged_after.into_iter().filter(|m| m.nulls).map(|m| judged(m, width)));",
+        integration: &[ONE_KEY],
+        unit: &[],
+    },
+    Mutation {
+        name: "single-keys-greedy-implied-unstated",
+        package: Package::Core,
+        breaks: "the join planned without the enumeration takes an equality for implied though no filter of its right operand states it, and hashes it",
+        file: SINGLE_FILE,
+        original: "|a, b| chained(&rights, a, b)",
+        replacement: "|a, b| a != b",
         integration: &[ONE_KEY],
         unit: &[],
     },

@@ -21220,9 +21220,28 @@ judged (`Realized::equated`, `enumerate/realize.rs`), a LEFT join, a
 semi join and an antijoin passing their left's and a FULL join none,
 and an equality is implied only by a chain of those. An equality still
 to be judged above, or one a relation's own filter holds, implies
-nothing here, and the equality stays in the filter. The join the
-optimizer plans without the enumeration (`physical/join.rs`) carries no
-such record and filters every equality that is not a key.
+nothing here, and the equality stays in the filter.
+
+The join planned without the enumeration (`physical/join.rs`) has no
+such record, and reads the same from the logical plans of its operands
+(`equated_in`). A conjunct of a filter is true of every row the filter
+gives, whatever plan runs it, so the equalities of columns in the
+filters over an operand, and through each product in those over its
+left operand, whose columns are the product's first, hold of each of
+its rows. An equality these do not imply goes to the filter over the
+join. One they imply stays a hash key of this join, and is not dropped
+as the enumerated join drops it. A chain of tables each joined to the
+first by one value shows why. Predicate transitivity (D404) adds the
+equality of each pair, so join `i` of the chain has `i` equalities of
+one column of its right operand, each implied by the filters below.
+Filtered, they would put each join under a filter that keeps every row,
+a pass over its rows and two more calls a level as the chain is read.
+Dropped, they would leave each key column unread above its join, and
+the join's operand would be put under a projection that gives it null
+(D1167), two more calls a level too. Either way the deepest chain the
+parser accepts took more than the stack it is read within, measured by
+its test (`pruned_columns.rs`). Kept as keys they cost a hash and a
+comparison of a column a level and no call, as before this decision.
 
 Outer joins, semi joins, antijoins and mark joins keep every equality
 as a key. They judge a condition beyond their keys of each pair inside
