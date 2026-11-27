@@ -705,6 +705,7 @@ verification approach DO-178C expects (§8).
 | D1095 | A probe of a table built for a pipeline locates its batch's rows before it pairs any, their first entries prefetched |
 | D1098 | A join hashes a vector of integers of scale 0 by a loop with no branch, the kernels' hash of words, as their buckets hash |
 | D1099 | A join keeps a vector of texts as codes of a dictionary: a built operand's parts of one, and a built operand's texts of no more rows than a batch |
+| D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it locates any |
 | D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
@@ -19305,6 +19306,28 @@ its texts, charged to no grant.
 A built operand of a row more is gathered as texts, as it was before, so
 past the bound a join costs what it did and never more. The step at the
 bound is the gain, not a loss.
+
+#### D1242. A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it locates any
+
+A join whose built operand passes its grant builds and probes it in
+passes, each pass holding some parts of it. A pass pairs the probing
+rows whose keys fall in its parts, and leaves the rest to the pass that
+holds theirs. The probe of a shared table (`batch/joined/shared/kept.rs`)
+and its whole batch's match (`matched_kept`) take what a pass keeps, a
+test of a row's key hash. The hash they are told is the one a hashed
+table's probe makes, seeded as the table's. A direct table's probe finds
+its rows by a key's number (D601), so its rows are hashed a second time
+for the test, and a row falls in the same pass whatever kind of table a
+pass makes. A key that matches no row, a null's where a null matches
+nothing, has no hash, and the test is told so. The pass that takes the
+rows of no part, the first, keeps it.
+
+A row a pass does not keep is dropped once the batch is hashed, before
+it is located, screened by a Bloom filter or paired (D1095, D1087). So
+no slot is read for it, and a LEFT join pairs it with nulls only in the
+pass that keeps it, never twice. A probe told nothing to keep makes its
+hashes once and drops no row, its loop over the rows unchanged, at the
+cost of one test of the batch.
 
 #### D1097. A fetch of a frozen row is priced by the number of columns it reads
 

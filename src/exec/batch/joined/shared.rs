@@ -20,6 +20,7 @@
 //! by SipHash keyed by the database's seed from the first.
 
 mod found;
+mod kept;
 mod outer;
 mod paired;
 mod probing;
@@ -34,6 +35,8 @@ use crate::kernels::Kernels;
 use crate::physical::JoinKey;
 use crate::storage::{Batch, Column, NO_ROW, Picks, Row, Texts, dictionaries};
 use crate::value::{Value, key_equal};
+
+pub(in crate::exec) use self::kept::PassKept;
 
 /// A hash join's right operand, built for a pipeline's morsels.
 pub(in crate::exec) struct SharedTable {
@@ -376,9 +379,26 @@ impl SharedTable {
     ///
     /// SQLCODE -910 if a value nests deeper than a type may.
     pub(in crate::exec) fn matched(&self, batch: &Batch, left: &[usize]) -> Result<Vec<(usize, usize)>> {
-        let given: Vec<usize> = (0..batch.rows).collect();
+        self.matched_kept((batch, left), None)
+    }
+
+    /// The pairs of `matched` of the rows `kept`, if given, keeps alone
+    /// (RULES.md D1242).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if a value nests deeper than a type may.
+    pub(in crate::exec) fn matched_kept(
+        &self,
+        (batch, left): (&Batch, &[usize]),
+        kept: Option<PassKept<'_>>,
+    ) -> Result<Vec<(usize, usize)>> {
+        let mut given: Vec<usize> = (0..batch.rows).collect();
         let mut hashes = KeyHashes::default();
         hashes.of_batch((batch, Some(&given)), (left, &self.nulls), self.hashing())?;
+        if let Some(kept) = kept {
+            self.kept_rows((batch, left), (&mut given, &mut hashes), kept)?;
+        }
         let mut pairs = Vec::new();
         for ((&r, &h), &miss) in given.iter().zip(&hashes.hashes).zip(&hashes.misses) {
             if miss {

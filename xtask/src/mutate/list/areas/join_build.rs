@@ -51,7 +51,7 @@ const COLLATED: &str = "src/physical/collated.rs";
 /// The test of joins on computed keys.
 const COMPUTED: &str = "computed_keys::an_equality_of_computed_keys_is_a_hash_join";
 
-pub const JOIN_BUILD: [Mutation; 29] = [
+pub const JOIN_BUILD: [Mutation; 31] = [
     Mutation {
         name: "probe-units-reversed",
         package: Package::Core,
@@ -341,5 +341,25 @@ pub const JOIN_BUILD: [Mutation; 29] = [
         replacement: "t.len() <= usize::MAX;",
         integration: &[],
         unit: &["storage::batch::coded::tests::small_built_texts_are_gathered_as_codes"],
+    },
+    Mutation {
+        name: "pass-kept-unfiltered",
+        package: Package::Core,
+        breaks: "a probe in passes pairs the rows a pass keeps alone, and no other (D1242)",
+        file: "src/exec/batch/joined/shared/kept.rs",
+        original: "        retained(given, &keep);\n        retained(&mut hashes.hashes, &keep);\n        retained(&mut hashes.misses, &keep);\n",
+        replacement: "",
+        integration: &[],
+        unit: &["exec::batch::joined::shared::kept::tests::a_probe_in_passes_pairs_the_rows_kept_alone"],
+    },
+    Mutation {
+        name: "pass-kept-direct-numbers",
+        package: Package::Core,
+        breaks: "a probe of a direct table in passes is told each row's seeded hash, not its key's number (D1242)",
+        file: "src/exec/batch/joined/shared/kept.rs",
+        original: "        let keep: Vec<bool> = if self.table.is_direct() {",
+        replacement: "        let keep: Vec<bool> = if false {",
+        integration: &[],
+        unit: &["exec::batch::joined::shared::kept::tests::a_probe_in_passes_pairs_the_rows_kept_alone"],
     },
 ];

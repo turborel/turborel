@@ -133,10 +133,10 @@ mod tests {
         assert_eq!(made.iter().map(Option::is_some).collect::<Vec<_>>(), [true, false, false, false]);
         let rows = [3_u32, NO_ROW, 0, 2, 9, 3, 1];
         let picks = Picks::new(&rows);
-        let codes = batch.columns[0].gathered_coded(&picks, made[0].as_ref(), &Portable);
-        let texts = batch.columns[0].gathered_by(&picks, &Portable);
-        assert_eq!(shown(&codes), (shown(&texts).0, true));
-        assert_eq!(shown(&codes).0, ["cde", "NULL", "ab", "NULL", "NULL", "cde", " "]);
+        let as_codes = batch.columns[0].gathered_coded(&picks, made[0].as_ref(), &Portable);
+        let as_texts = batch.columns[0].gathered_by(&picks, &Portable);
+        assert_eq!(shown(&as_codes), (shown(&as_texts).0, true));
+        assert_eq!(shown(&as_codes).0, ["cde", "NULL", "ab", "NULL", "NULL", "cde", " "]);
         assert!(!shown(&batch.columns[1].gathered_coded(&picks, None, &Portable)).1, "no dictionary, gathered as texts");
     }
 
