@@ -317,7 +317,7 @@ impl Session {
     ) -> Result<(Arc<Target>, Option<Arc<LogicalPlan>>, bool)> {
         if let Some((KeptPlan::Insert(target, query), clocked)) = keeping.map(Keeping::plan_clocked).transpose()?.flatten() {
             // Its defaults taken again only where one reads the user or
-            // the instant: else the target is as kept, shared (D902).
+            // the instant. Else the target is as kept, shared (D902).
             if target.fixed_defaults() {
                 return Ok((target, query, clocked));
             }

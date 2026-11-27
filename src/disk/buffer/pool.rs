@@ -188,7 +188,7 @@ impl BufferPool {
         match self.source(file) {
             Ok(Source::Blocks(blocks)) => Some(Arc::clone(blocks)),
             Ok(Source::Held(held)) => held.upgrade(),
-            _ => None,
+            Ok(Source::Pages(_)) | Err(_) => None,
         }
     }
 
