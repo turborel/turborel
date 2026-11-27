@@ -5,7 +5,12 @@
 //! lineage stopped at a grouping, a table joined with itself taken as one
 //! relation, the optimizer's local fixpoint lost, and of D1203 a set
 //! function compared kept a third, a sum's rows taken alike in number and
-//! an extreme taken of one value.
+//! an extreme taken of one value. Those of D1279 break what a table's
+//! sample shows of an expression grouped by. They are the lattice of its
+//! values ignored, a value seen once counted as one, a null given no
+//! place, and the count taken where nothing is merged, past the columns'
+//! bound, of a row that raises, of a column cut, of a plan of few rows,
+//! at each asking, and by a function's name alone.
 
 use super::super::{Mutation, Package};
 
@@ -16,12 +21,22 @@ const GROUPS_FILE: &str = "src/physical/cardinality/groups.rs";
 /// The lineage of a column.
 const LINEAGE_FILE: &str = "src/physical/cardinality/lineage.rs";
 
+/// What a table's sample shows of an expression.
+const SHOWN_FILE: &str = "src/physical/cardinality/shown.rs";
+
+/// The test of an expression counted as the sample shows it.
+const SHOWN: &str = "physical::cardinality::shown::tests::an_expression_grouped_by_is_counted_as_the_sample_shows_it";
+/// The test of each case in which the sample shows nothing.
+const SHOWS_NOTHING: &str = "physical::cardinality::shown::tests::where_the_sample_shows_nothing_the_columns_bound_stands";
+/// The test of an answer found once, of each function its own.
+const SHOWN_ONCE: &str = "physical::cardinality::shown::tests::an_answer_is_found_once_and_is_its_own_function_s";
+
 /// The test of set functions compared with constants.
 const HAVING: &str = "physical::cardinality::having::tests::a_set_function_compared_keeps_what_its_column_tells";
 
 /// Mechanisms of the estimator and the rule driver whose removal must fail
 /// their tests.
-pub const ESTIMATES: [Mutation; 12] = [
+pub const ESTIMATES: [Mutation; 22] = [
     Mutation {
         name: "estimates-one-row-floor",
         package: Package::Core,
@@ -141,5 +156,105 @@ pub const ESTIMATES: [Mutation; 12] = [
         replacement: "share.clamp(0.0_f64, 1.0_f64)",
         integration: &[],
         unit: &[HAVING],
+    },
+    Mutation {
+        name: "shown-lattice-ignored",
+        package: Package::Core,
+        breaks: "an expression's values are counted by those the sample holds alone, not by the lattice they lie on",
+        file: SHOWN_FILE,
+        original: "Some(lattice.places().map_or(counted, |places| counted.min(places)))",
+        replacement: "Some(counted)",
+        integration: &[],
+        unit: &[SHOWN],
+    },
+    Mutation {
+        name: "shown-seen-once-counted-as-one",
+        package: Package::Core,
+        breaks: "a value the sample holds once is counted as one value, not as the root of the rows a sampled row stands for",
+        file: SHOWN_FILE,
+        original: "each.sqrt() * once + (distinct - once)",
+        replacement: "distinct",
+        integration: &[],
+        unit: &["physical::cardinality::shown::tests::values_seen_once_count_as_the_root_of_the_rows_a_row_stands_for"],
+    },
+    Mutation {
+        name: "shown-null-given-no-place",
+        package: Package::Core,
+        breaks: "a null among an expression's values is given no place beside the lattice's",
+        file: SHOWN_FILE,
+        original: "steps.saturating_add(1).saturating_add(u128::from(self.nulls))",
+        replacement: "steps.saturating_add(1)",
+        integration: &[],
+        unit: &["physical::cardinality::shown::tests::a_lattice_has_a_place_each_step_and_one_of_a_null"],
+    },
+    Mutation {
+        name: "shown-where-nothing-is-merged",
+        package: Package::Core,
+        breaks: "the sample's count is taken of an expression it shows merging no values, in place of the columns' statistics",
+        file: SHOWN_FILE,
+        original: "if values.len() >= inputs.len() {",
+        replacement: "if values.is_empty() {",
+        integration: &[],
+        unit: &[SHOWS_NOTHING],
+    },
+    Mutation {
+        name: "shown-past-the-columns-bound",
+        package: Package::Core,
+        breaks: "what the sample shows is taken where it is more than the columns read allow",
+        file: "src/physical/cardinality/nodes.rs",
+        original: "self.shown_distinct(&computed, whole).map_or(read, |shown| read.min(shown))",
+        replacement: "self.shown_distinct(&computed, whole).unwrap_or(read)",
+        integration: &[],
+        unit: &[SHOWS_NOTHING],
+    },
+    Mutation {
+        name: "shown-raising-row-ends-it",
+        package: Package::Core,
+        breaks: "a sampled row whose evaluation raises leaves the sample showing nothing, where the others show the values",
+        file: SHOWN_FILE,
+        original: "let Ok(value) = eval(e, row, &NoSubqueries) else { continue };",
+        replacement: "let Ok(value) = eval(e, row, &NoSubqueries) else { return None };",
+        integration: &[],
+        unit: &["physical::cardinality::shown::tests::a_sampled_row_that_raises_is_left_out"],
+    },
+    Mutation {
+        name: "shown-of-a-column-cut",
+        package: Package::Core,
+        breaks: "an expression of a string cut to the characters a sampled row keeps is counted by the values of what was kept",
+        file: SHOWN_FILE,
+        original: "Value::Char(s) => s.len() >= ROW_CHARACTERS,",
+        replacement: "Value::Char(s) => s.len() > ROW_CHARACTERS,",
+        integration: &[],
+        unit: &[SHOWS_NOTHING],
+    },
+    Mutation {
+        name: "shown-asked-of-few-rows",
+        package: Package::Core,
+        breaks: "the sample is evaluated for a plan of no more rows than it holds",
+        file: SHOWN_FILE,
+        original: "if whole <= cost_of(rows.len()) {",
+        replacement: "if whole < 0.0_f64 {",
+        integration: &[],
+        unit: &[SHOWS_NOTHING, SHOWN_ONCE],
+    },
+    Mutation {
+        name: "shown-found-at-each-asking",
+        package: Package::Core,
+        breaks: "what the sample shows of an expression is found again each time a statement asks",
+        file: "src/physical/cardinality/seen.rs",
+        original: "let known = self.shown.borrow().get(&key).map(|&(_, shown)| shown);",
+        replacement: "let known: Option<Option<f64>> = None;",
+        integration: &[],
+        unit: &[SHOWN_ONCE],
+    },
+    Mutation {
+        name: "shown-key-of-the-name-alone",
+        package: Package::Core,
+        breaks: "two functions of one name that hold what differs share one answer of the sample",
+        file: "src/physical/estimate/fingerprint.rs",
+        original: "Arc::as_ptr(&f.0).cast::<()>().addr().hash(&mut h);",
+        replacement: "f.0.name().hash(&mut h);",
+        integration: &[],
+        unit: &[SHOWN_ONCE],
     },
 ];

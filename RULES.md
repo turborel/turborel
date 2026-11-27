@@ -818,6 +818,7 @@ verification approach DO-178C expects (§8).
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
+| D1279 | A grouping by an expression counts no more groups than its table's sample shows the expression to take values |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 
 ### The project
@@ -18972,7 +18973,8 @@ every row and is counted as before.
 
 The bound is not tight. A year takes far fewer values than its date
 does. It is still the plan's rows or fewer, which is what it was, so no
-estimate of groups grows by it.
+estimate of groups grows by it. What the expression does to the values
+is read of its table's sample (D1279).
 
 The distinct values a join's equality is estimated by are counted as
 before, an expression's as its plan's rows. Join orders rest on those
@@ -23508,7 +23510,100 @@ by the margin.
 None of the three changes what a grouping gives, as both forms give
 the same groups in the order asked. How far the count of an
 expression's values is from the values it takes is the estimator's
-matter (D1082) and is not settled here.
+matter (D1082, D1279) and is not settled here.
+
+#### D1279. A grouping by an expression counts no more groups than its table's sample shows the expression to take values
+
+A grouping by a deterministic expression counts no more groups than the
+columns it reads take values together (D1082). That says nothing of
+what the expression does to them. A time less its seconds takes a value
+a minute, a number divided by a hundred a hundredth of its values, the
+first two characters of a telephone number a few dozen, and the year of
+a date one a year. Each was counted by its column, most of them a value
+a row. With a group a row a sort of every row looked cheaper than
+hashing them (D550, D1278), and what was planned above the grouping
+was planned for as many rows.
+
+No shape of expression is looked for. There is no node for a
+truncation, and a list of the ways one is written would begin with the
+statements at hand and end there. The expression is evaluated instead
+on the rows of the sample its table's statistics keep (D382), as a
+conjunction no synopsis answers is, and two things are read of the
+values it gives (`cardinality/shown.rs`).
+
+The first is how many differ. The values seen more than once are
+counted as they are. A value seen once stands for the values the sample
+missed, which may be as few as itself or as many as the rows a sampled
+row stands for, and it is counted as the square root of those rows, the
+mean of the two in ratio. This is the estimator GEE of Charikar,
+Chaudhuri, Motwani and Narasayya ("Towards estimation error guarantees
+for distinct values", PODS 2000). Its count is expected to err by about
+that root at most either way, and the paper shows no count from a
+sample to be sure of less. The estimator that counts a column's
+distinct values from a statistics pass (Haas and Stokes, D31) is not
+used here. It takes the values as equally common, which of a sample
+this small counts an expression a few of whose values hold most rows,
+with many rare ones after them, far below what it takes. A count of
+groups is relied on to err high (D1278), and GEE's errs high where the
+values are in truth equally common. A sample that is the whole table
+holds every value.
+
+The second is the lattice the values lie on, of exact numbers of one
+scale, datetimes and intervals. The step is the greatest that every
+sampled value is whole steps from the first by, and between the least
+and the greatest value the lattice has their distance over the step,
+and one, places. A time less its seconds lies on a lattice of a
+minute, whatever the way it is written, and so does a quotient, a
+number rounded and a field of a date on theirs. The step is read, not
+proved. A thousand values that all fall on a coarser lattice than the
+expression's own are not a case to plan for, and the least and the
+greatest seen are near those of the table where its values are spread
+as the sample's are.
+
+The lesser of the two counts is what the sample shows, a null one
+place more of the lattice's, and the grouping counts the lesser of
+that and the columns' bound, never more than it counted before. The
+count then goes through Cardenas' formula with the grouping's rows as
+any column's does (D370). It is of the table, not of the rows a
+condition beside the expression keeps, so a grouping of two days of a
+month's minutes is still counted by the month's.
+
+The sample shows nothing, and the columns' bound stands alone, in each
+of these cases.
+
+- The table has no statistics, or they keep no sample.
+- The expression reads the columns of more than one table, or cannot
+  be evaluated on a row alone, as one of a `?`, a subquery, a sequence
+  or a routine cannot (D382).
+- No sampled row gives a value. A row whose evaluation raises is left
+  out and nothing is raised, as planning raises nothing of what the
+  statement evaluates (D15).
+- No two sampled rows that differ in the columns read give one value.
+  The sample then shows nothing merged, as of a number and one, and of
+  the columns' own values the statistics, counted from many more rows
+  or from an index, know more than the sample does.
+- A column read may have been cut in a sampled row. A sampled row
+  keeps the first 256 characters of a string, as many octets of a
+  binary string, and no large object (D382). The value of an
+  expression of what was cut is not the value of the expression of the
+  whole, as the length of a string shows, so a string of 256 octets or
+  more in a column read, or a large object, leaves the bound to the
+  columns.
+- The plan under the grouping has no more rows than the sample. The
+  evaluation would cost what the statement's own does, so a statement
+  of few rows plans at no cost more.
+
+The count is the same whenever it is asked of the same statistics, as
+the sample is fixed with them, so no plan depends on when it is made.
+A statement evaluates the sample once for each expression, however
+many plans it weighs, and keeps the answer (`Seen::shown`, D1089). The
+answer is not kept in the sample for later statements, as a
+conjunction's is. Its key there writes a function by its name, and two
+functions of one name may hold what differs, as EXTRACT of two fields
+does. The statement's key writes each function by the address of its
+handle too, and keeps the expression, so no handle is freed and its
+address taken while the key is kept.
+
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
 
 A batch's vector of integers, of approximate numbers or of datetimes

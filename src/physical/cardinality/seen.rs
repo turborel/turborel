@@ -1,7 +1,8 @@
 //! \[DESIGN\] (RULES.md D1089) What one statement's planning reads of the
 //! tables it plans: each table's statistics and rows, and each index's
-//! distinct keys, asked the first time a step of the planning wants them
-//! and kept for every step after. The optimizer's rules, the physical
+//! distinct keys, and what a table's sample shows of an expression
+//! (D1279), asked the first time a step of the planning wants them and
+//! kept for every step after. The optimizer's rules, the physical
 //! planner, the parts marked to run in parallel, predicate transfer and
 //! what a prepared statement's plan learned is measured from all read
 //! them here. The maintenance thread may gather a table's statistics at
@@ -16,6 +17,7 @@ use crate::catalog::QualifiedName;
 use crate::db::State;
 use crate::hash::xxhash::Xxh3Map;
 use crate::index::Index;
+use crate::logical::Expr;
 use crate::stats::Statistics;
 
 /// One statement's view of its tables' statistics, rows and index keys,
@@ -27,6 +29,12 @@ pub(crate) struct Seen {
     rows: RefCell<Xxh3Map<QualifiedName, Option<usize>>>,
     /// Each index's distinct keys, by its name, as its sketch counts them.
     keys: RefCell<HashMap<String, Option<f64>>>,
+    /// What a table's sample showed of each expression asked of it
+    /// (`cardinality/shown.rs`, RULES.md D1279), by the question's key,
+    /// with the expression. It is kept so that no function it calls is
+    /// freed, and its address taken by another, while the key made of
+    /// it is.
+    shown: RefCell<Xxh3Map<u64, (Expr, Option<f64>)>>,
 }
 
 impl Seen {
@@ -66,6 +74,20 @@ impl Seen {
     /// count is due (`State::distinct_keys`).
     pub(crate) fn table_keys(&self, db: &State, (table, name): (&QualifiedName, &str), index: &dyn Index) -> Option<f64> {
         self.keys_of(name, || db.distinct_keys(table, index))
+    }
+
+    /// \[DESIGN\] (RULES.md D1279) What a table's sample shows of the
+    /// expression `e`, the question of key `key`, found by `find` the
+    /// first time. Evaluating the sample's rows costs more than the rest
+    /// of a planning, and each plan weighed asks.
+    pub(super) fn shown(&self, key: u64, e: &Expr, find: impl FnOnce() -> Option<f64>) -> Option<f64> {
+        let known = self.shown.borrow().get(&key).map(|&(_, shown)| shown);
+        if let Some(shown) = known {
+            return shown;
+        }
+        let found = find();
+        self.shown.borrow_mut().insert(key, (e.clone(), found));
+        found
     }
 
     /// The distinct keys of the index `name`, counted by `count` the first
