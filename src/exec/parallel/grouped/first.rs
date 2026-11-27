@@ -91,7 +91,7 @@ fn scanned(plan: &Plan) -> Option<Plan> {
 /// column of the grouping's input and judged of each morsel whole.
 fn filters(keys: &Batch, groups: &[usize], db: &State) -> Result<Vec<Told>> {
     let seed = db.functions.seed().clone();
-    let how = Hashing { seed: &seed, keyed: false, direct: false };
+    let how = Hashing { seed: &seed, keyed: false, direct: false, kernels: None };
     let mut told = Vec::with_capacity(groups.len());
     for (at, &column) in groups.iter().enumerate() {
         let nulls = (0..keys.rows).any(|r| keys.cell(at, r).is_null());
