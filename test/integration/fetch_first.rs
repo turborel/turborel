@@ -221,9 +221,11 @@ fn the_clauses_past_the_work_area_and_both_ways_7_17() {
 /// priced by the rows it reads, OFFSET's and FETCH FIRST's (`Limit::read_rows`,
 /// `physical/access.rs`): a table's index is read in order and limited, no
 /// Sort, forward and backward, whether its zones are settled or not. Read
-/// whole it is not: of no FETCH FIRST, of a count of every row, or of all
-/// but a few after OFFSET's, of WITH TIES and through a filter of few rows
-/// the table unsettled is scanned and sorted. Through a filter of most rows
+/// whole, for a column the index does not hold, it is not: of no FETCH
+/// FIRST, of a count of every row, or of all but a few after OFFSET's, of
+/// WITH TIES and through a filter of few rows the table is scanned and
+/// sorted, as the index would fetch every row it reads (an index-only read
+/// is priced as its zones will be settled, RULES.md D1233). Through a filter of most rows
 /// the index is read in order, the rows read divided by the share the
 /// filter keeps (RULES.md D552).
 ///
@@ -246,10 +248,10 @@ fn fetch_first_prices_a_path_in_order_by_the_rows_it_reads() {
     assert!(!sorted(first), "unsettled");
     assert!(!sorted("SELECT I FROM M ORDER BY I OFFSET 10 ROWS FETCH FIRST 3 ROWS ONLY"), "OFFSET");
     assert!(!sorted("SELECT I, P FROM M ORDER BY I DESC FETCH FIRST 3 ROWS ONLY"), "backward");
-    assert!(sorted("SELECT I FROM M ORDER BY I"), "no FETCH FIRST");
-    assert!(sorted("SELECT I FROM M ORDER BY I FETCH FIRST 3000 ROWS ONLY"), "every row");
-    assert!(sorted("SELECT I FROM M ORDER BY I OFFSET 2990 ROWS FETCH FIRST 3 ROWS ONLY"), "OFFSET's rows read");
-    assert!(sorted("SELECT I FROM M ORDER BY I FETCH FIRST 3 ROWS WITH TIES"), "WITH TIES");
+    assert!(sorted("SELECT I, P FROM M ORDER BY I"), "no FETCH FIRST");
+    assert!(sorted("SELECT I, P FROM M ORDER BY I FETCH FIRST 3000 ROWS ONLY"), "every row");
+    assert!(sorted("SELECT I, P FROM M ORDER BY I OFFSET 2990 ROWS FETCH FIRST 3 ROWS ONLY"), "OFFSET's rows read");
+    assert!(sorted("SELECT I, P FROM M ORDER BY I FETCH FIRST 3 ROWS WITH TIES"), "WITH TIES");
     assert!(sorted("SELECT I FROM M WHERE V = 5 AND P = 'x' ORDER BY I FETCH FIRST 3 ROWS ONLY"), "a filter of few rows");
     assert!(!sorted("SELECT I FROM M WHERE V > 5 ORDER BY I FETCH FIRST 3 ROWS ONLY"), "a filter of most rows");
     assert_eq!(rows(&a, "SELECT I FROM M WHERE V > 5 ORDER BY I FETCH FIRST 3 ROWS ONLY"), expected(&["6", "7", "8"]));
