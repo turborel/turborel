@@ -820,6 +820,7 @@ verification approach DO-178C expects (§8).
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1279 | A grouping by an expression counts no more groups than its table's sample shows the expression to take values |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
+| D1299 | A table's sample remembers a function by its handle, not by its name alone |
 
 ### The project
 
@@ -11367,7 +11368,7 @@ most 1,024 evaluations however large the table, so small tables are
 sampled too, where the sample is most of the table and a conjunction
 that keeps no row is estimated to keep none. The sample remembers what
 was asked of it, up to 1,024 answers, each kept under a fingerprint of
-the conjuncts' columns, operators and constants in any order, hashed by
+the conjuncts' columns, operators, constants and functions (D1299) in any order, hashed by
 XXH3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
 statement it plans again: it never changes, so an answer holds until the
 next pass replaces it. An index remembers its distinct keys' estimate
@@ -23598,10 +23599,10 @@ the sample is fixed with them, so no plan depends on when it is made.
 A statement evaluates the sample once for each expression, however
 many plans it weighs, and keeps the answer (`Seen::shown`, D1089). The
 answer is not kept in the sample for later statements, as a
-conjunction's is. Its key there writes a function by its name, and two
-functions of one name may hold what differs, as EXTRACT of two fields
-does. The statement's key writes each function by the address of its
-handle too, and keeps the expression, so no handle is freed and its
+conjunction's is. It counts by the table's rows, which change with
+every row written, where a share of the sample does not. The
+statement's key writes each function by the address of its handle
+(D1299), and keeps the expression, so no handle is freed and its
 address taken while the key is kept.
 
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
@@ -23636,6 +23637,49 @@ order, gave the row store's results too
 (`test/integration/window_nulls.rs`, which stays as the requirement's
 test). Which step kept the store's numbers from the lane there was not
 found. The lane's own test shows the place it now clears.
+
+#### D1299. A table's sample remembers a function by its handle, not by its name alone
+
+A table's sample remembers what was asked of it under a fingerprint of
+the question (D382). The fingerprint wrote a function by its name and
+its arguments. A name does not tell a function. EXTRACT holds its
+field, a CAST by a template holds the template, a field of a row its
+number, a difference of two datetimes its interval qualifier, a query
+of XML its expression, TRIM and the greatest and least of strings
+their collation, and a type test its types. Each is one name whatever
+it holds, about thirty kinds of function in all. So two conditions
+that differed only in what such a function held were one question.
+The second asked was given the answer of the first, and a condition on
+the day of a date was estimated at the rows of a condition on its
+month. The estimate was wrong, and it was whichever was asked first.
+
+What does tell one function from another is its handle, as the rule
+that makes a list of ORs one set already takes it (`logical/sets.rs`).
+A function now writes its name and the address of its handle
+(`estimate/fingerprint.rs`). An address is one function's only while
+the function lives, and a sample outlives the statements that ask it.
+So a key comes with the handles it wrote (`stats::sample::Asked`), and
+the sample keeps them beside the answer. No function of a remembered
+answer is freed, and its address taken by another, while the answer
+may be given. The handles go when the sample forgets its answers, at
+1,024 of them, or is dropped with its statistics.
+
+What this costs is stated here so that it is not read later as a
+loss. A function registered once, as the string and numeric functions
+are, is one handle for the database's life, and its answers are shared
+by every statement as before. A function the binder makes for a call,
+as it makes EXTRACT for its field, is its statement's own. Its answers
+are shared within the statement and by each planning of a plan that is
+kept, and not by two statements written apart, each of which evaluates
+the sample once. Before, two such statements shared an answer, and it
+was the wrong one for one of them wherever they differed.
+
+Told apart without the handle, a function would have to give what it
+holds as part of its contract, a method of the function trait for
+every function and plug-in to write. The handle needs none.
+
+The count a grouping makes of an expression (D1279) writes its key the
+same way and keeps the expression for its statement.
 
 ## 2. Project layout
 

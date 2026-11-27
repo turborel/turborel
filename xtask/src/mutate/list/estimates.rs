@@ -10,7 +10,8 @@
 //! values ignored, a value seen once counted as one, a null given no
 //! place, and the count taken where nothing is merged, past the columns'
 //! bound, of a row that raises, of a column cut, of a plan of few rows,
-//! at each asking, and by a function's name alone.
+//! and at each asking. Those of D1299 are a function written to the
+//! sample's key by its name alone, and an answer keeping no function.
 
 use super::super::{Mutation, Package};
 
@@ -36,7 +37,7 @@ const HAVING: &str = "physical::cardinality::having::tests::a_set_function_compa
 
 /// Mechanisms of the estimator and the rule driver whose removal must fail
 /// their tests.
-pub const ESTIMATES: [Mutation; 22] = [
+pub const ESTIMATES: [Mutation; 23] = [
     Mutation {
         name: "estimates-one-row-floor",
         package: Package::Core,
@@ -248,13 +249,23 @@ pub const ESTIMATES: [Mutation; 22] = [
         unit: &[SHOWN_ONCE],
     },
     Mutation {
-        name: "shown-key-of-the-name-alone",
+        name: "sample-key-of-a-function-s-name-alone",
         package: Package::Core,
-        breaks: "two functions of one name that hold what differs share one answer of the sample",
+        breaks: "two functions of one name that hold what differs are one question of the sample, and share its answer (D1299)",
         file: "src/physical/estimate/fingerprint.rs",
-        original: "Arc::as_ptr(&f.0).cast::<()>().addr().hash(&mut h);",
-        replacement: "f.0.name().hash(&mut h);",
+        original: "Arc::as_ptr(&f.0).cast::<()>().addr().hash(h);",
+        replacement: "f.0.name().hash(h);",
+        integration: &["statistics_estimates::conditions_that_differ_in_what_a_function_holds_have_their_own_estimates"],
+        unit: &[SHOWN_ONCE, "physical::estimate::tests::two_functions_of_one_name_are_two_questions"],
+    },
+    Mutation {
+        name: "sample-answer-keeps-no-function",
+        package: Package::Core,
+        breaks: "an answer the sample remembers keeps none of the functions its key was written of (D1299)",
+        file: "src/stats/sample.rs",
+        original: "answers.insert(asked.key, (answer, asked.held));",
+        replacement: "answers.insert(asked.key, (answer, Vec::new()));",
         integration: &[],
-        unit: &[SHOWN_ONCE],
+        unit: &["physical::estimate::tests::a_remembered_answer_keeps_its_functions_until_the_statistics_go"],
     },
 ];

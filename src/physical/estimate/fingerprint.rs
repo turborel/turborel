@@ -1,28 +1,42 @@
 //! \[DESIGN\] The key under which a table's sample remembers what was
-//! asked of it (`RowSample::remembered`, RULES.md D382): a structural
-//! fingerprint of the question and of the conditions it is asked of,
-//! hashed by XXH3 (`hash/xxhash.rs`). Each condition and
-//! expression writes its kind, then what it holds: a column its place, a
-//! constant its value as `Value::norm` makes it, so values identical by
-//! the standard are one, an operator its kind, a function, a collation, a
-//! type or a domain its name. The conjuncts are fingerprinted one by one,
-//! and their fingerprints sorted, so a conjunction is one question
-//! whatever the order it is written in.
+//! asked of it (`RowSample::remembered`, RULES.md D382). It is a
+//! structural fingerprint of the question and of the conditions it is
+//! asked of, hashed by XXH3 (`hash/xxhash.rs`). Each condition and
+//! expression writes its kind, then what it holds. A column writes its
+//! place, a constant its value as `Value::norm` makes it, so values
+//! identical by the standard are one, an operator its kind, and a
+//! collation, a type or a domain its name. The conjuncts are
+//! fingerprinted one by one, and their fingerprints sorted, so a
+//! conjunction is one question whatever the order it is written in.
+//!
+//! \[DESIGN\] (RULES.md D1299) A function writes its name and the
+//! address of its handle. Its name does not tell it. EXTRACT holds its
+//! field, a CAST by a template the template, a row's field its number
+//! and a query of XML its expression, each under one name. The handle is
+//! what tells one function from another (`logical/sets.rs`). The key
+//! comes with the handles it wrote (`Asked`), which the sample keeps
+//! beside the answer, so no address is another function's while the
+//! answer may be given. A function registered once is one handle for
+//! every statement, and one the binder makes for a call is its
+//! statement's.
 //!
 //! A sample is asked only of conditions it can evaluate
 //! (`estimate/sampled.rs`), of no subquery, outer reference, `?`,
-//! sequence value or SQL routine; those write their kind alone.
+//! sequence value or SQL routine, and those write their kind alone.
 
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::mem::discriminant;
 use std::sync::Arc;
 
+use crate::functions::ScalarRef;
 use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Hasher};
 use crate::logical::{Cond, Expr};
+use crate::stats::sample::Asked;
 
-/// The key of the question `question` asked of the conjuncts `conds`,
-/// and of `more`, written after them.
-pub(super) fn key_of(question: &str, conds: &[&Cond], more: &dyn Fn(&mut Xxh3Hasher)) -> u64 {
+/// The question `question` asked of the conjuncts `conds`, and of
+/// `more`, written after them, as a sample remembers it: its key, and
+/// the functions the conjuncts call (RULES.md D1299).
+pub(super) fn key_of(question: &str, conds: &[&Cond], more: &dyn Fn(&mut Xxh3Hasher)) -> Asked {
     let mut each: Vec<u64> = conds
         .iter()
         .map(|c| {
@@ -36,28 +50,35 @@ pub(super) fn key_of(question: &str, conds: &[&Cond], more: &dyn Fn(&mut Xxh3Has
     h.write(question.as_bytes());
     each.hash(&mut h);
     more(&mut h);
-    h.finish()
+    let mut held = Vec::new();
+    for c in conds {
+        c.for_each_expr(&mut |e| called(e, &mut held));
+    }
+    Asked::new(h.finish(), held)
+}
+
+/// Adds to `held` the handle of each function `e` calls, itself and the
+/// expressions it is made of.
+fn called(e: &Expr, held: &mut Vec<ScalarRef>) {
+    let mut work = vec![e];
+    while let Some(next) = work.pop() {
+        if let Expr::Call(f, _) = next {
+            held.push(f.clone());
+        }
+        next.for_each_child(&mut |child| work.push(child));
+    }
 }
 
 /// \[DESIGN\] (RULES.md D1279) The key of the question `question` asked
 /// of the expression `e` within one statement, and of `more`, written
-/// after it. It writes `e` as a condition's expressions are written, and
-/// each function it calls by the address of its handle too. Two functions of
-/// one name may differ in what they hold, as EXTRACT of two fields does,
-/// and only the handle tells them apart (`logical/sets.rs`). The asker
-/// keeps `e` for as long as it keeps the key, so no address in it is
-/// another function's.
+/// after it. It writes `e` as a condition's expressions are written,
+/// each function it calls by the address of its handle among them
+/// (D1299). The asker keeps `e` for as long as it keeps the key, so no
+/// address in it is another function's.
 pub(in crate::physical) fn key_of_expr(question: &str, e: &Expr, more: &dyn Fn(&mut Xxh3Hasher)) -> u64 {
     let mut h = Xxh3BuildHasher::default().build_hasher();
     h.write(question.as_bytes());
     expr(e, &mut h);
-    let mut work = vec![e];
-    while let Some(next) = work.pop() {
-        if let Expr::Call(f, _) = next {
-            Arc::as_ptr(&f.0).cast::<()>().addr().hash(&mut h);
-        }
-        next.for_each_child(&mut |child| work.push(child));
-    }
     more(&mut h);
     h.finish()
 }
@@ -122,6 +143,8 @@ fn expr(e: &Expr, h: &mut Xxh3Hasher) {
         }
         Expr::Call(f, args) => {
             h.write(f.0.name().as_bytes());
+            // What the name does not tell, the handle does (D1299).
+            Arc::as_ptr(&f.0).cast::<()>().addr().hash(h);
             for a in args {
                 expr(a, h);
             }
