@@ -210,7 +210,7 @@ pub(super) fn ordered_ids(plans: Vec<Plan>, st: &Arc<State>, tx: TxId) -> Result
         // Each row as its sort keys' values, then its table's place, then
         // its id.
         let columns: Vec<usize> = keys.iter().map(|key| key.column).collect();
-        let on_keys: Vec<SortKey> = keys.iter().enumerate().map(|(i, key)| SortKey::new(i, key.order())).collect();
+        let on_keys: Vec<SortKey> = keys.iter().enumerate().map(|(i, key)| SortKey { column: i, ..*key }).collect();
         let runner = Runner::new(st, tx);
         let at = columns.clone();
         let keyed: RowIter = Box::new(table_entries(access, st, tx)?.map(move |read| {

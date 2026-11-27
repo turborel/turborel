@@ -20,7 +20,7 @@ pub fn bools<S: Seal>(
     (column, t): (usize, &DataType),
     (from, to): (u32, u32),
 ) -> Result<Option<Bools>> {
-    let (DataType::Boolean, Some(zones)) = (t, group.columns.get(column)) else { return Ok(None) };
+    let (DataType::Boolean, Some(zones)) = (t, group.zones(column)?) else { return Ok(None) };
     let (mut bits, mut nulls) = (Mask::default(), Mask::default());
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
@@ -48,7 +48,7 @@ pub fn bools_at<S: Seal>(
     (column, t): (usize, &DataType),
     positions: &[u32],
 ) -> Result<Option<Bools>> {
-    let (DataType::Boolean, Some(zones)) = (t, group.columns.get(column)) else { return Ok(None) };
+    let (DataType::Boolean, Some(zones)) = (t, group.zones(column)?) else { return Ok(None) };
     let (mut bits, mut nulls) = (Mask::default(), Mask::default());
     let mut rest = positions;
     for zone in zones {

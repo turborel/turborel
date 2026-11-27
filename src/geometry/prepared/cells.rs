@@ -17,9 +17,6 @@
 //! line, and a point in it is located from the few edges near it
 //! (`path.rs`); a cell several rings touch keeps a record of their sides
 //! and polygons (`several.rs`).
-//! Lucene precomputes a grid of cell relations for polygon queries
-//! likewise (`GeoEncodingUtils.createComponentPredicate`), with
-//! approximate rather than exact cells, and none for boundary cells.
 
 use std::sync::{Arc, OnceLock};
 

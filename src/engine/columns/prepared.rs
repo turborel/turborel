@@ -149,7 +149,7 @@ fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t): (&Zone, &DataType), mut bytes:
         let chunk = Chunk::parse(read)?;
         // Entries as text of a character string type, else as integers.
         let made = match padding(t) {
-            Some(pad) => Made { words: None, entries: chunk.body.entry_texts(pad) },
+            Some(pad) => Made { words: None, entries: chunk.body.entry_texts(pad, pages.kernels) },
             None => Made { words: chunk.body.entry_words(), entries: None },
         };
         Ok((chunk.table(), made, in_place))

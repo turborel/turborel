@@ -9,7 +9,7 @@
 //!     can use to find rows, and whether it gives key order (`IndexMethod`),
 //!   * the remaining weights live in a `CostModel` the user can change.
 //!
-//! "Interesting orders" (System R: Selinger et al., "Access Path Selection in a Relational Database
+//! "Interesting orders" (Selinger et al., "Access Path Selection in a Relational Database
 //! Management System", SIGMOD 1979): when a Sort is required, the order is passed down through
 //! operators that preserve it. A table access may then choose an ordered index path, and the Sort
 //! is dropped if that is cheaper than scanning in any order and sorting.
@@ -314,6 +314,9 @@ pub enum Plan {
         /// so each group is made and given as its last row passes, none
         /// held (`exec/group/streamed.rs`, RULES.md D550).
         streamed: bool,
+        /// \[DESIGN\] (RULES.md D1215) How many of its groups, any of them, a
+        /// FETCH FIRST over it asks for as it runs (`exec/limit/bounded.rs`).
+        first: Option<usize>,
     },
     /// Each `<value expression>` applied to each row [X3.135-1986 §5.25 GR2].
     Project {

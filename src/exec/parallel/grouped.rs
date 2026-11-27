@@ -32,6 +32,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
+mod first;
 mod regrouped;
 mod runs;
 mod second;
@@ -254,15 +255,14 @@ pub(super) fn is_one(plan: &Plan) -> bool {
     matches!(grouping, Plan::Aggregate { .. } | Plan::Distinct { .. })
 }
 
-/// [X3.135-1986 §5.22 GR2] The groups of the grouping `plan` over a
-/// stream, made by morsels on up to `degree` threads; or [X3.135-1986
-/// §5.25 GR2] DISTINCT's rows of one.
+/// [X3.135-1986 §5.22 GR2, §5.25 GR2] The groups of the grouping or
+/// DISTINCT `plan`, by morsels on `degree` threads, fixed by `first.rs`.
 ///
 /// # Errors
 ///
 /// As reading the stream, or a set function, fails.
 pub(super) fn grouped(plan: &Plan, (db, tx): (&Db, TxId), degree: usize) -> Result<Held<RowIter>> {
-    grouped_told(plan, (db, tx), degree, &[])
+    grouped_told(plan, (db, tx), degree, &first::told(plan, (db, tx))?)
 }
 
 /// \[DESIGN\] (RULES.md D1063) As `grouped`, the grouping's input told

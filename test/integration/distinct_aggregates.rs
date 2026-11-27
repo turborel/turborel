@@ -264,3 +264,33 @@ fn window_distinct_functions_keep_their_results() {
     let sql = "SELECT K, COUNT(DISTINCT X) OVER (PARTITION BY G), COUNT(DISTINCT X) OVER (ORDER BY K ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM T WHERE K < 8 ORDER BY K";
     assert_eq!(rows(&a, sql).unwrap(), ["1,2,1", "2,2,1", "3,2,2", "4,2,2", "5,2,2", "6,2,1", "7,2,2"]);
 }
+
+/// Verifies: [DESIGN] RULES.md D1186, D341: the parts of COUNT, SUM, AVG,
+/// MIN and MAX the first grouping keeps in columns of states give the
+/// results the query has without the rule, of exact and approximate
+/// numbers and of a decimal's scale, nulls among them and groups of
+/// nulls alone; by batches and row by row; run in parallel, where the
+/// columns are merged and sent between threads; and past a small work
+/// area, where each group's state is written and merged again.
+#[test]
+fn parts_kept_in_columns_give_the_results_without_the_rule() {
+    let (_db, a) = tables();
+    let queries = [
+        "SELECT G, COUNT(DISTINCT X), COUNT(*), COUNT(X), SUM(X), AVG(X), MIN(X), MAX(X) FROM C GROUP BY G ORDER BY G",
+        "SELECT G, COUNT(DISTINCT K), SUM(D), AVG(D), MIN(D), MAX(D), SUM(Y), AVG(Y) FROM C GROUP BY G ORDER BY G",
+        "SELECT COUNT(DISTINCT G), COUNT(*), SUM(X), AVG(X), MIN(K), MAX(K) FROM C",
+        "SELECT G, COUNT(DISTINCT X), COUNT(X), SUM(X), AVG(X), MAX(X) FROM C WHERE MOD(K, 17) = 0 GROUP BY G ORDER BY G",
+        "SELECT G, COUNT(DISTINCT X), COUNT(*), SUM(X), AVG(D), MIN(Y) FROM T GROUP BY G ORDER BY G",
+    ];
+    let serial: Vec<String> = queries.iter().map(|sql| alike(&a, sql)).collect();
+    for set in ["SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"] {
+        exec(&a, set).unwrap();
+    }
+    for (sql, wanted) in queries.iter().zip(&serial) {
+        assert_eq!(&alike(&a, sql), wanted, "in parallel: {sql}");
+    }
+    exec(&a, "SET MEMORY.WORK_BYTES = 65536").unwrap();
+    for (sql, wanted) in queries.iter().zip(&serial) {
+        assert_eq!(&alike(&a, sql), wanted, "past the work area: {sql}");
+    }
+}

@@ -1,5 +1,5 @@
-//! A deterministic simulator of a replica group (RULES.md D57, R-TEST-5),
-//! after TigerBeetle's VOPR: from a seed, a run of moments in which frames
+//! A deterministic simulator of a replica group (RULES.md D57, R-TEST-5):
+//! from a seed, a run of moments in which frames
 //! are delayed, dropped, duplicated and reordered, the group is
 //! partitioned, replicas crash and are made again from their journals,
 //! disks are slow, lose writes not yet durable and fail, the group is

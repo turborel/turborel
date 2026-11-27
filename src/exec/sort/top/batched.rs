@@ -19,7 +19,7 @@ use std::cmp::Ordering;
 use std::sync::Arc;
 
 use super::super::Work;
-use super::super::normal::{Layout, Shape, encode_batch, seen_column};
+use super::super::normal::{Layout, Shape, encode_batch, seen_as, seen_column};
 use super::super::vectors::{Held, compare_cells, row_of, sorted};
 use crate::error::Result;
 use crate::exec::batch::{Batches, resolved};
@@ -147,7 +147,7 @@ impl Top<'_> {
     fn take(&mut self, rows: &[usize]) -> bool {
         let at = self.batches.len().saturating_sub(1);
         let Some(Some(batch)) = self.batches.get(at) else { return false };
-        let found: Vec<_> = self.keys.iter().map(|k| seen_column(batch, k.column, rows)).collect();
+        let found: Vec<_> = self.keys.iter().map(|k| seen_as(k, seen_column(batch, k.column, rows))).collect();
         if self.layout.is_none() {
             self.layout = Layout::new(self.keys, &found, Shape::Open);
         }

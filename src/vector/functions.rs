@@ -7,7 +7,7 @@
 //! dimension count, format and layout, where null leaves each open.
 //!
 //! Metric, format, norm and layout names are character strings, as the
-//! SQL Server form writes them (`VECTOR_DISTANCE('cosine', a, b)`); a
+//! metric-first form writes them (`VECTOR_DISTANCE('cosine', a, b)`); a
 //! bare key word in their place is the binder's to turn into one. The
 //! operators `+ - *` of §6.5 are the binder's to turn into VECTOR_ADD,
 //! VECTOR_SUBTRACT, VECTOR_MULTIPLY, VECTOR_SCALE and VECTOR_DIVIDE, and
