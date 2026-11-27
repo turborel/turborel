@@ -6,6 +6,7 @@
 use super::keys::{nearest, value_hash};
 use super::*;
 use crate::exec::table::Seed;
+use crate::kernels::Kernels;
 use crate::storage::{Batch, Column, Floats, Ints, Mask, Texts};
 use crate::value::{Decimal, Value, key_equal};
 

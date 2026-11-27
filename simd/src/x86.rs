@@ -156,21 +156,6 @@ pub(crate) fn bloom_probe(isa: Isa, words: &[u64], hashes: &[u64], out: &mut Vec
 /// `Kernels::gather_i64`: by the portable body at every set, whose loads
 /// a row at a time measured faster than the vector gathers of AVX2 at
 /// every size (RULES.md D570).
-/// `Kernels::prefetch_u64` and `prefetch_u32`: a `prefetcht0` of each
-/// value of `values` at `at`, a place past the end passed by, so only a
-/// value of the slice is named.
-pub(crate) fn prefetch<T>(values: &[T], at: &[u32]) {
-    use std::arch::x86_64::{_MM_HINT_T0, _mm_prefetch};
-    for &n in at {
-        if let Some(value) = usize::try_from(n).ok().and_then(|n| values.get(n)) {
-            // SAFETY: SSE, which `prefetcht0` needs, is in every x86-64
-            // processor; the hint reads no memory the program sees, never
-            // faults, and is given the address of a value of the slice.
-            unsafe { _mm_prefetch::<_MM_HINT_T0>(std::ptr::from_ref(value).cast::<i8>()) };
-        }
-    }
-}
-
 pub(crate) fn gather_i64(_isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
     portable::gather::gather_i64(values, sel, out);
 }

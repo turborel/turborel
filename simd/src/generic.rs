@@ -60,11 +60,6 @@ pub(crate) fn bloom_probe(_isa: Isa, words: &[u64], hashes: &[u64], out: &mut Ve
     portable::bloom::bloom_probe(words, hashes, out);
 }
 
-/// `Kernels::prefetch_u64` and `prefetch_u32`: no instruction asks.
-pub(crate) fn prefetch<T>(values: &[T], at: &[u32]) {
-    let _ = (values, at);
-}
-
 /// `Kernels::gather_i64`.
 pub(crate) fn gather_i64(_isa: Isa, values: &[i64], sel: &[u32], out: &mut Vec<i64>) {
     portable::gather::gather_i64(values, sel, out);

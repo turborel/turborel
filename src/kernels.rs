@@ -117,24 +117,6 @@ pub trait Kernels: Send + Sync {
         portable::bloom::bloom_probe(words, hashes, out);
     }
 
-    /// Asks the processor to bring the words of `words` at `at` into its
-    /// caches ahead of their reading (RULES.md D1095), a place past the
-    /// end passed by: a hint, which changes no value. The portable body
-    /// asks nothing.
-    fn prefetch_u64(&self, words: &[u64], at: &[u32]) {
-        let _ = (words, at);
-    }
-
-    /// As `prefetch_u64`, of the values of `values`.
-    fn prefetch_u32(&self, values: &[u32], at: &[u32]) {
-        let _ = (values, at);
-    }
-
-    /// As `prefetch_u64`, of the integers of `values`.
-    fn prefetch_i64(&self, values: &[i64], at: &[u32]) {
-        let _ = (values, at);
-    }
-
     /// Appends to `out` the values from the `from`th to the `to`th of
     /// `bits` bits packed in `bytes`, as a chunk's frame of reference
     /// keeps them (RULES.md D352), each plus `least`, wrapping: none if

@@ -46,8 +46,6 @@ pub(in crate::exec) use equal::keys_equal;
 pub(in crate::exec) use keys::{Hashing, KeyHashes, numbers_hashed, values_hash};
 pub(in crate::exec) use parted::{BUILD_PARTS, BuiltPart, Parted, Parting};
 
-use crate::kernels::Kernels;
-
 /// \[DESIGN\] How far a directory word's 16 tag bits are turned.
 const TAG_SHIFT: u32 = 48;
 
@@ -220,36 +218,18 @@ impl JoinTable {
     /// built: those its key may match, compared then (`keys_equal`); of a
     /// direct table, `h` the number of the key (RULES.md D601).
     pub(in crate::exec) fn candidates(&self, h: u64) -> Candidates<'_> {
-        if self.dense.is_some() {
-            return self.candidates_at(h, Located::default());
-        }
-        self.candidates_at(h, self.locate(h))
-    }
-
-    /// \[DESIGN\] (RULES.md D1095) Where the rows of hash `h` lie: its
-    /// slot's directory words read, so a probe locating a batch's rows
-    /// at once has their reads from memory under way together. None of a
-    /// slot whose tags do not hold `h`'s.
-    pub(in crate::exec) fn locate(&self, h: u64) -> Located {
-        let slot = self.slot(h);
-        let part = slot.checked_shr(self.within).unwrap_or(0);
-        let Some(of) = self.parts.get(part) else { return Located::default() };
-        let at = slot & self.mask;
-        let Some(&word) = of.directory.get(at.saturating_add(1)) else { return Located::default() };
-        if word & tag(h) == 0 {
-            return Located::default();
-        }
-        Located { part, from: of.directory.get(at).map_or(0, |&w| end_of(w)), to: end_of(word) }
-    }
-
-    /// The candidates of hash `h`, as `candidates` gives them, its rows
-    /// found where `located`, that `locate` gave of it, says.
-    pub(in crate::exec) fn candidates_at(&self, h: u64, located: Located) -> Candidates<'_> {
         if let Some(dense) = &self.dense {
             return Candidates::Run(dense.candidates(h).iter());
         }
-        let Some(part) = self.parts.get(located.part) else { return Candidates::Run([].iter()) };
-        let (from, to) = (located.from, located.to);
+        let slot = self.slot(h);
+        let Some(part) = self.parts.get(slot.checked_shr(self.within).unwrap_or(0)) else { return Candidates::Run([].iter()) };
+        let at = slot & self.mask;
+        let Some(&word) = part.directory.get(at.saturating_add(1)) else { return Candidates::Run([].iter()) };
+        if word & tag(h) == 0 {
+            return Candidates::Run([].iter());
+        }
+        let from = part.directory.get(at).map_or(0, |&w| end_of(w));
+        let to = end_of(word);
         let (Some(hashes), Some(rows)) = (part.hashes.get(from..to), part.rows.get(from..to)) else {
             return Candidates::Run([].iter());
         };
@@ -260,46 +240,6 @@ impl JoinTable {
         let count = hashes.get(first..).map_or(0, |rest| rest.partition_point(|&x| x == h));
         Candidates::Run(rows.get(first..first.saturating_add(count)).unwrap_or_default().iter())
     }
-
-    /// \[DESIGN\] (RULES.md D1095) Asks `kernels` to bring the first hash
-    /// and row number of each of `located` into the caches, a part's at
-    /// once, so a probe reading them after finds them there.
-    pub(in crate::exec) fn prefetch(&self, located: &[Located], kernels: &dyn Kernels) {
-        let mut at: Vec<(usize, u32)> =
-            located.iter().filter(|l| l.from < l.to).filter_map(|l| Some((l.part, u32::try_from(l.from).ok()?))).collect();
-        at.sort_unstable();
-        let mut firsts = Vec::with_capacity(at.len());
-        for run in at.chunk_by(|a, b| a.0 == b.0) {
-            let Some(part) = run.first().and_then(|&(p, _)| self.parts.get(p)) else { continue };
-            firsts.clear();
-            firsts.extend(run.iter().map(|&(_, from)| from));
-            kernels.prefetch_u64(&part.hashes, &firsts);
-            kernels.prefetch_u32(&part.rows, &firsts);
-        }
-    }
-}
-
-impl JoinTable {
-    /// \[DESIGN\] (RULES.md D1095) The number of the first row of each of
-    /// `located`'s slots, into `out`, `u32::MAX` of one of no row: the
-    /// built row whose key a probe compares first.
-    pub(in crate::exec) fn firsts(&self, located: &[Located], out: &mut Vec<u32>) {
-        out.clear();
-        out.extend(located.iter().map(|l| {
-            let first = (l.from < l.to).then(|| self.parts.get(l.part)?.rows.get(l.from).copied()).flatten();
-            first.unwrap_or(u32::MAX)
-        }));
-    }
-}
-
-/// \[DESIGN\] (RULES.md D1095) Where a hash's rows lie in a table: its
-/// part, and the places in it from which to which its slot's rows are;
-/// none if they are no places.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(in crate::exec) struct Located {
-    part: usize,
-    from: usize,
-    to: usize,
 }
 
 /// The tag bit of hash `h` in a directory word.

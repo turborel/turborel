@@ -9,7 +9,7 @@
 //! where a null matches nothing, has no hash, and the caller is told so.
 //!
 //! The rows it does not keep are dropped once the batch is hashed, before
-//! any is located, screened by a Bloom filter or paired, so none is looked
+//! any is screened by a Bloom filter, looked up or paired, so none is looked
 //! up in vain and a LEFT join pairs none of them with nulls. A probe given
 //! nothing to keep by hashes its rows once and drops none, at no cost of a
 //! row.

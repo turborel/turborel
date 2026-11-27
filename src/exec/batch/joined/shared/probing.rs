@@ -16,7 +16,7 @@ use std::ops::Deref;
 use super::super::super::stream::Kept;
 use super::{Pairs, PassKept, SharedTable, pick};
 use crate::error::SqlError;
-use crate::exec::table::{JoinTable, KeyHashes, Located, keys_equal};
+use crate::exec::table::{KeyHashes, keys_equal};
 use crate::storage::sel::{kept_count, nth};
 use crate::storage::{BATCH_ROWS, Batch, NO_ROW, Sel};
 
@@ -33,9 +33,6 @@ pub(in crate::exec) struct Probing<T> {
     /// before the row it pairs now (RULES.md D1087); none if it looks up
     /// every row.
     screened: Option<(Vec<u32>, usize)>,
-    /// Of a hashed table, where the rows each row's hash may match lie, by
-    /// its place in `given`, located before any is paired (RULES.md D1095).
-    located: Vec<Located>,
     /// The places of the left's key vectors, and of the vectors its
     /// batches hold, or all.
     left: Vec<usize>,
@@ -85,13 +82,8 @@ impl SharedTable {
             failed = table.kept_rows((&batch, &left), (&mut given, &mut hashes), kept).err();
         }
         let screened = failed.is_none().then(|| table.screened(&hashes.hashes)).flatten().map(|held| (held, 0));
-        let by_hash = failed.is_none() && !table.table.is_direct();
-        let located = if by_hash { located(&table.table, &hashes, screened.as_ref().map(|(held, _)| &held[..])) } else { Vec::new() };
-        table.table.prefetch(&located, &*table.kernels);
-        table.prefetch_keys(&located);
         let pairs = (Vec::with_capacity(BATCH_ROWS), Vec::with_capacity(BATCH_ROWS));
-        let (at, seen, any, ended) = (0, 0, false, false);
-        Probing { table, batch, given, hashes, screened, located, left, left_shown, outer, at, seen, any, pairs, failed, ended }
+        Probing { table, batch, given, hashes, screened, left, left_shown, outer, at: 0, seen: 0, any: false, pairs, failed, ended: false }
     }
 }
 
@@ -137,10 +129,7 @@ impl<T: Deref<Target = SharedTable>> Probing<T> {
         if !may_match(&mut self.screened, self.at) {
             return Ok(true);
         }
-        let mut candidates = match self.located.get(self.at) {
-            Some(&located) => table.table.candidates_at(h, located),
-            None => table.table.candidates(h),
-        };
+        let mut candidates = table.table.candidates(h);
         // The built rows looked at before it stopped are passed by.
         if let Some(before) = self.seen.checked_sub(1)
             && candidates.nth(before).is_none()
@@ -159,25 +148,6 @@ impl<T: Deref<Target = SharedTable>> Probing<T> {
         }
         Ok(true)
     }
-}
-
-/// \[DESIGN\] (RULES.md D1095) Where in `table` the rows each of a
-/// batch's `hashes` may match lie, by its place: of every row with a key,
-/// or of a probe screened, of those at the places `held` alone. Their
-/// directory words are read one after another, apart from any pairing,
-/// so the reads of a table past the caches are under way together.
-fn located(table: &JoinTable, hashes: &KeyHashes, held: Option<&[u32]>) -> Vec<Located> {
-    let mut located = vec![Located::default(); hashes.hashes.len()];
-    let mut locate = |at: usize| {
-        if let (Some(&h), Some(false), Some(found)) = (hashes.hashes.get(at), hashes.misses.get(at).copied(), located.get_mut(at)) {
-            *found = table.locate(h);
-        }
-    };
-    match held {
-        Some(held) => held.iter().for_each(|&n| locate(crate::storage::mask::index(n))),
-        None => (0..hashes.hashes.len()).for_each(locate),
-    }
-    located
 }
 
 /// Whether the row at place `at` of a probe may match a built row: of a
@@ -296,37 +266,5 @@ mod tests {
         let (few, _) = pairs_of(&[(4, 0), (4, 1)], &[4, 5], (true, false));
         let pair = |k: &str, t: &str| (k.to_owned(), t.to_owned());
         assert_eq!(few, vec![pair("4", "0"), pair("4", "1"), pair("5", &null)]);
-    }
-
-    /// Verifies: [DESIGN] RULES.md D1095: a probe that locates its batch's
-    /// rows before it pairs any pairs them as the nested comparison of
-    /// every left key with every built key would: keys of one built row,
-    /// of many in a sorted slot, of none, and a null key matching nothing,
-    /// paired with nulls of a LEFT join; in the order of the left rows and
-    /// of the built rows, across batches of pairs.
-    #[test]
-    fn a_located_probe_pairs_as_the_nested_comparison() {
-        let built: Vec<(usize, usize)> = (0..4_000).map(|t| (if t < 2_000 { t } else { 7 }, t)).collect();
-        let keys: Vec<usize> = vec![3, 7, 5_000, 1_999, 7, 0];
-        let null = Value::Null.to_string();
-        for outer in [false, true] {
-            let mut want = Vec::new();
-            for &k in &keys {
-                let matched: Vec<(String, String)> = built.iter().filter(|b| b.0 == k).map(|b| (k.to_string(), b.1.to_string())).collect();
-                if matched.is_empty() && outer {
-                    want.push((k.to_string(), null.clone()));
-                }
-                want.extend(matched);
-            }
-            assert_eq!(pairs_of(&built, &keys, (outer, false)).0, want, "outer {outer}");
-        }
-        let rows: Vec<Row> = vec![vec![number(1), number(10)]];
-        let join = [JoinKey { left: 0, right: 0, nulls: false }];
-        let table = SharedTable::of_rows(&rows, 2, &join, (Seed::fixed(0x5EED), vec![1], false)).unwrap();
-        let mut left = Batch::empty(1);
-        left.push(&vec![Value::Null], &[0]);
-        left.push(&vec![number(1)], &[0]);
-        let gave: Vec<usize> = SharedTable::probing(&table, (left, None), (vec![0], None), true).map(|k| k.unwrap().0.rows).collect();
-        assert_eq!(gave.iter().sum::<usize>(), 2, "a null key paired with nulls, the other with its row");
     }
 }

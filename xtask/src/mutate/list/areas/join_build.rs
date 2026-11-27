@@ -51,7 +51,7 @@ const COLLATED: &str = "src/physical/collated.rs";
 /// The test of joins on computed keys.
 const COMPUTED: &str = "computed_keys::an_equality_of_computed_keys_is_a_hash_join";
 
-pub const JOIN_BUILD: [Mutation; 31] = [
+pub const JOIN_BUILD: [Mutation; 30] = [
     Mutation {
         name: "probe-units-reversed",
         package: Package::Core,
@@ -281,16 +281,6 @@ pub const JOIN_BUILD: [Mutation; 31] = [
         replacement: "    out.truncate(len.saturating_add(keep | 1));",
         integration: &[],
         unit: &["tests::every_available_set_gives_the_portable_results"],
-    },
-    Mutation {
-        name: "probe-located-nowhere",
-        package: Package::Core,
-        breaks: "a probe locates each row's slot before it pairs any, and pairs it from there (D1095)",
-        file: "src/exec/batch/joined/shared/probing.rs",
-        original: "            *found = table.locate(h);",
-        replacement: "            *found = Located::default();",
-        integration: &[],
-        unit: &["exec::batch::joined::shared::probing::tests::a_located_probe_pairs_as_the_nested_comparison"],
     },
     Mutation {
         name: "integers-hashed-unbounded",
