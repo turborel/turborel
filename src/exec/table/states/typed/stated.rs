@@ -25,6 +25,10 @@ impl Typed {
                 }
             }
             Typed::Approx(_) => self.boxed_of(g).write_state(out),
+            Typed::Best(best) => {
+                best.write(g, out);
+                true
+            }
         }
     }
 }

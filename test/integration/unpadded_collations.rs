@@ -447,3 +447,67 @@ fn a_count_of_distinct_values_of_no_grouping_is_one_part_10_9() {
         assert!(!pair_in_a_part(&physical(&a, &beside.replace("{t}", "C"))), "SUM in the second keeps it above the part");
     }
 }
+
+/// How many groups `best_strings_of_many_groups` makes, a row's by its K.
+const GROUPS: usize = 601;
+
+/// How `a` and `b` compare with the shorter padded with spaces.
+fn padded(a: &str, b: &str) -> std::cmp::Ordering {
+    let n = a.len().max(b.len());
+    format!("{a:<n$}").as_bytes().cmp(format!("{b:<n$}").as_bytes())
+}
+
+/// Of each group of rows alike in MOD(K, GROUPS): the group, the least
+/// and the greatest U and S by their octets, the least and the greatest P
+/// padded, less its trailing spaces, and how many distinct S, as the
+/// queries of `best_strings_of_many_groups` give them, sorted.
+fn bests() -> (Vec<String>, Vec<String>) {
+    let (mut plain, mut beside) = (Vec::new(), Vec::new());
+    for g in 0..GROUPS {
+        let us: Vec<String> = (g..ROWS).step_by(GROUPS).map(u_of).collect();
+        let ss: Vec<&str> = (g..ROWS).step_by(GROUPS).filter_map(s_of).collect();
+        let (least_u, greatest_u) = (us.iter().min().unwrap(), us.iter().max().unwrap());
+        let (least_s, greatest_s) = (ss.iter().min().unwrap(), ss.iter().max().unwrap());
+        let least_p = ss.iter().copied().min_by(|a, b| padded(a, b)).unwrap().trim_end_matches(' ');
+        let greatest_p = ss.iter().copied().max_by(|a, b| padded(a, b)).unwrap().trim_end_matches(' ');
+        let distinct = ss.iter().collect::<std::collections::HashSet<_>>().len();
+        plain.push(format!("{g},[{least_u}],[{greatest_u}],[{least_s}],[{greatest_s}],[{least_p}],[{greatest_p}]"));
+        beside.push(format!("{g},{distinct},[{least_u}],[{greatest_s}],[{greatest_p}]"));
+    }
+    plain.sort();
+    beside.sort();
+    (plain, beside)
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2, §10.9] [DESIGN]
+/// (RULES.md D1290) MIN and MAX of character strings of many groups, by
+/// octets under a collation of NO PAD, of nearly unique strings and of
+/// few, and padded with no collation, give each group's least and
+/// greatest: of both stores, by batches and a row at a time, run alone
+/// and in parallel on morsels of few rows, whose groups are merged
+/// partition by partition; beside a DISTINCT set function, whose first
+/// grouping computes them as parts; and in a work area that holds few
+/// groups, whose partitions are written to the spill and read back.
+#[test]
+fn best_strings_of_many_groups_10_9() {
+    let (db, a) = tables();
+    let (plain, beside) = bests();
+    let source = format!("(SELECT MOD(K, {GROUPS}) AS G, S, U, P FROM {{t}}) AS Q GROUP BY G");
+    let trimmed = |f: &str| format!("'[' || TRIM(TRAILING ' ' FROM {f}(P)) || ']'");
+    let shown = |f: &str, c: &str| format!("'[' || {f}({c}) || ']'");
+    let all = [shown("MIN", "U"), shown("MAX", "U"), shown("MIN", "S"), shown("MAX", "S"), trimmed("MIN"), trimmed("MAX")];
+    let first = format!("SELECT G, {} FROM {source}", all.join(", "));
+    let second = format!("SELECT G, COUNT(DISTINCT S), {}, {}, {} FROM {source}", shown("MIN", "U"), shown("MAX", "S"), trimmed("MAX"));
+    for work in [None, Some(64_i128 << 10_u32)] {
+        if let Some(bytes) = work {
+            db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(bytes, 0))).unwrap();
+        }
+        for degree in [1, 4] {
+            exec(&a, &format!("SET EXECUTOR.DEGREE = {degree}")).unwrap();
+            exec(&a, "SET EXECUTOR.MORSEL_ROWS = 256").unwrap();
+            exec(&a, "SET EXECUTOR.PARALLEL_MIN_ROWS = 0").unwrap();
+            assert_eq!(of_both(&a, &first), plain, "degree {degree}, work area {work:?}");
+            assert_eq!(of_both(&a, &second), beside, "beside DISTINCT, degree {degree}, work area {work:?}");
+        }
+    }
+}

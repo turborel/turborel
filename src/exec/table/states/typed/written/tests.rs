@@ -22,6 +22,7 @@ fn bits(typed: &Typed) -> String {
             let sums: Vec<(u64, u64)> = a.sums.iter().map(|w| w.parts()).map(|(b, s)| (b.to_bits(), s.to_bits())).collect();
             format!("approx {} {sums:?} {:?}", a.mean, a.counts)
         }
+        Typed::Best(best) => format!("best {:?}", (0..best.len()).map(|g| best.finish(g)).collect::<Vec<_>>()),
     }
 }
 

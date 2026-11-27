@@ -15,6 +15,7 @@ use super::{Approx, Exact, Typed};
 const COUNT: u8 = 0;
 const EXACT: u8 = 1;
 const APPROX: u8 = 2;
+const BEST: u8 = 3;
 
 /// Reads `len` counts.
 fn counts(reader: &mut Reader<'_>, len: usize) -> Result<Vec<i64>> {
@@ -49,6 +50,10 @@ impl Typed {
                 }
                 put_counts(&approx.counts, out);
             }
+            Typed::Best(best) => {
+                out.put_u8(BEST);
+                best.put_groups(places, out);
+            }
         }
     }
 
@@ -59,7 +64,7 @@ impl Typed {
     /// SQLCODE -901 if the bytes are not such states, or not of `agg`.
     pub(in crate::exec::table) fn read(reader: &mut Reader<'_>, len: usize, agg: &AggCall) -> Result<Typed> {
         // A part's column is its function's (RULES.md D1186).
-        let own = || Typed::of(agg.func.0.columnar().map(|c| c.0), &agg.result);
+        let own = || Typed::of(agg.func.0.columnar().map(|c| c.0), &agg.result).or_else(|| Typed::best(agg));
         let template = super::super::parts::column_of(agg).or_else(own);
         match (reader.u8()?, template) {
             (COUNT, Some(Typed::Count(_))) => Ok(Typed::Count(counts(reader, len)?)),
@@ -78,6 +83,7 @@ impl Typed {
                 }
                 Ok(Typed::Approx(Approx { mean, sums, counts: counts(reader, len)?, result }))
             }
+            (BEST, Some(Typed::Best(best))) => Ok(Typed::Best(best.read(reader, len)?)),
             (tag, _) => Err(reader.corrupt(&format!("no column of states of this set function has tag {tag}"))),
         }
     }

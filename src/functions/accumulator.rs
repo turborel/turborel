@@ -110,4 +110,12 @@ pub trait Accumulator {
     fn keeps_first(&self) -> bool {
         false
     }
+    /// \[DESIGN\] (RULES.md D1290) The order it compares character
+    /// strings in, if all it keeps is the best of the strings given, by
+    /// an order of their text alone, and it writes that string as its
+    /// state: so a grouping may keep a string a group, each candidate
+    /// compared where it lies. Default: none.
+    fn text_order(&self) -> Option<super::TextOrder> {
+        None
+    }
 }

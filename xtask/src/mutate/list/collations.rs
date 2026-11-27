@@ -3,8 +3,10 @@
 //! REVOKE USAGE and DROP SCHEMA revert a collation's columns; and, of a
 //! collation of NO PAD that orders strings as their octets do, each place
 //! its strings are compared in place (D1183), the pair of groupings a
-//! DISTINCT set function makes under one (D1184), and the bound a sort
-//! of its first rows by one tells its scan (D1187).
+//! DISTINCT set function makes under one (D1184), the bound a sort of
+//! its first rows by one tells its scan (D1187), a vector of texts MAX
+//! and MIN compare where it lies, and the column of each group's best
+//! string (D1290).
 
 use super::{Mutation, Package};
 
@@ -19,8 +21,27 @@ const OCTETS_BOUND: &str = "storage::condition::threshold::tests::a_threshold_by
 /// The unit test of a bound of a key by octets shared by a sort's morsels.
 const OCTETS_SHARED: &str = "storage::condition::threshold::tests::a_shared_threshold_by_octets_counts_strings_by_their_octets";
 
+/// The file of MAX and MIN.
+const EXTREMES: &str = "src/functions/extremes.rs";
+/// The unit test of a vector of texts taken where it lies against its values.
+const TEXTS_TAKEN: &str = "functions::extremes::tests::extremes_take_a_vector_of_texts_where_it_lies";
+/// The unit test of the two orders a vector of texts is taken in.
+const TEXTS_ORDERED: &str = "functions::extremes::tests::a_vector_of_texts_is_ordered_padded_or_by_its_octets";
+
+/// The file of the column of each group's best string.
+const BEST: &str = "src/exec/table/states/typed/best.rs";
+/// The unit test of that column against an accumulator a group.
+const BEST_ALONE: &str = "exec::table::states::typed::best::tests::a_column_of_best_strings_is_an_accumulator_a_group";
+/// The unit test of that column merged, gathered and read back.
+const BEST_MERGED: &str = "exec::table::states::typed::best::tests::best_strings_merge_gather_and_come_back_from_a_spill";
+/// The unit test of the copies that column makes of its live strings.
+const BEST_COPIED: &str =
+    "exec::table::states::typed::best::tests::a_column_of_best_strings_copies_its_live_strings_once_the_dead_pass_them";
+/// The unit test of what has no such column.
+const BEST_REFUSED: &str = "exec::table::states::typed::best::tests::what_is_no_extreme_of_strings_by_their_text_has_no_column";
+
 /// The mutations of collations, in the order they run.
-pub const COLLATIONS: [Mutation; 38] = [
+pub const COLLATIONS: [Mutation; 53] = [
     Mutation {
         name: "collated-read-tracked",
         package: Package::Core,
@@ -261,11 +282,161 @@ pub const COLLATIONS: [Mutation; 38] = [
         name: "unpadded-extreme-padded",
         package: Package::Core,
         breaks: "MAX and MIN under a collation of octets compare padded (D1183)",
-        file: "src/functions/extremes.rs",
-        original: "text.as_bytes().cmp(b.as_bytes()) == wanted",
-        replacement: "crate::value::compare_strings(text, b) == wanted",
+        file: EXTREMES,
+        original: "let order = if self.unpadded { candidate.as_bytes().cmp(best.as_bytes()) } else { compare_strings(candidate, best) };",
+        replacement: "let order = compare_strings(candidate, best);",
         integration: &["unpadded_collations::grouping_and_extremes_are_unpadded_8_2"],
-        unit: &[],
+        unit: &[TEXTS_ORDERED],
+    },
+    Mutation {
+        name: "texts-extreme-tie-replaces",
+        package: Package::Core,
+        breaks: "MAX and MIN of a vector of texts: a string equal to the best so far takes its place (D1290)",
+        file: EXTREMES,
+        original: "order == if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }",
+        replacement: "order != if self.max { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }",
+        integration: &[],
+        unit: &[TEXTS_ORDERED],
+    },
+    Mutation {
+        name: "texts-extreme-every-row",
+        package: Package::Core,
+        breaks: "MAX and MIN of a vector of texts read every row of it, not the rows asked (D1290)",
+        file: EXTREMES,
+        original: "let Some(candidate) = texts.get(nth(rows, n)) else { continue };",
+        replacement: "let Some(candidate) = texts.get(n) else { continue };",
+        integration: &[],
+        unit: &[TEXTS_TAKEN],
+    },
+    Mutation {
+        name: "texts-extreme-forgets-the-best",
+        package: Package::Core,
+        breaks: "MAX and MIN of a vector of texts: its best takes the place of a better one kept before (D1290)",
+        file: EXTREMES,
+        original: "let against = if found.is_some() { found } else { held };",
+        replacement: "let against = found;",
+        integration: &[],
+        unit: &[TEXTS_TAKEN],
+    },
+    Mutation {
+        name: "texts-extreme-of-keys-in-place",
+        package: Package::Core,
+        breaks: "MAX and MIN under a collation that makes sort keys compare a vector's texts by their octets (D1290)",
+        file: EXTREMES,
+        original: "        if !self.octets {\n            return self.update_many(texts.values(), rows);",
+        replacement: "        if false {\n            return self.update_many(texts.values(), rows);",
+        integration: &[],
+        unit: &[TEXTS_TAKEN],
+    },
+    Mutation {
+        name: "best-string-first-kept",
+        package: Package::Core,
+        breaks: "a column of best strings keeps a group's first string, whatever comes after (D1290)",
+        file: BEST,
+        original: "if self.get(g).is_some_and(|best| !self.order.better(candidate, best)) {",
+        replacement: "if self.get(g).is_some() {",
+        integration: &["unpadded_collations::best_strings_of_many_groups_10_9"],
+        unit: &[BEST_ALONE],
+    },
+    Mutation {
+        name: "best-strings-never-copied",
+        package: Package::Core,
+        breaks: "a column of best strings never copies its live strings, so its dead ones stay (D1290)",
+        file: BEST,
+        original: "*held = true;\n        if self.crowded() {",
+        replacement: "*held = true;\n        if false {",
+        integration: &[],
+        unit: &[BEST_COPIED],
+    },
+    Mutation {
+        name: "best-strings-copied-at-each-death",
+        package: Package::Core,
+        breaks: "a column of best strings copies its live strings whenever one dies (D1290)",
+        file: BEST,
+        original: "self.dead > self.text.len().saturating_sub(self.dead).saturating_add(places)",
+        replacement: "self.dead > 0",
+        integration: &[],
+        unit: &[BEST_COPIED],
+    },
+    Mutation {
+        name: "best-strings-copied-out-of-place",
+        package: Package::Core,
+        breaks: "a column of best strings copied keeps no string's place (D1290)",
+        file: BEST,
+        original: "*span = (start, self.text.len());",
+        replacement: "*span = (start, start);",
+        integration: &[],
+        unit: &[BEST_COPIED],
+    },
+    Mutation {
+        name: "best-strings-cut-off-left-live",
+        package: Package::Core,
+        breaks: "the strings of groups cut off a column of best strings are not counted dead (D1290)",
+        file: BEST,
+        original: "self.dead = self.dead.saturating_add(cut);",
+        replacement: "self.dead = self.dead.saturating_add(0);",
+        integration: &[],
+        unit: &[BEST_COPIED],
+    },
+    Mutation {
+        name: "best-strings-merged-of-another-group",
+        package: Package::Core,
+        breaks: "two columns of best strings merged: a group takes the string at its own place of the other (D1290)",
+        file: BEST,
+        original: "if let Some(candidate) = other.get(index(i)) {",
+        replacement: "if let Some(candidate) = other.get(index(g)) {",
+        integration: &[],
+        unit: &[BEST_MERGED],
+    },
+    Mutation {
+        name: "best-strings-gathered-in-place",
+        package: Package::Core,
+        breaks: "a column of best strings gathered keeps each group's string at its old place (D1290)",
+        file: BEST,
+        original: "if let Some(best) = self.get(index(i)) {",
+        replacement: "if let Some(best) = self.get(g) {",
+        integration: &[],
+        unit: &[BEST_MERGED],
+    },
+    Mutation {
+        name: "best-strings-read-back-held",
+        package: Package::Core,
+        breaks: "a column of best strings read back gives a group of no string the empty string (D1290)",
+        file: BEST,
+        original: "if held {\n                self.take(g, &best);",
+        replacement: "if true {\n                self.take(g, &best);",
+        integration: &[],
+        unit: &[BEST_MERGED],
+    },
+    Mutation {
+        name: "best-strings-take-any-value",
+        package: Package::Core,
+        breaks: "a column of best strings fed a value that is no string passes it over as a null (D1290)",
+        file: BEST,
+        original: "let fits = |v: &Value| v.is_null() || matches!(v, Value::Char(_));",
+        replacement: "let fits = |_: &Value| true;",
+        integration: &[],
+        unit: &["exec::table::states::typed::best::tests::a_column_fed_other_than_strings_turns_into_accumulators"],
+    },
+    Mutation {
+        name: "best-strings-of-large-objects",
+        package: Package::Core,
+        breaks: "MAX and MIN of a character large object tell a column of best strings their order (D1290)",
+        file: EXTREMES,
+        original: "let strings = result.is_character() && !result.is_lob();",
+        replacement: "let strings = result.is_character();",
+        integration: &[],
+        unit: &[BEST_REFUSED],
+    },
+    Mutation {
+        name: "best-strings-of-sort-keys",
+        package: Package::Core,
+        breaks: "MAX and MIN under a collation that makes sort keys tell a column of best strings an order by octets (D1290)",
+        file: EXTREMES,
+        original: "self.octets.then_some(TextOrder { max: self.max, unpadded: true })",
+        replacement: "Some(TextOrder { max: self.max, unpadded: true })",
+        integration: &[],
+        unit: &[BEST_REFUSED],
     },
     Mutation {
         name: "unpadded-key-trimmed",

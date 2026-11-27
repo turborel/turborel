@@ -827,6 +827,9 @@ verification approach DO-178C expects (§8).
 | D1282 | The runs that merge and finish a grouping's partitions lead their reader by every partition |
 | D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
+| D1290 | MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states |
+| D1291 | A regular expression function over a dictionary's codes is run once of each entry a row reads |
+| D1292 | What a searcher keeps is left with its expression for the next searcher |
 | D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
@@ -21071,7 +21074,8 @@ where `CollationRef::is_octets` holds.
   (`Seed::unpadded`), and a table made by it hashes those strings whole
   (`Kernels::hash_texts_unpadded`) and compares their octets
   (`Lane::equal`).
-- MAX and MIN compare the strings' octets (`CollatedAcc`).
+- MAX and MIN compare the strings' octets (`CollatedAcc`), a vector of
+  them where it lies since D1290.
 - ORDER BY, a join's keys and COUNT(DISTINCT) still take a key, made of a
   vector of texts in one pass as the text's octets (`calls::octets`), which
   sort, join and compare as binary strings do. A sort by a column reads
@@ -23969,6 +23973,143 @@ order, gave the row store's results too
 test). Which step kept the store's numbers from the lane there was not
 found. The lane's own test shows the place it now clears.
 
+#### D1290. MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states
+
+A set function fed by batches is given a vector at a time. A vector of
+character strings is one text with where each string ends, or the codes
+of a dictionary's entries (D31), and `Accumulator::update_texts` hands
+it over as it is. COUNT counted its strings so. MAX and MIN did not
+override it, so the default made a value of every string of the batch,
+the first time any group's accumulator asked, to compare each with the
+best so far. Nearly all of those values lost and were dropped with the
+batch.
+
+MAX and MIN now find the best string of the vector where the strings
+lie (`TextOrder::best_of`, `functions/extremes.rs`) and make a value of
+it alone, and only if it betters the best so far.
+
+- With no collation two strings compare with the shorter padded with
+  spaces [X3.135-1986 §5.11 GR5], by `compare_strings`, as two values
+  do. Of two that compare equal the one met first is kept, as before.
+- Under a collation of NO PAD whose sort key is the text itself (D1183)
+  they compare by their octets. A string given as a value compares by
+  the same rule (`TextOrder::better`), so the two ways cannot differ.
+- Under any other collation a sort key is made of each string's value,
+  as before.
+
+The rows asked of the vector are read in the order asked, and a null is
+passed over. What an accumulator writes, merges and gives is unchanged.
+
+A grouping by batch keeps COUNT, SUM, AVG, and MAX and MIN of exact
+numbers in columns of states, a slot a group (D356). MAX and MIN of
+character strings had no column, so each group held an accumulator on
+the heap, and in it a value of the group's best string. Every batch's
+rows were sorted by group to hand each accumulator its rows. Where the
+grouping ran in parallel, every group of every morsel wrote its string
+as a state for the partition's accumulator to read back as a value
+(D1110), and each accumulator was made and dropped by itself.
+
+They now keep a column (`Typed::Best`,
+`exec/table/states/typed/best.rs`). It holds every group's best string
+in one text, and where each group's lies in it. A row's string is
+compared with its group's best where both lie, by the order of
+`TextOrder`, and copied to the end of the text only when it wins.
+
+- Which set function has the column is asked of its accumulator
+  (`Accumulator::text_order`), as D1201 asks whether one keeps its first
+  value. MAX and MIN with no collation answer for a result that is a
+  character string held whole, and those under a collation whose key is
+  the text itself answer by octets. Under a collation that makes sort
+  keys they give none, as the keys would have to be kept beside the
+  strings. Of a character large object they give none, as comparing two
+  reads their chunks and may fail. No plug-in's function answers. A part
+  of MAX or MIN (D341, D1280) gives none either, so the first of two
+  groupings keeps accumulators of it and the second merges their
+  written states, as before.
+- A string bettered stays in the text, dead. Once the dead octets pass
+  what the column holds beside them, its live octets and its groups'
+  places, the live strings are copied to a text of their own
+  (`Best::compact`). A copy moves the live octets and rewrites the
+  places, and more than that many octets died since the last one, so
+  copying costs less than one octet moved for each octet that died, and
+  the column holds less than twice what it needs and one string more.
+- Two tables' columns are merged in one loop, each group's best
+  compared with the other's where they lie (D1110), with no state
+  written. A column is gathered in another order, and written to a
+  spill and read back (D1226) as each group's string and whether it has
+  one. A state an accumulator wrote is merged as the accumulator merges
+  it, and a group's result and written state are its accumulator's.
+- A column fed anything but character strings and nulls turns into
+  accumulators, each given its group's best, and is fed as they are.
+
+#### D1291. A regular expression function over a dictionary's codes is run once of each entry a row reads
+
+A column store gives a character string column's rows as the codes of
+its chunks' dictionaries (D31, D1161), and many rows read one entry.
+UPPER, LOWER, SUBSTRING and the lengths already run once an entry and
+give their rows the same codes (D363, D1126). LIKE_REGEX and
+TRANSLATE_REGEX read each row's string through its code and searched
+it again for every row that read it (D1188).
+
+Over a vector of codes they now run once of each entry a row reads
+(`functions/regex/entries.rs`).
+
+- One pass over the codes marks the entries a row that is not null
+  reads. TRANSLATE_REGEX translates each marked entry once, in the
+  entries' order, into one text, and its result is the rows' own codes
+  over the translated entries, so a grouping by it goes by codes
+  (D1161) and hashes each entry once. LIKE_REGEX matches each marked
+  entry once and gives each row its entry's truth value.
+- An entry no row reads is not run. A row a filter took out before the
+  call leaves its entry in the dictionary, and a call may raise an
+  error of one string and not of another, a result past the longest
+  string [ISO/IEC 9075-2:2023 §6.33 SR12f i 2] or a search past its
+  steps (D61). Run of every entry, a query could raise what none of its
+  rows raises. A row that is null marks nothing.
+- A row is given a null if it is null, or if its entry was given one,
+  as where the start position is not of the string [§6.33 GR9b ii].
+- A dictionary of more entries than the vector has rows is run a row
+  at a time, as before, since marking its entries would cost more than
+  the rows. A vector of texts one after another, and a call whose other
+  operands are not all constants, are run as before too.
+
+Which error a statement raises when several of its rows would raise
+one is that of the entry met first, where it was that of the row met
+first. The standard orders neither.
+
+#### D1292. What a searcher keeps is left with its expression for the next searcher
+
+A call over a vector of texts makes one searcher for the vector (D1188),
+which keeps the expression's automaton, what its last window of
+searches found and its scratch from one text to the next. The next
+vector's searcher began with none of it. It built the automaton's
+states again from the texts it read, and asked the automaton first for
+a window of searches before it learned again what the last searcher
+knew, that most of the column's texts match. A column is some tens of
+thousands of vectors.
+
+A searcher of text after text now leaves what it kept with its
+expression as it is dropped (`searcher::Leavings`), and
+`Regex::searcher` takes up what one left before it makes anything anew.
+The automaton's states and the window's verdict so last as long as the
+expression does, the statement's plan.
+
+- A searcher takes one `Left` out and puts one back, so the expression
+  holds no more of them than the searchers that were at work on it at
+  one time, the threads of the statements that share it. Each is within
+  the bound of one searcher (`dfa::OCTETS_MOST`,
+  `bounded::MARKS_OCTETS`).
+- Two searchers at work at once hold states of their own, and the lock
+  is taken to take one up and to leave one, never during a search.
+- An automaton that outgrew its states is left as none, so the
+  expression's next searchers ask none, where each vector's searcher
+  grew one to the bound before it gave up.
+- A search of one text alone (`Regex::once`) takes up nothing and
+  leaves nothing, as it makes no automaton.
+- A copy of an expression starts with nothing left.
+
+What a search finds is unchanged, as an automaton's states are of its
+program alone and the scratch is cleared by each search.
 #### D1293. A column store's scan does not judge a comparison that the bounds of every part of a run prove
 
 A chunk of a frozen group is written with the least and the greatest of
