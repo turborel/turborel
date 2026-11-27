@@ -524,6 +524,7 @@ mod window_batches;
 mod window_distinct;
 mod window_nested;
 mod window_nested_rules;
+mod window_nulls;
 mod window_rules;
 mod window_value_rules;
 mod window_values;

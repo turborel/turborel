@@ -812,6 +812,7 @@ verification approach DO-178C expects (§8).
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
+| D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 
 ### The project
 
@@ -23148,6 +23149,39 @@ numbers, so a set function whose state depends on the order of its
 values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
+
+#### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
+
+A batch's vector of integers, of approximate numbers or of datetimes
+keeps a number in every place and marks its nulls beside them
+(`storage::Ints`, `Floats`, `Datetimes`). Their documentation said a
+null's place holds 0. A column store's chunk does not give that. A frame
+of reference gives its least number there, runs give the run's number, a
+dictionary gives its first entry, and only fixed fields give 0
+(`engine/columns/encoded/words.rs`, which says so). Zeroing them as a
+chunk is read would cost every nullable column a pass that almost no
+reader needs. Every reader but one already left the place out. The set
+functions add every place with a kernel and take the nulls' numbers off
+again, a hash of a null is written over, and the kernels that select or
+find the least and greatest take the nulls with the numbers.
+
+So the rule is the store's. A null's place has no meaning, the
+documentation of the three vectors says so now, and whatever reads a
+place leaves out those its nulls mark. The one reader that did not is a
+window's lane (`exec/window/batched/lanes.rs`). A lane said its nulls'
+places hold 0, copied each vector as it was, and SUM and AVG over a
+frame add every place of it by prefix sums (`sets.rs`). A lane now
+writes 0 in each null's place as it copies a vector, of integers and of
+approximate numbers alike, which makes true what it said and keeps the
+prefix sums as they are.
+
+No statement was found that gave a wrong sum before this change. A sort
+below a window writes its rows out with 0 in each null's place, and a
+window over a whole partition of a frozen table, which asks for no
+order, gave the row store's results too
+(`test/integration/window_nulls.rs`, which stays as the requirement's
+test). Which step kept the store's numbers from the lane there was not
+found. The lane's own test shows the place it now clears.
 
 ## 2. Project layout
 
