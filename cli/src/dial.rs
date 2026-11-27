@@ -3,7 +3,9 @@
 //! on Unix, a socket's path beginning '/', on Windows a named pipe's name
 //! beginning '\\' (as '\\.\pipe\turborel'); DEFAULT is the server the
 //! command line names. A connection is proved as the command line says: a
-//! password typed is asked for again, for each.
+//! password typed is asked for again, for each. A job of an import over
+//! several connections (RULES.md D1148) is proved by the password typed
+//! for the first connection, not asked for again.
 
 use std::path::PathBuf;
 
@@ -30,12 +32,22 @@ const LOCAL_PREFIX: &str = r"\\";
 pub struct Dialer {
     options: Options,
     ask: Ask,
+    /// The password typed for the first connection, if one was.
+    typed: Option<String>,
 }
 
 impl Dialer {
     /// A connector as `options` say, a password typed read by `ask`.
     pub fn new(options: Options, ask: Ask) -> Dialer {
-        Dialer { options, ask }
+        Dialer { options, ask, typed: None }
+    }
+
+    /// The connector, `typed` the password typed for the first
+    /// connection: what proves each spare connection, the jobs of an
+    /// import over several connections, instead of asking again.
+    #[must_use]
+    pub fn with_typed(self, typed: Option<String>) -> Dialer {
+        Dialer { typed, ..self }
     }
 
     /// The server `address` names: secured by TLS as the default server
@@ -89,18 +101,35 @@ fn unreachable(why: &str) -> Failure {
     Failure::from(&SqlError::new(Code::Connection, format!("[DESIGN] {why}")).with_state(SqlState::CONNECTION_FAILURE))
 }
 
+/// Connects to `server` as `user`, or for none the user `options` name,
+/// proved as `options` say, a password typed read by `typed`.
+fn dialed(
+    options: &Options,
+    server: &Server,
+    user: Option<&str>,
+    typed: impl FnOnce() -> std::io::Result<String>,
+) -> turborel_client::connection::Result<Connected> {
+    let mut mechanism = mechanism(&options.credentials, typed).map_err(|why| unreachable(&why))?;
+    reach(server, (user.unwrap_or(&options.user), mechanism.as_mut()), options.timeouts).map_err(|unreached| match unreached {
+        Unreached::Address(why) => unreachable(&why),
+        Unreached::Refused(failure) => failure,
+    })
+}
+
 impl Connector for Dialer {
     fn connect(&mut self, server: Option<&str>, user: Option<&str>) -> turborel_client::connection::Result<Connected> {
         let server = match server {
             Some(address) => self.server(address).map_err(|why| unreachable(&why))?,
             None => self.options.server.clone(),
         };
-        let mut mechanism = mechanism(&self.options.credentials, &mut self.ask).map_err(|why| unreachable(&why))?;
-        reach(&server, (user.unwrap_or(&self.options.user), mechanism.as_mut()), self.options.timeouts).map_err(|unreached| match unreached
-        {
-            Unreached::Address(why) => unreachable(&why),
-            Unreached::Refused(failure) => failure,
-        })
+        dialed(&self.options, &server, user, &mut self.ask)
+    }
+
+    fn spare(&mut self) -> turborel_client::connection::Result<Connected> {
+        match self.typed.clone() {
+            Some(typed) => dialed(&self.options, &self.options.server, None, || Ok(typed)),
+            None => self.connect(None, None),
+        }
     }
 }
 

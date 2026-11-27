@@ -40,6 +40,7 @@ use crate::exec::table::{GroupTable, Made};
 use crate::exec::{Runner, broken};
 use crate::txn::TxId;
 use spilled::Spilled;
+pub(super) use spilled::given_of;
 
 /// \[DESIGN\] The rows of a morsel each of its groups stands for, on each
 /// thread, at least, for the statement's thread to merge the morsel's

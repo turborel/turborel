@@ -63,11 +63,22 @@ impl PhysicalPlanner<'_> {
 
     /// The keys are asked of the input; if it gives them, no Sort is needed.
     pub(super) fn sort(&self, keys: &[SortKey], input: &LogicalPlan) -> Built {
-        let b = self.nearest(keys, input).map_or_else(|| self.build(input, keys), Built::unordered);
+        let b = self.nearest(keys, input).map_or_else(|| self.read_for_sort(input, keys), Built::unordered);
         if b.ordered {
             return Built::unordered(b.plan);
         }
         let detail = self.described(input, |names| render_keys(keys, names));
         Built::unordered(Plan::Sort { keys: keys.to_vec(), detail, input: Box::new(b.plan), most: None })
+    }
+
+    /// \[DESIGN\] (RULES.md D1218) `input` asked the order `keys` of a
+    /// sort over it. Read in that order, it gives the sort's first rows
+    /// as its own, so a row goal holds of it. Read in any other, the sort
+    /// reads every row of it before it gives one, so it is planned again
+    /// with no goal (`goals.rs`), which a plan made for a few first rows
+    /// would be wrong of.
+    fn read_for_sort(&self, input: &LogicalPlan, keys: &[SortKey]) -> Built {
+        let b = self.build(input, keys);
+        if b.ordered || self.first.is_none() { b } else { self.whole().build(input, keys) }
     }
 }

@@ -28,6 +28,9 @@ const STATES: &str = "exec::table::states::tests::columns_of_states_are_their_ac
 /// A grouping in parallel whose partitions go to the spill past its grant.
 const SPILLED: &str = "spilled_groups::partitions_past_the_grant_are_spilled_by_their_threads";
 
+/// The unit test of a crossing second grouping's groups spilled.
+const CROSSING: &str = "exec::parallel::grouped::regrouped::crossing::tests::groups_past_the_grant_merge_as_those_held";
+
 /// A grouping in parallel spilled past its grant in its one area, given
 /// way to in two.
 const SPILLED_AREA: &str = "spilled_groups::a_grouping_spilled_holds_its_partitions_in_one_area";
@@ -40,7 +43,7 @@ const SPILLED_MERGE: &str = "exec::table::made::written::tests::groups_read_back
 const SPILLED_STATES: &str = "exec::table::states::typed::written::tests::every_column_of_states_is_read_back_as_written";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 26] = [
+pub const GROUP_TABLE: [Mutation; 28] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -300,5 +303,25 @@ pub const GROUP_TABLE: [Mutation; 26] = [
         replacement: "            run.push(&numbered(0, &row, &lobs))?;",
         integration: &[SPILLED],
         unit: &[],
+    },
+    Mutation {
+        name: "crossing-held-dropped",
+        package: Package::Core,
+        breaks: "the groups a crossing second grouping held when they passed the grant are not written to the spill (RULES.md D1228)",
+        file: "src/exec/parallel/grouped/regrouped/crossing.rs",
+        original: "Spill::of(held, spec, (db, tx, &limit))",
+        replacement: "Spill::of(Vec::new(), spec, (db, tx, &limit))",
+        integration: &[],
+        unit: &[CROSSING],
+    },
+    Mutation {
+        name: "crossing-runs-by-first",
+        package: Package::Core,
+        breaks: "a crossing second grouping's groups go to the spill's runs by their firsts, not their keys, so a key's groups are merged apart (RULES.md D1228)",
+        file: "src/exec/parallel/grouped/regrouped/crossing.rs",
+        original: "let p = part_of(&group_key(spec, &values)?, seed);",
+        replacement: "let p = part_of(&first.to_le_bytes(), seed);",
+        integration: &[],
+        unit: &[CROSSING],
     },
 ];

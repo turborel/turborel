@@ -80,7 +80,7 @@ fn both(s: &Session, sql: &str) -> Both {
 }
 
 /// Queries of one table `{t}`, each a part the planner marks.
-const QUERIES: [&str; 17] = [
+const QUERIES: [&str; 19] = [
     "SELECT K, G, S, N FROM {t}",
     "SELECT K, N * 2, S FROM {t} WHERE G = 3 AND N > 10",
     "SELECT G, COUNT(*), COUNT(S), SUM(N), AVG(N), MIN(S), MAX(N) FROM {t} GROUP BY G",
@@ -93,6 +93,8 @@ const QUERIES: [&str; 17] = [
     "SELECT K, S, N FROM {t} ORDER BY S, N DESC",
     "SELECT K, G, S FROM {t} ORDER BY G",
     "SELECT K, N FROM {t} ORDER BY N, K FETCH FIRST 7 ROWS ONLY",
+    "SELECT K, G, N FROM {t} ORDER BY G DESC FETCH FIRST 10 ROWS WITH TIES",
+    "SELECT K, N FROM {t} ORDER BY N FETCH FIRST 3 ROWS WITH TIES",
     "SELECT {t}.K, D.NAME FROM {t} JOIN D ON {t}.G = D.G WHERE {t}.N < 300",
     "SELECT K, G, ROW_NUMBER() OVER (PARTITION BY G ORDER BY K), SUM(N) OVER (PARTITION BY G ORDER BY K) FROM {t}",
     "SELECT K, G FROM {t} WHERE G = 1 UNION ALL SELECT K, G FROM {t} WHERE G = 2",

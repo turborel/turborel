@@ -15,8 +15,8 @@
 //! ```
 //!
 //! Every block carries its own digest, as a block file's does; the head
-//! names the extent's length and the digest of all of it, so a sweep after
-//! recovery walks a segment an extent at a time and finds a torn one.
+//! names the extent's length and the digest of all of it, so an extent
+//! redone from its log record is known whole before it is appended.
 
 use std::sync::{Arc, Mutex};
 

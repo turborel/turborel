@@ -71,8 +71,13 @@ impl<S: Read + Write> Connection<S> {
         let begun = lobs && self.autocommit && !self.in_transaction();
         let run = match layout.columns(out, statement.columns()) {
             Err(e) => Err(unwritten(&e, None)),
-            Ok(()) if lobs => self.batched(&statement, out, layout),
-            Ok(()) => self.streamed(&statement, out, layout),
+            Ok(()) => {
+                if lobs {
+                    self.batched(&statement, out, layout)
+                } else {
+                    self.streamed(&statement, out, layout)
+                }
+            }
         };
         let ended = self.ended(statement, &run, begun);
         let count = run?;

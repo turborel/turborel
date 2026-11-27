@@ -517,6 +517,35 @@ OK
 (17 rows)
 ```
 
+Sums of one column, each with a constant added or subtracted, which
+the rule share_shifted_sums computes of one sum and one count of the
+column, each sum then the column's sum and its constant times the count:
+
+```sql
+EXPLAIN SELECT SUM(CUSTOMER + 1), SUM(CUSTOMER + 2), SUM(10 - CUSTOMER) FROM SALES;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project SUM((SALES.CUSTOMER + 1)), SUM((SALES.CUSTOMER + 2)), SUM((10 - SALES.CUSTOMER))
+   Aggregate group by [] computing [SUM((SALES.CUSTOMER + 1)), SUM((SALES.CUSTOMER + 2)), SUM((10 - SALES.CUSTOMER))]
+     Scan ANN.SALES
+ -- rules: share_shifted_sums
+ -- optimized:
+ Project (SUM(SALES.CUSTOMER) + (1 * COUNT(SALES.CUSTOMER))), (SUM(SALES.CUSTOMER) + (2 * COUNT(SALES.CUSTOMER))), ((10 * COUNT(SALES.CUSTOMER)) - SUM(SALES.CUSTOMER))
+   Project (SUM(SALES.CUSTOMER) + (1 * COUNT(SALES.CUSTOMER))), (SUM(SALES.CUSTOMER) + (2 * COUNT(SALES.CUSTOMER))), ((10 * COUNT(SALES.CUSTOMER)) - SUM(SALES.CUSTOMER))
+     Aggregate group by [] computing [SUM(SALES.CUSTOMER), COUNT(SALES.CUSTOMER)]
+       Scan ANN.SALES
+ -- physical:
+ Project (SUM(SALES.CUSTOMER) + (1 * COUNT(SALES.CUSTOMER))), (SUM(SALES.CUSTOMER) + (2 * COUNT(SALES.CUSTOMER))), ((10 * COUNT(SALES.CUSTOMER)) - SUM(SALES.CUSTOMER))
+   Project (SUM(SALES.CUSTOMER) + (1 * COUNT(SALES.CUSTOMER))), (SUM(SALES.CUSTOMER) + (2 * COUNT(SALES.CUSTOMER))), ((10 * COUNT(SALES.CUSTOMER)) - SUM(SALES.CUSTOMER))
+     Aggregate group by [] computing [SUM(SALES.CUSTOMER), COUNT(SALES.CUSTOMER)]
+       SeqScan ANN.SALES  (rows=4, cost=3.5)
+(15 rows)
+```
+
 A query that reads only the employees, of a LEFT join to their
 department on its key, which the rule eliminate_joins removes: each
 employee joins at most one department, and nothing above reads it

@@ -1,13 +1,14 @@
 //! The mutations of streamed groupings and row goals (RULES.md R-TEST-9,
 //! D550 to D552): a grouping by a collation kept hashed, a batch's runs
 //! cut by their keys, set functions that cannot raise letting FETCH FIRST
-//! stop, and a row goal passed through a filter.
+//! stop, a row goal passed through a filter, and none passed to the input
+//! of a sort that reads it whole (D1218).
 
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the streamed groupings' and row
 /// goals' requirements.
-pub const ORDERS: [Mutation; 4] = [
+pub const ORDERS: [Mutation; 5] = [
     Mutation {
         name: "streamed-collated",
         package: Package::Core,
@@ -46,6 +47,16 @@ pub const ORDERS: [Mutation; 4] = [
         original: "        if self.first.is_some() && !goals::passes(logical) {",
         replacement: "        if self.first.is_some() {",
         integration: &["row_goals::a_goal_passes_through_a_filter", "row_goals::a_goal_passes_to_a_joins_left_operand"],
+        unit: &[],
+    },
+    Mutation {
+        name: "row-goal-under-sort",
+        package: Package::Core,
+        breaks: "the input of a sort that reads it whole is planned for the few rows FETCH FIRST asks of the sort",
+        file: "src/physical/ordered.rs",
+        original: "if b.ordered || self.first.is_none() { b } else { self.whole().build(input, keys) }",
+        replacement: "b",
+        integration: &["streamed_grouping::a_sort_that_reads_every_group_passes_no_row_goal"],
         unit: &[],
     },
 ];
