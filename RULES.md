@@ -815,6 +815,7 @@ verification approach DO-178C expects (§8).
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
+| D1282 | The runs that merge and finish a grouping's partitions lead their reader by every partition |
 
 ### The project
 
@@ -23279,6 +23280,60 @@ as before. A null a set function eliminates warns where the first
 grouping is fed it. A sum past the digits an exact number holds raises
 what the partitions' merge raises of it. EXPLAIN shows the plan it
 showed.
+
+#### D1282. The runs that merge and finish a grouping's partitions lead their reader by every partition
+
+A grouping run in parallel merges each wave's morsels into its
+partitions, a thread a partition, and finishes the partitions the same
+way at the end (D356). Those runs, as every run, gave their results in
+the order of their numbers and took no partition more than two a thread
+past the one their reader waited for (D290). D1262 widened that for the
+run over the morsels and left the partitions' runs as they were.
+
+Where one partition holds far more groups than the others, the window
+made it cost twice. A grouping over another whose grouping columns hold
+its own (D1113) splits the first's groups by the second's columns alone,
+so one value of those columns that takes a large share of the groups
+puts that share in one partition. Its thread merged it for as long as
+that took. The other threads finished the partitions within the window
+past it and then stood idle, as the reader took no result out of order
+and no partition past the window could be started. Only once the long
+partition was done were the rest merged. A profile over time showed one
+thread busy and the others waiting, then all of them busy again.
+
+The runs that merge a wave, that finish the partitions, and that merge
+the partitions of a grouping read a row at a time now lead their reader
+by every partition (`exec/parallel/run.rs`, `Lead::unmetered`,
+`grouped/waves.rs`, `grouped.rs`). The partitions after a long one are
+merged while it is, and the run ends when the long one does.
+
+The lead is not metered as the morsels' is, and needs no meter. A
+morsel's groups ahead of the reader were charged to nothing until read,
+so D1262 counts their bytes against the grant. A partition's result is
+held either way. The reader of each of these runs gathers every
+partition's result before it gives one row or merges the next wave, so
+a partition finished early holds nothing that would not be held a
+moment later, and at the end of the run both orders hold the same. What
+a partition's table holds between waves is charged as the wave ends, by
+the bytes the run gives back, in the order of the partitions, as
+before. So the waves a grouping merges and the times it writes its
+partitions to the spill are the same at a lead of two a thread and of
+every partition, which a test shows of a grant that holds the groups
+only in waves and of one they pass.
+
+No more threads run than before. The lead says how many partitions may
+be taken past the reader's, not how many are merged at once, which is
+the degree as it was (D1246). A statement cancelled or ended while the
+partitions run drops the run, which waits for the partitions its
+workers are in, one a worker, and lets go of its work and of every
+result not read. That wait is of the same length at any lead. The
+partitions read back from the spill a few at a time (D1226) keep their
+window, as what they hold at once is what bounds them.
+
+The groups, their order, each set function's result, the warnings and
+the errors are unchanged. Results still come in the order of the
+partitions, and a partition's morsels are merged in the order of their
+numbers.
 
 ## 2. Project layout
 

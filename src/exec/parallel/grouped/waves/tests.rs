@@ -209,3 +209,28 @@ fn a_wide_lead_merges_and_spills_as_a_narrow_one() {
         }
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D1282, D38 the runs that merge a wave and
+/// finish the partitions lead their reader by every partition as a
+/// statement runs them, and that lead decides nothing of the grant. Of a
+/// grant that holds the groups only in waves, and of one they pass, such
+/// a grouping merges as many waves, writes its partitions to the spill as
+/// many times and gives the same groups in the same order as one whose
+/// runs keep to two partitions a thread.
+///
+/// Decision: the grant holds the groups, or not; the partitions' runs
+/// lead by two a thread, or by every partition.
+#[test]
+fn partitions_led_by_every_one_merge_and_spill_as_those_led_by_two() {
+    assert_eq!(How::default().parts, PARTS, "a statement's runs lead by every partition");
+    let (db, a) = table();
+    let sql = "SELECT G, COUNT(*), SUM(V), MIN(V), MAX(K) FROM (SELECT MOD(K, 6000) AS G, K, V FROM T) AS Q GROUP BY G";
+    for (grant, spilled) in [(1_048_576_i128, false), (131_072_i128, true)] {
+        set(&db, "MEMORY.WORK_BYTES", grant);
+        let narrow = waved(&a, sql, &How { parts: 2, ..How::default() }, 3);
+        assert_eq!(narrow.rows.len(), 6000);
+        assert!(narrow.waves > 0, "{} waves of a grant of {grant}", narrow.waves);
+        assert_eq!(narrow.spills > 0, spilled, "{} spills of a grant of {grant}", narrow.spills);
+        assert_eq!(waved(&a, sql, &How::default(), 3), narrow, "led by every partition, a grant of {grant}");
+    }
+}
