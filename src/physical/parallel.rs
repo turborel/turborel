@@ -386,8 +386,8 @@ fn rooted(plan: &Plan, db: Option<&State>) -> Option<usize> {
     {
         return (calm_cond(cond) && !cond.can_raise()).then(|| rooted(input, db)).flatten();
     }
-    if let Plan::Sort { input, most, .. } = plan {
-        return most.is_none_or(|m| !m.ties).then(|| stream_in(input, db)).flatten();
+    if let Plan::Sort { input, .. } = plan {
+        return stream_in(input, db);
     }
     if let Plan::Window { window, .. } = plan {
         let Plan::Sort { input, most: None, .. } = &window.input else { return None };

@@ -374,7 +374,8 @@ fn only_a_slot_of_the_type_or_a_constant_is_given() {
     assert!(matches!(Given::of(&slot(integer()), &integer()), Some(Given::Slot { index: 2, settled: true })));
     let varying = DataType::Varying { length: 5, units: CharUnits::Characters };
     assert!(Given::of(&slot(varying.clone()), &integer()).is_none(), "a slot of another type");
-    assert!(matches!(Given::of(&Expr::Const(int(7)), &integer()), Some(Given::Constant(v)) if shown(&v) == shown(&int(7))));
+    let Some(Given::Constant(v)) = Given::of(&Expr::Const(int(7)), &integer()) else { panic!("a constant of the type is given") };
+    assert_eq!(shown(&v), shown(&int(7)));
     assert!(Given::of(&Expr::Const(text("too long")), &varying).is_none(), "a constant the type takes not");
     assert!(Given::of(&Expr::Neg(Box::new(Expr::Const(int(7)))), &integer()).is_none(), "an expression");
     let approximate = DataType::Approximate { precision: 53, spelled: Spelled::DoublePrecision };
@@ -441,10 +442,8 @@ fn the_calls_kept_are_bounded() {
         assert_eq!(kept(&a).0, (n + 1).min(most));
     }
     let first: Arc<BoundCall> = Arc::clone(&a.inner.borrow().routines.1.0[0].bound);
-    assert!(
-        matches!(first.given.as_deref(), Some([_, Given::Constant(v)]) if shown(v) == shown(&int(1))),
-        "the first kept is now the second prepared"
-    );
+    let Some([_, Given::Constant(v)]) = first.given.as_deref() else { panic!("the first kept gives a constant") };
+    assert_eq!(shown(v), shown(&int(1)), "the first kept is now the second prepared");
     a.execute_prepared(&prepared[0], &[int(1000)]).unwrap();
     assert_eq!(kept(&a), (most, most, most - 1), "kept again, its frame not yet left");
     a.execute_prepared(&prepared[0], &[int(1001)]).unwrap();

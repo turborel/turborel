@@ -141,7 +141,7 @@ impl BLinkTree {
     /// D924): a commit's rows a statement left in one leaf are stamped
     /// with the leaf latched once, not once a row. `change` is given each
     /// key's place among `keys` and its value. How many of `keys`, from
-    /// the first, were changed there: the first not changed is not in the
+    /// the first, were changed there. The first not changed is not in the
     /// node that covers the first, which the caller then changes alone.
     /// None of them if the leaf may have left the tree. `change` must not
     /// use the tree.

@@ -92,8 +92,12 @@ impl Grouped {
             let (_, newest) = match delta.next() {
                 Some(Ok(found)) => found,
                 Some(Err(e)) => return Some(Err(e)),
-                None if entries == 0 => return None,
-                None => break,
+                None => {
+                    if entries == 0 {
+                        return None;
+                    }
+                    break;
+                }
             };
             entries = entries.saturating_add(1);
             match table.visible_from(newest, self.reader) {

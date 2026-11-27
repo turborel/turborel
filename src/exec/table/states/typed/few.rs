@@ -1,5 +1,5 @@
 //! \[DESIGN\] (RULES.md D1120) The states of a set function of few groups
-//! fed by lanes. A grouping of few groups, as TPC-H Q1's four, gives one
+//! fed by lanes. A grouping of few groups, four say, gives one
 //! group to many rows in turn, and each row's add to its group's total
 //! waits on the store of the row before it. Rows are fed in turn to
 //! `LANES` partial states of each group, so the adds of a lane's rows

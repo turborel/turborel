@@ -243,20 +243,50 @@ fn recomputable(e: &Expr, depth: usize) -> bool {
 /// same operator or function of the same parts, a constant as it is
 /// written.
 fn same(a: &Expr, b: &Expr, depth: usize) -> bool {
-    let own = match (a, b) {
-        (Expr::Column(x), Expr::Column(y)) => x == y,
-        (Expr::Const(x), Expr::Const(y)) => format!("{x:?}") == format!("{y:?}"),
-        (Expr::Call(f, _), Expr::Call(g, _)) => Arc::ptr_eq(&f.0, &g.0),
-        (Expr::Neg(_), Expr::Neg(_)) => true,
-        (Expr::Arith(_, x, _), Expr::Arith(_, y, _)) => x == y,
-        (Expr::Cast(_, x), Expr::Cast(_, y)) => x == y,
-        _ => false,
-    };
+    let own = same_node(a, b);
     let (mut of_a, mut of_b) = (Vec::new(), Vec::new());
     a.for_each_child(&mut |child| of_a.push(child));
     b.for_each_child(&mut |child| of_b.push(child));
     let deeper = depth.saturating_add(1);
     own && depth <= super::MAX_JUDGED_DEPTH && of_a.len() == of_b.len() && of_a.iter().zip(&of_b).all(|(x, y)| same(x, y, deeper))
+}
+
+/// Whether `a` and `b`, each `recomputable`, are the same node, their parts
+/// aside: the same column, constant, function, operator or cast.
+fn same_node(a: &Expr, b: &Expr) -> bool {
+    match a {
+        Expr::Column(x) => {
+            let Expr::Column(y) = b else { return false };
+            x == y
+        }
+        Expr::Const(x) => {
+            let Expr::Const(y) = b else { return false };
+            format!("{x:?}") == format!("{y:?}")
+        }
+        Expr::Call(f, _) => {
+            let Expr::Call(g, _) = b else { return false };
+            Arc::ptr_eq(&f.0, &g.0)
+        }
+        Expr::Neg(_) => matches!(b, Expr::Neg(_)),
+        Expr::Arith(_, x, _) => {
+            let Expr::Arith(_, y, _) = b else { return false };
+            x == y
+        }
+        Expr::Cast(_, x) => {
+            let Expr::Cast(_, y) = b else { return false };
+            x == y
+        }
+        Expr::Outer(..)
+        | Expr::Dynamic(_)
+        | Expr::Case(..)
+        | Expr::Domain(..)
+        | Expr::SortKey(..)
+        | Expr::Subquery(..)
+        | Expr::Truth(_)
+        | Expr::Warned(..)
+        | Expr::NextValue(_)
+        | Expr::Invoked(_) => false,
+    }
 }
 
 // Unit tests: what a set finds, and which ORs become one (RULES.md
