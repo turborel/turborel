@@ -15,7 +15,11 @@
 //! between two of them it does beside one worker fewer than the degree.
 //! No more than `window` morsels are taken past the one the reader waits
 //! for, so a reader that stops early, as a cursor closed or a FETCH FIRST
-//! met does, leaves little read for nothing. Each morsel looks at the statement's
+//! met does, leaves little read for nothing. A reader that holds all its
+//! input, as a grouping does, may ask a longer lead (`Lead`, RULES.md
+//! D1262), taken only while the bytes of the results landed and not yet
+//! given leave room, so its threads do not wait on the order of the
+//! results behind one slow morsel. Each morsel looks at the statement's
 //! cancellation first (RULES.md D44), and after one fails none past it is
 //! taken. A panic in a morsel is its failure, so the reader never waits
 //! for a morsel that will not end.
@@ -45,6 +49,28 @@ pub(super) fn window(degree: usize) -> usize {
 /// The work of each morsel, by its number.
 pub(in crate::exec) type Work<T> = Box<dyn Fn(usize) -> Result<T> + Send + Sync>;
 
+/// \[DESIGN\] (RULES.md D1262) How far a run may lead its reader past the
+/// window every run has: `wide` morsels a thread in place of
+/// `AHEAD_PER_THREAD`, while the bytes of the results landed and not yet
+/// given, each `size` of it, are fewer than `room` says there is for
+/// them now. A reader that holds all its input, whose threads would
+/// else wait on the order of the results behind one slow morsel, asks
+/// it; the bytes pace the threads and decide nothing else.
+pub(in crate::exec) struct Lead<T> {
+    /// The morsels a thread, past the reader's.
+    pub(in crate::exec) wide: usize,
+    /// The bytes a result holds.
+    pub(in crate::exec) size: fn(&T) -> usize,
+    /// The bytes there is room for ahead of the reader, now.
+    pub(in crate::exec) room: Box<dyn Fn() -> usize + Send + Sync>,
+}
+
+/// A run's lead, and the bytes it holds ahead of its reader now.
+struct Led<T> {
+    lead: Lead<T>,
+    held: AtomicUsize,
+}
+
 /// A run of morsels, shared by the workers taking them and its reader.
 struct Run<T> {
     work: Work<T>,
@@ -66,6 +92,8 @@ struct Run<T> {
     done: Mutex<BTreeMap<usize, Result<T>>>,
     landed: Condvar,
     pool: Arc<Pool>,
+    /// Its lead past the window, if its reader asked one.
+    led: Option<Led<T>>,
 }
 
 /// What a run's reader holds: the run's results, in order. Dropped, the
@@ -101,9 +129,18 @@ impl<T: Send + 'static> Run<T> {
         if self.ended.load(Ordering::Acquire) {
             return None;
         }
-        let ahead = self.given.load(Ordering::Acquire).saturating_add(self.window);
-        let limit = self.count.min(ahead).min(self.failed.load(Ordering::Acquire).saturating_add(1));
-        below(&self.taken, limit)
+        below(&self.taken, self.limit())
+    }
+
+    /// The number past the last morsel that may be taken now: within the
+    /// window past the one the reader waits for, or the lead its reader
+    /// asked while the bytes held ahead leave room (RULES.md D1262), and
+    /// not past one that failed.
+    fn limit(&self) -> usize {
+        let roomy = |led: &&Led<T>| led.held.load(Ordering::Acquire) < (led.lead.room)();
+        let reach = self.led.as_ref().filter(roomy).map_or(self.window, |led| self.degree.saturating_mul(led.lead.wide).max(self.window));
+        let ahead = self.given.load(Ordering::Acquire).saturating_add(reach);
+        self.count.min(ahead).min(self.failed.load(Ordering::Acquire).saturating_add(1))
     }
 
     /// \[DESIGN\] (RULES.md D1246) The morsels the pool's workers run at
@@ -125,8 +162,16 @@ impl<T: Send + 'static> Run<T> {
         if result.is_err() {
             self.failed.fetch_min(m, Ordering::AcqRel);
         }
+        if let Some(led) = &self.led {
+            led.held.fetch_add(self.bytes_of(&result), Ordering::AcqRel);
+        }
         done_of(self).insert(m, result);
         self.landed.notify_all();
+    }
+
+    /// The bytes `result` holds ahead of the reader, of a run that leads.
+    fn bytes_of(&self, result: &Result<T>) -> usize {
+        self.led.as_ref().zip(result.as_ref().ok()).map_or(0, |(led, landed)| (led.lead.size)(landed))
     }
 
     /// The result of the next morsel in order, taking morsels itself while
@@ -138,6 +183,9 @@ impl<T: Send + 'static> Run<T> {
         }
         loop {
             if let Some(result) = done_of(self).remove(&want) {
+                if let Some(led) = &self.led {
+                    led.held.fetch_sub(self.bytes_of(&result), Ordering::AcqRel);
+                }
                 self.given.store(want.saturating_add(1), Ordering::Release);
                 // The window moved on: idle workers may take more.
                 self.pool.nudge();
@@ -159,11 +207,9 @@ impl<T: Send + 'static> Run<T> {
 
 impl<T: Send + 'static> Task for Run<T> {
     fn wanted(&self) -> bool {
-        let ahead = self.given.load(Ordering::Acquire).saturating_add(self.window);
-        let limit = self.count.min(ahead).min(self.failed.load(Ordering::Acquire).saturating_add(1));
         !self.ended.load(Ordering::Acquire)
             && self.running.load(Ordering::Acquire) < self.workers()
-            && self.taken.load(Ordering::Acquire) < limit
+            && self.taken.load(Ordering::Acquire) < self.limit()
     }
 
     fn finished(&self) -> bool {
@@ -186,7 +232,13 @@ impl<T: Send + 'static> Morsels<T> {
     /// A run of `count` morsels, each `work` of its number, on up to
     /// `degree` threads, the statement's own and one fewer of `db`'s
     /// workers, for the statement of `tx`.
-    pub(in crate::exec) fn start(db: &State, tx: TxId, (count, degree): (usize, usize), work: Work<T>) -> Morsels<T> {
+    pub(in crate::exec) fn start(db: &State, tx: TxId, run: (usize, usize), work: Work<T>) -> Morsels<T> {
+        Morsels::led(db, tx, run, work, None)
+    }
+
+    /// \[DESIGN\] (RULES.md D1262) As `start`, the run leading its reader
+    /// as `lead` says, if given.
+    pub(in crate::exec) fn led(db: &State, tx: TxId, (count, degree): (usize, usize), work: Work<T>, lead: Option<Lead<T>>) -> Morsels<T> {
         let degree = degree.max(1);
         // [EXTENSION] the notes of the operator that starts it, each
         // worker's work noted of it (RULES.md D620).
@@ -208,6 +260,7 @@ impl<T: Send + 'static> Morsels<T> {
             done: Mutex::new(BTreeMap::new()),
             landed: Condvar::new(),
             pool: Arc::clone(db.jobs.workers()),
+            led: lead.map(|lead| Led { lead, held: AtomicUsize::new(0) }),
         });
         if degree > 1 && count > 1 {
             let workers = crate::physical::workers_of(db);
@@ -272,8 +325,18 @@ mod tests {
 
         /// Opens the gate.
         fn open(&self) {
-            self.state.lock().unwrap().1 = true;
+            self.state.lock().unwrap_or_else(PoisonError::into_inner).1 = true;
             self.moved.notify_all();
+        }
+    }
+
+    /// Opens its gate as it is dropped, so a test that fails with morsels
+    /// waiting at the gate ends, and does not wait for them for ever.
+    struct Opening<'a>(&'a Gate);
+
+    impl Drop for Opening<'_> {
+        fn drop(&mut self) {
+            self.0.open();
         }
     }
 
@@ -298,6 +361,7 @@ mod tests {
             done: Mutex::new(BTreeMap::new()),
             landed: Condvar::new(),
             pool: Arc::new(Pool::default()),
+            led: None,
         }
     }
 
@@ -318,6 +382,7 @@ mod tests {
             let run = gated(64, degree, &gate);
             let workers = degree.saturating_sub(1);
             std::thread::scope(|s| {
+                let _opening = Opening(&gate);
                 for inside in 1..=workers {
                     assert!(run.wanted(), "a worker is wanted below the cap, degree {degree}");
                     s.spawn(|| run.step());
@@ -328,12 +393,46 @@ mod tests {
                 run.step();
                 assert_eq!(run.taken.load(Ordering::Acquire), workers, "a worker past the cap takes none, degree {degree}");
                 assert_eq!(run.claim(), Some(workers), "the reader takes the next, degree {degree}");
-                gate.open();
             });
             assert!(run.wanted(), "a worker is wanted again once the morsels ended");
             run.step();
             assert_eq!(run.taken.load(Ordering::Acquire), workers.saturating_add(2));
         }
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1262 a run whose reader asked a lead
+    /// takes morsels past its window, as many a thread as the lead says,
+    /// while the bytes of the results landed and not yet given are fewer
+    /// than there is room for, and no morsel past the window once they are
+    /// not; a result's bytes are held from its landing until the reader is
+    /// given it; and a run that asked none keeps to its window.
+    ///
+    /// Decision: a lead is asked, or not; the bytes held leave room, or
+    /// not.
+    #[test]
+    fn a_run_leads_its_reader_while_what_it_holds_has_room() {
+        let run_of = |room: usize| {
+            let lead = Lead { wide: 16, size: |m: &usize| m.saturating_add(100), room: Box::new(move || room) };
+            Run { led: Some(Led { lead, held: AtomicUsize::new(0) }), ..gated(200, 2, &Arc::new(Gate::default())) }
+        };
+        let taken = |run: &Run<usize>| std::iter::from_fn(|| run.claim()).count();
+        assert_eq!(taken(&gated(200, 2, &Arc::new(Gate::default()))), window(2), "no lead asked");
+        let roomy = run_of(1000);
+        assert_eq!(taken(&roomy), 32, "sixteen a thread while there is room");
+        let none = run_of(0);
+        assert_eq!(taken(&none), window(2), "no room, the window alone");
+        // Morsels 0 to 9 land, each of its number and a hundred bytes.
+        let filling = run_of(1000);
+        for m in 0..10_usize {
+            filling.taken.store(m.saturating_add(1), Ordering::Release);
+            done_of(&filling).insert(m, Ok(m));
+            filling.led.as_ref().unwrap().held.fetch_add(filling.bytes_of(&Ok(m)), Ordering::AcqRel);
+        }
+        assert_eq!(filling.led.as_ref().unwrap().held.load(Ordering::Acquire), 1045);
+        assert_eq!(filling.claim(), None, "ten are taken, past the window, and what landed leaves no room");
+        assert_eq!(filling.next().map(Result::unwrap), Some(0));
+        assert_eq!(filling.led.as_ref().unwrap().held.load(Ordering::Acquire), 945, "given, its bytes are held no longer");
+        assert_eq!(filling.claim(), Some(10), "room again");
     }
 
     /// Verifies: [DESIGN] RULES.md D1246, D290 a run of degree 1 wants no

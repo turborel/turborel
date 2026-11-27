@@ -3,12 +3,13 @@
 //! D1247).
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use super::super::super::pipeline::Pipeline;
 use super::super::super::probe::PARTS;
 use super::super::super::{Held, Limit};
 use super::super::{Ordered, grouping_of, read_of};
-use super::{Forced, few, waved_as};
+use super::{Forced, How, few, waved_as};
 use crate::db::{Database, Session};
 use crate::exec::Db;
 use crate::physical::{PhysicalPlanner, Plan};
@@ -19,31 +20,52 @@ use crate::value::{Decimal, Value};
 /// Rows of T.
 const ROWS: i64 = 24_000;
 
-/// T, kept by column, of `ROWS` rows: K, and V, scattered among them.
+/// T, kept by column, of `ROWS` rows: K, V, scattered among them, and P,
+/// one letter followed by none, one or two spaces, so every P is equal
+/// to every other as strings compare padded and three are told apart by
+/// their octets.
 fn table() -> (Database, Session) {
     let db = Database::new();
-    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER NOT NULL, V INTEGER NOT NULL) USING columnstore").unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE TABLE T (K INTEGER NOT NULL, V INTEGER NOT NULL, P VARCHAR(4) NOT NULL) USING columnstore",
+    )
+    .unwrap();
     let a = db.session("A");
     for first in (0..ROWS).step_by(1000) {
         let v = |k: i64| k.wrapping_mul(7).rem_euclid(1013);
-        let values: Vec<String> = (first..first.saturating_add(1000)).map(|k| format!("({k}, {})", v(k))).collect();
+        let p = |k: i64| ["x", "x ", "x  "][usize::try_from(k.wrapping_mul(5).rem_euclid(3)).unwrap()];
+        let values: Vec<String> = (first..first.saturating_add(1000)).map(|k| format!("({k}, {}, '{}')", v(k), p(k))).collect();
         a.run(&format!("INSERT INTO T VALUES {}", values.join(", "))).unwrap();
     }
     a.commit().unwrap();
     db.maintain().unwrap();
-    let set = |name: &str, value: i128| db.set_setting(name, &Value::Exact(Decimal::new(value, 0))).unwrap();
-    set("EXECUTOR.MORSEL_ROWS", 1000);
-    set("EXECUTOR.WORKERS", 3);
+    set(&db, "EXECUTOR.MORSEL_ROWS", 1000);
+    set(&db, "EXECUTOR.WORKERS", 3);
     (db, a)
 }
 
-/// The groups of `sql`, a grouping of T under a projection, made by its
-/// waves on three threads, the morsels `forced` names handed whole, or
-/// those `waved` hands so: each group's row as its values are written
-/// out, in the order they are given, and how many runs of groups its
-/// waves ended with, one of a grouping merged on the statement's thread
-/// alone, else one a partition.
-fn groups_of(a: &Session, sql: &str, forced: Forced) -> (Vec<String>, usize) {
+/// Sets `name` of `db` to `value`.
+fn set(db: &Database, name: &str, value: i128) {
+    db.set_setting(name, &Value::Exact(Decimal::new(value, 0))).unwrap();
+}
+
+/// What a grouping's waves made: each group's row as its values are
+/// written out, in the order they are given; how many runs of groups they
+/// ended with, one of a grouping merged on the statement's thread alone,
+/// else one a partition; and the waves the partitions merged and the
+/// times their tables were written to the spill.
+#[derive(Debug, PartialEq, Eq)]
+struct Waved {
+    rows: Vec<String>,
+    runs: usize,
+    waves: usize,
+    spills: usize,
+}
+
+/// What the waves of `sql`, a grouping of T under a projection, made on
+/// `degree` threads, run as `how` says.
+fn waved(a: &Session, sql: &str, how: &How, degree: usize) -> Waved {
     let (st, optimized) = a.optimized(sql).unwrap();
     let planned = PhysicalPlanner::new(&st).plan(&optimized);
     let aggregate = if let Plan::Project { input, .. } = planned { *input } else { planned };
@@ -55,12 +77,21 @@ fn groups_of(a: &Session, sql: &str, forced: Forced) -> (Vec<String>, usize) {
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     let unpadded = grouping.read.as_ref().map(|by_batch| by_batch.unpadded.clone());
     grouping.seed = grouping.seed.unpadded(&unpadded.expect("grouped by batch"));
-    let Held::Kept((runs, given)) = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, forced).unwrap() else {
+    let Held::Kept((runs, given)) = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, degree), &limit, how).unwrap() else {
         panic!("the grouping gave way")
     };
     let count = runs.len();
     let rows = Ordered::of(runs, given).unwrap().collect::<Result<Vec<Row>, _>>().unwrap();
-    (rows.iter().map(|row| format!("{row:?}")).collect(), count)
+    let (waves, spills) = (how.counted.0.load(Ordering::Relaxed), how.counted.1.load(Ordering::Relaxed));
+    Waved { rows: rows.iter().map(|row| format!("{row:?}")).collect(), runs: count, waves, spills }
+}
+
+/// The groups of `sql` and the runs its waves ended with, on three
+/// threads, the morsels `forced` names handed whole, or those the
+/// executor hands so.
+fn groups_of(a: &Session, sql: &str, forced: Forced) -> (Vec<String>, usize) {
+    let made = waved(a, sql, &How { forced, ..How::default() }, 3);
+    (made.rows, made.runs)
 }
 
 /// Every morsel handed whole.
@@ -123,4 +154,58 @@ fn a_grouping_of_many_groups_stops_handing_morsels_whole() {
     assert!(!few(false, (100, 1000), 3), "handed whole no longer");
     assert!(!few(true, (200, 1000), 3), "many beside its rows");
     assert!(!few(false, (200, 1000), 3));
+}
+
+/// The waves of `sql` on `degree` threads, its run leading the
+/// statement's thread by `lead` morsels a thread.
+fn led(a: &Session, sql: &str, lead: usize, degree: usize) -> Waved {
+    waved(a, sql, &How { lead, ..How::default() }, degree)
+}
+
+/// Verifies: [DESIGN] RULES.md D1262, D356 a grouping whose threads lead
+/// the statement's thread by many morsels gives what one that leads by
+/// two does, and what one thread alone gives: its groups, their order,
+/// and a state that depends on the order its values come in, MIN of
+/// strings equal as they compare padded and different in their octets,
+/// which is the string of the group's first row only if each partition
+/// merged its morsels in their order.
+#[test]
+fn a_wide_lead_keeps_the_order_states_are_merged_in() {
+    let (_db, a) = table();
+    for keyed in ["MOD(K, 40)", "MOD(K, 6000)"] {
+        let sql = format!("SELECT G, MIN(P) FROM (SELECT {keyed} AS G, P FROM T) AS Q GROUP BY G");
+        let alone = led(&a, &sql, 2, 1);
+        let kept: std::collections::BTreeSet<&str> =
+            alone.rows.iter().filter_map(|row| row.split_once(", ")).map(|(_, least)| least).collect();
+        assert!(kept.len() > 1, "strings of different octets are kept, by the order they came in: {kept:?}");
+        for lead in [2, 16, 64] {
+            assert_eq!(led(&a, &sql, lead, 3).rows, alone.rows, "a lead of {lead}: {sql}");
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1262, D1155, D38 what a grouping's threads
+/// hold ahead of the statement's thread decides nothing of its grant. Of
+/// a grant that holds its groups only in waves, and of one its groups
+/// pass, a run leading by many morsels merges as many waves and writes
+/// its partitions to the spill as many times as one leading by two, and
+/// gives the same groups: waves of the first and none spilled, some
+/// spilled of the second.
+///
+/// Decision: the grant holds the groups, or not; the lead is two morsels
+/// a thread, or many.
+#[test]
+fn a_wide_lead_merges_and_spills_as_a_narrow_one() {
+    let (db, a) = table();
+    let sql = "SELECT G, COUNT(*), SUM(V), MIN(V), MAX(K) FROM (SELECT MOD(K, 6000) AS G, K, V FROM T) AS Q GROUP BY G";
+    for (grant, spilled) in [(1_i128 << 20, false), (1_i128 << 17, true)] {
+        set(&db, "MEMORY.WORK_BYTES", grant);
+        let narrow = led(&a, sql, 2, 3);
+        assert_eq!(narrow.rows.len(), 6000);
+        assert!(narrow.waves > 0, "{} waves of a grant of {grant}", narrow.waves);
+        assert_eq!(narrow.spills > 0, spilled, "{} spills of a grant of {grant}", narrow.spills);
+        for lead in [16, 64] {
+            assert_eq!(led(&a, sql, lead, 3), narrow, "a lead of {lead}, a grant of {grant}");
+        }
+    }
 }
