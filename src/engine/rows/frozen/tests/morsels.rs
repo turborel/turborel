@@ -1,5 +1,6 @@
 //! Unit tests of a column store's morsels read by batch, their columns
-//! asked for late given late (RULES.md D366).
+//! asked for late given late (RULES.md D366), under a sort's bound too
+//! (RULES.md D1241).
 
 use super::*;
 use crate::storage::{Batch, Column};
@@ -39,6 +40,51 @@ fn morsels_give_late_columns_as_their_places() {
     assert!(!none_late && held_late, "late only as told");
     assert_eq!(late, early);
     assert!(early.iter().any(|r| r == "17 v17"), "{early:?}");
+}
+
+/// Of the batches of `table`'s one morsel under `condition`, the text
+/// asked for late: how many rows they give, and how many of those hold
+/// the text decoded, not as their places.
+fn decoded_of(table: &Arc<RowTable>, condition: &Conjunction) -> (usize, usize) {
+    let split = Arc::clone(table).split(NO_TRANSACTION, &[0, 1], Some(condition), 5000).unwrap();
+    let (mut rows, mut decoded) = (0_usize, 0_usize);
+    for batch in (0..split.morsels()).flat_map(|n| split.morsel_batches(n, &[1]).unwrap()) {
+        let batch: Batch = batch.unwrap();
+        rows = rows.saturating_add(batch.rows);
+        if !matches!(batch.columns.get(1), Some(Column::Late(_))) {
+            decoded = decoded.saturating_add(batch.rows);
+        }
+    }
+    (rows, decoded)
+}
+
+/// Verifies: [DESIGN] RULES.md D1241, D366 a run the scan judged and kept
+/// most rows of is given whole. Judged by a comparison, its late column
+/// is decoded with it, of every row. Judged by a sort's bound that keeps
+/// as many, its late column stays late, no value of a frozen run decoded,
+/// as the sort keeps few of the rows it is given; and so does a run under
+/// a bound that holds no value yet.
+#[test]
+fn a_run_given_whole_under_a_bound_keeps_its_late_column_late() {
+    use crate::storage::{Conjunct, Threshold};
+    let (_, files) = files();
+    let (table, _) = table(&files, 0, 5000);
+    ended(&table, 1);
+    let most = Value::Exact(Decimal::new(4000, 0));
+    let compared = Conjunction::of(Condition { columns: vec![0], probe: Probe::Compare { op: CompOp::Le, value: most.clone() } });
+    let (rows, decoded) = decoded_of(&table, &compared);
+    assert!(rows > 4000 && decoded == rows, "a comparison keeping most rows decodes the late column: {decoded} of {rows}");
+    // The rows not yet frozen are read from the tree, decoded as they are
+    // read, whatever is asked late: those a scan told nothing decodes.
+    let (all, of_tree) = decoded_of(&table, &Conjunction(Vec::new()));
+    assert!(all == 5000 && of_tree < 1024, "{of_tree} of {all} from the tree");
+    let threshold = Arc::new(Threshold::new(false));
+    let bounded = Conjunction(vec![Conjunct::Dynamic { column: 0, threshold: Arc::clone(&threshold) }]);
+    assert_eq!(decoded_of(&table, &bounded), (5000, of_tree), "a bound not yet set");
+    threshold.raise(&most);
+    let (under, decoded_under) = decoded_of(&table, &bounded);
+    // The tree's rows are all past the bound, their zone passed over.
+    assert!(under > 4000 && decoded_under == 0, "a bound keeping most rows decodes none of a frozen run: {decoded_under} of {under}");
 }
 
 /// Verifies: [DESIGN] RULES.md D1052 a column store's split judges its

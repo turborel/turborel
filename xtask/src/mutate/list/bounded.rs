@@ -34,7 +34,7 @@ const SCANNED: &str = "fetch_bounded::an_ordered_scan_of_the_column_store_reads_
 const RAISING: &str = "fetch_bounded::rows_that_can_raise_are_read_to_their_end_7_17";
 
 /// See the module doc.
-pub const BOUNDED_FETCH: [Mutation; 16] = [
+pub const BOUNDED_FETCH: [Mutation; 17] = [
     Mutation {
         name: "top-earlier-equal-given-up",
         package: Package::Core,
@@ -194,5 +194,15 @@ pub const BOUNDED_FETCH: [Mutation; 16] = [
         replacement: "is_some_and(|last| offered > *last)",
         integration: &[],
         unit: &["storage::condition::threshold::tests::a_shared_threshold_is_the_last_of_the_first_offered"],
+    },
+    Mutation {
+        name: "bounded-run-decodes-late-columns",
+        package: Package::Core,
+        breaks: "a run given whole under a sort's bound decodes its late columns of every row (RULES.md D1241)",
+        file: "src/engine/rows/frozen/batches/run.rs",
+        original: "(judged.decoded, self.judgment.bounded())",
+        replacement: "(judged.decoded, false)",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::morsels::a_run_given_whole_under_a_bound_keeps_its_late_column_late"],
     },
 ];
