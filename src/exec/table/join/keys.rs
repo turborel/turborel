@@ -138,11 +138,14 @@ fn hash_column(
     };
     let places = (0..count).map(|n| nth(rows, n));
     match column {
-        Column::Ints(ints) if ints.scale == 0 && integers_hashed((ints, rows, count), how, out) => {
-            let base = out.len().saturating_sub(count);
-            nulls_marked((ints, rows), how, nulls, (out.get_mut(base..).unwrap_or_default(), misses));
+        Column::Ints(ints) => {
+            if ints.scale == 0 && integers_hashed((ints, rows, count), how, out) {
+                let base = out.len().saturating_sub(count);
+                nulls_marked((ints, rows), how, nulls, (out.get_mut(base..).unwrap_or_default(), misses));
+            } else {
+                out.extend(places.zip(misses.iter_mut()).map(|(r, m)| ints_hash(ints, r, how).unwrap_or_else(|| null(m))));
+            }
         }
-        Column::Ints(ints) => out.extend(places.zip(misses.iter_mut()).map(|(r, m)| ints_hash(ints, r, how).unwrap_or_else(|| null(m)))),
         Column::Floats(f) => out.extend(places.zip(misses.iter_mut()).map(|(r, m)| f.get(r).map_or_else(|| null(m), |x| how.number(x)))),
         Column::Texts(texts) => texts_hashed((texts, places), how, (out, misses), &null),
         Column::Datetimes(d) => {

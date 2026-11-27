@@ -37,9 +37,8 @@ const MOST_ENTRIES: usize = BATCH_ROWS;
 pub fn dictionaries(batch: &Batch) -> Vec<Option<Arc<Texts>>> {
     let small = |t: &Texts| t.len() <= MOST_ENTRIES;
     let of = |c: &Column| match c {
-        Column::Texts(t) if t.coded.is_none() && small(t) => Some(Arc::new(Texts::new(t.text.clone(), t.ends.clone(), None))),
-        Column::Texts(_)
-        | Column::Ints(_)
+        Column::Texts(t) => (t.coded.is_none() && small(t)).then(|| Arc::new(Texts::new(t.text.clone(), t.ends.clone(), None))),
+        Column::Ints(_)
         | Column::Floats(_)
         | Column::Datetimes(_)
         | Column::Bools(_)
