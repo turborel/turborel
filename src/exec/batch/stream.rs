@@ -471,8 +471,23 @@ fn filter_batches(plan: Plan, (db, tx): (&Db, TxId), deferred: &Deferred) -> Res
     let below = deferred.filtered(&cond).with_told(deferred.filters().to_vec());
     // A grouping its input and its subqueries compute alike, read once (RULES.md D1129).
     let (input, runner) = crate::exec::shared::readied(&cond, *input, db, tx);
-    let (inner, columns) = told(input, &cond, (db, tx), &below)?;
+    // An input that is no scan is read from here, so each filter over a
+    // join of a deep chain adds one call to the stack, not two (RULES.md
+    // R-CF-6).
+    let (inner, columns) = if scanned(&input) {
+        told(input, &cond, (db, tx), &below)?
+    } else {
+        let columns = layout(&input, db).map(|l| l.0).unwrap_or_default();
+        (batches_with(input, (db, tx), &below)?, columns)
+    };
     Ok(filtered(inner, (Judging::of(&cond, &columns), runner)))
+}
+
+/// Whether `plan`, a filter's input, is one `told` reads: a scan in no
+/// order, which it tells the filter's simple conjuncts, or a counted
+/// operator, whose rows it counts.
+fn scanned(plan: &Plan) -> bool {
+    if let Plan::SeqScan { order, .. } = plan { order.is_empty() } else { matches!(plan, Plan::Counted(_)) }
 }
 
 /// The batches of `inner`, the input of a filter of `cond`, its scans'
