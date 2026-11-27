@@ -68,7 +68,7 @@ impl Space<'_> {
                 out.push((Cand { cost, order, tree: 0 }, tree(Method::Nested, (cand.tree, build.tree))));
                 continue;
             }
-            let hash = self.hash_linear((left, right), (l, r), (kind, build.cost));
+            let hash = self.hash_linear((left, right), (l, r), (kind, build.cost, cand.cost));
             let probed = self.probe_cost(kind, keys, r).map(|probe| Linear { fixed: 0.0_f64, per_row: probe });
             let how = probed.map_or(Method::Hash, |index| self.robust(&sides, hash, index));
             let cost = match how {

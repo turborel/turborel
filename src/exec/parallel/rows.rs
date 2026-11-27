@@ -47,6 +47,11 @@ struct MorselRows {
 ///
 /// SQLCODE -910 if `n` is past its last morsel.
 pub(super) fn morsel_rows(pipeline: &Arc<Pipeline>, n: usize, runner: Runner) -> Result<RowIter> {
+    // A morsel of a pass past the first is of that pass's pipeline
+    // (RULES.md D1240).
+    if let Some((pass, m)) = super::passes::passed(pipeline, n)? {
+        return morsel_rows(&pass, m, runner);
+    }
     let mut at = n;
     for (branch, of) in pipeline.branches.iter().enumerate() {
         let morsels = of.split.morsels();
@@ -99,6 +104,11 @@ impl MorselRows {
                 Step::Count(_) => {
                     if let Some(seen) = self.tally.as_mut().and_then(|t| t.get_mut(at)) {
                         *seen = seen.saturating_add(1);
+                    }
+                }
+                Step::Kept(keep) => {
+                    if !keep.keeps_row(&row)? {
+                        return Ok(None);
                     }
                 }
                 Step::Runtime(..) => {}
