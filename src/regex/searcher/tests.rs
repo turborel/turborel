@@ -155,6 +155,7 @@ struct Counted {
     empty: usize,
     alone: usize,
     again: usize,
+    runs: usize,
 }
 
 /// The octet each character of `string` begins at, and its length after
@@ -308,6 +309,7 @@ fn over_a_corpus_a_searcher_finds_what_the_first_matchers_find() {
         assert_eq!(regex.matcher(3, 0) == Matcher::Backtrack, regex.back_references, "{pattern:?} {flag:?}");
         count(&mut counted.patterns, true);
         count(&mut counted.automata, kept.dfa.is_some());
+        count(&mut counted.runs, regex.program.passed.runs.contains(&true));
         count(&mut counted.back_references, regex.back_references);
         count(&mut counted.lines, lines);
         for text in &texts {
@@ -317,6 +319,7 @@ fn over_a_corpus_a_searcher_finds_what_the_first_matchers_find() {
     }
     assert!(counted.patterns >= 600, "patterns: {}", counted.patterns);
     assert!(counted.automata >= 300 && counted.back_references >= 40 && counted.lines >= 40, "kinds of pattern");
+    assert!(counted.runs >= 12, "patterns with a loop run through (RULES.md D1190): {}", counted.runs);
     assert!(counted.found >= 100_000 && counted.none >= 100_000 && counted.empty >= 10_000, "kinds of search");
     assert!(counted.alone >= 10_000 && counted.again >= 10_000, "kinds of replacing");
 }

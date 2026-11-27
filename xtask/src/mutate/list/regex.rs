@@ -9,11 +9,13 @@ use super::{Mutation, Package};
 const IN_PLACE: &str = "regex::searcher::tests::over_a_corpus_a_searcher_finds_what_the_first_matchers_find";
 /// The unit test of texts of characters of several octets read where they lie.
 const LONGER: &str = "regex::searcher::tests::a_text_of_longer_characters_read_where_it_lies_matches_as_its_characters";
+/// The unit test of a loop the matcher that marks runs through.
+const RUN: &str = "regex::bounded::tests::a_loop_of_a_class_before_a_character_outside_it_is_run_through";
 /// The unit test of a subject read where it lies.
 const SUBJECT: &str = "functions::regex::tests::a_subject_read_where_it_lies_counts_in_its_units";
 
 /// The mutations of regular expressions, in the order they run.
-pub const REGEX: [Mutation; 51] = [
+pub const REGEX: [Mutation; 55] = [
     Mutation {
         name: "regex-dot-all-splits-crlf",
         package: Package::Core,
@@ -413,8 +415,8 @@ pub const REGEX: [Mutation; 51] = [
         package: Package::Core,
         breaks: "the matcher that marks walks every character of the rest of a text a loop takes whole (D1188)",
         file: "src/regex/bounded.rs",
-        original: "program.rest.filter(|(first, _)| *first == pc)",
-        replacement: "program.rest.filter(|(first, _)| *first == pc && *first != pc)",
+        original: "program.passed.rest.filter(|(first, _)| *first == pc)",
+        replacement: "program.passed.rest.filter(|(first, _)| *first == pc && *first != pc)",
         integration: &[],
         unit: &["regex::bounded::tests::the_rest_of_a_text_is_taken_without_walking_it"],
     },
@@ -537,5 +539,45 @@ pub const REGEX: [Mutation; 51] = [
         replacement: "return units;",
         integration: &[],
         unit: &[SUBJECT],
+    },
+    Mutation {
+        name: "regex-run-through-a-class-met-after",
+        package: Package::Core,
+        breaks: "a loop is run through though the character asked for after it may be one it takes, so a+a finds no match in aa (D1190)",
+        file: "src/regex/compile/runs.rs",
+        original: "is_some_and(|(ours, theirs)| ours.apart(&theirs))",
+        replacement: "is_some()",
+        integration: &[],
+        unit: &[RUN],
+    },
+    Mutation {
+        name: "regex-run-through-a-reluctant-loop",
+        package: Package::Core,
+        breaks: "a reluctant loop is taken for one run through, and left by its body's way (D1190)",
+        file: "src/regex/compile/runs.rs",
+        original: "    if (*body, *out, *back) != (at.saturating_add(1), after, at) {\n        return false;\n    }\n",
+        replacement: "",
+        integration: &[],
+        unit: &[RUN],
+    },
+    Mutation {
+        name: "regex-run-through-unmarked",
+        package: Package::Core,
+        breaks: "a loop run through marks no position passed, so each way into it walks it again (D1190)",
+        file: "src/regex/bounded.rs",
+        original: "            if !self.mark(pc, at) {\n                return Ok(None);\n            }",
+        replacement: "",
+        integration: &[],
+        unit: &[RUN],
+    },
+    Mutation {
+        name: "regex-run-through-keeps-forks",
+        package: Package::Core,
+        breaks: "the matcher that marks keeps a fork a character of a loop it could run through (D1190)",
+        file: "src/regex/bounded.rs",
+        original: "if !self.program.passed.runs.get(pc).copied().unwrap_or(false) {",
+        replacement: "if !self.program.passed.runs.is_empty() {",
+        integration: &[],
+        unit: &[RUN],
     },
 ];

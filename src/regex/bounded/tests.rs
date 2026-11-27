@@ -15,7 +15,7 @@ fn found(program: &Program, text: &[char], at: (usize, usize), capture: bool, ke
 /// and reluctant quantifiers, counted ones, groups nested and repeated,
 /// iterations that match nothing, anchors of the string and of lines,
 /// classes, the wildcard and CRLF.
-pub(in crate::regex) const PATTERNS: [(&str, &str); 32] = [
+pub(in crate::regex) const PATTERNS: [(&str, &str); 36] = [
     ("a", ""),
     ("abc|ab|a", ""),
     ("a|ab|abc", ""),
@@ -48,6 +48,10 @@ pub(in crate::regex) const PATTERNS: [(&str, &str); 32] = [
     ("(a|ab)*c|.*", ""),
     ("x(|a)", ""),
     ("a(bc)?", ""),
+    ("(a*)b", ""),
+    ("a+a", ""),
+    ("[ab]+?\\r", ""),
+    ("(a|aa)[^b]+\\r", ""),
 ];
 
 /// Texts of what the patterns read: runs of one letter, mixes, newlines of
@@ -172,13 +176,13 @@ fn the_rest_of_a_text_is_taken_without_walking_it() {
     let has = [("a.*$", "s"), ("(a)(.+)$", "s"), ("^(.*)$", "s"), ("(a.*$)", "s")];
     let none = [(".*$", ""), (".*$", "sm"), (".*?$", "s"), (".*a$", "s"), (".*$|b", "s"), ("[ab]*$", "s"), (".*", "s"), ("a$|b.*$", "s")];
     for (pattern, flag) in has {
-        assert!(Regex::new(pattern, flag).unwrap().program.rest.is_some(), "{pattern:?} {flag:?}");
+        assert!(Regex::new(pattern, flag).unwrap().program.passed.rest.is_some(), "{pattern:?} {flag:?}");
     }
     for (pattern, flag) in none {
-        assert!(Regex::new(pattern, flag).unwrap().program.rest.is_none(), "{pattern:?} {flag:?}");
+        assert!(Regex::new(pattern, flag).unwrap().program.passed.rest.is_none(), "{pattern:?} {flag:?}");
     }
-    assert!(Regex::xquery("a.*$", "s").unwrap().program.rest.is_some());
-    assert!(Regex::xquery("a.*$", "").unwrap().program.rest.is_none());
+    assert!(Regex::xquery("a.*$", "s").unwrap().program.passed.rest.is_some());
+    assert!(Regex::xquery("a.*$", "").unwrap().program.passed.rest.is_none());
     let regex = Regex::new("^a(.*)$", "s").unwrap();
     let text: Vec<char> = format!("a{}", "x\r\n".repeat(400)).chars().collect();
     let mut kept = Scratch::default();
@@ -188,4 +192,50 @@ fn the_rest_of_a_text_is_taken_without_walking_it() {
     let marked: u32 = kept.marks.iter().map(|word| word.count_ones()).sum();
     assert!(marked < 16, "the characters between are not marked: {marked}");
     assert_eq!(found(&regex.program, text.as_slice(), (0, 5), true, &mut kept).unwrap(), None, "known to end before the end");
+}
+
+/// Verifies: [DESIGN] RULES.md D1190: a program runs through a greedy
+/// loop of one instruction that matches a character where the next
+/// character asked for after it, positions kept for groups between or
+/// not, is one that instruction never matches. It does not where the
+/// next may be one the loop takes, where the loop is reluctant or of
+/// more than one instruction, of the wildcard that looks beside it, or
+/// where an assertion, a fork or the match follows. Through such a loop
+/// the matcher that marks keeps no fork to try and marks the loop's
+/// fork at each position passed, so a second way into the loop stops at
+/// once, and it finds what the matcher of threads finds, of a text with
+/// a match and of one with none.
+#[test]
+fn a_loop_of_a_class_before_a_character_outside_it_is_run_through() {
+    let runs = |pattern: &str, flag: &str| Regex::new(pattern, flag).unwrap().program.passed.runs.iter().filter(|run| **run).count();
+    for (pattern, flag) in [("[^/]+/", ""), ("a*b", ""), ("(a+)b", ""), ("[ab]+c", ""), ("((a*))(b)", ""), ("[0-9]+\\.", "")] {
+        assert_eq!(runs(pattern, flag), 1, "{pattern:?} {flag:?}");
+    }
+    assert_eq!(runs("a*b[^c]*c", ""), 2, "each loop of two");
+    let none = [
+        ("a+a", ""),
+        ("[ab]+b", ""),
+        ("a+?b", ""),
+        ("(ab)+c", ""),
+        ("a+", ""),
+        ("a+$", ""),
+        (".+a", "s"),
+        ("a+(b|c)", ""),
+        ("a{2,3}b", ""),
+    ];
+    for (pattern, flag) in none {
+        assert_eq!(runs(pattern, flag), 0, "{pattern:?} {flag:?}");
+    }
+    let regex = Regex::new("^(x|xa)[^c]+c", "").unwrap();
+    let mut kept = Scratch::default();
+    for (end, what) in [("", "no match"), ("c", "a match")] {
+        let text: Vec<char> = format!("x{}{end}", "a".repeat(2000)).chars().collect();
+        let reads = positions(&regex.program, text.len(), 0).unwrap();
+        let ours = found(&regex.program, text.as_slice(), (0, reads), true, &mut kept).unwrap();
+        assert_eq!(ours, pike::search(&regex.program, text.as_slice(), 0, true).unwrap(), "{what}");
+        assert_eq!(ours.is_some(), !end.is_empty(), "{what}");
+    }
+    let marked: u32 = kept.marks.iter().map(|word| word.count_ones()).sum();
+    assert!(marked >= 2000, "the fork is marked at each position passed: {marked}");
+    assert!(kept.stack.capacity() < 64, "no fork is kept a character: {}", kept.stack.capacity());
 }

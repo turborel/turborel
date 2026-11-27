@@ -771,6 +771,7 @@ verification approach DO-178C expects (§8).
 | D1186 | A part of a built-in set function is kept in that function's column of states, and gives its part of each group |
 | D1188 | A regular expression with no back-reference is matched by an automaton for where it ends and by a matcher that marks for what it captured |
 | D1189 | A character string of any characters is matched where it lies, by the octets its characters begin at, and a match over a vector takes no memory of its own |
+| D1190 | A greedy loop of one class before a character outside it is run through by the matcher that marks, no fork kept |
 | D1200 | The groups of far more values than rows are the rows, the formula computed without its power |
 | D1201 | A grouping column functionally dependent on the others is carried, not grouped by |
 | D1202 | Columns a grouping carries of a table joined on its key are fetched after FETCH FIRST |
@@ -21239,6 +21240,45 @@ position, on each matcher and through the searcher, to the matchers
 over the text's characters, with each match after another and what
 replaces it (`over_a_corpus_a_searcher_finds_what_the_first_matchers_find`,
 `a_text_of_longer_characters_read_where_it_lies_matches_as_its_characters`).
+
+#### D1190. A greedy loop of one class before a character outside it is run through by the matcher that marks, no fork kept
+
+The matcher that marks (D1188) follows a loop as it follows any fork.
+At each character it marks the fork, keeps the way out of the loop to
+try later, and marks and follows the loop's instructions, five of them
+for a loop of one class. A pattern that takes a part of a text up to a
+delimiter, as `[^/]+/` takes a host name, spent most of its search
+there, and nearly every way out it kept failed at its first
+instruction.
+
+A program now knows the loops it runs through (`compile/runs.rs`,
+`Program::runs`). Such a loop is greedy and of one instruction that
+matches a character by what the character is alone, and the next
+character asked for after the loop, positions kept for groups between
+them or not, is one that instruction never matches. `[^/]+/`, `a*b` and
+`(\d+)\.` each have one. At a position where the loop's instruction
+matches the character, the way out comes to that next instruction with
+the same character and fails. Where the loop's instruction fails, the
+way out is the only way. So the first way that can match leaves the
+loop at the first character it does not take, and every way out before
+that fails at once and changes nothing, no group's position either, as
+a way that fails puts back what it kept.
+
+The matcher that marks follows such a loop to that character with no
+fork kept (`bounded.rs`, `through`). It marks the loop's fork at each
+position it passes, as following the forks did, so a way that comes to
+the loop at a position passed before stops there and a search still
+takes time within the product of the text's length and the program's.
+It reads no further than where a match is known to end.
+
+A loop stays a loop of forks where the proof does not hold. That is a
+reluctant loop, a loop of more than one instruction, a loop of the
+wildcard that looks for an LF after a CR, and a loop followed by an
+assertion, a fork, a back-reference or the match before any character
+is asked for. The other matchers follow every loop as before, and the
+corpus of D1188 holds the matcher that marks to them over patterns
+with such loops and without
+(`a_loop_of_a_class_before_a_character_outside_it_is_run_through`).
 
 #### D1200. The groups of far more values than rows are the rows, the formula computed without its power
 

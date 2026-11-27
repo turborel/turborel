@@ -52,6 +52,10 @@ const OCTET: usize = 8;
 /// The bits of a word of marks.
 const WORD: usize = 64;
 
+/// Where, after its fork, a loop of one instruction has that instruction
+/// (`compile/runs.rs`): past the position it keeps.
+const LOOP_TAKES: usize = 2;
+
 /// Work left: a way to try, or a slot to put back on going back.
 enum Job {
     Try(usize, usize),
@@ -181,9 +185,44 @@ impl<T: Text + ?Sized> Search<'_, T> {
     /// characters between, so none of them is walked; no end if the match
     /// is known to end before the string does.
     fn rest(&self, pc: usize) -> Option<(usize, Option<usize>)> {
-        let (_, after) = self.program.rest.filter(|(first, _)| *first == pc)?;
+        let (_, after) = self.program.passed.rest.filter(|(first, _)| *first == pc)?;
         let end = self.text.len();
         Some((after, (end.saturating_sub(self.from) < self.positions).then_some(end)))
+    }
+
+    /// Where the search goes on from the fork at `pc`, met at `at`, that
+    /// prefers `first` to `second`. Of a loop the program runs through
+    /// (RULES.md D1190) that is past the loop, at `second`, and nowhere
+    /// if the loop was passed there before. Of any other fork it is
+    /// `first`, the other way kept to try.
+    fn forked(&mut self, (pc, at): (usize, usize), (first, second): (usize, usize)) -> Result<Option<(usize, usize)>> {
+        if !self.program.passed.runs.get(pc).copied().unwrap_or(false) {
+            self.kept.stack.push(Job::Try(second, at));
+            return Ok(Some((first, at)));
+        }
+        Ok(self.through(pc, at)?.map(|left| (second, left)))
+    }
+
+    /// \[DESIGN\] (RULES.md D1190) Of the loop whose fork is `pc`, one
+    /// the program runs through (`compile/runs.rs`), met at `at`, the
+    /// position it is left at, which is the first whose character its
+    /// instruction does not match, or the last the search reads to. No
+    /// fork is kept on the way, as leaving the loop any earlier fails at
+    /// once. The fork is marked at each position passed, as following
+    /// the forks marks it, and none is given if one of them was marked
+    /// before, since the way from there was followed already.
+    fn through(&mut self, pc: usize, mut at: usize) -> Result<Option<usize>> {
+        let Some(taken) = self.program.insts.get(pc.saturating_add(LOOP_TAKES)) else { return Ok(Some(at)) };
+        loop {
+            let within = at.saturating_sub(self.from).saturating_add(1) < self.positions;
+            if !within || !one(taken, self.text, at)? {
+                return Ok(Some(at));
+            }
+            at = self.text.after(at);
+            if !self.mark(pc, at) {
+                return Ok(None);
+            }
+        }
     }
 
     /// Follows one way from `pc` at `at` until it matches, true, or fails
@@ -205,10 +244,10 @@ impl<T: Text + ?Sized> Search<'_, T> {
             match inst {
                 Inst::Match => return Ok(true),
                 Inst::Jump(to) => pc = *to,
-                Inst::Split(first, second) => {
-                    self.kept.stack.push(Job::Try(*second, at));
-                    pc = *first;
-                }
+                Inst::Split(first, second) => match self.forked((pc, at), (*first, *second))? {
+                    Some(next) => (pc, at) = next,
+                    None => return Ok(false),
+                },
                 Inst::Save(slot) => {
                     if self.capture {
                         let old = self.kept.slots.get(*slot).copied().flatten();
