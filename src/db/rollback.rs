@@ -55,8 +55,13 @@ impl Session {
         self.transaction_ended(false);
         self.locators_ended(false);
         self.temporaries_ended(st, id);
-        self.db.checkpoint_if_due();
+        self.db.checkpoint_if_due(None);
         self.db.maintain_if_due();
         ended
     }
 }
+
+// Unit tests: a transaction rolled back beside checkpoints, through a
+// crash (RULES.md R-TEST-1, R-TEST-7).
+#[cfg(test)]
+mod tests;

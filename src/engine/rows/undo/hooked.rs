@@ -64,6 +64,10 @@ impl Log for Hooked {
         fire(&self.on_end);
         self.log.end()
     }
+
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        self.log.bytes_between(from, to)
+    }
 }
 
 impl Hooked {

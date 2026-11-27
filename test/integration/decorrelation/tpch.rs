@@ -134,8 +134,8 @@ fn tpch_subqueries_are_unnested() {
 }
 
 /// Verifies: [X3.135-1986 §5.21 GR3] (RULES.md D310, D312, D1060) a join
-/// whose WHERE has a correlated scalar subquery of a set function, as
-/// TPC-H queries 2 and 17 write it, keeps its equality a join once the
+/// whose WHERE has a correlated scalar subquery of a set function
+/// keeps its equality a join once the
 /// subquery is unnested, not a product of its tables, with the rows it
 /// has nested: of a column whose sum may pass an exact number's digits,
 /// by the domain of bindings, and of one of few digits, by a grouping

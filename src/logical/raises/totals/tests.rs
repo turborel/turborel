@@ -70,9 +70,9 @@ fn a_grouping_s_columns_are_typed_by_their_set_functions() {
         call(kw::SUM, Expr::Column(2), &exact(30, 0)),
     ];
     let plan = grouping(types.clone(), aggs.clone());
-    let shape = |column: usize| match plan_column_type(&plan, column, &catalog) {
-        Some(DataType::Exact { precision, scale, .. }) => Some((precision, scale)),
-        _ => None,
+    let shape = |column: usize| {
+        let Some(DataType::Exact { precision, scale, .. }) = plan_column_type(&plan, column, &catalog) else { return None };
+        Some((precision, scale))
     };
     assert_eq!(shape(0), Some((4, 0)), "the grouping column");
     assert_eq!(shape(1), Some((34, 2)), "SUM");

@@ -78,6 +78,7 @@ use std::thread::ThreadId;
 
 use crate::catalog::QualifiedName;
 use crate::error::{Result, SqlError};
+use crate::log::{Log, Lsn};
 use crate::sync::{Alone, Gate, lock, lock_builtin};
 
 mod access;
@@ -269,12 +270,10 @@ pub(crate) struct Transactions {
     /// Of those, the ones the last checkpoint taken holds: those after it
     /// count toward the next (CHECKPOINT.AFTER_CHANGES).
     checkpointed: AtomicU64,
-    /// The bytes of records written to the log since the database was
-    /// opened; those the checkpoint being taken holds, noted as it
-    /// captures; and those the last taken holds (RULES.md D1137).
-    pub(crate) logged_bytes: Alone<AtomicU64>,
-    capturing_bytes: AtomicU64,
-    checkpointed_bytes: AtomicU64,
+    /// The log's position the checkpoint being taken holds through, and the
+    /// last taken's, its bytes counted from (RULES.md D1137, D1231); 0, none.
+    capturing_at: AtomicU64,
+    checkpointed_at: AtomicU64,
     /// Index builds under way, which a checkpoint waits for: it records
     /// only indexes ready to be read (`Database::create_index`).
     builds: Mutex<usize>,
@@ -369,9 +368,8 @@ impl Default for Transactions {
             logged: Alone(AtomicU64::new(0)),
             pending: Pending::default(),
             checkpointed: AtomicU64::new(0),
-            logged_bytes: Alone(AtomicU64::new(0)),
-            capturing_bytes: AtomicU64::new(0),
-            checkpointed_bytes: AtomicU64::new(0),
+            capturing_at: AtomicU64::new(0),
+            checkpointed_at: AtomicU64::new(0),
             builds: Mutex::new(0),
             built: Condvar::new(),
             stopped: Mutex::new(None),
@@ -429,25 +427,27 @@ impl Transactions {
         self.logged.load(Ordering::Relaxed).saturating_sub(self.checkpointed.load(Ordering::Relaxed))
     }
 
-    /// The bytes of records written to the log since the last checkpoint
-    /// taken (RULES.md D1137).
-    pub(crate) fn bytes_since_checkpoint(&self) -> u64 {
-        self.logged_bytes.load(Ordering::Relaxed).saturating_sub(self.checkpointed_bytes.load(Ordering::Relaxed))
+    /// The bytes `log` holds from the last checkpoint to `to`, by its positions
+    /// (RULES.md D1137, D1231), read unwritten; the first time none, from `to`.
+    pub(crate) fn bytes_since_checkpoint(&self, log: &dyn Log, to: Lsn) -> u64 {
+        let from = match self.checkpointed_at.load(Ordering::Relaxed) {
+            0 => self.checkpointed_at.compare_exchange(0, to.0, Ordering::Relaxed, Ordering::Relaxed).err().unwrap_or(to.0),
+            from => from,
+        };
+        log.bytes_between(Lsn(from), to)
     }
 
-    /// The row changes logged so far, as a checkpoint captures what it
-    /// holds, the bytes logged so far noted with them: one checkpoint is
-    /// taken at a time.
-    pub(crate) fn captured(&self) -> u64 {
-        self.capturing_bytes.store(self.logged_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
+    /// The row changes logged so far, as a checkpoint captures what it holds
+    /// through the log's position `through`, noted with them: one at a time.
+    pub(crate) fn captured(&self, through: Lsn) -> u64 {
+        self.capturing_at.store(through.0, Ordering::Relaxed);
         self.logged.load(Ordering::Relaxed)
     }
 
-    /// Notes a checkpoint taken, holding the first `logged` row changes,
-    /// and the bytes noted as it captured them.
+    /// Notes a checkpoint taken: the first `logged` row changes, and its position.
     pub(crate) fn checkpointed(&self, logged: u64) {
         self.checkpointed.fetch_max(logged, Ordering::Relaxed);
-        self.checkpointed_bytes.fetch_max(self.capturing_bytes.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.checkpointed_at.fetch_max(self.capturing_at.load(Ordering::Relaxed), Ordering::Relaxed);
     }
 
     /// How many transactions are open.
@@ -579,10 +579,9 @@ impl Drop for Txn {
         self.release();
         // Only one whose records were written before its end has a first
         // to forget.
-        if self.pinned_log() {
+        if self.forget_held() {
             lock_builtin(&self.origin.shared.firsts).remove(&self.id);
         }
-        self.forget_held();
         self.origin.shared.stops.remove(self.id);
         self.origin.shared.clock.dropped(self.id);
     }

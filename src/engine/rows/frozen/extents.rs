@@ -307,7 +307,7 @@ impl RowTable {
     ///
     /// # Errors
     ///
-    /// As `segment` and `sweep_segments`.
+    /// As `segment` and `Extents::sweep`.
     pub(in crate::engine::rows) fn placed_entries(&self, summaries: Vec<Summary>) -> Result<Vec<Arc<Entry>>> {
         let mut ends: BTreeMap<u64, u64> = BTreeMap::new();
         for p in summaries.iter().filter_map(|s| s.extent) {

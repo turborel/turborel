@@ -61,7 +61,7 @@ impl Database {
                 ));
             }
         }
-        let counted = st.tx.captured();
+        let counted = st.tx.captured(through);
         st.capture_engines(through)?;
         let held = lock_builtin(&st.tx.followed).values().filter_map(FollowedRecords::first).min();
         let image = st.image_of(false, (through, held.map_or(through, |first| first.min(through))))?;

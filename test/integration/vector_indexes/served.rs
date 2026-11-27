@@ -104,7 +104,8 @@ fn a_parameter_takes_the_columns_vector_type() {
     assert_eq!(got, rows(&s, &nearest_sql("L2_DISTANCE", 3, ("APPROX", ""))).unwrap());
     let general = s.prepare("SELECT VECTOR_DISTANCE(V, ?, ?) FROM T").unwrap();
     assert_eq!(general.inputs().len(), 2);
-    assert!(matches!(general.inputs().get(1), Some(ParameterType::Of(t)) if t.is_character()));
+    let Some(ParameterType::Of(t)) = general.inputs().get(1) else { panic!("the metric's parameter has a type") };
+    assert!(t.is_character());
 }
 
 /// Verifies: [EXTENSION] vector_standard §9.3: VECTOR_SEARCH of the

@@ -2,9 +2,8 @@
 //! the `Log` contract, and what a database writes to its log and gets back
 //! from it, through each kind of log a test names (`LogKind`). The core's
 //! integration tests run them for its built-in logs, including this file
-//! (`#[path]`) with `database.rs`; replication's for its replicated log,
-//! through this crate. Each suite is a function, called by a test of each
-//! binary, which states what it verifies.
+//! (`#[path]`) with `database.rs`; replication's for its replicated log, through
+//! this crate. Each suite is a function a test of each binary calls and states.
 #![allow(
     clippy::unwrap_used,
     clippy::panic,
@@ -252,6 +251,9 @@ impl Log for Watched {
     }
     fn end(&self) -> Lsn {
         self.inner.end()
+    }
+    fn bytes_between(&self, from: Lsn, to: Lsn) -> u64 {
+        self.inner.bytes_between(from, to)
     }
 }
 

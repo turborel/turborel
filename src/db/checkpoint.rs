@@ -142,19 +142,21 @@ impl Database {
 
     /// Whether a checkpoint is due: enough row changes logged, or bytes
     /// written to the side file or to the log (RULES.md D1137), since the
-    /// last.
-    fn checkpoint_due(&self) -> bool {
+    /// last; the log's counted to `at`, a commit's record, else its end
+    /// (RULES.md D1231).
+    fn checkpoint_due(&self, at: Option<Lsn>) -> bool {
         let (Ok(Some(files)), Ok(current)) = (self.files(), self.snapshot()) else { return false };
         let (changes, bytes) = (current.settings.integer(CHECKPOINT_AFTER_CHANGES), current.settings.integer(CHECKPOINT_AFTER_BYTES));
-        let written = files.shadows.pending_bytes().max(current.tx.bytes_since_checkpoint());
+        let logged = current.log.as_deref().map_or(0, |log| current.tx.bytes_since_checkpoint(log, at.unwrap_or_else(|| log.end())));
+        let written = files.shadows.pending_bytes().max(logged);
         i128::from(current.tx.since_checkpoint()) >= changes || i128::from(written) >= bytes
     }
 
-    /// Asks for the checkpoint job if a checkpoint is due; tells, then, if
-    /// checkpoints are overdue (`overdue.rs`), as each checkpoint taken
-    /// does.
-    pub(super) fn checkpoint_if_due(&self) {
-        if self.checkpoint_due() {
+    /// Asks for the checkpoint job if a checkpoint is due, the log counted to
+    /// `at` (`checkpoint_due`); tells, then, if checkpoints are overdue
+    /// (`overdue.rs`), as each checkpoint taken does.
+    pub(super) fn checkpoint_if_due(&self, at: Option<Lsn>) {
+        if self.checkpoint_due(at) {
             self.request_checkpoint();
             self.tell_if_overdue();
         }
@@ -307,7 +309,7 @@ pub(super) struct Checkpointer {
 ///
 /// The checkpoint's.
 pub(super) fn checkpointed(db: &Database) -> Result<Option<Duration>> {
-    if db.checkpoint_due() {
+    if db.checkpoint_due(None) {
         let outcome = db.checkpoint();
         if let Ok(Some(files)) = db.files() {
             *lock_builtin(&files.checkpointer.failure) = outcome.as_ref().err().cloned();
@@ -365,7 +367,7 @@ impl State {
             Some(crate::txn::Held::Deposed | crate::txn::Held::Retired) | None => log.end(),
         };
         self.capture_engines(through)?;
-        let counted = self.tx.captured();
+        let counted = self.tx.captured(through);
         let image = self.image_of(clean, (through, self.tx.oldest_logged().map_or(through, |first| first.min(through))))?;
         Ok((image, counted))
     }
