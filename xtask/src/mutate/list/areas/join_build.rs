@@ -285,12 +285,12 @@ pub const JOIN_BUILD: [Mutation; 30] = [
     Mutation {
         name: "integers-hashed-unbounded",
         package: Package::Core,
-        breaks: "a vector of integers of scale 0 is hashed by MAGIC only if each is below 2^51 in magnitude (D1098)",
+        breaks: "an integer is its f64 by MAGIC only below 2^51 in magnitude, and keys by itself from there (D1098, D1288)",
         file: "src/exec/table/join/keys.rs",
-        original: "            wide |= v.unsigned_abs() >= MAGIC_UNITS;\n",
-        replacement: "",
+        original: "    if n.unsigned_abs() < MAGIC_UNITS {",
+        replacement: "    if n.unsigned_abs() <= MAGIC_UNITS {",
         integration: &[],
-        unit: &["exec::table::join::tests::integers_of_scale_zero_hash_as_their_buckets"],
+        unit: &["exec::table::join::tests::a_wide_keys_word_is_no_nulls_and_strays_to_one_small_key_at_most"],
     },
     Mutation {
         name: "integers-hashed-nulls-unmarked",
