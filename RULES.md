@@ -806,6 +806,7 @@ verification approach DO-178C expects (§8).
 | D1245 | A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
+| D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 
 ### The project
 
@@ -22861,6 +22862,62 @@ the projection over the part takes the rows the partitions kept for the
 sort, as those are the rows that leave the part. Both take the time of
 the part's run and of each row pulled. A part that gives way, and a sort
 whose rows are not taken from the tables, count every group in both.
+
+#### D1270. A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch
+
+A leaf taken out of a B-link tree is freed once no operation that may
+hold its number is left (D31, D814). Every operation is counted in the
+tree's epoch as it begins, and that count is what keeps the page. The
+paths under an operation took no part in this. The descent, a node's
+lock and the read from a leaf remembered or noted each relied on their
+caller having entered the epoch, and nothing checked that it had.
+
+The tree's stress test called the descent itself, in no epoch, to find
+a leaf to note. Between its read of a parent and its read of the leaf,
+other threads could take the leaf out, move the epoch on twice and free
+the page. The read was then refused as one of a page not allocated,
+rarely, and on one platform's run of the checks first. The test had
+made that call since it was written. It failed far more often once
+sparse leaves were merged (D814), which takes leaves out more often
+than emptying them did.
+
+No operation of the engine made such a read. A build that reported
+every read of a page by its number made by a thread counted in no epoch
+of the tree named only the tree's own unit tests, over the unit tests
+of the engines and the disk and over the integration suite.
+
+A read outside the epoch risks more than a refusal. The page refused is
+one freed and not yet given out again. Once it is another leaf of the
+tree it is read as valid, since a descent checks a node's level and its
+mark and not where its range begins. A leaf further right then answers
+that a key the tree holds is absent, and a writer puts its key in a
+leaf that is not the key's. Once it is another tree's it is read as
+this tree's.
+
+So the rule is in the types. `Within` (`engine/tree/reclaim.rs`) is
+proof of being counted in a tree's epoch. An operation's guard lends
+it, and so do the counts a scan and a pin hold, and it is made nowhere
+else. Every path that reads or locks a page by a number a node gave, or
+one remembered, takes one. They are `descend`, `move_right`, `lock`,
+`page`, `edge_for`, `leaf_by_copies`, `at_noted`, the reads from a leaf
+remembered and a leaf noted, and the paths that reach them. A call made
+outside an epoch does not compile, in any build. `Within` has no size,
+so passing it adds no instruction to a read or a write.
+
+Two things stay conventions. `Within` does not say which tree's epoch
+it proves, so one tree's lent to another tree's path compiles. An
+operation works one tree and makes and uses the proof inside one call,
+so that mistake has to be written out. And the count a scan or a pin
+keeps (`Entered`) can be copied, so a copy kept past its `leave` would
+still lend. Only `Scan` and `Pinned` hold one, each until it is dropped.
+
+The meta page and the root are read and locked without the proof, as
+neither is freed while the tree lives. So are the walks of a tree no one
+else uses, its load and its freeing.
+
+The tree's tests that called these paths directly enter the epoch as an
+operation does, through one helper, `leaf_of`, where they ask for a
+key's leaf.
 
 ## 2. Project layout
 

@@ -19,7 +19,7 @@ use std::cell::Cell;
 
 use super::node::Node;
 use super::scan::Visit;
-use super::{BLinkTree, Path, Target, corrupt, leaves};
+use super::{BLinkTree, Path, Target, Within, corrupt, leaves};
 use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::noted::{self, Noted};
@@ -89,9 +89,9 @@ impl BLinkTree {
     ///
     /// `f`'s errors; as `get`.
     pub fn first_from(&self, key: &[u8], mut f: impl FnMut(&[u8], &[u8]) -> Result<Visit>) -> Result<()> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let mut shown = Shown { last: KEY.take(), any: false };
-        let done = self.probe(key, &mut shown, &mut f);
+        let done = self.probe(op.within(), key, &mut shown, &mut f);
         if shown.last.capacity() <= KEPT_BYTES {
             KEY.set(shown.last);
         }
@@ -103,8 +103,14 @@ impl BLinkTree {
     /// it (`inner.rs`) and it is a leaf of the tree, in it, whose range
     /// holds `key`: the leaf to go on to. `Descend` if not, nothing shown;
     /// the probe descends then.
-    fn shown_by_copies(&self, key: &[u8], shown: &mut Shown, f: &mut impl FnMut(&[u8], &[u8]) -> Result<Visit>) -> Result<ByCopies> {
-        let Some(leaf) = self.leaf_by_copies(key) else { return Ok(ByCopies::Descend) };
+    fn shown_by_copies(
+        &self,
+        within: Within<'_>,
+        key: &[u8],
+        shown: &mut Shown,
+        f: &mut impl FnMut(&[u8], &[u8]) -> Result<Visit>,
+    ) -> Result<ByCopies> {
+        let Some(leaf) = self.leaf_by_copies(within, key) else { return Ok(ByCopies::Descend) };
         let page = leaves::read(&self.pool, (self.file, leaf), Some(&self.tally))?;
         let node = page.node()?;
         if node.level != 0 || node.deleted || node.tree != self.meta.0 || !node.covers(key) {
@@ -115,18 +121,18 @@ impl BLinkTree {
     }
 
     /// `first_from`, its keys put together in `shown`.
-    fn probe(&self, key: &[u8], shown: &mut Shown, f: &mut impl FnMut(&[u8], &[u8]) -> Result<Visit>) -> Result<()> {
+    fn probe(&self, within: Within<'_>, key: &[u8], shown: &mut Shown, f: &mut impl FnMut(&[u8], &[u8]) -> Result<Visit>) -> Result<()> {
         let notes = noted::noting();
-        let mut next = match self.shown_by_copies(key, shown, f)? {
+        let mut next = match self.shown_by_copies(within, key, shown, f)? {
             ByCopies::Shown(next) => next,
             ByCopies::Descend => {
                 let mut path = Path { tallied: true, ..Path::default() };
-                self.descend(Target::Key(key), 0, &mut path, |leaf| show(leaf, key, &mut *shown, &mut *f))?.1
+                self.descend((within, Target::Key(key)), 0, &mut path, |leaf| show(leaf, key, &mut *shown, &mut *f))?.1
             }
         };
         noted::add(notes.as_deref(), Noted::Leaves, 1);
         while let Some(right) = next {
-            let page = self.pool.read(self.file, right.0)?;
+            let page = self.page(within, right)?;
             next = show(&Node::parse(&page)?, key, shown, f)?;
             noted::add(notes.as_deref(), Noted::Leaves, 1);
         }

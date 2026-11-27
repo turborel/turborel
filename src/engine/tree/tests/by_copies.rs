@@ -7,9 +7,11 @@ use std::sync::Barrier;
 
 use super::*;
 
-/// The leaf a descent that latches each node reaches for key `k`.
-fn leaf_of(tree: &BLinkTree, k: u64) -> u64 {
-    tree.descend(Target::Key(&key(k)), 0, &mut Path::default(), |_| Ok(())).unwrap().0.0
+/// The leaf the thread's copies lead to for key `k`, asked in the tree's
+/// epoch, as a read asks (RULES.md D1270).
+fn by_copies(tree: &BLinkTree, k: u64) -> Option<u64> {
+    let op = tree.epochs.guard();
+    tree.leaf_by_copies(op.within(), &key(k))
 }
 
 /// The first key a probe from `k` shows, if any.
@@ -45,8 +47,8 @@ fn two_levels(test: &str) -> (BLinkTree, Scratch) {
 fn a_read_through_the_copies_finds_what_a_descent_finds() {
     let (tree, _scratch) = two_levels("by-copies");
     for k in 0..=40_002 {
-        let leaf = leaf_of(&tree, k);
-        assert_eq!(tree.leaf_by_copies(&key(k)), Some(leaf), "key {k}");
+        let leaf = leaf_of(&tree, k).0;
+        assert_eq!(by_copies(&tree, k), Some(leaf), "key {k}");
     }
     let reads = || {
         for k in 0..=40_002_u64 {
@@ -60,7 +62,7 @@ fn a_read_through_the_copies_finds_what_a_descent_finds() {
     std::thread::scope(|s| {
         s.spawn(|| {
             let root = tree.root.load(Ordering::Acquire);
-            assert_eq!(tree.leaf_by_copies(&key(10)), Some(root), "no copies: the root, to be read for itself");
+            assert_eq!(by_copies(&tree, 10), Some(root), "no copies: the root, to be read for itself");
             reads();
         });
     });
@@ -80,12 +82,12 @@ fn a_copy_changed_since_is_not_followed() {
     let mut k = 1_u64;
     std::thread::scope(|s| {
         s.spawn(|| {
-            let leaf = leaf_of(&tree, 1);
-            assert_eq!(tree.leaf_by_copies(&key(1)), Some(leaf), "its copies kept by the descent");
+            let leaf = leaf_of(&tree, 1).0;
+            assert_eq!(by_copies(&tree, 1), Some(leaf), "its copies kept by the descent");
             warm.wait();
             split.wait();
             let root = tree.root.load(Ordering::Acquire);
-            assert_eq!(tree.leaf_by_copies(&key(1)), Some(root), "the root changed by the split: no leaf below it");
+            assert_eq!(by_copies(&tree, 1), Some(root), "the root changed by the split: no leaf below it");
             let mut near = Near::default();
             assert!(tree.get_near(&key(1), &mut near).unwrap(), "found by a descent");
         });
@@ -100,8 +102,8 @@ fn a_copy_changed_since_is_not_followed() {
     for odd in (1..k).step_by(2) {
         let mut near = Near::default();
         assert!(tree.get_near(&key(odd), &mut near).unwrap(), "key {odd}");
-        if let Some(leaf) = tree.leaf_by_copies(&key(odd)) {
-            assert_eq!(leaf, leaf_of(&tree, odd), "key {odd}");
+        if let Some(leaf) = by_copies(&tree, odd) {
+            assert_eq!(leaf, leaf_of(&tree, odd).0, "key {odd}");
         }
     }
     for even in (2..=4_000).step_by(2) {

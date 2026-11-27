@@ -25,7 +25,7 @@ use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
 use super::node::{Node, Parsed, child_in};
-use super::{BLinkTree, leaves};
+use super::{BLinkTree, Within, leaves};
 use crate::disk::buffer::{BufferPool, FileId, PageRef, Stamp, Tally};
 use crate::error::Result;
 use crate::hash::xxhash::{Xxh3BuildHasher, Xxh3Map};
@@ -215,7 +215,7 @@ impl BLinkTree {
     /// missing or does not hold `key`'s range, as past a split not yet
     /// posted; the caller descends then. The caller is in the tree's
     /// epoch, so the page given is not freed under it.
-    pub(super) fn leaf_by_copies(&self, key: &[u8]) -> Option<u64> {
+    pub(super) fn leaf_by_copies(&self, _within: Within<'_>, key: &[u8]) -> Option<u64> {
         let root = self.root.load(Ordering::Acquire);
         let (mut id, mut above) = (root, None::<u8>);
         for _ in 0..LEVELS {

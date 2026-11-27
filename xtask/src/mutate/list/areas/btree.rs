@@ -1,5 +1,6 @@
 //! The mutations of the B-link tree's node layout, leaf hints and merges
-//! (RULES.md R-TEST-9, D500, D814).
+//! (RULES.md R-TEST-9, D500, D814), and of the epochs that keep a page
+//! taken out (D31, D1270).
 
 use super::super::{Mutation, Package};
 
@@ -7,9 +8,15 @@ use super::super::{Mutation, Package};
 const MERGE: &str = "src/engine/tree/merge.rs";
 /// The unit test of a sparse leaf merged.
 const SPARSE: &str = "engine::tree::tests::merge::a_sparse_leaf_merges_into_a_sparse_right_neighbour";
+/// The file of the epochs and of leaves taken out.
+const RECLAIM: &str = "src/engine/tree/reclaim.rs";
+/// The unit test of the epochs alone.
+const EPOCHS: &str = "engine::tree::tests::epochs::a_page_retired_waits_for_the_operations_of_its_epoch_and_the_one_before";
+/// The unit test of a writer stopped above a leaf taken out.
+const STOPPED: &str = "engine::tree::tests::epochs::a_leaf_taken_out_under_a_writer_stopped_above_it_is_kept_and_leads_right";
 
 /// Mechanisms of the B-link tree whose removal must fail their tests.
-pub const BTREE: [Mutation; 33] = [
+pub const BTREE: [Mutation; 35] = [
     Mutation {
         name: "btree-hints-misread",
         package: Package::Core,
@@ -339,5 +346,25 @@ pub const BTREE: [Mutation; 33] = [
         replacement: "        drop(leaf);",
         integration: &["trees::a_page_its_file_fails_to_free_is_freed_later"],
         unit: &[],
+    },
+    Mutation {
+        name: "btree-epoch-freed-a-turn-early",
+        package: Package::Core,
+        breaks: "a page taken out is freed one epoch on, under an operation that began in its epoch and may hold its number",
+        file: RECLAIM,
+        original: "partition(|(epoch, _)| epoch.saturating_add(2) <= now)",
+        replacement: "partition(|(epoch, _)| epoch.saturating_add(1) <= now)",
+        integration: &[],
+        unit: &[EPOCHS, STOPPED],
+    },
+    Mutation {
+        name: "btree-epoch-held-by-its-own",
+        package: Package::Core,
+        breaks: "the epoch waits for the operations of the current one, not the one before, so one long operation keeps every page taken out",
+        file: RECLAIM,
+        original: "        let before = usize::from(epoch.is_multiple_of(2));",
+        replacement: "        let before = usize::from(!epoch.is_multiple_of(2));",
+        integration: &[],
+        unit: &[EPOCHS, STOPPED],
     },
 ];

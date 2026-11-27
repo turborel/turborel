@@ -23,7 +23,7 @@ use std::marker::PhantomData;
 use std::rc::Rc;
 
 use super::BLinkTree;
-use super::reclaim::{Entered, Epochs, Guard};
+use super::reclaim::{Entered, Epochs};
 
 /// \[DESIGN\] The trees a thread notes as pinned at once: a transaction's
 /// tables and their indexes. More are pinned unnoted.
@@ -82,16 +82,14 @@ impl Epochs {
         });
         Pinned { epochs: self, entered, place, _here: PhantomData }
     }
+}
 
-    /// An operation guarded until the guard is dropped; none if the
-    /// thread has the tree pinned, which guards it already.
-    pub(super) fn guard(&self) -> Option<Guard<'_>> {
-        let number = self.number();
-        if PINNED.with(|pinned| pinned.get().contains(&number)) {
-            return None;
-        }
-        Some(self.guarded())
-    }
+/// Whether the thread has noted a pin of the tree whose epochs' number is
+/// `number`: its operations then count nothing of their own
+/// (`Epochs::guard`).
+#[inline]
+pub(super) fn noted(number: u64) -> bool {
+    PINNED.with(|pinned| pinned.get().contains(&number))
 }
 
 impl BLinkTree {

@@ -26,7 +26,8 @@ fn long(len: usize, shared: usize, fill: u8, n: u64) -> Vec<u8> {
 
 /// Every leaf of `tree`, left to right: its page and its length.
 fn leaves(tree: &BLinkTree) -> Vec<(PageId, usize)> {
-    let mut id = Some(tree.descend(Target::Key(&[]), 0, &mut Path::default(), |_| Ok(())).unwrap().0);
+    let op = tree.epochs.guard();
+    let mut id = Some(tree.descend((op.within(), Target::Key(&[])), 0, &mut Path::default(), |_| Ok(())).unwrap().0);
     let mut found = Vec::new();
     while let Some(leaf) = id {
         let page = tree.pool.read(tree.file, leaf.0).unwrap();

@@ -33,7 +33,7 @@
 use std::cmp::Ordering;
 
 use super::node::{self, Held, Node};
-use super::{BLinkTree, Path, Target, hints, leaves};
+use super::{BLinkTree, Path, Target, Within, hints, leaves};
 use crate::disk::buffer::Stamp;
 use crate::error::Result;
 use crate::storage::Near;
@@ -105,21 +105,22 @@ impl BLinkTree {
     ///
     /// `f`'s errors; as `get`.
     pub fn get_near_with<R>(&self, key: &[u8], near: &mut Near, f: impl FnOnce(&[u8]) -> Result<R>) -> Result<Option<R>> {
-        let _guard = self.epochs.guard();
-        let stamp = self.epochs.stamp();
+        let op = self.epochs.guard();
+        // The stamp loaded in the epoch, with the proof of being in it.
+        let (within, stamp) = (op.within(), self.epochs.stamp());
         let mut reader = Reader(Some(f));
-        if let Tried::Answered(found) = self.in_leaf(key, stamp, near, &mut reader)? {
+        if let Tried::Answered(found) = self.in_leaf(key, (within, stamp), near, &mut reader)? {
             return Ok(found);
         }
-        if let Tried::Answered(found) = self.hinted(key, stamp, near, &mut reader)? {
+        if let Tried::Answered(found) = self.hinted(key, (within, stamp), near, &mut reader)? {
             return Ok(found);
         }
-        if let Tried::Answered(found) = self.down_copies(key, stamp, near, &mut reader)? {
+        if let Tried::Answered(found) = self.down_copies(key, (within, stamp), near, &mut reader)? {
             return Ok(found);
         }
         let at = &mut near.at;
         let mut path = Path { tallied: true, ..Path::default() };
-        let (leaf, found) = self.descend(Target::Key(key), 0, &mut path, |leaf| located(leaf, key, at, &mut reader))?;
+        let (leaf, found) = self.descend((within, Target::Key(key)), 0, &mut path, |leaf| located(leaf, key, at, &mut reader))?;
         near.leaf = Some((leaf.0, stamp));
         Ok(found)
     }
@@ -132,11 +133,11 @@ impl BLinkTree {
     /// before `key`, so a key it does not hold is not in the tree.
     /// Elsewhere if any of that fails; the caller then descends as before. `near`
     /// is left as a descent leaves it, and the lookup is tallied as one.
-    fn down_copies<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
+    fn down_copies<R, F>(&self, key: &[u8], (within, stamp): (Within<'_>, u64), near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
     where
         F: FnOnce(&[u8]) -> Result<R>,
     {
-        let Some(leaf) = self.leaf_by_copies(key) else { return Ok(Tried::Elsewhere) };
+        let Some(leaf) = self.leaf_by_copies(within, key) else { return Ok(Tried::Elsewhere) };
         let page = leaves::read(&self.pool, (self.file, leaf), Some(&self.tally))?;
         let found = match node::held(&page, self.meta.0, key, None) {
             Held::At(slot, value) => {
@@ -161,7 +162,7 @@ impl BLinkTree {
     /// frame's version holds (`in_copy`). A key the leaf holds is found
     /// with no node made of it, at the slot after the last found if it is
     /// there (`node/lean.rs`, RULES.md D950).
-    fn in_leaf<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
+    fn in_leaf<R, F>(&self, key: &[u8], (_within, stamp): (Within<'_>, u64), near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
     where
         F: FnOnce(&[u8]) -> Result<R>,
     {
@@ -240,15 +241,15 @@ fn keep(near: &mut Near, (leaf, first): (u64, u64), (page, version): (&[u8], Sta
 impl BLinkTree {
     /// As `in_leaf`, if the leaf noted for `key`'s row answers, or one
     /// right of it within `HOPS` links.
-    fn hinted<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
+    fn hinted<R, F>(&self, key: &[u8], (within, stamp): (Within<'_>, u64), near: &mut Near, reader: &mut Reader<F>) -> Result<Tried<R>>
     where
         F: FnOnce(&[u8]) -> Result<R>,
     {
-        if let Some(found) = self.in_noted(key, stamp, near, reader)? {
+        if let Some(found) = self.in_noted(key, (within, stamp), near, reader)? {
             return Ok(Tried::Answered(Some(found)));
         }
         let at = &mut near.at;
-        let Some((leaf, found)) = self.at_noted(key, |node| located(node, key, at, reader))? else { return Ok(Tried::Elsewhere) };
+        let Some((leaf, found)) = self.at_noted(within, key, |node| located(node, key, at, reader))? else { return Ok(Tried::Elsewhere) };
         // The misses stay as they are: the leaf remembered did not answer,
         // so the reads are not side by side, and a hint that answers says
         // nothing else. Cleared here, reads of rows far apart kept trying
@@ -264,7 +265,7 @@ impl BLinkTree {
     /// its first key nor its high key is read. None of a leaf without
     /// the key, and of no leaf noted or held by a frame; the caller then
     /// reads as `at_noted` does. `near` is left as `hinted` leaves it.
-    fn in_noted<R, F>(&self, key: &[u8], stamp: u64, near: &mut Near, reader: &mut Reader<F>) -> Result<Option<R>>
+    fn in_noted<R, F>(&self, key: &[u8], (_within, stamp): (Within<'_>, u64), near: &mut Near, reader: &mut Reader<F>) -> Result<Option<R>>
     where
         F: FnOnce(&[u8]) -> Result<R>,
     {
@@ -282,7 +283,7 @@ impl BLinkTree {
     /// noted for `key`'s row is it, or leads to it within `HOPS` links;
     /// none if the tree is no table's, no leaf is noted, or the one noted
     /// may not be trusted. The caller is in its epoch.
-    pub(super) fn at_noted<R>(&self, key: &[u8], at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<Option<(u64, R)>> {
+    pub(super) fn at_noted<R>(&self, _within: Within<'_>, key: &[u8], at: impl FnOnce(&Node<'_>) -> Result<R>) -> Result<Option<(u64, R)>> {
         let Some(mut id) = self.row_of(key).and_then(hints::leaf_of) else { return Ok(None) };
         // From the thread's copy of the leaf, if it keeps one (`leaves.rs`).
         let Some(mut page) = leaves::read_resident(&self.pool, (self.file, id))? else { return Ok(None) };

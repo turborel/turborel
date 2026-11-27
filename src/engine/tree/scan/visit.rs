@@ -132,7 +132,7 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                 if self.last.and_then(|last| last.0.checked_add(1)) == Some(id.0) {
                     tree.pool.ahead_of(&mut self.ahead, tree.file, id.0);
                 }
-                let page = tree.pool.read(tree.file, id.0)?;
+                let page = tree.page(self.entered.within(), id)?;
                 Ok(Some((id, shown(&Node::parse(&page)?, bounds, f)?)))
             }
             Next::Descend => {
@@ -143,7 +143,7 @@ impl<T: Deref<Target = BLinkTree>> Scan<T> {
                 // A lookup is its first descent, to a key.
                 let tallied = self.last.is_none() && matches!(target, Target::Key(_));
                 let mut path = Path { tallied, ..Path::default() };
-                tree.descend(target, 0, &mut path, |leaf| shown(leaf, bounds, f)).map(Some)
+                tree.descend((self.entered.within(), target), 0, &mut path, |leaf| shown(leaf, bounds, f)).map(Some)
             }
         }
     }

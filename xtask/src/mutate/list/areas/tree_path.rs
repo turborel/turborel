@@ -109,7 +109,7 @@ pub const TREE_PATH: [Mutation; 27] = [
         package: Package::Core,
         breaks: "a row read for a write no longer starts at the leaf noted for it, and descends from the root",
         file: "src/engine/tree/write.rs",
-        original: "        if let Some((leaf, found)) = self.at_noted(key, |leaf| value_into(leaf, key, into))? {",
+        original: "        if let Some((leaf, found)) = self.at_noted(op.within(), key, |leaf| value_into(leaf, key, into))? {",
         replacement: "        if let Some((leaf, found)) = None::<(u64, bool)> {",
         integration: &[],
         unit: &["engine::tree::tests::hinted::a_read_for_a_write_starts_at_the_leaf_noted"],

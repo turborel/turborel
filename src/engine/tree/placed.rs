@@ -54,11 +54,11 @@ impl BLinkTree {
     ///
     /// As `insert`.
     pub fn replace_found_placed(&self, found: &super::Descended, key: &[u8], (expected, value): (&[u8], &[u8])) -> Result<Option<Placed>> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let stamp = self.epochs.stamp();
         let written = if stamp == found.stamp {
             self.fits(key, value)?;
-            self.write_from(&found.path, found.leaf, (key, value), Mode::ReplaceIf(expected))?
+            self.write_from((op.within(), &found.path), found.leaf, (key, value), Mode::ReplaceIf(expected))?
         } else {
             self.write(key, value, Mode::ReplaceIf(expected))?
         };
@@ -86,13 +86,14 @@ impl BLinkTree {
         key: &[u8],
         f: impl FnOnce(&[u8]) -> Result<Option<&'v [u8]>>,
     ) -> Result<Option<Placed>> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
+        let within = op.within();
         let stamp = self.epochs.stamp();
         let mut descended = Path::default();
-        let leaf = if stamp == found.stamp { found.leaf } else { self.leaf_for_write(key, &mut descended)? };
+        let leaf = if stamp == found.stamp { found.leaf } else { self.leaf_for_write(within, key, &mut descended)? };
         let path = if stamp == found.stamp { &found.path } else { &descended };
-        let mut held = self.lock(leaf)?;
-        let mut page = self.latched_covering(&mut held, key)?;
+        let mut held = self.lock(within, leaf)?;
+        let mut page = self.latched_covering(within, &mut held, key)?;
         let (slot, value) = {
             let node = Node::parse(&page)?;
             let Ok(at) = node.search(key)? else { return Ok(None) };
@@ -106,7 +107,7 @@ impl BLinkTree {
             Some(copy) => self.split(held.id, &copy, (key, value), slot)?,
             None => Vec::new(),
         };
-        let into = self.posted(path, held, key, splits)?;
+        let into = self.posted((within, path), held, key, splits)?;
         // A table's row: its leaf noted, as a write notes it (`hints.rs`).
         if let Some(row) = self.row_of(key) {
             super::hints::note(row, into.0);
@@ -125,13 +126,13 @@ impl BLinkTree {
     /// `change`'s errors; the buffer pool's; SQLCODE -916 if a node is
     /// malformed.
     pub fn change_placed<R>(&self, placed: Placed, key: &[u8], change: impl FnOnce(&mut [u8]) -> Result<R>) -> Result<Option<R>> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         if !placed.is_some() || self.epochs.stamp() != placed.stamp {
             return Ok(None);
         }
-        let mut held = self.lock(PageId(placed.leaf))?;
+        let mut held = self.lock(op.within(), PageId(placed.leaf))?;
         // Searched and changed under one latch, as a write is (`here.rs`).
-        let mut page = self.latched_covering(&mut held, key)?;
+        let mut page = self.latched_covering(op.within(), &mut held, key)?;
         let Ok(at) = Node::parse(&page)?.search(key)? else { return Ok(None) };
         change(node::value_mut(&mut page, at)?).map(Some)
     }
@@ -156,10 +157,10 @@ impl BLinkTree {
         keys: &[K],
         mut change: impl FnMut(usize, &mut [u8]) -> Result<()>,
     ) -> Result<usize> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let Some(first) = keys.first().filter(|_| placed.is_some() && self.epochs.stamp() == placed.stamp) else { return Ok(0) };
-        let mut held = self.lock(PageId(placed.leaf))?;
-        let mut page = self.latched_covering(&mut held, first.as_ref())?;
+        let mut held = self.lock(op.within(), PageId(placed.leaf))?;
+        let mut page = self.latched_covering(op.within(), &mut held, first.as_ref())?;
         for (n, key) in keys.iter().enumerate() {
             let found = {
                 let node = Node::parse(&page)?;
