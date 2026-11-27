@@ -32,17 +32,15 @@ impl States {
     /// \[DESIGN\] (RULES.md D1256) Finishes each of the first `len`
     /// groups' results and keeps none, so a group whose result raises
     /// raises it where no column of the results is wanted. A count and a
-    /// value carried raise nothing, and are not finished, nor is an exact
-    /// total too small to raise (`Typed::checked`).
+    /// value carried raise nothing, and are not finished.
     ///
     /// # Errors
     ///
     /// As `Accumulator::finish`, of the first group that fails.
     pub(in crate::exec::table) fn checked(&self, len: usize) -> Result<()> {
-        match self {
-            States::Typed(typed) => typed.checked(len),
-            States::Carried(_) => Ok(()),
-            States::Part(_) | States::Boxed(_) => (0..len).try_for_each(|g| self.finish(g).map(drop)),
+        if matches!(self, States::Typed(Typed::Count(_))) || matches!(self, States::Carried(_)) {
+            return Ok(());
         }
+        (0..len).try_for_each(|g| self.finish(g).map(drop))
     }
 }
