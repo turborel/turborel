@@ -40,6 +40,11 @@
 //! of a chunk that is malformed, it is not judged, and the filter judges
 //! it of the rows given.
 //!
+//! \[DESIGN\] (RULES.md D1293) A comparison with a constant that the
+//! bounds of every part a run lies in prove true of every row of it is
+//! not judged of that run, and its column is not decoded to judge it
+//! (`judged/proved.rs`).
+//!
 //! A scan is told only conjuncts every row its filter keeps satisfies, of a
 //! condition that cannot raise an error (`logical/pushed.rs`), and the
 //! filter still judges every row the scan gives (RULES.md D15). So a row
@@ -49,6 +54,7 @@
 mod coded;
 mod entries;
 mod lengths;
+mod proved;
 mod sketched;
 mod sorted;
 
@@ -64,7 +70,6 @@ use crate::storage::bound::{Bound, holds, rescaled_bound};
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
 use crate::storage::{Column, Condition, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Texts};
-use crate::value::types::narrow_scale;
 use crate::value::{CompOp, DataType, Decimal, Value, compare_strings};
 
 /// \[DESIGN\] The share of a run's rows, one in this many, past which the
@@ -180,6 +185,11 @@ impl Judgment {
                 kept = coded::liked(group, (pages, &mut *prepared), (pred, like, t), (from, to), kept.as_deref())?.or(kept);
                 continue;
             }
+            // A comparison the bounds of the run's parts prove keeps every
+            // row, its column not decoded to judge it (RULES.md D1293).
+            if proved::proved(group, (pred, t), (from, to))? {
+                continue;
+            }
             if let Some(rows) = coded::kept(group, (pages, &mut *prepared), (pred, t), (from, to), kept.as_deref())? {
                 kept = Some(rows);
                 continue;
@@ -227,13 +237,14 @@ fn judged_leaf(conjunct: &Conjunct) -> bool {
 }
 
 /// Whether a column of type `t` is decoded into a vector of its kind,
-/// which the scan judges: exact numbers 64 bits hold (`narrow_scale`),
-/// approximate numbers, datetimes of no time zone, truth values,
-/// character strings read as text.
+/// which the scan judges: exact numbers, read as integers where 64 bits
+/// hold a run's values (`scan::ints`, RULES.md D1287) and left to the
+/// filter where they do not, approximate numbers, datetimes of no time
+/// zone, truth values, character strings read as text.
 fn judged_type(t: &DataType) -> bool {
     match t {
-        DataType::Exact { .. } => narrow_scale(t).is_some(),
-        DataType::Approximate { .. }
+        DataType::Exact { .. }
+        | DataType::Approximate { .. }
         | DataType::Boolean
         | DataType::Date
         | DataType::Time { zoned: false, .. }

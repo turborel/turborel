@@ -152,8 +152,8 @@ impl Grouping {
     fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Run> {
         if let Some(top) = &self.top {
             // Its first rows alone, the number each is merged by its last
-            // column (RULES.md D1124).
-            return Ok(Run::Rows(top.of_table(table)?.into_iter().map(|row| (0, row)).collect()));
+            // column (RULES.md D1124), of a pair the second's (D1281).
+            return Ok(Run::Rows(top.of_part(self, table, runner)?.into_iter().map(|row| (0, row)).collect()));
         }
         if self.having.is_none() && self.outer.is_none() && table.in_order() {
             // Its groups as the table holds them, a row made of each

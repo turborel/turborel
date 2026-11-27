@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 32] = [
+pub const GROUPED_PARTS: [Mutation; 33] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -217,10 +217,10 @@ pub const GROUPED_PARTS: [Mutation; 32] = [
     Mutation {
         name: "top-groups-of-a-pair",
         package: Package::Core,
-        breaks: "first rows are taken from the tables of a pair's first grouping, its groups given for the second's (RULES.md D1124)",
+        breaks: "first rows are taken from the tables of a pair's first grouping, its groups given for the second's (RULES.md D1124, D1281)",
         file: "src/exec/parallel/grouped/top.rs",
-        original: "grouping.read.is_some() && plain &&",
-        replacement: "grouping.read.is_some() &&",
+        original: "let Some(outer) = &grouping.outer else { return self.of_table(table) };",
+        replacement: "let Some(outer) = grouping.outer.as_ref().filter(|_| false) else { return self.of_table(table) };",
         integration: &["regrouped_parts::the_first_rows_of_a_sort_over_a_pair_are_the_second_groupings"],
         unit: &[],
     },
@@ -333,5 +333,15 @@ pub const GROUPED_PARTS: [Mutation; 32] = [
         replacement: "keys.push(SortKey { descending: true, ..SortKey::ascending(sorted_by.len()) });",
         integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
         unit: &[],
+    },
+    Mutation {
+        name: "spilled-table-of-the-statements-thread-lost",
+        package: Package::Core,
+        breaks: "a grouping whose statement thread's table went to the spill with no wave merged gives the last such table's groups alone (RULES.md D1276)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "if !self.waved && self.wave.is_empty() && self.spilled.is_none() {",
+        replacement: "if !self.waved && self.wave.is_empty() {",
+        integration: &["spilled_groups::a_table_of_few_groups_past_the_grant_gives_every_group"],
+        unit: &["exec::parallel::grouped::waves::tests::a_table_of_the_statements_thread_past_the_grant_loses_no_group"],
     },
 ];
