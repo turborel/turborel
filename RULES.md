@@ -822,6 +822,7 @@ verification approach DO-178C expects (§8).
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1290 | MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states |
+| D1291 | A regular expression function over a dictionary's codes is run once of each entry a row reads |
 
 ### The project
 
@@ -23690,6 +23691,41 @@ compared with its group's best where both lie, by the order of
   it, and a group's result and written state are its accumulator's.
 - A column fed anything but character strings and nulls turns into
   accumulators, each given its group's best, and is fed as they are.
+
+#### D1291. A regular expression function over a dictionary's codes is run once of each entry a row reads
+
+A column store gives a character string column's rows as the codes of
+its chunks' dictionaries (D31, D1161), and many rows read one entry.
+UPPER, LOWER, SUBSTRING and the lengths already run once an entry and
+give their rows the same codes (D363, D1126). LIKE_REGEX and
+TRANSLATE_REGEX read each row's string through its code and searched
+it again for every row that read it (D1188).
+
+Over a vector of codes they now run once of each entry a row reads
+(`functions/regex/entries.rs`).
+
+- One pass over the codes marks the entries a row that is not null
+  reads. TRANSLATE_REGEX translates each marked entry once, in the
+  entries' order, into one text, and its result is the rows' own codes
+  over the translated entries, so a grouping by it goes by codes
+  (D1161) and hashes each entry once. LIKE_REGEX matches each marked
+  entry once and gives each row its entry's truth value.
+- An entry no row reads is not run. A row a filter took out before the
+  call leaves its entry in the dictionary, and a call may raise an
+  error of one string and not of another, a result past the longest
+  string [ISO/IEC 9075-2:2023 §6.33 SR12f i 2] or a search past its
+  steps (D61). Run of every entry, a query could raise what none of its
+  rows raises. A row that is null marks nothing.
+- A row is given a null if it is null, or if its entry was given one,
+  as where the start position is not of the string [§6.33 GR9b ii].
+- A dictionary of more entries than the vector has rows is run a row
+  at a time, as before, since marking its entries would cost more than
+  the rows. A vector of texts one after another, and a call whose other
+  operands are not all constants, are run as before too.
+
+Which error a statement raises when several of its rows would raise
+one is that of the entry met first, where it was that of the row met
+first. The standard orders neither.
 
 ## 2. Project layout
 
