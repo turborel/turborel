@@ -152,9 +152,13 @@ impl RowTable {
         let directory = self.frozen.directory()?;
         let maker = directory.holding(id).map(|e| self.group_maker(e));
         let row = self.frozen_in(&directory, id, None)?;
-        Ok(match maker {
-            Some(Maker::Open(by)) if by != tx => Newest { row: None, pending: Some(row), writer: Some(by), stamp: 0 },
-            _ => Newest::of(row),
+        let writer = match maker {
+            Some(Maker::Open(by)) => Some(by).filter(|&by| by != tx),
+            Some(Maker::Committed(_)) | None => None,
+        };
+        Ok(match writer {
+            Some(by) => Newest { row: None, pending: Some(row), writer: Some(by), stamp: 0 },
+            None => Newest::of(row),
         })
     }
 

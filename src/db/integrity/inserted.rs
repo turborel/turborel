@@ -88,8 +88,13 @@ impl State {
                     }
                     checked.unique = true;
                 }
-                ConstraintKind::ForeignKey(fk) if by_column && self.looked_up(table, fk) => checked.foreign.push(c),
-                ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => return None,
+                ConstraintKind::ForeignKey(fk) => {
+                    if !by_column || !self.looked_up(table, fk) {
+                        return None;
+                    }
+                    checked.foreign.push(c);
+                }
+                ConstraintKind::Unique { .. } | ConstraintKind::Connection(_) => return None,
             }
         }
         Some(checked)
@@ -184,11 +189,10 @@ impl RowsChecked<'_> {
                 if !decoded_into(self.desc, (&fk.columns, &key), &mut row) {
                     return Ok(false);
                 }
-                match st.check_row_values(tx, (self.desc, c), &row, &mut self.bound) {
-                    Ok(()) => seen.insert(key),
-                    Err(e) if e.code == Code::Constraint => return Ok(false),
-                    Err(e) => return Err(e),
-                };
+                if !found(st.check_row_values(tx, (self.desc, c), &row, &mut self.bound))? {
+                    return Ok(false);
+                }
+                seen.insert(key);
             }
         }
         Ok(true)
@@ -200,6 +204,17 @@ impl RowsChecked<'_> {
     pub(in crate::db) fn needs_note(&self, alone: bool) -> bool {
         self.unique && !alone
     }
+}
+
+/// Whether the lookup `checked` reports found its parent row, false if it
+/// broke its constraint.
+///
+/// # Errors
+///
+/// The lookup's error, but a constraint broken.
+fn found(checked: Result<()>) -> Result<bool> {
+    let Err(e) = checked else { return Ok(true) };
+    if e.code == Code::Constraint { Ok(false) } else { Err(e) }
 }
 
 /// Whether the `fields` of `columns` of `desc`, each a record or none
