@@ -101,7 +101,7 @@ pub const LOAD_LIMITS: [Mutation; 24] = [
         package: Package::Core,
         breaks: "a load into groups takes the table's lock alone, so a second load waits for the first to end",
         file: "src/db/write/bulk/load.rs",
-        original: "    if !together.indexes.iter().any(Indexed::loads) {",
+        original: "    if referencing || !together.indexes.iter().any(Indexed::loads) {",
         replacement: "    if false {",
         integration: &["bulk_groups::loads_at_once_each_write_their_own_groups"],
         unit: &[],

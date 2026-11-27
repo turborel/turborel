@@ -354,6 +354,10 @@ impl Loading for RowTable {
         self.redo_extent(first, extent)
     }
 
+    fn extent_rows(&self, extent: &[u8]) -> Result<Vec<(RowId, Row)>> {
+        self.rows_of_extent(extent)
+    }
+
     fn end_load(&self, tx: TxId) {
         self.end_direct(tx);
     }

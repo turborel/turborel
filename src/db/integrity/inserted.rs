@@ -13,12 +13,13 @@
 //! changes a trigger or a delta table reads, one with a constraint
 //! deferred, a foreign key, an edge's endpoints or a UNIQUE of a period,
 //! one of a family of typed tables, and one an assertion or a CHECK with a
-//! subquery may read.
+//! subquery may read. Rows given by column are checked before they go in,
+//! a foreign key's distinct keys each looked up once (RULES.md D1235).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::Effects;
-use crate::catalog::{ConstraintDesc, ConstraintKind, QualifiedName, TableDesc};
+use crate::catalog::{ConstraintDesc, ConstraintKind, ForeignKey, QualifiedName, TableDesc};
 use crate::db::State;
 use crate::error::{Code, Result, Subject};
 use crate::exec::{Heard, eval_cond};
@@ -37,6 +38,8 @@ pub(in crate::db) struct RowsChecked<'s> {
     /// Whether it has UNIQUE constraints, each with a unique index of
     /// exactly its columns.
     unique: bool,
+    /// Its foreign keys, of rows by column alone (RULES.md D1235).
+    foreign: Vec<&'s ConstraintDesc>,
     /// Each CHECK's condition, bound once.
     bound: HashMap<QualifiedName, Cond>,
 }
@@ -45,13 +48,26 @@ impl State {
     /// The checks of `table`'s rows inserted by a statement that did
     /// `effects`, made as each goes in; none if each is to be noted.
     pub(in crate::db) fn rows_checked<'s>(&'s self, table: &QualifiedName, effects: &Effects<'_>) -> Option<RowsChecked<'s>> {
+        self.rows_checked_as(table, effects, false)
+    }
+
+    /// \[DESIGN\] RULES.md D1235: as `rows_checked`, of rows given by
+    /// column, checked before they go in (`RowsChecked::hold_by_column`):
+    /// a foreign key too, to another table, its referenced columns those
+    /// of an index, with no period.
+    pub(in crate::db) fn rows_checked_by_column<'s>(&'s self, table: &QualifiedName, effects: &Effects<'_>) -> Option<RowsChecked<'s>> {
+        self.rows_checked_as(table, effects, true)
+    }
+
+    /// `rows_checked`, of rows by column if `by_column`.
+    fn rows_checked_as<'s>(&'s self, table: &QualifiedName, effects: &Effects<'_>, by_column: bool) -> Option<RowsChecked<'s>> {
         let noted = effects.triggered.is_some() || effects.delta.is_some() || effects.restricted.is_some();
         let read = self.catalog.constrained().reading_checks || self.catalog.assertions().iter().any(|a| reads(a, table));
         if noted || read || self.family(table).iter().any(|t| t != table) {
             return None;
         }
         let desc = self.catalog.table(table)?;
-        let mut checked = RowsChecked { desc, rows: Vec::new(), unique: false, bound: HashMap::new() };
+        let mut checked = RowsChecked { desc, rows: Vec::new(), unique: false, foreign: Vec::new(), bound: HashMap::new() };
         let deferral = effects.deferral.borrow();
         for c in self.constraints_of(table) {
             if deferral.deferred(c) {
@@ -72,10 +88,22 @@ impl State {
                     }
                     checked.unique = true;
                 }
+                ConstraintKind::ForeignKey(fk) if by_column && self.looked_up(table, fk) => checked.foreign.push(c),
                 ConstraintKind::Unique { .. } | ConstraintKind::ForeignKey(_) | ConstraintKind::Connection(_) => return None,
             }
         }
         Some(checked)
+    }
+
+    /// Whether foreign key `fk` of `table` references another table, of
+    /// no subtable, through an index of exactly its referenced columns,
+    /// with no period: so its keys are each looked up in it.
+    fn looked_up(&self, table: &QualifiedName, fk: &ForeignKey) -> bool {
+        let other = fk.table != *table && self.family(&fk.table).iter().all(|t| t == &fk.table);
+        let exact = |ix: &&crate::catalog::IndexDesc| {
+            ix.columns.len() == fk.referenced.len() && fk.referenced.iter().all(|c| ix.columns.contains(c))
+        };
+        other && fk.period.is_none() && self.catalog.indexes(&fk.table).iter().any(exact)
     }
 }
 
@@ -109,17 +137,16 @@ impl RowsChecked<'_> {
     /// table's columns each by its records, satisfies its NOT NULL
     /// constraints and CHECKs, each by the columns it reads alone: a NOT
     /// NULL by its column's nulls, a CHECK of each row by the values of the
-    /// columns it reads, the others null. False if one is broken, or the
-    /// table has a UNIQUE constraint, so the rows go in as rows, which
-    /// tells how.
+    /// columns it reads, the others null; and its foreign keys, each
+    /// distinct key of the rows looked up once (`foreign_hold`). False if
+    /// one is broken, so the rows go in as rows, which tells how. A
+    /// UNIQUE constraint is checked as the rows' entries go in, as of rows
+    /// inserted together (RULES.md D1235).
     ///
     /// # Errors
     ///
     /// As a CHECK's condition, bound or evaluated.
     pub(in crate::db) fn hold_by_column(&mut self, (st, tx): (&State, &Txn), columns: &[Records]) -> Result<bool> {
-        if self.unique {
-            return Ok(false);
-        }
         for &c in &self.rows {
             let holds = match &c.kind {
                 ConstraintKind::NotNull(at) => columns.get(*at).is_some_and(|r| r.nulls.iter().all(|b| *b == 0)),
@@ -133,6 +160,37 @@ impl RowsChecked<'_> {
                 return Ok(false);
             }
         }
+        self.foreign_hold((st, tx), columns)
+    }
+
+    /// Whether every row of `columns` matches a row its foreign keys
+    /// reference, as `State::check` finds it, each distinct key of the
+    /// rows looked up once, in a row of its columns alone, the others
+    /// null; false if one matches none.
+    ///
+    /// # Errors
+    ///
+    /// As the lookup, but a constraint broken.
+    fn foreign_hold(&mut self, (st, tx): (&State, &Txn), columns: &[Records]) -> Result<bool> {
+        for &c in &self.foreign {
+            let ConstraintKind::ForeignKey(fk) = &c.kind else { continue };
+            let mut seen: HashSet<Vec<Option<&[u8]>>> = HashSet::new();
+            let mut row: Row = vec![Value::Null; self.desc.columns.len()];
+            for n in 0..columns.first().map_or(0, Records::len) {
+                let key: Vec<Option<&[u8]>> = fk.columns.iter().map(|&at| columns.get(at).and_then(|r| r.record(n))).collect();
+                if seen.contains(&key) {
+                    continue;
+                }
+                if !decoded_into(self.desc, (&fk.columns, &key), &mut row) {
+                    return Ok(false);
+                }
+                match st.check_row_values(tx, (self.desc, c), &row, &mut self.bound) {
+                    Ok(()) => seen.insert(key),
+                    Err(e) if e.code == Code::Constraint => return Ok(false),
+                    Err(e) => return Err(e),
+                };
+            }
+        }
         Ok(true)
     }
 
@@ -142,6 +200,21 @@ impl RowsChecked<'_> {
     pub(in crate::db) fn needs_note(&self, alone: bool) -> bool {
         self.unique && !alone
     }
+}
+
+/// Whether the `fields` of `columns` of `desc`, each a record or none
+/// for a null, decoded, are written into `row` at their columns: not if
+/// one does not decode.
+fn decoded_into(desc: &TableDesc, (columns, fields): (&[usize], &[Option<&[u8]>]), row: &mut Row) -> bool {
+    for (&at, field) in columns.iter().zip(fields) {
+        let (Some(column), Some(slot)) = (desc.columns.get(at), row.get_mut(at)) else { return false };
+        *slot = match field.map(|f| column.data_type.decode_record(f)) {
+            None => Value::Null,
+            Some(Some(v)) => v,
+            Some(None) => return false,
+        };
+    }
+    true
 }
 
 /// Whether `cond`, a CHECK of `desc`, is not false of any row of

@@ -132,6 +132,17 @@ impl RowTable {
     /// database in memory following one on disk, keeps its groups: read
     /// from the extent held in memory a while, and written again.
     fn redo_on_pages(&self, extent: &[u8], hash: Arc<dyn HashFunction>, header: PageId) -> Result<()> {
+        let (ids, rows) = self.held_rows(extent, hash, header)?;
+        let columns = (*read(&self.frozen.columns)?).unwrap_or_default();
+        let written = self.group_from(&self.group_pages()?, ids, Batch::Rows(&rows), &columns)?;
+        let pages = written.pages();
+        let entry = self.entry_of(written)?;
+        self.publish_entry((None, Some((entry, pages))), Vec::new())
+    }
+
+    /// The ids and rows of the group of `extent`, checksummed with `hash`,
+    /// its header at `header`: read from the extent held in memory a while.
+    fn held_rows(&self, extent: &[u8], hash: Arc<dyn HashFunction>, header: PageId) -> Result<(Vec<RowId>, Vec<crate::storage::Row>)> {
         let fs = MemoryFileSystem::new();
         let path = std::path::Path::new("/extent");
         let blocks = Arc::new(BlockFile::create(&fs, path, hash, Pipeline::none(), BlockOptions::default())?);
@@ -141,12 +152,16 @@ impl RowTable {
         let group = group::read(&held, header, types)?;
         let ids = group.row_ids(&held)?;
         let all: Vec<usize> = (0..types.len()).collect();
-        let rows = rows(&group, &held, types, &all, (0, group.rows))?;
-        let columns = (*read(&self.frozen.columns)?).unwrap_or_default();
-        let written = self.group_from(&self.group_pages()?, ids, Batch::Rows(&rows), &columns)?;
-        let pages = written.pages();
-        let entry = self.entry_of(written)?;
-        self.publish_entry((None, Some((entry, pages))), Vec::new())
+        Ok((ids, rows(&group, &held, types, &all, (0, group.rows))?))
+    }
+
+    /// \[DESIGN\] RULES.md D1235: the rows of the group of `extent`, a
+    /// load's log record's, each with its id (`Loading::extent_rows`).
+    pub(in crate::engine::rows) fn rows_of_extent(&self, extent: &[u8]) -> Result<Vec<(RowId, crate::storage::Row)>> {
+        let hashes = self.frozen.extents.placed().map_or_else(crate::hash::builtin, |(p, _)| p.hashes());
+        let (head, hash) = head_any(&hashes, extent)?;
+        let (ids, rows) = self.held_rows(extent, hash, PageId(head.header))?;
+        Ok(ids.into_iter().zip(rows).collect())
     }
 
     /// The summary of the group of the extent at `base` of `segment`,
