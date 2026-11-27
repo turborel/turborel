@@ -78,6 +78,16 @@ impl Made {
     }
 }
 
+/// \[DESIGN\] (RULES.md D1275) Whether the group of `made` at `place`,
+/// one given its slot and not yet appended, holds `key`. Kept out of the
+/// lookup's loop, which then compares keys in one place alone, those the
+/// table holds: a key seldom meets the slot of a group not yet appended,
+/// and never of a morsel's groups no two of which share a key.
+#[inline(never)]
+fn unappended_equal(made: &Made, place: Option<u32>, key: Key<'_>, scratch: &mut Vec<u8>) -> bool {
+    place.is_some_and(|j| made.keys.equal(crate::storage::mask::index(j), key, scratch))
+}
+
 impl GroupTable {
     /// Its groups, made, split among `parts` partitions by their hashes;
     /// or, of `lanes` some, by the hashes of their keys of those lanes
@@ -270,9 +280,9 @@ impl GroupTable {
             let Self { slots, keys, scratch, .. } = self;
             let probe = slots.find(hash, |g| {
                 let held = crate::storage::mask::index(g);
-                match held.checked_sub(base).and_then(|new| fresh.get(new)) {
-                    Some(&j) => made.keys.equal(crate::storage::mask::index(j), key, scratch),
+                match held.checked_sub(base) {
                     None => keys.equal(held, key, scratch),
+                    Some(new) => unappended_equal(made, fresh.get(new).copied(), key, scratch),
                 }
             });
             let mut length = probe.length;

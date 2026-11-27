@@ -175,7 +175,7 @@ fn the_groups_are_the_same_whichever_morsels_hand_their_rows_on_ungrouped() {
 /// the row `expected` holds there. None if they are the same rows.
 fn differing(made: &Waved, expected: &Waved) -> Option<(usize, usize, Option<String>)> {
     let first = made.rows.iter().zip(&expected.rows).find(|(row, same)| row != same).map(|(row, _)| row.clone());
-    (first.is_some() || made.rows.len() != expected.rows.len()).then(|| (made.rows.len(), expected.rows.len(), first))
+    (first.is_some() || made.rows.len() != expected.rows.len()).then_some((made.rows.len(), expected.rows.len(), first))
 }
 
 /// Verifies: [DESIGN] RULES.md D1247, D1226 a grouping whose morsels are
