@@ -2,8 +2,9 @@
 //! D1245): its input pruned to the columns it and those above read, a
 //! call's columns read though nothing above reads the call, its rows
 //! narrowed to those columns whether under a projection or a scan, its
-//! calls' columns numbered after them, and a window read in an order
-//! merged back in it.
+//! calls' columns numbered after them, a window read in an order merged
+//! back in it, and a run of morsels dropped letting go of what it holds
+//! at once.
 
 use super::super::{Mutation, Package};
 
@@ -18,6 +19,12 @@ const NARROWED: &str = "src/physical/blind/pruned/narrowed.rs";
 
 /// The file of a window's plan.
 const ORDERED: &str = "src/physical/ordered.rs";
+
+/// The file of a run of morsels.
+const RUN: &str = "src/exec/parallel/run.rs";
+
+/// The unit test of a run dropped by its reader.
+const DROPPED: &str = "exec::parallel::run::tests::a_run_dropped_lets_go_of_its_work_and_its_results_at_once";
 
 /// The unit test of a window's scan pruned and narrowed.
 const SCAN: &str = "physical::blind::pruned::tests::a_windows_scan_reads_only_what_it_and_those_above_read";
@@ -36,7 +43,7 @@ const SPILLED: &str = "spilled_windows::partitions_past_the_grant_give_their_res
 
 /// Mechanisms whose removal must fail the requirements of a window pruned
 /// and narrowed.
-pub const NARROWED_WINDOWS: [Mutation; 5] = [
+pub const NARROWED_WINDOWS: [Mutation; 6] = [
     Mutation {
         name: "windows-read-whole",
         package: Package::Core,
@@ -86,5 +93,15 @@ pub const NARROWED_WINDOWS: [Mutation; 5] = [
         replacement: "Plan::Window { window, detail, est, ordered: false }",
         integration: &[RAISED, SPILLED],
         unit: &[],
+    },
+    Mutation {
+        name: "morsels-drop-leaves-work",
+        package: Package::Core,
+        breaks: "a run dropped by its reader lets go of its work and its results before the drop returns (D1245)",
+        file: RUN,
+        original: "let work = self.run.work.write().unwrap_or_else(PoisonError::into_inner).take();",
+        replacement: "let work: Option<Work<T>> = None;",
+        integration: &[],
+        unit: &[DROPPED],
     },
 ];

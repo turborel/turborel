@@ -5,9 +5,6 @@
 //! plan run alone, in its order where one is asked of them (RULES.md
 //! D1245).
 
-use std::thread;
-use std::time::{Duration, Instant};
-
 use turborel::db::{Database, Session};
 use turborel::error::Code;
 use turborel::params::Params;
@@ -103,8 +100,8 @@ fn partitions_past_the_grant_give_their_results_in_order() {
 /// STATEMENT.TIMEOUT_MS wherever that lands, while its rows are split,
 /// while its partitions are sorted and computed on their threads, or as
 /// their lists are read, is cancelled (SQLCODE -920) or gives its rows
-/// whole; and either way nothing of its lists is left held once its
-/// workers wake.
+/// whole; and either way nothing of its lists is left held as it
+/// returns.
 #[test]
 fn a_window_split_by_row_cancelled_anywhere_leaves_nothing_held() {
     let (db, a) = table();
@@ -126,14 +123,10 @@ fn a_window_split_by_row_cancelled_anywhere_leaves_nothing_held() {
                 cancelled += 1;
             }
         }
-        exec(&a, "SET STATEMENT.TIMEOUT_MS = 0").unwrap();
-        // A worker lets go of its lists as it next wakes, after the
-        // statement has ended.
-        let began = Instant::now();
-        while spill_bytes(&db) > 0 && began.elapsed() < Duration::from_secs(30) {
-            thread::sleep(Duration::from_millis(10));
-        }
+        // Its workers' lists let go before it returned, not as they next
+        // woke.
         assert_eq!(spill_bytes(&db), 0, "{timeout} ms: nothing left held");
+        exec(&a, "SET STATEMENT.TIMEOUT_MS = 0").unwrap();
     }
     assert!(cancelled > 0, "cancelled at least once");
 }

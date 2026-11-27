@@ -22074,6 +22074,19 @@ statement's stop and looks again at each chunk of a run its sort
 writes (D44). Cancelled wherever it lands, it leaves nothing of its
 lists held.
 
+A run of morsels whose reader dropped it (D290) took no more morsels
+and woke the idle workers, but its work and the results not read went
+only with the pool's last hold on the run, as a worker next looked at
+it. So a statement could return, cancelled or ended early, with its
+partitions' lists and their spill areas still held, seen by the next
+statement's grant and by MEMORY_RESERVATIONS. The drop now waits for
+the morsels running, which a cancelled statement's do at their next
+row, as each reads through the statement's stop. It then lets go of the
+work and of the unread results on the reader's thread before it
+returns (`exec/parallel/run.rs`). A statement that ends early with no
+cancel, as a FETCH FIRST met does, waits for at most a morsel's work on
+each thread, which no stop bounds, as the statement has not stopped.
+
 ## 2. Project layout
 
 ```

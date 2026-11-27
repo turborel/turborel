@@ -80,7 +80,7 @@ fn both(s: &Session, sql: &str) -> Both {
 }
 
 /// Queries of one table `{t}`, each a part the planner marks.
-const QUERIES: [&str; 19] = [
+const QUERIES: [&str; 20] = [
     "SELECT K, G, S, N FROM {t}",
     "SELECT K, N * 2, S FROM {t} WHERE G = 3 AND N > 10",
     "SELECT G, COUNT(*), COUNT(S), SUM(N), AVG(N), MIN(S), MAX(N) FROM {t} GROUP BY G",
@@ -97,6 +97,7 @@ const QUERIES: [&str; 19] = [
     "SELECT K, N FROM {t} ORDER BY N FETCH FIRST 3 ROWS WITH TIES",
     "SELECT {t}.K, D.NAME FROM {t} JOIN D ON {t}.G = D.G WHERE {t}.N < 300",
     "SELECT K, G, ROW_NUMBER() OVER (PARTITION BY G ORDER BY K), SUM(N) OVER (PARTITION BY G ORDER BY K) FROM {t}",
+    "SELECT K, G, ROW_NUMBER() OVER (PARTITION BY G ORDER BY K) FROM {t} ORDER BY G, K",
     "SELECT K, G FROM {t} WHERE G = 1 UNION ALL SELECT K, G FROM {t} WHERE G = 2",
     "SELECT G, S FROM {t} UNION SELECT G, S FROM {t} WHERE N > 100",
     "SELECT G, S FROM {t} EXCEPT SELECT G, S FROM {t} WHERE N > 100",
@@ -108,7 +109,8 @@ const QUERIES: [&str; 19] = [
 /// projections, groupings, DISTINCT, sorts, a hash join's probe, window
 /// functions of a partitioning, UNION [ALL], EXCEPT [ALL] and INTERSECT
 /// [ALL], each run in parallel, give the rows they give run alone, in the
-/// same order, of the row store and of the column store's groups.
+/// same order, of the row store and of the column store's groups; a
+/// window asked no order gives them in any (D1245).
 #[test]
 fn parallel_parts_give_the_rows_alone_gives() {
     let (_db, a) = tables();
@@ -118,6 +120,15 @@ fn parallel_parts_give_the_rows_alone_gives() {
             let (alone, together, marked) = both(&a, &sql);
             assert!(marked, "{sql} is not run in parallel");
             assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+            let (mut alone, mut together) = (alone, together);
+            if sql.contains(" OVER ") && !sql.contains("ORDER BY G, K") {
+                if let Ok(r) = alone.as_mut() {
+                    r.sort();
+                }
+                if let Ok(r) = together.as_mut() {
+                    r.sort();
+                }
+            }
             assert_eq!(alone, together, "{sql}");
         }
     }
