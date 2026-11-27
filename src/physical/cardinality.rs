@@ -11,7 +11,9 @@
 //! above a join, a grouping or a derived table is estimated by its base
 //! table's statistics; joins by classes of equalities
 //! (`cardinality/joins.rs`), the same answer for every order of one set
-//! (D302); groupings by Cardenas' formula (`cardinality/groups.rs`).
+//! (D302); groupings by Cardenas' formula (`cardinality/groups.rs`), an
+//! expression grouped by counted as its table's sample shows it
+//! (`cardinality/shown.rs`, D1279).
 //!
 //! One `Estimates` lives for one planning. It reads the cost model's
 //! weights once, and asks each table's statistics and row count once, as
@@ -41,6 +43,7 @@ mod nodes;
 mod past;
 pub(crate) mod seen;
 mod semi;
+mod shown;
 mod tables;
 mod width;
 
