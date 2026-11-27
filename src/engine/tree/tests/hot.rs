@@ -19,7 +19,7 @@ fn keys_in_order_go_to_the_rightmost_leaf_with_no_descent() {
     let counts = tree.counts();
     assert!(counts.splits > 40, "{counts:?}");
     assert!(counts.edge_writes >= 1998, "{counts:?}");
-    let rightmost = tree.descend(Target::Key(&key(u64::MAX)), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
+    let rightmost = leaf_of(&tree, u64::MAX);
     assert_eq!(tree.edge.load(Ordering::Relaxed), rightmost.0);
     assert!(tree.insert(&key(0), &VALUE).unwrap());
     assert_eq!(tree.counts().edge_writes, counts.edge_writes, "a key below it descends");
@@ -37,7 +37,7 @@ fn keys_in_order_go_to_the_rightmost_leaf_with_no_descent() {
 fn a_leaf_no_longer_the_rightmost_is_forgotten() {
     let (tree, _scratch) = tree("edge-stale");
     fill(&tree, 400);
-    let first = tree.descend(Target::Key(&key(1)), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
+    let first = leaf_of(&tree, 1);
     let root = tree.root.load(Ordering::Acquire);
     for (k, stale) in [(401_u64, first.0), (402, root), (403, 1_u64 << 40_u32)] {
         tree.edge.store(stale, Ordering::Relaxed);
@@ -60,15 +60,16 @@ fn a_leaf_writers_wait_for_is_split_early() {
     let (tree, _scratch) = tree("edge-contended");
     fill(&tree, 400);
     let k = 200_u64;
-    let leaf = tree.descend(Target::Key(&key(k)), 0, &mut Path::default(), |_| Ok(())).unwrap().0;
-    let in_leaf = |n: u64| tree.descend(Target::Key(&key(n)), 0, &mut Path::default(), |_| Ok(())).unwrap().0 == leaf;
+    let leaf = leaf_of(&tree, k);
+    let in_leaf = |n: u64| leaf_of(&tree, n) == leaf;
     assert!(in_leaf(k + 1) && in_leaf(k + 2), "the leaf holds a few keys after {k}");
     // Room for one entry: one removed, the leaf left mostly full.
     assert!(tree.delete(&key(k + 1)).unwrap().is_some());
     for round in 1..=edge::CONTENDED {
-        let held = tree.lock(leaf).unwrap();
+        let op = tree.epochs.guard();
+        let held = tree.lock(op.within(), leaf).unwrap();
         thread::scope(|s| {
-            s.spawn(|| drop(tree.lock(leaf).unwrap()));
+            s.spawn(|| drop(tree.lock(tree.epochs.guard().within(), leaf).unwrap()));
             while held.contended() < round {
                 thread::yield_now();
             }
@@ -79,7 +80,7 @@ fn a_leaf_writers_wait_for_is_split_early() {
     assert!(tree.insert(&key(k + 1), &VALUE).unwrap());
     let counts = tree.counts();
     assert_eq!((counts.splits, counts.contention_splits), (splits + 1, 1), "{counts:?}");
-    assert_eq!(tree.lock(leaf).unwrap().contended(), 0);
+    assert_eq!(tree.lock(tree.epochs.guard().within(), leaf).unwrap().contended(), 0);
     let want: Vec<Vec<u8>> = (1..=400_u64).map(|n| key(n).to_vec()).collect();
     assert_eq!(keys(&tree, Direction::Forward), want);
 }

@@ -32,7 +32,7 @@ impl BLinkTree {
     ///
     /// The buffer pool's errors; SQLCODE -916 if the meta page is malformed.
     pub(super) fn note_retired(&self, pages: &[PageId]) -> Result<()> {
-        let _meta = self.lock(self.meta)?;
+        let _meta = self.lock_meta()?;
         let mut content = self.pool.write(self.file, self.meta)?;
         let mut noted = noted(&content)?;
         let room = self.capacity.saturating_sub(META_LEN.saturating_add(COUNT)).checked_div(PAGE).unwrap_or_default();
@@ -46,7 +46,7 @@ impl BLinkTree {
     ///
     /// As `note_retired`.
     pub(super) fn unnote_retired(&self, pages: &[PageId]) -> Result<()> {
-        let _meta = self.lock(self.meta)?;
+        let _meta = self.lock_meta()?;
         let mut content = self.pool.write(self.file, self.meta)?;
         let mut noted = noted(&content)?;
         noted.retain(|page| !pages.contains(page));

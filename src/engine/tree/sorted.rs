@@ -8,7 +8,7 @@
 
 use super::node::Node;
 use super::write::alone_at;
-use super::{BLinkTree, Path, Slot};
+use super::{BLinkTree, Path, Slot, Within};
 use crate::error::Result;
 
 /// What `BLinkTree::update_sorted` asks of each key's change: of the key
@@ -26,11 +26,11 @@ impl BLinkTree {
     ///
     /// As `update_alone_into`.
     pub fn update_sorted(&self, keys: &[(&[u8], usize)], change: &mut SortedChange<'_>) -> Result<Vec<bool>> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let mut alone = Vec::with_capacity(keys.len());
         let mut value = Vec::new();
         while alone.len() < keys.len() {
-            self.leaf_run(keys, &mut alone, &mut value, change)?;
+            self.leaf_run((op.within(), keys), &mut alone, &mut value, change)?;
         }
         Ok(alone)
     }
@@ -38,13 +38,19 @@ impl BLinkTree {
     /// Writes the keys of `keys` from the first not in `alone` on, while
     /// the leaf of the first covers them and takes them with no split; a
     /// split ends the run with that key written.
-    fn leaf_run(&self, keys: &[(&[u8], usize)], alone: &mut Vec<bool>, value: &mut Vec<u8>, change: &mut SortedChange<'_>) -> Result<()> {
+    fn leaf_run(
+        &self,
+        (within, keys): (Within<'_>, &[(&[u8], usize)]),
+        alone: &mut Vec<bool>,
+        value: &mut Vec<u8>,
+        change: &mut SortedChange<'_>,
+    ) -> Result<()> {
         let from = alone.len();
         let Some(&(first, _)) = keys.get(from) else { return Ok(()) };
         let mut path = Path::default();
-        let leaf = self.leaf_for_write(first, &mut path)?;
-        let mut held = self.lock(leaf)?;
-        let mut page = self.latched_covering(&mut held, first)?;
+        let leaf = self.leaf_for_write(within, first, &mut path)?;
+        let mut held = self.lock(within, leaf)?;
+        let mut page = self.latched_covering(within, &mut held, first)?;
         for (n, &(key, prefix)) in keys.iter().enumerate().skip(from) {
             let (found, lone) = {
                 let node = Node::parse(&page)?;
@@ -69,7 +75,7 @@ impl BLinkTree {
             if let Some(copy) = self.change_latched(&held, &mut page, (key, value), slot)? {
                 drop(page);
                 let splits = self.split(held.id, &copy, (key, value), slot)?;
-                return self.posted(&path, held, key, splits).map(drop);
+                return self.posted((within, &path), held, key, splits).map(drop);
             }
         }
         Ok(())

@@ -21,7 +21,8 @@
 use std::sync::atomic::Ordering;
 
 use super::node::Node;
-use super::{BLinkTree, NodeLock, Slot, count, near};
+use super::{BLinkTree, NodeLock, Slot, Within, count, near};
+use crate::disk::buffer::PageRef;
 use crate::disk::pager::PageId;
 use crate::error::Result;
 
@@ -29,15 +30,29 @@ use crate::error::Result;
 pub(super) const CONTENDED: u32 = 32;
 
 impl BLinkTree {
-    /// Owns node `id` for writing.
-    pub(super) fn lock(&self, id: PageId) -> Result<NodeLock<'_>> {
+    /// Owns node `id` for writing. The caller is in the tree's epoch, as
+    /// `id` is a number a node gave, or one remembered (RULES.md D1270).
+    pub(super) fn lock(&self, _within: Within<'_>, id: PageId) -> Result<NodeLock<'_>> {
         self.pool.own(self.file, id)
+    }
+
+    /// Owns the meta page for writing: never freed while the tree lives,
+    /// so owned in no epoch, as when the tree is dropped (`retired.rs`).
+    pub(super) fn lock_meta(&self) -> Result<NodeLock<'_>> {
+        self.pool.own(self.file, self.meta)
+    }
+
+    /// Node `id`, held for reading, for a caller in the tree's epoch that
+    /// follows a number a node gave (RULES.md D1270).
+    #[inline]
+    pub(super) fn page(&self, _within: Within<'_>, id: PageId) -> Result<PageRef<'_>> {
+        self.pool.read(self.file, id.0)
     }
 
     /// The rightmost leaf to write `key` into with no descent, if the tree
     /// remembers one it may trust for it; one no longer the rightmost leaf
     /// is forgotten.
-    pub(super) fn edge_for(&self, key: &[u8]) -> Result<Option<PageId>> {
+    pub(super) fn edge_for(&self, _within: Within<'_>, key: &[u8]) -> Result<Option<PageId>> {
         let id = self.edge.load(Ordering::Relaxed);
         if id == 0 {
             return Ok(None);

@@ -18,7 +18,7 @@
 
 use super::node::{self, Node};
 use super::write::Mode;
-use super::{BLinkTree, NodeLock, Slot, Split, room};
+use super::{BLinkTree, NodeLock, Slot, Split, Within, room};
 use crate::disk::buffer::PageMut;
 use crate::error::Result;
 
@@ -114,7 +114,7 @@ impl BLinkTree {
     /// The node covering `key`, latched for writing: `held`, or the node
     /// reached by moving right from it while it does not cover `key`,
     /// which `held` then is (§5, move.right).
-    pub(super) fn latched_covering<'a>(&'a self, held: &mut NodeLock<'a>, key: &[u8]) -> Result<PageMut<'a>> {
+    pub(super) fn latched_covering<'a>(&'a self, within: Within<'_>, held: &mut NodeLock<'a>, key: &[u8]) -> Result<PageMut<'a>> {
         loop {
             let page = self.pool.write_owned(held)?;
             let node = Node::parse(&page)?;
@@ -122,7 +122,7 @@ impl BLinkTree {
                 return Ok(page);
             }
             drop(page);
-            self.move_right(held, key, |_| Ok(()))?;
+            self.move_right(within, held, key, |_| Ok(()))?;
         }
     }
 

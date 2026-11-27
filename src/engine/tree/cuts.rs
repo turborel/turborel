@@ -29,13 +29,13 @@ impl BLinkTree {
     ///
     /// As reading a node fails.
     pub fn cuts(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>, most: usize) -> Result<Vec<Vec<u8>>> {
-        let _guard = self.epochs.guard();
+        let op = self.epochs.guard();
         let mut nodes = vec![PageId(self.root.load(Ordering::Acquire))];
         let mut level = None;
         loop {
             let (mut keys, mut children) = (Vec::new(), Vec::new());
             for id in &nodes {
-                let page = self.pool.read_tallied(self.file, id.0, None)?;
+                let page = self.page(op.within(), *id)?;
                 let node = Node::parse(&page)?;
                 // A node of another level than its first's was moved past.
                 if node.deleted || node.level == 0 || level.is_some_and(|l| l != node.level) {
