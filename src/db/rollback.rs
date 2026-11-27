@@ -60,3 +60,8 @@ impl Session {
         ended
     }
 }
+
+// Unit tests: a transaction rolled back beside checkpoints, through a
+// crash (RULES.md R-TEST-1, R-TEST-7).
+#[cfg(test)]
+mod tests;
