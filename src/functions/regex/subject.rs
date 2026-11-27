@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use super::{CHARACTERS, OCTETS};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::functions::strings::text;
-use crate::regex::{LobText, Text};
+use crate::regex::{Ascii, LobText, Text, Utf8};
 use crate::value::Value;
 use crate::value::lob::{CHUNK_OCTETS, Lob};
 
@@ -23,6 +23,12 @@ const SHORT_OCTETS: usize = CHUNK_OCTETS;
 pub(super) enum Body<'v> {
     /// A character string's, in memory.
     Chars(Vec<char>),
+    /// A character string's of ASCII alone, read where it lies (RULES.md
+    /// D1188): its octets are its characters.
+    Ascii(Ascii<'v>),
+    /// Any other character string's, read where it lies too (RULES.md
+    /// D1189). Its positions are the octets its characters begin at.
+    Utf8(Utf8<'v>),
     /// A character large object's, read a chunk at a time.
     Lob(LobText<'v>),
 }
@@ -37,6 +43,14 @@ macro_rules! on_text {
                 let $t = chars.as_slice();
                 $e
             }
+            $crate::functions::regex::subject::Body::Ascii(ascii) => {
+                let $t = ascii;
+                $e
+            }
+            $crate::functions::regex::subject::Body::Utf8(utf8) => {
+                let $t = utf8;
+                $e
+            }
             $crate::functions::regex::subject::Body::Lob(lob) => {
                 let $t = lob;
                 $e
@@ -49,7 +63,6 @@ pub(super) use on_text;
 /// A subject string, and the units its positions and lengths count.
 pub(super) struct Subject<'v> {
     pub(super) body: Body<'v>,
-    value: &'v Value,
     octets: bool,
 }
 
@@ -61,16 +74,12 @@ impl<'v> Subject<'v> {
     ///
     /// SQLCODE -910 of a large object that cannot be read as characters.
     pub(super) fn new(value: &'v Value, units: &Value) -> Result<Option<Subject<'v>>> {
-        let octets = match text(units)? {
-            Some(OCTETS) => true,
-            Some(CHARACTERS) => false,
-            Some(_) | None => return fail(Code::Api, "[DESIGN] a regular expression function was given units that are none"),
-        };
+        let octets = octets(units)?;
         let body = match value {
             Value::Null => return Ok(None),
             Value::Lob(lob) => Body::Lob(LobText::new(lob)?),
-            Value::Char(_)
-            | Value::Exact(_)
+            Value::Char(s) => body_of(s),
+            Value::Exact(_)
             | Value::Approx(_)
             | Value::DecFloat(_)
             | Value::Binary(_)
@@ -86,27 +95,37 @@ impl<'v> Subject<'v> {
             | Value::Extension(_)
             | Value::Xml(_) => Body::Chars(text(value)?.unwrap_or_default().chars().collect()),
         };
-        Ok(Some(Subject { body, value, octets }))
+        Ok(Some(Subject { body, octets }))
     }
 
-    /// The subject as it was given.
-    pub(super) fn value(&self) -> &'v Value {
-        self.value
+    /// \[DESIGN\] (RULES.md D1188) `text`, a character string of a vector
+    /// of them, counted in `units`: as `new` of its value, no value made.
+    ///
+    /// # Errors
+    ///
+    /// As `new`.
+    pub(super) fn of_text(text: &'v str, units: &Value) -> Result<Subject<'v>> {
+        Ok(Subject { body: body_of(text), octets: octets(units)? })
     }
 
-    /// Its characters.
+    /// The position past its last character.
     pub(super) fn len(&self) -> usize {
         on_text!(self, t => t.len())
     }
 
-    /// The units before character `at`.
+    /// The units before position `at`.
     fn units_before(&self, at: usize) -> Result<u64> {
         let counted = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+        if let Body::Utf8(utf8) = &self.body {
+            // Its positions count octets.
+            return Ok(counted(if self.octets { at } else { utf8.span(0, at).chars().count() }));
+        }
         if !self.octets {
             return Ok(counted(at));
         }
         match &self.body {
             Body::Chars(chars) => Ok(counted(chars.iter().take(at).map(|c| c.len_utf8()).sum())),
+            Body::Ascii(_) | Body::Utf8(_) => Ok(counted(at)),
             Body::Lob(lob) => lob.octet_of_char(at),
         }
     }
@@ -120,16 +139,25 @@ impl<'v> Subject<'v> {
         Ok(i128::from(self.units_before(at)?).saturating_add(1))
     }
 
-    /// The character `sp`, a start position, names: none if it is less
-    /// than 1 or past the string's length [§6.31 GR18b ii]. An octet
-    /// within a character names the next character (UV074).
+    /// The position of the character `sp`, a start position, names:
+    /// none if it is less than 1 or past the string's length [§6.31
+    /// GR18b ii]. An octet within a character names the next character
+    /// (UV074).
     ///
     /// # Errors
     ///
     /// As reading the chunk it is in fails.
     pub(super) fn start(&self, sp: i128) -> Result<Option<usize>> {
+        // The first position is the first character's, of any string
+        // that has one, whatever the units, so nothing is counted.
+        if sp == 1 {
+            return Ok((self.len() > 0).then_some(0));
+        }
         let length = self.units_before(self.len())?;
         let Some(offset) = sp.checked_sub(1).and_then(|o| u64::try_from(o).ok()).filter(|o| *o < length) else { return Ok(None) };
+        if let Body::Utf8(utf8) = &self.body {
+            return Ok(usize::try_from(offset).ok().map(|units| placed(utf8.text(), units, self.octets)));
+        }
         if !self.octets {
             return Ok(usize::try_from(offset).ok());
         }
@@ -144,12 +172,14 @@ impl<'v> Subject<'v> {
                 });
                 Ok(Some(found.unwrap_or(chars.len())))
             }
+            Body::Ascii(_) | Body::Utf8(_) => Ok(usize::try_from(offset).ok()),
             Body::Lob(lob) => lob.char_of_octet(offset).map(Some),
         }
     }
 
-    /// Its characters `start` to `end`: a string, or a slice of the large
-    /// object, which copies none of its octets.
+    /// What lies from position `start` to position `end`, as a string,
+    /// or as a slice of the large object, which copies none of its
+    /// octets.
     ///
     /// # Errors
     ///
@@ -157,9 +187,39 @@ impl<'v> Subject<'v> {
     pub(super) fn substring(&self, start: usize, end: usize) -> Result<Value> {
         match &self.body {
             Body::Chars(chars) => Ok(Value::Char(chars.get(start..end).unwrap_or_default().iter().collect())),
+            Body::Ascii(ascii) => Ok(Value::Char(ascii.span(start, end).into())),
+            Body::Utf8(utf8) => Ok(Value::Char(utf8.span(start, end).into())),
             Body::Lob(lob) => slice(lob.lob(), start, end).map(Value::Lob),
         }
     }
+}
+
+/// \[DESIGN\] (RULES.md D1189) The position in `text`, read where it
+/// lies, of the character that `units` units lie before, all within the
+/// text. The units are octets if `octets`, an octet within a character
+/// naming the next character (UV074), and characters if not.
+fn placed(text: &str, units: usize, octets: bool) -> usize {
+    if octets {
+        return (units..text.len()).find(|&at| text.is_char_boundary(at)).unwrap_or(text.len());
+    }
+    text.char_indices().nth(units).map_or(text.len(), |(at, _)| at)
+}
+
+/// Whether `units`, a `<char length units>`, are octets.
+fn octets(units: &Value) -> Result<bool> {
+    match text(units)? {
+        Some(OCTETS) => Ok(true),
+        Some(CHARACTERS) => Ok(false),
+        Some(_) | None => fail(Code::Api, "[DESIGN] a regular expression function was given units that are none"),
+    }
+}
+
+/// The characters of the character string `s`, read where they lie.
+/// They are read by their octets as they are if all are ASCII's
+/// (RULES.md D1188), and each is decoded as it is read if not (RULES.md
+/// D1189).
+fn body_of(s: &str) -> Body<'_> {
+    Ascii::of(s).map_or_else(|| Body::Utf8(Utf8::of(s)), Body::Ascii)
 }
 
 /// Characters `start` to `end` of `lob`.

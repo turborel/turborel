@@ -4,12 +4,16 @@
 //! the work area losing one held; the count asked for leaving OFFSET out;
 //! a scan told of WITH TIES; a projection that can raise passed through;
 //! an input that can raise not read to its end, or not asked to be; a column store's ordered
-//! read keeping one row fewer.
+//! read keeping one row fewer; and the bound of a sort's first key judged
+//! of each row by the scan, a sort of its first rows run as a part, its
+//! morsels' late columns and the bound they share (D1241).
 
 use super::{Mutation, Package};
 
 /// The file of a sort of the first rows.
 const TOP: &str = "src/exec/sort/top.rs";
+/// The test of a scan judging a bound of each row, and of a top-N run as a part.
+const TOP_PART: &str = "topped_sorts::a_scan_judges_a_top_bound_of_each_row_and_a_top_is_a_part";
 /// The file of the rows asked for, told the input.
 const BOUNDED: &str = "src/exec/limit/bounded.rs";
 /// The file of OFFSET and FETCH FIRST run.
@@ -30,7 +34,7 @@ const SCANNED: &str = "fetch_bounded::an_ordered_scan_of_the_column_store_reads_
 const RAISING: &str = "fetch_bounded::rows_that_can_raise_are_read_to_their_end_7_17";
 
 /// See the module doc.
-pub const BOUNDED_FETCH: [Mutation; 10] = [
+pub const BOUNDED_FETCH: [Mutation; 17] = [
     Mutation {
         name: "top-earlier-equal-given-up",
         package: Package::Core,
@@ -130,5 +134,75 @@ pub const BOUNDED_FETCH: [Mutation; 10] = [
         replacement: "            keep.truncate(most.saturating_sub(1));",
         integration: &[SCANNED],
         unit: &[],
+    },
+    Mutation {
+        name: "top-bound-not-judged-a-row",
+        package: Package::Core,
+        breaks: "a scan passes a sort's bound over groups and parts alone, judging no row of it (RULES.md D1241)",
+        file: "src/engine/columns/judged.rs",
+        original: "        Conjunct::Dynamic { .. } => true,",
+        replacement: "        Conjunct::Dynamic { .. } => false,",
+        integration: &[TOP_PART],
+        unit: &["engine::columns::judged::tests::a_sorts_bound_is_judged_of_each_row"],
+    },
+    Mutation {
+        name: "top-bound-keeps-rows-past-it",
+        package: Package::Core,
+        breaks: "a scan judging a sort's bound keeps the rows past it and leaves out those before it (RULES.md D1241)",
+        file: "src/storage/condition/threshold.rs",
+        original: "let op = if self.descending { CompOp::Ge } else { CompOp::Le };",
+        replacement: "let op = if self.descending { CompOp::Le } else { CompOp::Ge };",
+        integration: &[],
+        unit: &["storage::condition::threshold::tests::a_threshold_is_a_test_of_a_row_once_set"],
+    },
+    Mutation {
+        name: "top-of-column-store-serial",
+        package: Package::Core,
+        breaks: "a sort asked for its first rows over a column store table is no part (RULES.md D1241)",
+        file: "src/physical/parallel.rs",
+        original: "        let topped = self.first && matches!(plan, Plan::Sort { .. });",
+        replacement: "        let topped = false;",
+        integration: &[TOP_PART],
+        unit: &[],
+    },
+    Mutation {
+        name: "top-part-of-any-fetch",
+        package: Package::Core,
+        breaks: "a sort under FETCH FIRST WITH TIES or of a percentage, told no count of rows, is marked a part (RULES.md D1241)",
+        file: "src/physical/parallel.rs",
+        original: "limit.fetch.as_ref().is_some_and(|f| !f.percent && f.ties.is_none())",
+        replacement: "limit.fetch.is_some()",
+        integration: &[TOP_PART],
+        unit: &[],
+    },
+    Mutation {
+        name: "morsel-top-decodes-every-row",
+        package: Package::Core,
+        breaks: "a morsel read by a sort of its first rows decodes its late columns of every row its steps kept (RULES.md D1241)",
+        file: "src/exec/parallel/batched.rs",
+        original: "        by.unresolved = late;",
+        replacement: "        by.unresolved = false;",
+        integration: &[],
+        unit: &["exec::parallel::batched::tests::a_sort_of_first_rows_leaves_its_other_columns_late_and_tells_its_bound"],
+    },
+    Mutation {
+        name: "shared-bound-keeps-the-last",
+        package: Package::Core,
+        breaks: "a bound shared by a sort's morsels counts the last first keys offered, not the first (RULES.md D1241)",
+        file: "src/storage/condition/threshold.rs",
+        original: "is_some_and(|last| offered < *last)",
+        replacement: "is_some_and(|last| offered > *last)",
+        integration: &[],
+        unit: &["storage::condition::threshold::tests::a_shared_threshold_is_the_last_of_the_first_offered"],
+    },
+    Mutation {
+        name: "bounded-run-decodes-late-columns",
+        package: Package::Core,
+        breaks: "a run given whole under a sort's bound decodes its late columns of every row (RULES.md D1241)",
+        file: "src/engine/rows/frozen/batches/run.rs",
+        original: "(judged.decoded, self.judgment.bounded())",
+        replacement: "(judged.decoded, false)",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::morsels::a_run_given_whole_under_a_bound_keeps_its_late_column_late"],
     },
 ];

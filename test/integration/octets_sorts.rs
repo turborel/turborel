@@ -223,3 +223,154 @@ fn a_scroll_cursor_orders_by_octets_13_3() {
         assert_eq!(fetch(&format!("ABSOLUTE {at}")), Some(wanted[at - 1].clone()), "row {at}");
     }
 }
+
+/// The rows of table B, several groups of the column store.
+const MANY: usize = 12_000;
+
+/// W of row `k` of table B, null every 11th. Each is a string of its
+/// own, the rows' strings in an order of their own, and each four are
+/// alike but for one of `ENDS` after them, which octets and padding
+/// order differently.
+fn w_of(k: usize) -> Option<String> {
+    let c = (k * 7919) % MANY;
+    (!k.is_multiple_of(11)).then(|| format!("w{:04}{}", c.div_euclid(4), ENDS[c % 4]))
+}
+
+/// D of row `k` of table B: one of `STRINGS` every fourth row, so few
+/// rows of a group are at or before any of them, and one string past
+/// them all of the rest.
+fn d_of(k: usize) -> String {
+    if k.is_multiple_of(4) { STRINGS[k.div_euclid(4) % 7] } else { "zz" }.to_owned()
+}
+
+/// Verifies: [DESIGN] RULES.md D1187, D1241 [ISO/IEC 9075-2:2023 §7.17
+/// GR5]: a FETCH FIRST by a column under a collation of NO PAD by
+/// octets, of a column store table of several groups, tells its scan the
+/// bound of its first key, a character string, and the scan judges each
+/// row by it. So the scan gives fewer rows than the table holds, of a
+/// column of a string a row and of one of a few strings, with a filter
+/// and with none, and the rows given are the first by octets, ascending,
+/// descending and past an offset of hundreds of rows, no null among them,
+/// on one thread and with the bound shared by the morsels of a sort run
+/// in parallel.
+#[test]
+fn a_top_n_by_octets_tells_its_scan_a_bound_of_strings_7_17() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE COLLATION BYTES FOR SQL_TEXT FROM UCS_BASIC NO PAD
+           CREATE TABLE B (K INTEGER PRIMARY KEY, W VARCHAR(40) COLLATE A.BYTES, D VARCHAR(20) COLLATE A.BYTES)
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    let text = |s: Option<String>| s.map_or("NULL".to_owned(), |s| format!("'{s}'"));
+    for first in (0..MANY).step_by(1000) {
+        let values: Vec<String> = (first..first + 1000).map(|k| format!("({k}, {}, {})", text(w_of(k)), text(Some(d_of(k))))).collect();
+        a.run(&format!("INSERT INTO B VALUES {}", values.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    let ordered = |of: &dyn Fn(usize) -> Option<String>, descending: bool| -> Vec<String> {
+        let mut ks: Vec<usize> = (0..MANY).collect();
+        ks.sort_by(|&x, &y| by_octets(of(x).as_ref(), of(y).as_ref(), (descending, false)).then(x.cmp(&y)));
+        ks.iter().map(ToString::to_string).collect()
+    };
+    let (up, down, few) = (ordered(&w_of, false), ordered(&w_of, true), ordered(&|k| Some(d_of(k)), false));
+    let cases: [(&str, &[String], usize); 6] = [
+        ("SELECT K FROM B ORDER BY W FETCH FIRST 10 ROWS ONLY", &up[..10], 2),
+        ("SELECT K FROM B WHERE W <> '' ORDER BY W OFFSET 5 ROWS FETCH FIRST 20 ROWS ONLY", &up[5..25], 2),
+        ("SELECT K FROM B ORDER BY W DESC NULLS LAST FETCH FIRST 10 ROWS ONLY", &down[..10], 2),
+        ("SELECT K FROM B WHERE K >= 0 ORDER BY W DESC NULLS LAST OFFSET 40 ROWS FETCH FIRST 9 ROWS ONLY", &down[40..49], 2),
+        ("SELECT K FROM B ORDER BY W OFFSET 290 ROWS FETCH FIRST 20 ROWS ONLY", &up[290..310], 1),
+        ("SELECT K FROM B ORDER BY D, K FETCH FIRST 10 ROWS ONLY", &few[..10], 2),
+    ];
+    let scanned = |sql: &str| {
+        let analyzed = a.analyzed(sql, &Params::new()).unwrap();
+        analyzed.operators.iter().find(|o| o.label.starts_with("SeqScan")).unwrap_or_else(|| panic!("no scan in\n{}", analyzed.text)).rows
+    };
+    for (sql, wanted, share) in cases {
+        assert_eq!(rows(&a, sql).unwrap(), wanted, "{sql}");
+        let given = usize::try_from(scanned(sql)).unwrap();
+        assert!(given * share < MANY, "rows past the bound are left out, {given} given: {sql}");
+        let shared = db.session("A");
+        for setting in WAYS[2] {
+            exec(&shared, setting).unwrap();
+        }
+        assert_eq!(rows(&shared, sql).unwrap(), wanted, "in parallel: {sql}");
+    }
+}
+
+/// U of row `k` of table Z, null every 11th. The strings rise with the
+/// rows, so a group's are all past those of the groups before it, and
+/// each has one of `ENDS` after it.
+fn rising_of(k: usize) -> Option<String> {
+    (!k.is_multiple_of(11)).then(|| format!("u{k:05}{}", ENDS[k % 4]))
+}
+
+/// V of row `k` of table Z. The strings fall as the rows rise.
+fn falling_of(k: usize) -> String {
+    format!("v{:05}{}", MANY - k, ENDS[k % 4])
+}
+
+/// Verifies: [DESIGN] RULES.md D1187, D379 [ISO/IEC 9075-2:2023 §7.17
+/// GR5]: a FETCH FIRST by a column under a collation of NO PAD by
+/// octets passes over the groups and parts whose least or greatest,
+/// kept in the padded order, proves every string of them past the
+/// sort's bound by octets. Ascending by strings that rise with the rows,
+/// and descending by strings that fall, every group after the first is
+/// past the bound, and the scan gives under half of the table's rows,
+/// the first group and the rows not yet frozen. The other way round no
+/// group is past the bound and the scan gives over half. Each way the
+/// rows given are the first by octets, on one thread and in parallel.
+/// That the groups are passed over and not judged a row at a time is
+/// held by `group::tests::a_top_bound_skips_chunks_past_it`.
+#[test]
+fn a_top_n_by_octets_passes_over_the_groups_past_its_bound_7_17() {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION A
+           CREATE COLLATION BYTES FOR SQL_TEXT FROM UCS_BASIC NO PAD
+           CREATE TABLE Z (K INTEGER PRIMARY KEY, U VARCHAR(40) COLLATE A.BYTES, V VARCHAR(40) COLLATE A.BYTES)
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let a = db.session("A");
+    let text = |s: Option<String>| s.map_or("NULL".to_owned(), |s| format!("'{s}'"));
+    for first in (0..MANY).step_by(1000) {
+        let values: Vec<String> =
+            (first..first + 1000).map(|k| format!("({k}, {}, {})", text(rising_of(k)), text(Some(falling_of(k))))).collect();
+        a.run(&format!("INSERT INTO Z VALUES {}", values.join(", "))).unwrap();
+    }
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    let ordered = |of: &dyn Fn(usize) -> Option<String>, descending: bool| -> Vec<String> {
+        let mut ks: Vec<usize> = (0..MANY).collect();
+        ks.sort_by(|&x, &y| by_octets(of(x).as_ref(), of(y).as_ref(), (descending, false)).then(x.cmp(&y)));
+        ks.iter().map(ToString::to_string).collect()
+    };
+    let cases: [(&str, Vec<String>, bool); 4] = [
+        ("SELECT K FROM Z ORDER BY U FETCH FIRST 10 ROWS ONLY", ordered(&rising_of, false), true),
+        ("SELECT K FROM Z ORDER BY V DESC NULLS LAST FETCH FIRST 10 ROWS ONLY", ordered(&|k| Some(falling_of(k)), true), true),
+        ("SELECT K FROM Z ORDER BY U DESC NULLS LAST FETCH FIRST 10 ROWS ONLY", ordered(&rising_of, true), false),
+        ("SELECT K FROM Z ORDER BY V FETCH FIRST 10 ROWS ONLY", ordered(&|k| Some(falling_of(k)), false), false),
+    ];
+    let scanned = |sql: &str| {
+        let analyzed = a.analyzed(sql, &Params::new()).unwrap();
+        analyzed.operators.iter().find(|o| o.label.starts_with("SeqScan")).unwrap_or_else(|| panic!("no scan in\n{}", analyzed.text)).rows
+    };
+    for (sql, wanted, passed_over) in cases {
+        assert_eq!(rows(&a, sql).unwrap(), wanted[..10], "{sql}");
+        let given = usize::try_from(scanned(sql)).unwrap();
+        assert_eq!(given * 2 < MANY, passed_over, "{given} rows given: {sql}");
+        let shared = db.session("A");
+        for setting in WAYS[2] {
+            exec(&shared, setting).unwrap();
+        }
+        assert_eq!(rows(&shared, sql).unwrap(), wanted[..10], "in parallel: {sql}");
+    }
+}

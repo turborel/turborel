@@ -132,6 +132,7 @@ mod window_nested;
 mod window_values;
 mod windows;
 mod with;
+mod workers;
 mod xml;
 mod xml_composite;
 mod xml_index;

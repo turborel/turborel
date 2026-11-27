@@ -14,7 +14,7 @@ use crate::error::Result;
 pub(super) type Slots = Vec<Option<usize>>;
 
 /// A thread: where it is in the program, and what it has captured.
-struct Thread {
+pub(super) struct Thread {
     pc: usize,
     slots: Slots,
 }
@@ -82,7 +82,7 @@ pub(super) fn search<T: Text + ?Sized>(program: &Program, text: &T, from: usize,
             }
             if one(inst, text, at)? {
                 let mut kept = thread.slots;
-                s.add(&mut next, thread.pc.saturating_add(1), at.saturating_add(1), &mut kept)?;
+                s.add(&mut next, thread.pc.saturating_add(1), text.after(at), &mut kept)?;
             }
         }
         if at >= text.len() {
@@ -91,7 +91,7 @@ pub(super) fn search<T: Text + ?Sized>(program: &Program, text: &T, from: usize,
         std::mem::swap(&mut current, &mut next);
         next.threads.clear();
         next.seen.fill(false);
-        at = at.saturating_add(1);
+        at = text.after(at);
     }
     Ok(matched)
 }

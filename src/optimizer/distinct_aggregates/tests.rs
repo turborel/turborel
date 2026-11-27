@@ -79,3 +79,43 @@ fn slots_are_shared_and_copied() {
     let LogicalPlan::Aggregate { groups, aggs: parts, .. } = *input else { panic!("no first grouping") };
     assert_eq!((groups.len(), parts.len()), (4, 1));
 }
+
+/// Verifies: [DESIGN] [ISO/IEC 9075-2:2023 §4.3.2] RULES.md D1219: a
+/// DISTINCT function whose argument is the sort key of a string under a
+/// collation whose key is the text itself has its first grouping group
+/// by the string under that collation, no key made of a row; COUNT then
+/// counts the strings, and another function takes each group's key, made
+/// of the group. Under another collation the key is grouped by as before,
+/// under no collation.
+///
+/// Decisions: a sort key or not; a collation by octets or another; COUNT
+/// or another function, each changing the outcome alone.
+#[test]
+fn a_key_of_octets_is_grouped_as_its_string() {
+    use crate::value::collation::{CASE_INSENSITIVE, CollationRef, builtin, default_pad, unpadded_scalar};
+    let db = state();
+    let folded = CollationRef {
+        collation: builtin().into_iter().find(|c| c.name() == CASE_INSENSITIVE).unwrap(),
+        pad: default_pad(CASE_INSENSITIVE),
+    };
+    let keyed = |name: &str, collation: &CollationRef| AggCall {
+        arg: Some(Expr::SortKey(Box::new(Expr::Column(1)), collation.clone())),
+        ..call(&db, name, 1, true)
+    };
+    // Whether the second's function takes a sort key, which of the
+    // first's grouping columns are under a collation, and whether the
+    // first groups by a sort key.
+    let levels = |agg: AggCall| {
+        let Some(LogicalPlan::Aggregate { aggs, input, .. }) = applied(&aggregation(vec![agg])) else { panic!("no aggregation") };
+        let LogicalPlan::Aggregate { groups, collations, input: projected, .. } = *input else { panic!("no first grouping") };
+        let LogicalPlan::Project { exprs, .. } = *projected else { panic!("no projection") };
+        let is_key = |e: Option<&Expr>| matches!(e, Some(Expr::SortKey(..)));
+        let grouped = groups.last().and_then(|&g| exprs.get(g));
+        (is_key(aggs[0].arg.as_ref()), collations.iter().map(Option::is_some).collect::<Vec<_>>(), is_key(grouped))
+    };
+    let under = vec![false, true];
+    assert_eq!(levels(keyed("COUNT", &unpadded_scalar())), (false, under.clone(), false), "the string grouped, COUNT counts it");
+    assert_eq!(levels(keyed("SUM", &unpadded_scalar())), (true, under, false), "another function takes each group's key");
+    assert_eq!(levels(keyed("COUNT", &folded)), (false, Vec::new(), true), "another collation's key is grouped by as made");
+    assert_eq!(levels(call(&db, "COUNT", 1, true)), (false, Vec::new(), false), "no sort key, no collation");
+}

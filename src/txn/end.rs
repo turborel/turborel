@@ -114,7 +114,9 @@ impl State {
     /// \[DESIGN\] The commit of `tx`, which changed nothing, so it read one
     /// committed state, its snapshot, and is serializable there: no engine
     /// need check its reads, and it takes no commit timestamp (RULES.md
-    /// D29).
+    /// D29). It collects nothing and notes no table for maintenance. A
+    /// read that makes some wanted is told of by the table's engine
+    /// (`spill/asks.rs`, RULES.md D1212).
     fn commit_read(tx: &Txn, joined: &[Joined]) -> Result<()> {
         for participant in joined {
             participant.storage.commit(tx.id, tx.snapshot());
@@ -180,30 +182,46 @@ impl State {
         let _undoing = Undoing::begin();
         // Undo first, then release the locks. A damaged table is marked before
         // its locks are released, so no other transaction sees it partly undone.
-        let gate = self.tx.gate.enter();
-        let (undo, joined) = {
-            let mut st = tx.state()?;
-            (st.undo.take_from(0), mem::take(&mut st.joined))
-        };
-        // A run of entries that cannot be read back fails the tables it
-        // may have changed, the rest undone all the same.
-        let mut failures = match undo {
-            Ok(undo) => undo.apply(tx.id),
-            Err(error) => vec![UndoFailure { table: None, error, rows: true }],
-        };
-        for Joined { table, storage } in &joined {
-            if let Err(error) = storage.rollback(tx.id) {
-                failures.push(UndoFailure { table: Some(QualifiedName::clone(table)), error, rows: true });
-            }
-        }
+        let (failures, joined) = tx.undo_whole()?;
         let damage = self.report_damage(&failures, "the transaction's rollback");
-        tx.log_abort();
-        drop(gate);
         tx.release();
         self.collect_ended(tx, &joined);
         // [DESIGN] RULES.md D850: a completion told only as the
         // transaction ends, rolled back, waits as it would have.
         tx.replied(damage)
+    }
+}
+
+impl Txn {
+    /// What a rollback does under the gate, by the transaction alone, so
+    /// one dropped without its end is rolled back as one a session rolls
+    /// back (`release.rs`, RULES.md D1259): its changes undone, each
+    /// engine it joined told, the records it holds dropped and its abort
+    /// record written (`log_abort`). The changes that could not be undone,
+    /// and the participants. Its locks are still held.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -910 if its state's lock is poisoned: nothing is undone.
+    pub(super) fn undo_whole(&self) -> Result<(Vec<UndoFailure>, Vec<Joined>)> {
+        let _gate = self.origin.shared.gate.enter();
+        let (undo, joined) = {
+            let mut st = self.state()?;
+            (st.undo.take_from(0), mem::take(&mut st.joined))
+        };
+        // A run of entries that cannot be read back fails the tables it
+        // may have changed, the rest undone all the same.
+        let mut failures = match undo {
+            Ok(undo) => undo.apply(self.id),
+            Err(error) => vec![UndoFailure { table: None, error, rows: true }],
+        };
+        for Joined { table, storage } in &joined {
+            if let Err(error) = storage.rollback(self.id) {
+                failures.push(UndoFailure { table: Some(QualifiedName::clone(table)), error, rows: true });
+            }
+        }
+        self.log_abort();
+        Ok((failures, joined))
     }
 }
 

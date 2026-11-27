@@ -26,6 +26,7 @@ mod count;
 mod debugger;
 mod debugger_api;
 mod declared_types;
+mod keyed_loads;
 mod write_costs;
 // The decode kernels' mutations, beside the areas as `list.rs` holds no
 // more modules.
@@ -88,8 +89,10 @@ mod kernels;
 mod like_pieces;
 mod mark_joins;
 mod morsel_memory;
+mod narrowed_windows;
 mod outer_steps;
 mod semi_joins;
+mod spilled_joins;
 mod steady;
 mod unnesting;
 mod uuid;
@@ -234,13 +237,14 @@ fn second() -> [&'static [Mutation]; 48] {
     ]
 }
 
-/// The planner's newest areas, in order: join estimates, range joins, the
+/// The planner's newest areas, in order: who takes a parallel run's morsels, join estimates, range joins, the
 /// cost model, orders, probed subqueries, predicate transfer, dead entries
 /// taken back by a scan and scans priced by sampled zones, key plans, a
 /// B-link tree probe's path, a commit's stamps in place, the fixed costs cut from a write, a row's fetch by its id,
 /// EXPLAIN of a data change, the work shared, one statement's statistics and the implied edges.
-fn planner() -> [&'static [Mutation]; 16] {
+fn planner() -> [&'static [Mutation]; 17] {
     [
+        &super::workers::WORKERS,
         &join_estimates::JOIN_ESTIMATES,
         &range_joins::RANGE_JOINS,
         &cost_model::COST_MODEL,
@@ -309,9 +313,10 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// semi joins', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
-/// debugger's, a morsel's memory's and a copy by column's last, as `last`
-/// holds no more.
-fn closing() -> [&'static [Mutation]; 32] {
+/// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
+/// window narrowed's and a join built in passes' last, as `last` holds no
+/// more.
+fn closing() -> [&'static [Mutation]; 35] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -345,6 +350,9 @@ fn closing() -> [&'static [Mutation]; 32] {
         &debugger::DEBUGGER,
         &morsel_memory::MORSEL_MEMORY,
         &copy_columns::COPY_COLUMNS,
+        &keyed_loads::KEYED_LOADS,
+        &narrowed_windows::NARROWED_WINDOWS,
+        &spilled_joins::SPILLED_JOINS,
     ]
 }
 

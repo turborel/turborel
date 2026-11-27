@@ -124,7 +124,7 @@ fn hashed(parts: Parts, (left, join): (Left, Hashed), deferred: &Deferred, (db, 
     let places = places.ok_or_else(|| broken("a join key the left operand's batch lacks"))?;
     let mut work = Work::of(db, tx);
     let mut told = deferred.filters().to_vec();
-    let side = match held::read(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
+    let side = match held::read_keyed(right, (&keys, &filtered, building), work.limit(), (db, tx))? {
         Read::Held(held) => {
             told.extend(held.filters.iter().filter_map(|(k, f)| keys.get(*k).map(|key| Told::of(Arc::clone(f), key.left))));
             Side::Vectors(held)

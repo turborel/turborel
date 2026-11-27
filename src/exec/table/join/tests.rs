@@ -6,6 +6,7 @@
 use super::keys::{nearest, value_hash};
 use super::*;
 use crate::exec::table::Seed;
+use crate::kernels::Kernels;
 use crate::storage::{Batch, Column, Floats, Ints, Mask, Texts};
 use crate::value::{Decimal, Value, key_equal};
 
@@ -91,7 +92,7 @@ fn hashed(column: Column, nulls: bool) -> KeyHashes {
     };
     let batch = Batch { columns: vec![column], rows };
     let mut out = KeyHashes::default();
-    out.of_batch((&batch, None), (&[0], &[nulls]), Hashing { seed: &seed(), keyed: false, direct: false }).unwrap();
+    out.of_batch((&batch, None), (&[0], &[nulls]), Hashing { seed: &seed(), keyed: false, direct: false, kernels: None }).unwrap();
     out
 }
 
@@ -101,7 +102,7 @@ fn hashed(column: Column, nulls: bool) -> KeyHashes {
 /// whose nulls match.
 #[test]
 fn a_key_hashes_alike_in_any_vector() {
-    let how = Hashing { seed: &seed(), keyed: false, direct: false };
+    let how = Hashing { seed: &seed(), keyed: false, direct: false, kernels: None };
     let of = |v: Value| value_hash(&v, false, how).unwrap().unwrap();
     let ints = hashed(Column::Ints(Ints::new(vec![1, 100, 0], 2, Some(Mask::from_bools(&[false, false, true])))), false);
     assert_eq!(ints.hashes[..2], [of(Value::Exact(Decimal::new(1, 2))), of(Value::Exact(Decimal::new(1, 0)))]);
@@ -137,4 +138,48 @@ fn keys_compared_in_place_match_as_values_do() {
             assert_eq!(keys_equal((&x, &[0], 0), (&y, &[0], 0), &[nulls]).unwrap(), want, "{:?} {:?} {nulls}", x.cell(0, 0), y.cell(0, 0));
         }
     }
+}
+
+/// Verifies: [DESIGN] RULES.md D1098: a vector of integers of scale 0
+/// hashes as its values' buckets do, on no kernels and the portable ones
+/// (each set of the vector crate gives the portable hash of words), of
+/// every row and of some, negatives and 2^51 less 1
+/// among them; a null the hash of a null, a miss but on a key whose nulls
+/// match; to a direct table, each its `f64`'s bits; and a vector holding
+/// a value of 2^51 or more hashed as before.
+#[test]
+fn integers_of_scale_zero_hash_as_their_buckets() {
+    let edge = (1_i64 << 51_u32) - 1;
+    let units = vec![0_i64, 1, -1, 7, edge, -edge, 42, 0];
+    let nulled = Mask::from_bools(&[false, false, false, false, false, false, false, true]);
+    let batch = Batch { columns: vec![Column::Ints(Ints::new(units.clone(), 0, Some(nulled)))], rows: units.len() };
+    let portable = crate::kernels::Portable;
+    let given_kernels: &dyn Kernels = &portable;
+    for kernels in [None, Some(given_kernels)] {
+        for (rows, nulls) in [(None, false), (Some(&[6_usize, 1, 7, 2][..]), true)] {
+            let how = Hashing { seed: &seed(), keyed: false, direct: false, kernels };
+            let mut out = KeyHashes::default();
+            out.of_batch((&batch, rows), (&[0], &[nulls]), how).unwrap();
+            let given: Vec<usize> = rows.map_or_else(|| (0..units.len()).collect(), <[usize]>::to_vec);
+            let want: Vec<u64> = given
+                .iter()
+                .map(|&r| if r == 7 { value_hash(&Value::Null, true, how).unwrap().unwrap() } else { of_units(units[r], how) })
+                .collect();
+            assert_eq!(out.hashes, want, "rows {rows:?}");
+            assert_eq!(out.misses, given.iter().map(|&r| r == 7 && !nulls).collect::<Vec<_>>());
+        }
+    }
+    let direct = Hashing { seed: &seed(), keyed: false, direct: true, kernels: None };
+    let mut out = KeyHashes::default();
+    out.of_batch((&batch, Some(&[3, 2])), (&[0], &[false]), direct).unwrap();
+    assert_eq!(out.hashes, [7.0_f64.to_bits(), (-1.0_f64).to_bits()]);
+    let wide = Batch { columns: vec![Column::Ints(Ints::new(vec![3_i64, 1_i64 << 51_u32, -(1_i64 << 60_u32)], 0, None))], rows: 3 };
+    let how = Hashing { seed: &seed(), keyed: false, direct: false, kernels: Some(given_kernels) };
+    out.of_batch((&wide, None), (&[0], &[false]), how).unwrap();
+    assert_eq!(out.hashes, [of_units(3, how), of_units(1_i64 << 51_u32, how), of_units(-(1_i64 << 60_u32), how)]);
+}
+
+/// The hash of the integer `units` as a value's bucket.
+fn of_units(units: i64, how: Hashing<'_>) -> u64 {
+    value_hash(&Value::Exact(Decimal::new(i128::from(units), 0)), false, how).unwrap().unwrap()
 }

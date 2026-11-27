@@ -14,7 +14,7 @@
 use std::ops::Deref;
 
 use super::super::super::stream::Kept;
-use super::{Pairs, SharedTable, pick};
+use super::{Pairs, PassKept, SharedTable, pick};
 use crate::error::SqlError;
 use crate::exec::table::{KeyHashes, keys_equal};
 use crate::storage::sel::{kept_count, nth};
@@ -57,14 +57,30 @@ impl SharedTable {
     /// row matches paired with none [ISO/IEC 9075:1992 §7.5 GR5b].
     pub(in crate::exec) fn probing<T: Deref<Target = SharedTable>>(
         table: T,
-        (batch, rows): (Batch, Option<Sel>),
-        (left, left_shown): (Vec<usize>, Option<Vec<usize>>),
+        batch: (Batch, Option<Sel>),
+        left: (Vec<usize>, Option<Vec<usize>>),
         outer: bool,
     ) -> Probing<T> {
+        SharedTable::probing_kept(table, batch, left, (outer, None))
+    }
+
+    /// The probe of `probing`, of the rows `kept`, if given, keeps alone
+    /// (RULES.md D1242): a row it does not keep is neither paired nor, of
+    /// a LEFT join, paired with none, as a probe in passes pairs it in
+    /// another pass. Without `kept` the rows are hashed once, as ever.
+    pub(in crate::exec) fn probing_kept<T: Deref<Target = SharedTable>>(
+        table: T,
+        (batch, rows): (Batch, Option<Sel>),
+        (left, left_shown): (Vec<usize>, Option<Vec<usize>>),
+        (outer, kept): (bool, Option<PassKept<'_>>),
+    ) -> Probing<T> {
         let rows = rows.as_deref();
-        let given: Vec<usize> = (0..kept_count(rows, batch.rows)).map(|n| nth(rows, n)).collect();
+        let mut given: Vec<usize> = (0..kept_count(rows, batch.rows)).map(|n| nth(rows, n)).collect();
         let mut hashes = KeyHashes::default();
-        let failed = hashes.of_batch((&batch, Some(&given)), (&left, &table.nulls), table.hashing()).err();
+        let mut failed = hashes.of_batch((&batch, Some(&given)), (&left, &table.nulls), table.hashing()).err();
+        if let Some(kept) = kept.filter(|_| failed.is_none()) {
+            failed = table.kept_rows((&batch, &left), (&mut given, &mut hashes), kept).err();
+        }
         let screened = failed.is_none().then(|| table.screened(&hashes.hashes)).flatten().map(|held| (held, 0));
         let pairs = (Vec::with_capacity(BATCH_ROWS), Vec::with_capacity(BATCH_ROWS));
         Probing { table, batch, given, hashes, screened, left, left_shown, outer, at: 0, seen: 0, any: false, pairs, failed, ended: false }

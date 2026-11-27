@@ -68,6 +68,15 @@ pub trait Loading {
     /// SQLCODE -916 if the extent is not whole; writing it fails.
     fn redo_group(&self, first: RowId, extent: &[u8]) -> Result<()>;
 
+    /// \[DESIGN\] The rows of the group a load's log record holds as
+    /// `extent`, each with its id, decoded: what recovery takes their
+    /// index entries back by (RULES.md D1235).
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if the extent is not whole.
+    fn extent_rows(&self, extent: &[u8]) -> Result<Vec<(RowId, Row)>>;
+
     /// Ends the load of `tx`, if one is under way: rows it inserts from
     /// now on go to the tree.
     fn end_load(&self, tx: TxId);

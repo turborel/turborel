@@ -277,7 +277,7 @@ fn filter_of(kept: &[Kept], (at, nulls): (usize, bool), db: &State) -> Result<Op
         .collect();
     let keys = if parts.is_empty() { Batch::empty(1) } else { Batch::joined(parts) };
     let seed = db.functions.seed().clone();
-    let how = Hashing { seed: &seed, keyed: false, direct: false };
+    let how = Hashing { seed: &seed, keyed: false, direct: false, kernels: None };
     let mut hashes = KeyHashes::default();
     hashes.of_batch((&keys, None), (&[0], &[nulls]), how)?;
     Ok(RuntimeFilter::of_built(&keys, (0, nulls), &hashes, how).map(Arc::new))

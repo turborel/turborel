@@ -433,9 +433,7 @@ pub enum Plan {
     /// [ISO/IEC 9075-2:2023 §7.6 SR8] A `<collection derived table>`
     /// laterally over the rows of its input (`exec/unnest.rs`).
     Unnest(Box<Unnest<Plan>>),
-    /// [ISO/IEC 9075-2:2023 §7.15] Window functions over the rows of its
-    /// input, which come sorted by its partitioning and ordering
-    /// (`exec/window.rs`).
+    /// [ISO/IEC 9075-2:2023 §7.15] Window functions over the rows of its input, sorted by its partitioning and ordering (`exec/window.rs`).
     Window {
         /// The functions, and the rows they are computed over.
         window: Box<Window<Plan>>,
@@ -443,10 +441,12 @@ pub enum Plan {
         detail: String,
         /// Its estimated rows (`physical/cardinality.rs`).
         est: f64,
+        /// Whether one above may read its rows in its sort's order, false only if planned for no order asked of it
+        /// (`physical/ordered.rs`), so a run in parallel merges its partitions back in that order only if so (RULES.md D1245).
+        ordered: bool,
     },
-    /// [ISO/IEC 9075-2:2023 §7.7] Row pattern recognition over the rows of
-    /// its input, which come sorted by its partitioning and ordering
-    /// (`exec/pattern.rs`).
+    /// [ISO/IEC 9075-2:2023 §7.7] Row pattern recognition over the rows of its input, sorted by its partitioning and
+    /// ordering (`exec/pattern.rs`).
     Recognize {
         /// The recognition, and the rows it is sought in.
         recognize: Box<Recognize<Plan>>,

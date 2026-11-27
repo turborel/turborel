@@ -91,7 +91,7 @@ fn windowed(prices: &[i128], matching: &Arc<WindowMatching>, end: Bound) -> Vec<
     let window = Window { partition: Vec::new(), order: vec![SortKey::ascending(0)], calls, input };
     let db = Arc::new(State::with_builtins(Box::new(MemoryCatalog::default())));
     let shown = |v: &Value| if v.is_null() { "-".to_owned() } else { v.to_string() };
-    execute(Plan::Window { window: Box::new(window), detail: String::new(), est: 0.0 }, &db, NO_TRANSACTION)
+    execute(Plan::Window { window: Box::new(window), detail: String::new(), est: 0.0, ordered: true }, &db, NO_TRANSACTION)
         .map(|row| row.unwrap().iter().map(shown).collect::<Vec<_>>().join(" "))
         .collect()
 }

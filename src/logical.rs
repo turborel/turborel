@@ -53,7 +53,7 @@ pub(crate) use program::{
 pub use ptf::Polymorphic;
 pub use pushed::{compared_unpadded, compared_with_constant, disjuncts, in_list, like_bounds, pushed_conjuncts};
 pub use raises::{MAX_JUDGED_DEPTH, Types, can_raise_typed, cond_can_raise_typed, plan_column_type};
-pub use render::{column_name, render_cond, render_expr, render_keys};
+pub use render::{column_name, render_cond, render_expr, render_groups, render_keys};
 pub use sets::{IN_SET_LEAST, InSet, judged_by_sets};
 pub use sort_key::SortKey;
 pub use subquery::{Decorrelated, Subquery, bound_expr, cond_has_outer, map_plan_exprs, plan_has_outer};

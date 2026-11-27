@@ -177,7 +177,7 @@ impl JoinTable {
             return Ok(None);
         }
         let mut numbers = KeyHashes::default();
-        numbers.of_batch((batch, None), (places, nulls), Hashing { seed, keyed: false, direct: true })?;
+        numbers.of_batch((batch, None), (places, nulls), Hashing { seed, keyed: false, direct: true, kernels: None })?;
         Ok(JoinTable::direct(&numbers.hashes, &numbers.misses))
     }
 

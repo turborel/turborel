@@ -514,8 +514,7 @@ impl TableStorage for RowTable {
     }
 
     fn read_by_condition(&self, tx: TxId, condition: &Condition) -> Result<()> {
-        // RULES.md D448: a covering scan consumes the index's columns;
-        // any other reads each row it chose by id, with its columns.
+        // RULES.md D448: a covering scan consumes the index's columns; any other reads each row it chose by id, with its columns.
         self.note_read(tx, || Read::Condition(Conjunction::of(condition.clone()), columns_mask(condition.columns.iter().copied())))
     }
 
@@ -544,8 +543,7 @@ impl TableStorage for RowTable {
         self.collect(horizon, removed)
     }
 
-    /// Statistics to gather; zones to sum up; rows to freeze, groups to
-    /// write again, entries to take out.
+    /// Statistics to gather; zones to sum up; rows to freeze, groups to write again, entries to take out.
     fn maintenance_due(&self) -> bool {
         self.gather_wanted() || self.zones.wanted() || self.freeze_wanted() || self.groups_pending()
     }
@@ -555,8 +553,7 @@ impl TableStorage for RowTable {
     /// freezing as the next's: freezing as this one's too if no zone could
     /// be summed up, as one of a commit too recent waits for the horizon
     /// (`rows/zones.rs`). Zones resting, or waiting, are not summed up as
-    /// another table's work or an index's calls this, unless `now`
-    /// (RULES.md D772).
+    /// another table's work or an index's calls this, unless `now` (RULES.md D772).
     fn maintain(&self, horizon: Timestamp, now: bool) -> Result<bool> {
         if self.gather_if_due(now) {
             return Ok(true);
@@ -577,8 +574,7 @@ impl TableStorage for RowTable {
             Err(e) => return Box::new(std::iter::once(Err(e))),
         };
         let columns = columns.to_vec();
-        // Held to the end, so no entry of a row frozen meanwhile is taken
-        // out before it is read.
+        // Held to the end, so no entry of a row frozen meanwhile is taken out before it is read.
         let held = self.frozen.directory();
         Box::new(unreadable.chain(frozen).chain(Self::entries(&self).flat_map(move |entry| {
             let _held = &held;
@@ -594,7 +590,6 @@ impl TableStorage for RowTable {
 // Unit tests: a long value's page is checked against its row and column,
 // a meta page against its format, an undone change keeps its older
 // version for open readers, deleted rows are not written, versions and
-// garbage are read as of a time, and a dropped table frees its pages
-// (RULES.md R-TEST-1, R-TEST-2, R-TEST-7).
+// garbage are read as of a time, and a dropped table frees its pages (RULES.md R-TEST-1, R-TEST-2, R-TEST-7).
 #[cfg(test)]
 mod tests;

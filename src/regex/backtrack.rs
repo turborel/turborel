@@ -39,7 +39,8 @@ struct Search<'a, T: Text + ?Sized> {
 pub(super) fn search<T: Text + ?Sized>(program: &Program, text: &T, from: usize, caseless: Option<&Table>) -> Result<Option<Slots>> {
     let all = program.slots.saturating_add(program.loops);
     let mut s = Search { program, text, caseless, steps: 0, slots: vec![None; all], stack: Vec::new() };
-    for start in from..=text.len() {
+    let mut start = from;
+    while start <= text.len() {
         s.slots.fill(None);
         s.stack.clear();
         s.stack.push(Job::Try(0, start));
@@ -53,6 +54,7 @@ pub(super) fn search<T: Text + ?Sized>(program: &Program, text: &T, from: usize,
                 }
             }
         }
+        start = text.after(start);
     }
     Ok(None)
 }
@@ -124,7 +126,7 @@ impl<T: Text + ?Sized> Search<'_, T> {
             Inst::LineStart(lines) => held(line_start(self.text, at, *lines)?),
             Inst::LineEnd(lines) => held(line_end(self.text, at, *lines)?),
             Inst::BackRef(group) => self.again(*group, at)?.map(|length| at.saturating_add(length)),
-            Inst::Char(_) | Inst::Set(_) | Inst::AnyButCrlf => one(inst, self.text, at)?.then(|| at.saturating_add(1)),
+            Inst::Char(_) | Inst::Set(_) | Inst::AnyButCrlf => one(inst, self.text, at)?.then(|| self.text.after(at)),
             Inst::Match | Inst::Jump(_) | Inst::Split(..) => None,
         })
     }
@@ -133,26 +135,28 @@ impl<T: Text + ?Sized> Search<'_, T> {
     /// capture matches at `at`, each the same or, under the flag `i`, a
     /// case variant: none if they do not; nothing captured matching the
     /// empty string. The capture and what is at `at` are read a character
-    /// of each in turn, so neither is held whole.
+    /// of each in turn, so neither is held whole, each by the positions
+    /// of its own characters, as a case variant may take other octets
+    /// than the character captured (RULES.md D1189). The count is of
+    /// positions, those from `at` to the end of what matched.
     fn again(&self, group: usize, at: usize) -> Result<Option<usize>> {
         let Some(start) = group.checked_mul(2) else { return Ok(None) };
         let (Some(Some(from)), Some(Some(to))) = (self.slots.get(start), self.slots.get(start.saturating_add(1))) else {
             return Ok(Some(0));
         };
         let length = to.saturating_sub(*from);
-        if at.checked_add(length).is_none_or(|end| end > self.text.len()) {
-            return Ok(None);
-        }
         let alike = |a: char, b: char| self.caseless.map_or(a == b, |table| table.alike(a, b));
         if let (Some(captured), Some(here)) = (self.text.held(*from, *to), self.text.held(at, at.saturating_add(length))) {
             return Ok(captured.iter().zip(here).all(|(&a, &b)| alike(a, b)).then_some(length));
         }
-        for i in 0..length {
-            let (a, b) = (self.text.at(from.saturating_add(i))?, self.text.at(at.saturating_add(i))?);
+        let (mut theirs, mut ours) = (*from, at);
+        while theirs < *to {
+            let (a, b) = (self.text.at(theirs)?, self.text.at(ours)?);
             if !a.zip(b).is_some_and(|(a, b)| alike(a, b)) {
                 return Ok(None);
             }
+            (theirs, ours) = (self.text.after(theirs), self.text.after(ours));
         }
-        Ok(Some(length))
+        Ok(Some(ours.saturating_sub(at)))
     }
 }

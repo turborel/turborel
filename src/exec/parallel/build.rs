@@ -31,7 +31,7 @@ use super::run::{Morsels, Work};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::{Filters, Frame, SharedTable, dense_wanted, wanted};
-use crate::exec::table::{BUILD_PARTS, BuiltPart, JoinTable, KeyHashes, Parted, Parting, RuntimeFilter, Span, numbers_hashed};
+use crate::exec::table::{BUILD_PARTS, BuiltPart, Hashing, JoinTable, KeyHashes, Parted, Parting, RuntimeFilter, Span, numbers_hashed};
 use crate::physical::JoinKey;
 use crate::settings::EXECUTOR_MORSEL_ROWS;
 use crate::storage::{Batch, Column};
@@ -120,15 +120,17 @@ fn joined(mut parts: Vec<Batch>, crew: Crew<'_>) -> Result<Batch> {
 
 /// The keys of `frame`'s rows hashed, a run of rows at a time, each by a
 /// thread of `crew`'s: given as numbers, and what they say of a direct
-/// table, if `numbers`.
+/// table, if `numbers`; integers hashed on the statement's kernels.
 fn hashed(frame: &Arc<Frame>, numbers: bool, crew: Crew<'_>) -> Result<Vec<Hashed>> {
     let (rows, each) = (frame.right.rows, crew.run_rows());
-    let held = Arc::clone(frame);
+    let (held, kernels) = (Arc::clone(frame), crate::db::kernels::chosen(crew.db));
     let work = Box::new(move |run: usize| -> Result<Hashed> {
         let from = run.saturating_mul(each);
         let given: Vec<usize> = (from..from.saturating_add(each).min(rows)).collect();
         let mut hashes = KeyHashes::default();
-        hashes.of_batch((&held.right, Some(&given)), (&held.places, &held.nulls), held.hashing(numbers))?;
+        // Integers hashed on the statement's kernels (RULES.md D1098).
+        let how = Hashing { kernels: Some(&*kernels), ..held.hashing(numbers) };
+        hashes.of_batch((&held.right, Some(&given)), (&held.places, &held.nulls), how)?;
         let span = numbers.then(|| Span::of(&hashes.hashes, &hashes.misses));
         Ok((hashes, span))
     });

@@ -64,29 +64,36 @@ fn a_failed_statement_is_logged_undone() {
     logs::a_failed_statement_is_logged_undone(Arc::new(MemoryLog::new()));
 }
 
-/// Verifies: [DESIGN] RULES.md D25, D470, a failing log: a change is held,
-/// not written, so it is made though the log fails; a commit whose
-/// records and commit record cannot be written rolls the transaction back
-/// (SQLCODE -913); a transaction whose held records a checkpoint could not
-/// write can only roll back, its COMMIT rolling it back, though the log
-/// takes records again.
+/// Verifies: [DESIGN] RULES.md D25, D470, D1258, a failing log: a change
+/// is held, not written, so it is made though the log fails; a commit
+/// whose records and commit record cannot be written rolls the
+/// transaction back (SQLCODE -913), and its abort record refused too, the
+/// database takes no change from then on (SQLCODE -915) though the log
+/// takes records again, reads going on; a transaction whose held records
+/// a checkpoint could not write can only roll back, its COMMIT rolling
+/// it back, its abort record written once the log takes records again,
+/// and the database goes on.
 #[test]
 fn changes_that_cannot_be_logged_do_not_commit() {
-    let (db, log) = logged();
-    let s = db.session("APP");
-    log.fail_appends.store(true, Ordering::SeqCst);
+    let (stopped, refusing) = logged();
+    let s = stopped.session("APP");
+    refusing.fail_appends.store(true, Ordering::SeqCst);
     s.run("INSERT INTO T (ID) VALUES (9)").unwrap();
     assert_eq!(s.commit().err().map(|e| e.code), Some(Code::CommitFailed), "no commit record");
-    log.fail_appends.store(false, Ordering::SeqCst);
+    refusing.fail_appends.store(false, Ordering::SeqCst);
     assert_eq!(count(&s, "SELECT ID FROM T"), 3, "the insert was rolled back");
-    s.run("INSERT INTO T (ID) VALUES (10)").unwrap();
+    assert_eq!(s.run("INSERT INTO T (ID) VALUES (10)").err().map(|e| e.code), Some(Code::Io), "no abort record, so no change after");
+    assert_eq!(count(&stopped.session("APP"), "SELECT ID FROM T"), 3, "reads go on");
+    let (db, log) = logged();
+    let t = db.session("APP");
+    t.run("INSERT INTO T (ID) VALUES (10)").unwrap();
     log.fail_appends.store(true, Ordering::SeqCst);
     assert_eq!(db.write_held().err().map(|e| e.code), Some(Code::Io));
     log.fail_appends.store(false, Ordering::SeqCst);
-    assert_eq!(s.commit().err().map(|e| e.code), Some(Code::CommitFailed), "its records part logged");
+    assert_eq!(t.commit().err().map(|e| e.code), Some(Code::CommitFailed), "its records part logged");
     assert_eq!(count(&db.session("APP"), "SELECT ID FROM T"), 3, "rolled back: no row 10");
-    s.run("INSERT INTO T (ID) VALUES (12)").unwrap();
-    s.commit().unwrap();
+    t.run("INSERT INTO T (ID) VALUES (12)").unwrap();
+    t.commit().unwrap();
     assert_eq!(count(&db.session("APP"), "SELECT ID FROM T WHERE ID = 12"), 1, "the log takes records again");
 }
 

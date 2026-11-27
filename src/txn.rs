@@ -279,8 +279,9 @@ pub(crate) struct Transactions {
     builds: Mutex<usize>,
     /// Signalled when a build ends.
     built: Condvar,
-    /// The failed sync of the log that stopped the database's changes, if
-    /// one did (`txn/logging.rs`), and whether one did.
+    /// The failure of the log that stopped the database's changes, if one
+    /// did, a sync's or an abort record's append (`txn/logging.rs`), and
+    /// whether one did.
     stopped: Mutex<Option<SqlError>>,
     stopping: Alone<AtomicBool>,
     /// The commits written to the log but not yet synced, under
@@ -571,20 +572,6 @@ impl Txn {
     /// Records the thread its running call is on, or that none runs.
     pub(crate) fn runs_on(&self, thread: Option<ThreadId>) {
         *lock_builtin(&self.running) = thread;
-    }
-}
-
-impl Drop for Txn {
-    fn drop(&mut self) {
-        self.release();
-        // Only one whose records were written before its end has a first
-        // to forget.
-        if self.pinned_log() {
-            lock_builtin(&self.origin.shared.firsts).remove(&self.id);
-        }
-        self.forget_held();
-        self.origin.shared.stops.remove(self.id);
-        self.origin.shared.clock.dropped(self.id);
     }
 }
 

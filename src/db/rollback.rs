@@ -38,6 +38,23 @@ impl Session {
         }
     }
 
+    /// \[DESIGN\] RULES.md D1259: ends its transaction as the session is
+    /// dropped with no call to enter, its database retired or opened again
+    /// since, or a call's entry having failed part way. Its cursors are
+    /// closed and the definitions it changed forgotten, as `rollback_in`
+    /// does, and its transaction is rolled back in memory here
+    /// (`Txn::abandon`), whoever else still holds it.
+    pub(super) fn end_unentered(&self) {
+        let ending = self.end_transaction();
+        self.ran();
+        if let Some(staged) = self.take_staged() {
+            staged.discard();
+        }
+        if let Some(tx) = ending {
+            tx.abandon();
+        }
+    }
+
     pub(super) fn rollback_in(&self, st: &State) -> Result<()> {
         // The changes of definitions are forgotten; the published ones have
         // the storage of every table its changes are undone in.
@@ -60,3 +77,8 @@ impl Session {
         ended
     }
 }
+
+// Unit tests: a transaction rolled back beside checkpoints, through a
+// crash (RULES.md R-TEST-1, R-TEST-7).
+#[cfg(test)]
+mod tests;

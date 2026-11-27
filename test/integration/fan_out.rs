@@ -55,14 +55,17 @@ const QUERIES: [&str; 6] = [
 const ON_EXPRESSION: [&str; 1] =
     ["SELECT COUNT(*), SUM(X.K) FROM R AS Q JOIN (SELECT {t}.K, B.TAG FROM {t} JOIN B ON {t}.G = B.G) AS X ON Q.K = X.TAG + X.K"];
 
-/// The answers of `queries` of F and R, each with its query: of those of
-/// an order, in it.
+/// The answers of `queries` of F and R, each with its query: of those
+/// that end in an ORDER BY of their own, in its order. A window's ORDER
+/// BY orders no result (RULES.md D1245), so such a query's rows are
+/// compared sorted.
 fn answers(a: &Session, queries: &[&str]) -> Vec<(String, Vec<String>)> {
     let mut out = Vec::new();
     for query in queries {
         for table in ["F", "R"] {
             let sql = query.replace("{t}", table);
-            let rows = if sql.contains("ORDER BY") { rows(a, &sql).unwrap() } else { sorted(a, &sql) };
+            let ordered = sql.rsplit_once("ORDER BY").is_some_and(|(_, tail)| !tail.contains(')'));
+            let rows = if ordered { rows(a, &sql).unwrap() } else { sorted(a, &sql) };
             out.push((sql, rows));
         }
     }

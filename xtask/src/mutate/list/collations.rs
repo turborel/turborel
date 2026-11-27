@@ -2,13 +2,25 @@
 //! index of sort keys honest, the order of a key, and how DROP COLLATION,
 //! REVOKE USAGE and DROP SCHEMA revert a collation's columns; and, of a
 //! collation of NO PAD that orders strings as their octets do, each place
-//! its strings are compared in place (D1183), and the pair of groupings a
-//! DISTINCT set function makes under one (D1184).
+//! its strings are compared in place (D1183), the pair of groupings a
+//! DISTINCT set function makes under one (D1184), and the bound a sort
+//! of its first rows by one tells its scan (D1187).
 
 use super::{Mutation, Package};
 
+/// The file of the bound a sort of its first rows tells its scan.
+const THRESHOLD: &str = "src/storage/condition/threshold.rs";
+/// The file of the ranges a bound by octets passes over.
+const OCTETS_ZONES: &str = "src/storage/condition/threshold/octets.rs";
+/// The unit test of those ranges over every short string.
+const OCTETS_MODEL: &str = "storage::condition::threshold::octets::tests::a_zone_passed_over_holds_no_string_at_or_before_the_bound";
+/// The unit test of a bound of a key by octets.
+const OCTETS_BOUND: &str = "storage::condition::threshold::tests::a_threshold_by_octets_holds_a_string_ordered_by_its_octets";
+/// The unit test of a bound of a key by octets shared by a sort's morsels.
+const OCTETS_SHARED: &str = "storage::condition::threshold::tests::a_shared_threshold_by_octets_counts_strings_by_their_octets";
+
 /// The mutations of collations, in the order they run.
-pub const COLLATIONS: [Mutation; 30] = [
+pub const COLLATIONS: [Mutation; 38] = [
     Mutation {
         name: "collated-read-tracked",
         package: Package::Core,
@@ -314,5 +326,85 @@ pub const COLLATIONS: [Mutation; 30] = [
         replacement: "true",
         integration: &[],
         unit: &["physical::parallel::tests::a_pair_under_another_collation_or_keyed_apart_is_no_pair"],
+    },
+    Mutation {
+        name: "octets-bound-ordered-padded",
+        package: Package::Core,
+        breaks: "a top-N's bound of a key by octets narrows and counts its strings in the padded order (D1187)",
+        file: THRESHOLD,
+        original: "if let (Value::Char(a), Value::Char(b)) = (a, b) { Some(a.as_bytes().cmp(b.as_bytes())) } else { None }",
+        replacement: "compare(a, b)",
+        integration: &[],
+        unit: &[OCTETS_BOUND, OCTETS_SHARED],
+    },
+    Mutation {
+        name: "octets-bound-tested-padded",
+        package: Package::Core,
+        breaks: "the test a bound by octets is of a row compares the strings padded (D1187)",
+        file: THRESHOLD,
+        original: "Some(Conjunct::Unpadded { column, op, octets: text.as_bytes().to_vec() })",
+        replacement: "Some(Conjunct::Condition(Condition { columns: vec![column], probe: Probe::Compare { op, value: Value::Char(text) } }))",
+        integration: &[],
+        unit: &[OCTETS_BOUND, "engine::columns::judged::tests::a_sorts_bound_by_octets_is_judged_of_each_text"],
+    },
+    Mutation {
+        name: "octets-zone-by-the-padded-order",
+        package: Package::Core,
+        breaks: "a bound by octets passes over a range the padded order alone puts past it (D1187)",
+        file: THRESHOLD,
+        original: "        if self.octets {\n            return !octets::past(self.descending, (least, greatest), &bound);\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &[OCTETS_BOUND],
+    },
+    Mutation {
+        name: "octets-zone-none-passed-over",
+        package: Package::Core,
+        breaks: "a bound by octets passes over no group and no chunk, so a top-N judges every row of a table in its key's order (D1187)",
+        file: THRESHOLD,
+        original: "return !octets::past(self.descending, (least, greatest), &bound);",
+        replacement: "return true;",
+        integration: &[],
+        unit: &[OCTETS_BOUND, "engine::columns::group::tests::a_top_bound_skips_chunks_past_it"],
+    },
+    Mutation {
+        name: "octets-zone-ascending-below-a-space",
+        package: Package::Core,
+        breaks: "an ascending bound by octets passes over a range whose least goes on with an octet at or below a space (D1187)",
+        file: OCTETS_ZONES,
+        original: "ours > theirs && ours > SPACE && least.iter().take(at).all(|&octet| octet >= SPACE)",
+        replacement: "ours > theirs",
+        integration: &[],
+        unit: &[OCTETS_MODEL],
+    },
+    Mutation {
+        name: "octets-zone-end-a-prefix-passed",
+        package: Package::Core,
+        breaks: "a descending bound by octets passes over a range whose greatest is a prefix of the bound (D1187)",
+        file: OCTETS_ZONES,
+        original: "parted(greatest, bound).is_some_and(|(_, ours, theirs)| ours < theirs)",
+        replacement: "parted(greatest, bound).is_none_or(|(_, ours, theirs)| ours < theirs)",
+        integration: &[],
+        unit: &[OCTETS_MODEL],
+    },
+    Mutation {
+        name: "octets-bound-shared-of-numbers",
+        package: Package::Core,
+        breaks: "the bound the morsels of a sort by octets share holds numbers, so it counts no string (D1187)",
+        file: THRESHOLD,
+        original: "Threshold { octets: self.octets, ..Threshold::shared(self.descending, most) }",
+        replacement: "Threshold::shared(self.descending, most)",
+        integration: &[],
+        unit: &[OCTETS_SHARED],
+    },
+    Mutation {
+        name: "octets-top-told-no-bound",
+        package: Package::Core,
+        breaks: "a top-N by a key by octets tells its scan no bound, so the scan gives every row (D1187)",
+        file: "src/exec/sort.rs",
+        original: "let first = keys.first().filter(|k| !k.nulls_first);",
+        replacement: "let first = keys.first().filter(|k| !k.nulls_first && !k.octets);",
+        integration: &["octets_sorts::a_top_n_by_octets_tells_its_scan_a_bound_of_strings_7_17"],
+        unit: &[],
     },
 ];

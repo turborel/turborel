@@ -3,7 +3,7 @@
 
 use super::streamed::{Grouping, streamable};
 use super::{Built, PhysicalPlanner, Plan};
-use crate::logical::{AggCall, LogicalPlan, SortKey, column_name, cond_columns, expr_columns};
+use crate::logical::{AggCall, LogicalPlan, SortKey, cond_columns, expr_columns, render_groups};
 
 impl PhysicalPlanner<'_> {
     /// The groups of `logical`, an aggregation, in the order of `want` if
@@ -14,7 +14,7 @@ impl PhysicalPlanner<'_> {
             let seeded = if seeds.is_empty() { String::new() } else { format!(" with {} groups of no rows", seeds.len()) };
             format!(
                 "group by [{}] computing [{}]{seeded}",
-                groups.iter().map(|&g| column_name(names, g)).collect::<Vec<_>>().join(", "),
+                render_groups(groups, collations, names),
                 aggs.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
             )
         });

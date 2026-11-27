@@ -16,6 +16,10 @@
 //! straight into one table, with no partition's thread to wake nor table
 //! to make; the morsels after it of many groups take that table to the
 //! partitions first, so each partition still merges its morsels in order.
+//! That holds of a grouping of few groups in all. Once the statement
+//! thread's table holds more groups than a morsel has rows, the grouping
+//! has many, and from then on every morsel goes to the partitions, that
+//! table first (RULES.md D1247).
 //!
 //! Partitions that outgrow the grant are held in the spill from then on,
 //! each partition's table written by the thread that merged it, and merged
@@ -24,20 +28,20 @@
 
 mod spilled;
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::super::pipeline::Pipeline;
 use super::super::probe::PARTS;
-use super::super::run::Morsels;
+use super::super::run::{Lead, Morsels, Work};
 use super::super::{Held, Limit};
+use super::runs::Run;
 use super::{Grouping, Waved, first_of};
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::morsel_groups;
 use crate::exec::table::{GroupTable, Made};
 use crate::exec::{Runner, broken};
-use crate::storage::Row;
 use crate::txn::TxId;
 use spilled::Spilled;
 pub(super) use spilled::given_of;
@@ -49,6 +53,14 @@ pub(super) use spilled::given_of;
 /// threads group the rows of the next morsel each.
 const DIRECT_ROWS: usize = 2;
 
+/// Whether a morsel of `groups` groups made of `taken` rows on one of
+/// `degree` threads is handed whole to the statement's thread: its groups
+/// few beside its rows (`DIRECT_ROWS`), while morsels are `still` handed
+/// so, the grouping's groups few too (RULES.md D1247).
+fn few(still: bool, (groups, taken): (usize, usize), degree: usize) -> bool {
+    still && groups.saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= taken
+}
+
 /// A partition's groups between waves, frozen; none before its first.
 type Frozen = Arc<Vec<Mutex<Option<Made>>>>;
 
@@ -57,6 +69,49 @@ type Frozen = Arc<Vec<Mutex<Option<Made>>>>;
 enum Handed {
     Whole(Made),
     Parted(Arc<Made>),
+}
+
+impl Handed {
+    /// The bytes it holds, ahead of the statement's thread until read.
+    fn bytes(&self) -> usize {
+        match self {
+            Handed::Whole(made) => made.bytes(),
+            Handed::Parted(made) => made.bytes(),
+        }
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1262) The morsels a thread a grouping's run may
+/// lead the statement's thread by, while the grant has room for what they
+/// hold. From a sweep of 2, 4, 8, 16, 32, 64 and 128 a thread over
+/// groupings whose morsels cost unevenly, of few groups and of many, and
+/// over a join's probe that makes several rows of each, on eight threads
+/// and on two: the time falls as the lead grows to 16 and is level past
+/// it, so 16, the least that is level, as a longer lead only holds more.
+const LEAD_PER_THREAD: usize = 16;
+
+/// \[DESIGN\] (RULES.md D1247) Which morsels a test hands whole, by their
+/// numbers, whatever their groups and the grouping's: none named in a
+/// statement, whose morsels are handed as `waved_as` says.
+pub(super) type Forced = Option<fn(usize) -> bool>;
+
+/// How a grouping's waves are run: as a statement runs them, the default,
+/// or as a test asks, which also reads what they did.
+pub(super) struct How {
+    /// The morsels handed whole, if a test names them.
+    pub(super) forced: Forced,
+    /// \[DESIGN\] (RULES.md D1262) The morsels a thread the run leads its
+    /// reader by.
+    pub(super) lead: usize,
+    /// The waves the partitions merged, and the times their tables were
+    /// written to the spill.
+    pub(super) counted: (AtomicUsize, AtomicUsize),
+}
+
+impl Default for How {
+    fn default() -> How {
+        How { forced: None, lead: LEAD_PER_THREAD, counted: (AtomicUsize::new(0), AtomicUsize::new(0)) }
+    }
 }
 
 /// A grouping's waves as its morsels come: the partitions' groups frozen,
@@ -76,6 +131,10 @@ struct Waves<'a> {
     direct_bytes: usize,
     /// Where the partitions are held once they outgrow the grant.
     spilled: Option<Arc<Spilled>>,
+    /// Whether morsels are still handed whole, and the groups the table
+    /// they are merged into may hold while they are.
+    whole: (Arc<AtomicBool>, usize),
+    how: &'a How,
 }
 
 /// The groups of each partition of `grouping`'s pipeline, each finished
@@ -85,38 +144,44 @@ struct Waves<'a> {
 /// # Errors
 ///
 /// As reading the pipeline, or a set function, fails.
-pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&Db, TxId, usize), limit: &Limit) -> Result<Waved> {
-    let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
+pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, run: (&Db, TxId, usize), limit: &Limit) -> Result<Waved> {
+    waved_as(pipeline, grouping, run, limit, &How::default())
+}
+
+/// \[DESIGN\] (RULES.md D1247) As `waved`, run as `how` says, the morsels
+/// it names handed whole and no others, if it names any. A morsel is handed whole while
+/// the statement thread's table is small, its groups no more than a
+/// morsel's rows, EXECUTOR.MORSEL_ROWS: no table a thread makes of a
+/// morsel holds more, so up to there a group merges for what a row or two
+/// cost to group, as `DIRECT_ROWS` counts. Past it every merge misses the
+/// processor's cache and the table's keys grow by copying, on one thread,
+/// so the grouping is one of many groups and its morsels are the
+/// partitions' from then on. Which of the morsels being grouped as the
+/// table passes that were already handed whole depends on the threads'
+/// timing. They are merged in their order all the same, into a table
+/// taken to the partitions before the next morsel of many groups, so the
+/// groups, their order and each set function's result do not.
+///
+/// # Errors
+///
+/// As `waved`.
+pub(super) fn waved_as(
+    pipeline: Pipeline,
+    grouping: &Arc<Grouping>,
+    (db, tx, degree): (&Db, TxId, usize),
+    limit: &Limit,
+    how: &How,
+) -> Result<Waved> {
     let count = pipeline.count();
-    // The groups the morsel last grouped made, the room the next is given.
-    let room = AtomicUsize::new(0);
-    let work = Box::new(move |m: usize| {
-        let runner = Runner::new(&db_for, tx);
-        let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
-        let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
-        let expected = room.load(Ordering::Relaxed);
-        let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed), expected)?;
-        room.store(table.len(), Ordering::Relaxed);
-        if table.len().saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= table.taken {
-            return table.frozen().map(Handed::Whole);
-        }
-        table.made(PARTS, making.lanes()).map(|made| Handed::Parted(Arc::new(made)))
-    });
-    let frozen: Frozen = Arc::new((0..PARTS).map(|_| Mutex::new(None)).collect());
-    let mut waves = Waves {
-        grouping,
-        run: (db, tx, degree),
-        limit,
-        frozen,
-        wave: Vec::new(),
-        wave_bytes: 0,
-        parts_bytes: 0,
-        waved: false,
-        direct: None,
-        direct_bytes: 0,
-        spilled: None,
-    };
-    for morsel in Morsels::start(db, tx, (count, degree), work) {
+    let whole = Arc::new(AtomicBool::new(true));
+    let work = grouped(pipeline, grouping, (db, tx, degree), (Arc::clone(&whole), how.forced));
+    let mut waves = Waves::of(grouping, (db, tx, degree), limit, (whole, how));
+    // [DESIGN] (RULES.md D1262) The threads lead the statement's thread
+    // while what they hold ahead of it fits what the grant has left.
+    let left = limit.clone();
+    let room = Box::new(move || left.most().saturating_sub(left.held()));
+    let lead = Lead { wide: how.lead, size: Handed::bytes, room };
+    for morsel in Morsels::led(db, tx, (count, degree), work, Some(lead)) {
         let held = match morsel? {
             Handed::Whole(made) => waves.direct(&made)?,
             Handed::Parted(made) => waves.flushed()? && waves.parted(made)?,
@@ -128,10 +193,66 @@ pub(super) fn waved(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degre
     waves.finished()
 }
 
+/// The work of a morsel of `pipeline` under `grouping` on one of `degree`
+/// threads: its rows grouped in a table of its own, handed whole if its
+/// groups are few (`few`) while morsels are `still` handed so, or if
+/// `forced` names it, else split among the partitions.
+fn grouped(
+    pipeline: Pipeline,
+    grouping: &Arc<Grouping>,
+    (db, tx, degree): (&Db, TxId, usize),
+    (still, forced): (Arc<AtomicBool>, Forced),
+) -> Work<Handed> {
+    let (pipeline, db_for, making) = (Arc::new(pipeline), db.clone(), Arc::clone(grouping));
+    // The groups the morsel last grouped made, the room the next is given.
+    let room = AtomicUsize::new(0);
+    Box::new(move |m: usize| {
+        let runner = Runner::new(&db_for, tx);
+        let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
+        let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
+        let expected = room.load(Ordering::Relaxed);
+        let table = morsel_groups(read, &making.spec.aggs, batches, (&runner, first_of(&making, m), &making.seed), expected)?;
+        room.store(table.len(), Ordering::Relaxed);
+        let few = few(still.load(Ordering::Relaxed), (table.len(), table.taken), degree);
+        if forced.map_or(few, |named| named(m)) {
+            return table.frozen().map(Handed::Whole);
+        }
+        table.made(PARTS, making.lanes()).map(|made| Handed::Parted(Arc::new(made)))
+    })
+}
+
+impl<'a> Waves<'a> {
+    /// The waves of `grouping`, none merged yet, run as `run` and `how`
+    /// say within `limit`, morsels handed whole while `whole` stands.
+    fn of(
+        grouping: &'a Arc<Grouping>,
+        run: (&'a Db, TxId, usize),
+        limit: &'a Limit,
+        (whole, how): (Arc<AtomicBool>, &'a How),
+    ) -> Waves<'a> {
+        Waves {
+            grouping,
+            run,
+            limit,
+            frozen: Arc::new((0..PARTS).map(|_| Mutex::new(None)).collect()),
+            wave: Vec::new(),
+            wave_bytes: 0,
+            parts_bytes: 0,
+            waved: false,
+            direct: None,
+            direct_bytes: 0,
+            spilled: None,
+            whole: (whole, run.0.settings.count(crate::settings::EXECUTOR_MORSEL_ROWS).max(1)),
+            how,
+        }
+    }
+}
+
 impl Waves<'_> {
     /// Merges `made`, a morsel's groups whole, into the statement thread's
-    /// table, handed to the partitions once the grant does not hold it:
-    /// whether the grant holds what is held.
+    /// table, handed to the partitions once the grant does not hold it, or
+    /// once it holds more groups than a morsel has rows, after which no
+    /// morsel is handed whole: whether the grant holds what is held.
     ///
     /// # Errors
     ///
@@ -141,6 +262,12 @@ impl Waves<'_> {
         let width = grouping.read.as_ref().map_or(0, |read| read.groups.len());
         let table = self.direct.get_or_insert_with(|| GroupTable::new(width, &grouping.spec.aggs, &grouping.seed, usize::MAX));
         table.absorb_whole(made)?;
+        if table.len() > self.whole.1 {
+            // A grouping of many groups: its morsels are the partitions'
+            // from now on, this table first (RULES.md D1247).
+            self.whole.0.store(false, Ordering::Relaxed);
+            return self.flushed();
+        }
         let bytes = table.bytes();
         let more = bytes.saturating_sub(self.direct_bytes);
         self.direct_bytes = bytes;
@@ -206,6 +333,7 @@ impl Waves<'_> {
     fn merged(&mut self) -> Result<bool> {
         let wave = std::mem::take(&mut self.wave);
         let Some(held) = frozen_wave((self.grouping, &self.frozen, self.spilled.as_ref()), wave, self.run)? else { return Ok(false) };
+        self.how.counted.0.fetch_add(1, Ordering::Relaxed);
         self.limit.give(self.wave_bytes.saturating_add(self.parts_bytes));
         (self.wave_bytes, self.parts_bytes, self.waved) = (0, held, true);
         if self.limit.take(held) {
@@ -228,6 +356,7 @@ impl Waves<'_> {
             return Ok(true);
         }
         let spilled = Arc::clone(self.spilled.get_or_insert_with(|| Arc::new(Spilled::new(self.run.0, self.run.1, self.limit))));
+        self.how.counted.1.fetch_add(1, Ordering::Relaxed);
         let (frozen, (db, tx, degree)) = (Arc::clone(&self.frozen), self.run);
         let write = Box::new(move |p: usize| {
             let held = frozen.get(p).and_then(|slot| slot.lock().unwrap_or_else(PoisonError::into_inner).take());
@@ -333,7 +462,7 @@ fn finished_wave(
     (grouping, frozen): (&Arc<Grouping>, &Frozen),
     wave: Vec<Arc<Made>>,
     (db, tx, degree): (&Db, TxId, usize),
-) -> Result<Vec<Vec<(u64, Row)>>> {
+) -> Result<Vec<Run>> {
     let (grouping, kept, wave, db_for) = (Arc::clone(grouping), Arc::clone(frozen), Arc::new(wave), db.clone());
     let finish = Box::new(move |p: usize| {
         let table = thawed_and_merged(&grouping, (&kept, p), &wave)?;
@@ -341,3 +470,8 @@ fn finished_wave(
     });
     Morsels::start(db, tx, (PARTS, degree), finish).collect()
 }
+
+// Unit tests: the groups whichever morsels are handed whole (RULES.md
+// R-TEST-1).
+#[cfg(test)]
+mod tests;

@@ -218,11 +218,14 @@ are read in morsels, parts of about EXECUTOR.MORSEL_ROWS rows, each
 taken by whichever thread is free, and the operators over them, a
 grouping, DISTINCT, a sort, a hash join, window functions, EXCEPT and
 INTERSECT, are made of each morsel's part. The threads are the
-database's workers, `turborel-exec-1` and on, EXECUTOR.WORKERS of
+database's workers, `turborel-exec-0` and on, EXECUTOR.WORKERS of
 them, 0 for as many as the machine runs at once, shared by every
 statement; the statement's own thread works beside them. A statement
 takes at most EXECUTOR.DEGREE threads, its own among them, 0 for as
-many as the workers, 1 for its own thread alone. The planner runs a
+many as the workers, 1 for its own thread alone. Its own thread is
+always one of them, so it takes one worker fewer than its degree, the
+lowest-numbered while no other statement runs in parallel, and the same
+ones from one statement to the next. The planner runs a
 part on several only if its tables hold at least
 EXECUTOR.PARALLEL_MIN_ROWS rows, so a query of a few rows, as one by a
 key, stays on its own thread. A grouping or DISTINCT of so many
@@ -230,21 +233,26 @@ groups, as the optimizer estimates them, that each morsel holds
 nearly as many groups as rows runs on several only when enough threads
 share its work. Its morsels' groups are merged a few morsels at a time,
 so it holds about what its groups hold, and a morsel of few groups is
-merged on the statement's thread at once. A query of DISTINCT set
+merged on the statement's thread at once, while the groups merged there
+are no more than a morsel has rows. A query of DISTINCT set
 functions, computed by two groupings, runs both in one part: the first
 grouping's groups are split among the threads by the query's grouping
 columns alone, so each thread makes the second grouping's groups of its
-own, and EXPLAIN shows both groupings under one `Parallel`. An index
+own, and EXPLAIN shows both groupings under one `Parallel`. COUNT(DISTINCT)
+with no GROUP BY runs so too, each thread counting the distinct values
+of its own share and the statement's thread adding the counts. An index
 nested-loop join over a part, as of a correlated EXISTS, probes its
 index on the part's threads, each taking a sixteenth of a morsel's rows
 of its left operand at a time. A semi join or an antijoin that holds
 its left operand, shown as `HashRightSemiJoin` or `HashRightAntiJoin`,
 holds a left run in parallel by the part's threads, each gathering the
-rows it read and putting them in the join's table. A scan or sort of a column
+rows it read and putting them in the join's table. A scan or a whole sort of a column
 store table stays on it too while EXECUTOR.BATCHES is on, since its
 scan by batch is faster alone; a join, window functions, a grouping or
 DISTINCT over one still run in parallel, a grouping a batch at a time
-on each thread, and so does the scan of the operand a hash join run in
+on each thread, and so does a sort under FETCH FIRST of a count of rows,
+ONLY, whose threads share the greatest key any of them still keeps, so
+each reads past rows no thread would keep, and so does the scan of the operand a hash join run in
 parallel builds, shown as a `Parallel` part of its own under the join.
 Such an operand of more rows than a morsel is put together by those
 threads as well, its rows, its hash table and its filters. A bare
@@ -320,7 +328,10 @@ their first 32 bytes, and sorts the strings, by radix sort when they are
 MEMORY.WORK_BYTES writes the keys beside its rows and merges its runs by
 them. A sort under FETCH FIRST keeps a batch's rows only if their keys
 are below the greatest of those it holds, so of a long input it makes
-only the rows it gives. Rows of equal keys keep the order they came in,
+only the rows it gives. It tells the scan under it that greatest key,
+and a column store's scan leaves out the rows past it before it decodes
+the other columns a filter reads, so a filter of a long string under
+such a sort reads the string of few rows. Rows of equal keys keep the order they came in,
 whatever the degree.
 
 A grouping or DISTINCT run in parallel groups each morsel apart, then
