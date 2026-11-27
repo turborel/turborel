@@ -209,7 +209,7 @@ pub fn texts_at<S: Seal>(
                 chunk.texts(
                     (at(run.first().copied().unwrap_or(0)), at(run.last().copied().unwrap_or(0)).saturating_add(1)),
                     (&mut text, &mut ends, &mut nulls),
-                    t,
+                    (t, pages.kernels),
                 )
             }))
         })?;

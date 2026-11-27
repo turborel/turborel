@@ -1466,6 +1466,28 @@ those kept is read, unless computing one can raise an exception, as a
 division by zero does. Then every row is read, and the exception is
 raised as it would be if every row were kept.
 
+Over GROUP BY with no ORDER BY, the clauses keep some of the groups, and
+which is left to the order the groups come in. Each row kept is a whole
+group, its set functions of every row of it. The grouping then makes
+only as many groups as OFFSET and FETCH FIRST count together, the first
+it meets, and passes over every row of another group, so a few groups
+of a large table need little memory. It makes every group as before
+where a row passed over could have raised an exception or a warning, as
+a SUM that may pass its range or a set function of a column that may
+hold a null does, under HAVING, of grouping sets, and of a DISTINCT set
+function.
+
+```sql
+SELECT DEPT, COUNT(*) FROM STAFF GROUP BY DEPT FETCH FIRST 1 ROW ONLY;
+```
+
+```
+ DEPT |
+------+----------------------
+ ENG  |                    2
+(1 row)
+```
+
 ```sql
 SELECT NAME FROM STAFF FETCH FIRST 0 ROWS ONLY;
 SELECT NAME FROM STAFF OFFSET 1.5 ROWS;

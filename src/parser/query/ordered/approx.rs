@@ -46,7 +46,7 @@ const TARGET: &str = "TARGET";
 const ACCURACY: &str = "ACCURACY";
 /// PARAMETERS, after ACCURACY.
 const PARAMETERS: &str = "PARAMETERS";
-/// HNSW's search list, Oracle's name.
+/// HNSW's search list, as PARAMETERS names it.
 const EFSEARCH: &str = "EFSEARCH";
 /// NEIGHBOR, of NEIGHBOR PARTITION PROBES.
 const NEIGHBOR: &str = "NEIGHBOR";

@@ -1,4 +1,4 @@
-//! [GS §10.2, R5.1, R5.2, R16.8] What Oracle's GRAPH_TABLE writes: the
+//! [GS §10.2, R5.1, R5.2, R16.8] What GRAPH_TABLE may write besides: the
 //! identity functions VERTEX_ID and EDGE_ID and the predicates
 //! VERTEX_EQUAL and EDGE_EQUAL, the dot notation of a JSON property, and
 //! hints in a comment after GRAPH_TABLE's parenthesis; and the identity
