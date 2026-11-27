@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 33] = [
+pub const GROUPED_PARTS: [Mutation; 36] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -332,6 +332,36 @@ pub const GROUPED_PARTS: [Mutation; 33] = [
         original: "keys.push(SortKey::ascending(sorted_by.len()));",
         replacement: "keys.push(SortKey { descending: true, ..SortKey::ascending(sorted_by.len()) });",
         integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
+        unit: &[],
+    },
+    Mutation {
+        name: "rows-apart-numbered-by-batch",
+        package: Package::Core,
+        breaks: "rows handed on ungrouped take their batch's first number, not their own, so their groups' order is lost (RULES.md D1260)",
+        file: "src/exec/batch/groups/morsel.rs",
+        original: "let own = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));",
+        replacement: "let own = number;",
+        integration: &["grouped_parts::morsels_that_reduce_nothing_hand_their_rows_on_ungrouped"],
+        unit: &[],
+    },
+    Mutation {
+        name: "rows-apart-where-they-reduce",
+        package: Package::Core,
+        breaks: "morsels hand their rows on ungrouped where their tables reduce them, and group them where they do not (RULES.md D1260)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "self.left.load(Ordering::Relaxed) > APART_PER_MILLE",
+        replacement: "self.left.load(Ordering::Relaxed) < APART_PER_MILLE",
+        integration: &[],
+        unit: &["exec::parallel::grouped::waves::tests::morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing"],
+    },
+    Mutation {
+        name: "rows-apart-spilled-ungrouped",
+        package: Package::Core,
+        breaks: "a morsel's rows handed on ungrouped are written to the spill as they are, so a key held many times outgrows the grant in a part no hash splits (RULES.md D1260)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "return spilled.write_parts(self.regrouped(made)?.as_ref());",
+        replacement: "return spilled.write_parts(made.as_ref());",
+        integration: &["spilled_groups::a_grouping_spilled_holds_its_partitions_in_one_area"],
         unit: &[],
     },
     Mutation {

@@ -814,9 +814,11 @@ verification approach DO-178C expects (§8).
 | D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
+| D1260 | Morsels whose tables reduce nothing hand their rows to the partitions ungrouped |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1275 | A partition merges a morsel's groups in one pass, a new group given its slot as it is met |
 | D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
@@ -23315,6 +23317,55 @@ Opening it again recovers it from its last checkpoint and its log.
 For this a commit pays one load of the `open` mark, in its
 transaction's drop, and takes no lock.
 
+#### D1260. Morsels whose tables reduce nothing hand their rows to the partitions ungrouped
+
+A grouping run in parallel groups each morsel in a table of its own and
+hands the table's groups to the partitions, which merge them (D355,
+D356). The table pays where it reduces: many rows leave as few groups,
+and the partitions merge few. Where nearly every row of a morsel is a
+group of its own, the table found nothing to merge. Every lookup missed
+and every slot was taken for a group the partition finds again by the
+same hash, so the morsel's table was work done twice.
+
+The morsels of such a grouping now hand their rows on ungrouped
+(`exec/batch/groups/morsel.rs`, `rows_apart`). Each row is made a group
+of its own: its key appended, its hash kept, its first row its own
+number, its set functions fed its one row. No group is looked for and no
+slot is taken (`exec/table.rs`, `appended`). What is handed on has the
+form a morsel's groups always had, so the partitions merge it, hold it
+and spill it as before, and a key the morsel held twice is merged there.
+The groups, their order and their results are unchanged. Only where a
+row is first grouped differs.
+
+Whether to group is the workers' own measurement, never the planner's
+estimate (`exec/parallel/grouped/waves.rs`, `Reduction`). Each morsel's
+table tells the groups it ended with of the rows it took. After a table
+that left more than 750 groups a thousand rows the next morsels are
+handed on ungrouped. A table spends a lookup and a slot on each row, and
+saves, for each row it merges, the appending, the ordering by partition
+and the lookup the partition would spend on it. Where the two meet was
+measured, the hand-over forced on and forced off over groupings of
+integer keys whose morsels leave from 640 to 1000 groups a thousand
+rows. Where every group is new to its partition, the two were level at
+640 and the hand-over was ahead at 790 and above. Where the keys are few
+in all, so that the partitions merge the rows anyway into tables that
+stay small, it was ahead at 730 and above. The bound sits between the
+ratio measured level and the least measured ahead of both kinds.
+
+One morsel in sixteen still makes a table. It gives back a sixteenth of
+what the others save, and data that turns to few groups is grouped in
+its morsels again within sixteen of them.
+
+Two things follow from rows of one key arriving as several groups. A
+partition's table finds a key the morsel holds twice in the group its
+first made, as its merge gives a new group its slot before the next is
+looked up (D1275, `exec/table/made.rs`). And a morsel that must go to
+the spill as it is, the grant holding nothing more, is grouped first
+(`waves.rs`, `regrouped`). A partition read back is split by its groups'
+hashes where it outgrows the grant, and rows of one key share a hash, so
+a key held many times must be one group there. Nothing written to the
+spill holds a key twice, then, and its form needs no word for it.
+
 #### D1262. A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold
 
 A run gives its results in the order of its morsels and took no morsel
@@ -23440,6 +23491,36 @@ A split that fails after it took a page now gives back every page it
 took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
+
+#### D1275. A partition merges a morsel's groups in one pass, a new group given its slot as it is met
+
+A partition's table merged a morsel's groups in two passes over its
+slots (D1110). It looked every group up, then appended those that were
+new and went over them again to give each its slot. That holds only
+while no two of the morsel's groups share a key, since a group not yet
+placed cannot be found by the one after it. Rows handed on ungrouped
+(D1260) do share keys, so they were found or made one at a time, each
+group's key, first row and states appended through its cells before the
+next was looked up. Where every row is a new group that cost more than
+the morsels' tables had saved.
+
+The merge is now one pass for every morsel (`exec/table/made.rs`,
+`looked_up`). Each group is looked up by its key and hash. One that is
+new takes the next number, and its hash and slot are written at once,
+so the slots stand as they would had it been made. Its key, first row
+and states are not appended yet. A key looked up later that meets its
+slot is compared with the key the morsel holds at that group's place,
+so a key the morsel holds twice finds the group its first made. After
+the pass the new groups' keys, first rows and states are appended a
+column at a time, and each set function's states are merged in one
+loop, as before.
+
+The groups, their numbers and their slots are those that finding or
+making each group in turn gives. A probe that grows past the longest a
+table takes (D357) ends the pass after its group. What is new so far is
+appended, the table hashes its keys anew, and the rest are found or made
+one at a time by their keyed hashes, as a table placed so always merged
+them.
 
 #### D1276. A grouping whose statement thread's table went to the spill reads the spill at its end
 
