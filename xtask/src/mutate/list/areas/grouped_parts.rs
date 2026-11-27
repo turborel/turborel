@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 30] = [
+pub const GROUPED_PARTS: [Mutation; 33] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -313,5 +313,35 @@ pub const GROUPED_PARTS: [Mutation; 30] = [
         replacement: "let (grouping, grouped) = (&p.input, None::<Arc<NodeCount>>);",
         integration: &["grouped_parts::an_analyzed_sort_takes_its_first_rows_from_the_tables"],
         unit: &[],
+    },
+    Mutation {
+        name: "top-groups-picked-unchecked",
+        package: Package::Core,
+        breaks: "a set function no sort key names is not finished of the groups a top-N does not pick, so a result that raises is lost (RULES.md D1256)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "        table.checked_but(sorted_by)?;\n",
+        replacement: "",
+        integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
+        unit: &[],
+    },
+    Mutation {
+        name: "top-groups-picked-by-group-number",
+        package: Package::Core,
+        breaks: "groups picked before they are made tie by their numbers in their partition, not by their first rows (RULES.md D1256)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "keys.push(SortKey::ascending(sorted_by.len()));",
+        replacement: "keys.push(SortKey { descending: true, ..SortKey::ascending(sorted_by.len()) });",
+        integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
+        unit: &[],
+    },
+    Mutation {
+        name: "slots-thawed-with-no-room",
+        package: Package::Core,
+        breaks: "a partition's table taken up for a wave makes its slots for the groups it holds alone, and places them again as the wave's come (RULES.md D1261)",
+        file: "src/exec/table/made.rs",
+        original: "table.slots.rebuilt_for(made.keyed.as_deref().unwrap_or(&made.hashes), more);",
+        replacement: "table.slots.rebuilt_for(made.keyed.as_deref().unwrap_or(&made.hashes), 0);",
+        integration: &[],
+        unit: &["exec::table::made::tests::a_table_taken_up_for_a_wave_places_its_groups_once"],
     },
 ];

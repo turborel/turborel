@@ -150,17 +150,19 @@ impl GroupTable {
 
     /// The table of the groups of `made`, frozen, of the set functions
     /// `aggs`, its keys hashed by `seed`: its slots placed anew by the
-    /// hashes it holds, its columns of states as they were, each
-    /// accumulator merged from its state written.
+    /// hashes it holds, with room for `more` groups it may yet take, so
+    /// they are placed once however many come (RULES.md D1261); its
+    /// columns of states as they were, each accumulator merged from its
+    /// state written.
     ///
     /// # Errors
     ///
     /// As `Accumulator::merge`.
-    pub(in crate::exec) fn thawed(made: Made, aggs: &[AggCall], seed: &Seed) -> Result<GroupTable> {
+    pub(in crate::exec) fn thawed(made: Made, (aggs, seed): (&[AggCall], &Seed), more: usize) -> Result<GroupTable> {
         let len = made.hashes.len();
         let mut table = GroupTable::new(made.keys.width(), aggs, seed, usize::MAX);
         table.states = made.states.into_iter().zip(aggs).map(|(sent, agg)| States::thawed(sent, agg, len)).collect::<Result<_>>()?;
-        table.slots.rebuilt(made.keyed.as_deref().unwrap_or(&made.hashes));
+        table.slots.rebuilt_for(made.keyed.as_deref().unwrap_or(&made.hashes), more);
         (table.keys, table.hashes, table.firsts, table.keyed) = (made.keys.of_seed(seed), made.hashes, made.firsts, made.keyed);
         Ok(table)
     }
@@ -188,12 +190,22 @@ impl GroupTable {
     }
 
     /// Room for `more` groups more, their keys in lanes as `like`'s, so
-    /// merging a wave's morsels grows no vector a group at a time.
+    /// merging a wave's morsels grows no vector a group at a time, and
+    /// room in its slots for them too, so no group is placed again as
+    /// they come (RULES.md D1261).
     pub(in crate::exec) fn reserve(&mut self, like: &Made, more: usize) {
         self.keys.reserve(&like.keys, more);
         self.hashes.reserve(more);
         self.firsts.reserve(more);
         self.states.iter_mut().for_each(|states| states.reserve(more));
+        let placed = self.keyed.as_deref().unwrap_or(&self.hashes);
+        self.slots.reserve(placed.len().saturating_add(more), placed);
+    }
+
+    /// How many slots it holds.
+    #[cfg(test)]
+    pub(in crate::exec) fn slots(&self) -> usize {
+        self.slots.len()
     }
 
     /// \[DESIGN\] (RULES.md D1110) Merges the groups at `places` of

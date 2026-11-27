@@ -91,6 +91,41 @@ fn partitions_merged_by_columns_hold_what_the_morsels_hold() {
     }
 }
 
+/// Verifies: [DESIGN] (RULES.md D1261) a partition's table taken up with
+/// room for a wave's groups keeps its slots at one size as the wave is
+/// merged, and so does a new table reserved for them; one taken up with
+/// no room grows its slots as the groups come; and all three hold the
+/// same groups.
+#[test]
+fn a_table_taken_up_for_a_wave_places_its_groups_once() {
+    let key = |n: i128| vec![exact(n)];
+    let (early, late): (Vec<_>, Vec<_>) = ((0..3000).map(key).collect(), (3000..9000).map(key).collect());
+    let (first, second) = (morsel(&early, (0, 2, 0)).made(1, &[]).unwrap(), morsel(&late, (10_000, 3, 0)).made(1, &[]).unwrap());
+    let (aggs, seed) = (calls(), Seed::fixed(0x5EED));
+    let held = || {
+        let mut table = GroupTable::new(1, &aggs, &seed, usize::MAX);
+        table.absorb(&first, 0).unwrap();
+        table.frozen().unwrap()
+    };
+    let mut roomy = GroupTable::thawed(held(), (&aggs, &seed), second.groups_of(0)).unwrap();
+    let made = roomy.slots();
+    roomy.reserve(&second, second.groups_of(0));
+    roomy.absorb(&second, 0).unwrap();
+    assert_eq!((roomy.len(), roomy.slots()), (9000, made), "placed once");
+    let mut tight = GroupTable::thawed(held(), (&aggs, &seed), 0).unwrap();
+    let before = tight.slots();
+    tight.absorb(&second, 0).unwrap();
+    assert!(before < made && tight.slots() == made, "grown as the groups came: {before} to {}", tight.slots());
+    let mut fresh = GroupTable::new(1, &aggs, &seed, usize::MAX);
+    fresh.reserve(&first, 9000);
+    assert_eq!(fresh.slots(), made);
+    fresh.absorb(&first, 0).unwrap();
+    fresh.absorb(&second, 0).unwrap();
+    assert_eq!(fresh.slots(), made);
+    assert_eq!(sorted(&roomy), sorted(&tight));
+    assert_eq!(sorted(&roomy), sorted(&fresh));
+}
+
 /// Verifies: [DESIGN] (RULES.md D1113) groups split by the hashes of
 /// their first lane alone put every group of a value of it in one
 /// partition, in each morsel alike, of integers and of texts, and the
