@@ -808,6 +808,8 @@ verification approach DO-178C expects (§8).
 | D1246 | A run's workers number one fewer than its degree, the statement's thread the last, and a thread's runs keep their workers |
 | D1247 | A grouping stops handing morsels whole once the statement thread's table holds more groups than a morsel has rows |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
+| D1251 | A column store's scan judges a LIKE of a constant pattern of each chunk's texts where they lie, those coded by symbols by the pattern's machine stepped a code at a time |
+| D1253 | A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
 | D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
 | D1258 | An abort record that cannot be appended stops the database |
@@ -22973,6 +22975,174 @@ and forgets it, or the write finds the transaction over and notes none.
 Recovery is unchanged. Nothing in the log tells a transaction rolled
 back in memory from one a crash stopped, so the rule is kept where
 records are written.
+
+#### D1251. A column store's scan judges a LIKE of a constant pattern of each chunk's texts where they lie, those coded by symbols by the pattern's machine stepped a code at a time
+
+A filter's LIKE of a column and a constant pattern reached the scan
+only as the bounds of the pattern's prefix (D31), and a pattern that
+begins with `%` has none. So the scan gave every row with the LIKE's
+column decoded, and the filter searched the text (D1074, D1118, D1119).
+Each text was read out of its chunk, checked to be UTF-8 and copied, to
+be searched once and, of nearly every row, dropped, and of a chunk
+coded by a table of symbols (D31) it was decoded from its codes first.
+
+The scan is now told the LIKE itself, beside the bounds of its prefix,
+and NOT LIKE as the same with its answer turned (`Conjunct::Like`,
+`logical/pushed.rs`). It is told a LIKE of a column as it is, whose
+pattern and escape character are constants, not null, that raise no
+error, the pattern with no arbitrary character specifier `_`. A pattern
+with `_` matches a character, which a machine over octets does not
+count. A LIKE under a collation that folds case or contracts characters
+is not of the column as it is, as the binder folds both sides or calls
+the collation (`binder/collation.rs`), so it is not told. LIKE pads no
+string (ISO/IEC 9075-2:2023 §8.5 SR3d), so under the default collation
+and under one of NO PAD that compares each character as itself (D1183)
+it matches the same octets, and both are told. An ESCAPE character only
+makes `%`, `_` or itself a character of a piece, so a pattern with one
+is told like any other.
+
+The pattern is made one machine over octets, once for the statement
+(`value/like/machine.rs`). Its pieces are those of D1074. The states
+are, in this order, the octets of the first piece matched so far, where
+any other octet leaves no match, then of each piece between the octets
+of it matched so far, and then the same of the last piece. A piece is
+searched for as Knuth, Morris and Pratt, "Fast Pattern Matching in
+Strings" (SIAM Journal on Computing, 1977), search for a string. An
+octet that does not go on falls back to the longest start of the piece
+that the octets read end with, so no octet is read twice. The last
+piece is searched for to the value's end, and the value matches if it
+ends in the state of the whole piece. A pattern that ends in `%` has in
+its place an accepting state that no octet leaves, and a pattern of no
+`%` a state that any further octet leaves for no match. A piece is
+found where it first ends, which leaves the most of the value to the
+pieces after it, so the machine matches what the pieces match. A test
+compares the two over every string of three octets up to seven long,
+for patterns of each shape.
+
+A state is held in one octet, so that a table of states is an octet a
+place. The states are the octets of the pieces and two more, and one
+value of the octet is left for a code of no symbol. So a pattern whose
+pieces are 253 octets together at most has a machine, and a longer one
+is not told to the scan.
+
+Searching a text's codes for the codes of a piece would be wrong. The
+encoder takes the longest symbol at each place, so a piece is coded in
+as many ways as there are octets before it. The scan steps the machine
+over the codes instead (`engine/columns/fsst/stepped.rs`). For each
+state and each symbol it steps the machine over the symbol's octets
+once and keeps the state after in a table, and a text is then matched
+by one place of the table for each code. A piece that ends inside a
+symbol is found there, since the symbol's octets after it step the
+machine on from the piece's end, into the states of the next piece or
+into the accepting state. The escape code quotes the octet after it,
+which steps the machine by itself. A state's row therefore has 256
+places for codes and 256 for quoted octets, and a pattern's table is at
+most 255 rows of 512 octets. The table is made once for a pattern and a
+table of symbols. A group's chunks of a column are coded by one table,
+written in each (D31), so the scan keeps the steps beside the table
+they were made of and makes them again only when a chunk's table
+differs, which is once a group (`Stepped`, held by `Prepared`).
+
+A text's codes are read in runs that leave the machine in the state it
+is in. Most of a text leaves it at the start of a piece, as few symbols
+end with a start of the piece. The loop of a run asks only whether the
+place it reads holds the state it is in, and carries from one code to
+the next only whether an octet is quoted, so no read waits for the one
+before it. A step that changes the state ends the run, and the next run
+reads the new state's row. Reading stops at a state no octet leaves.
+
+A column's chunks are each in the encoding that takes fewest bytes
+(D31), so one run of a scan reads chunks coded by symbols beside chunks
+kept as dictionaries, plain or as one value. The scan therefore judges
+the LIKE a chunk at a time, of a VARCHAR column, and never decodes the
+column to judge it (`engine/columns/judged/coded.rs`). A chunk coded by
+symbols is judged by the steps above. Any other chunk of texts keeps
+each text's octets as they were written, each alone, once for the chunk
+or as a dictionary's entries, and the pattern's pieces are searched for
+in those octets where they lie (D1074), with no text copied and none
+checked to be UTF-8.
+
+That search is exact because the octets are text. The field of a
+character string in a record is the octets of the string its value
+holds (`value/types/character.rs`), and a value holds a string of the
+language, which is UTF-8 by its type, so every string written to a
+chunk was UTF-8 when written and no check at reading adds to that. A
+piece is whole characters, and in UTF-8 no character's octets begin
+inside another's, so a piece found among a text's octets is found at a
+character of it. A chunk that fails its own structure, with codes of no
+symbol, codes that end in an escape, or a field or an entry that lies
+outside the octets the chunk holds, is not judged. Every row asked of
+it is kept, once, in the place of any judged before the fault was met,
+and the filter's decoding of the chunk raises what is malformed as it
+did before. A chunk whose structure holds but whose octets are damaged
+is searched as it is, as a comparison judged in place reads it (D360),
+and the rows it keeps are checked as they are decoded.
+
+The scan judges the LIKE of a run after its other conjuncts (D360), of
+the rows they kept, since it reads every octet or code of a text where
+a comparison reads a few. A null is left out, as LIKE of a null is
+unknown (X3.135-1986 §5.14 GR4). Of a CHARACTER column the scan judges
+nothing and gives the run's rows, since its strings are padded as they
+are read, which no chunk holds. The filter still judges every row the
+scan gives (D15). So a row the scan leaves out is one the filter would
+leave out, and the rows of the delta tree, which the scan does not
+judge, are judged there.
+
+A run of which one row in eight or more is kept is given whole, and the
+filter judges every row of it again (D360), so judging the LIKE of such
+a run to its end is work done twice. The scan judges a chunk at a time,
+so it stops (`whole_by`). Once at least one in eight of the rows asked
+of the run are judged, if the rate kept of them, carried to all the
+rows asked, comes to one row in eight of the run, the chunks left are
+not judged and their rows are kept. The share is the one the run is
+given whole by (`KEPT_SHARE`), so no constant is added. Before one in
+eight of the rows asked are judged nothing is told, as even every one of
+them kept would leave the run short of the share. A LIKE that keeps
+every row is so judged of an eighth of each run, and one that keeps few
+is judged of every row. A run wrongly taken for whole costs what it cost
+before the scan was told the LIKE, and one wrongly judged to its end
+costs the judging.
+
+Where a conjunct is asked of a row's values (`Conjunct::matches_key`),
+the LIKE is true of a string the pattern matches, never of a null, and
+taken as true of any other value, as a large object's, which the filter
+reads. Zone maps, Bloom filters and imprints pass over nothing by it, as
+the prefix's bounds do that, so the share of a table the planner prices
+a scan by (`scan_share`) is what it was.
+
+#### D1253. A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code
+
+A chunk kept as a dictionary holds each distinct text once, its entries'
+octets one after another, and a code a row (D31). The scan's LIKE
+(D1251) matched the entry of each row asked for, so an entry many rows
+share was searched once for each of them. A filter over a batch did the
+same of the texts it was given (`exec/batch/judge/texts.rs`).
+
+The scan now judges the entries (`engine/columns/judged/entries.rs`).
+The entries are one arena whose values end where the entries do, so the
+pattern's longest piece between two `%`s is searched for in all of it
+at once by the database's kernels (`BytesLike::matches_each`, D1119),
+which compare a vector of places at a time. An entry the search never
+stops in does not match, and one it stops in is matched whole by its
+pieces. A pattern of no piece between, as `abc%` is, is matched an
+entry at a time. A row is then kept by its code alone, and a null is
+left out.
+
+The entries are judged where the rows asked of the chunk are no fewer
+than its entries. Judging the entries searches each entry once, and a
+row at a time searches the entry of each row asked for, both by the same
+pieces over the same octets. So with as many rows as entries or more the
+entries are no more octets to search than the rows' entries, whatever
+kernels search them, and the arena search only makes them cheaper. With
+fewer rows, as an earlier conjunct leaves of a dictionary of many
+entries, each row's entry is matched alone and the entries no row asks
+for are never read. The bound is that comparison of two counts, so it
+has no constant to tune.
+
+A dictionary whose entries do not lie one after another within the
+octets the chunk holds, or one of whose codes is of no entry, is not
+judged by its entries nor a row at a time, and its rows are kept for the
+filter, whose decoding raises what is malformed (D1251).
 
 #### D1254. The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none
 

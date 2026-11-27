@@ -17,9 +17,10 @@
 //! alone and gains nothing from the arena, and a pattern with `_` has no
 //! pieces: each is matched a value at a time as before.
 //!
-//! A scan that decodes each value into a buffer of its own matches it by
-//! its bytes (`BytesLike`), the pieces made once for its conjunct. A LIKE
-//! with a collation never makes a `LikePattern`, as its matching is the
+//! A column store's scan told a LIKE matches a value kept as it was
+//! written by its bytes where they lie, none decoded (`BytesLike`,
+//! RULES.md D1251), the pieces made once for its conjunct. A LIKE with a
+//! collation never makes a `LikePattern`, as its matching is the
 //! collation's (`like/collated.rs`).
 
 use super::LikePattern;
@@ -76,6 +77,22 @@ impl BytesLike {
     /// `value` matches the pattern.
     pub fn matches(&self, value: &[u8]) -> bool {
         self.0.matches(value)
+    }
+
+    /// [X3.135-1986 §5.14 GR5] (RULES.md D1253) Whether each value of
+    /// the arena `text`, the `n`th ending at `ends[n]`, matches the
+    /// pattern: the arena searched at once by `kernels`, of a pattern of
+    /// a piece between two `%`s (RULES.md D1119), else each value alone.
+    pub fn matches_each(&self, (text, ends): (&[u8], &[usize]), kernels: &dyn Kernels) -> Vec<bool> {
+        self.0.arena((text, ends), kernels).unwrap_or_else(|| {
+            let mut start = 0_usize;
+            let alone = |&end: &usize| {
+                let value = text.get(start..end).unwrap_or_default();
+                start = end;
+                self.0.matches(value)
+            };
+            ends.iter().map(alone).collect()
+        })
     }
 }
 

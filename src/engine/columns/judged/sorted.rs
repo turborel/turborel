@@ -108,7 +108,8 @@ fn first_where(count: usize, holds: &dyn Fn(usize) -> Option<bool>) -> Option<us
 /// The strings `conjunct` compares a text with, pushed to `out`: none,
 /// of a bound a sort raises as it runs, as no constant holds it, and of a
 /// constant compared unpadded, which a dictionary in the padded order and
-/// a sketch of it place no code by (RULES.md D1183).
+/// a sketch of it place no code by (RULES.md D1183), and of a LIKE, which
+/// no order against a constant judges.
 pub(super) fn constants_of<'c>(conjunct: &'c Conjunct, out: &mut Vec<&'c str>) -> Option<()> {
     let strings = |values: &'c [Value], into: &mut Vec<&'c str>| {
         into.extend(values.iter().filter_map(|v| if let Value::Char(c) = v { Some(c.as_str()) } else { None }));
@@ -118,7 +119,7 @@ pub(super) fn constants_of<'c>(conjunct: &'c Conjunct, out: &mut Vec<&'c str>) -
         Conjunct::In { values, .. } | Conjunct::NotIn { values, .. } => strings(values, out),
         Conjunct::Any(each) => return each.iter().try_for_each(|c| constants_of(c, out)),
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::Spans { .. } => {}
-        Conjunct::Dynamic { .. } | Conjunct::Unpadded { .. } => return None,
+        Conjunct::Dynamic { .. } | Conjunct::Unpadded { .. } | Conjunct::Like { .. } => return None,
     }
     Some(())
 }
