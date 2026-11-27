@@ -13,9 +13,11 @@ use crate::value::datetime::Moment;
 use crate::value::types::narrow_scale;
 use crate::value::{DataType, Value};
 
+mod lengths;
 mod positions;
 mod truths;
 
+pub use lengths::octets_at;
 use positions::coded_at;
 pub use positions::{column_at, datetimes_at, floats_at, ints_at, texts_at, values_at};
 pub use truths::{bools, bools_at};

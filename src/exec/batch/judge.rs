@@ -93,7 +93,9 @@ impl Judged {
             Some(Column::Datetimes(column)) => kinds::datetimes(self, column, over, kernels),
             Some(Column::Bools(column)) => kinds::bools(self, column, over, kernels),
             Some(Column::Texts(column)) => texts::kept(self, column, over, kernels),
-            Some(Column::Values(_) | Column::Nulls(_) | Column::Late(_)) | None => None,
+            // Of a column its scan measured, by its lengths where they tell it (RULES.md D1267).
+            Some(Column::Late(late)) => measured::kept(self, late, over),
+            Some(Column::Values(_) | Column::Nulls(_)) | None => None,
         };
         if typed.is_some() {
             return typed;
@@ -447,6 +449,7 @@ mod calls;
 mod ints;
 mod kinds;
 mod likes;
+mod measured;
 mod texts;
 
 #[cfg(test)]

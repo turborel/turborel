@@ -266,6 +266,7 @@ mod log_sync;
 mod looped_parts;
 mod manifest_settings;
 mod marked_semi;
+mod measured_columns;
 mod memory;
 mod merge;
 mod merge_concurrency;

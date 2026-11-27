@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
-use super::Batched;
 use super::pending::Pending;
+use super::{Batched, measured};
 use crate::engine::columns::group::Group;
 use crate::engine::columns::judged::KEPT_SHARE;
 use crate::engine::columns::scan::{column_at, column_of_run};
@@ -97,6 +97,14 @@ impl Batched {
         let mut places: Option<Arc<[u32]>> = None;
         let mut batch = Batch { columns: Vec::with_capacity(self.columns.len()), rows };
         for &c in &self.columns {
+            // A measured column, late with its lengths, whatever the run keeps (RULES.md D1267).
+            if self.measured.contains(&c) {
+                let at = Arc::clone(places.get_or_insert_with(|| (from..to).collect()));
+                if let Some(column) = measured::column(self.source.as_ref(), group, (&pages, &mut self.prepared), (c, types.get(c)), at)? {
+                    batch.columns.push(column);
+                    continue;
+                }
+            }
             if let Some(column) = late.then(|| self.late_column(c, &mut places, || (from..to).collect())).flatten() {
                 batch.columns.push(column);
                 continue;
@@ -130,6 +138,13 @@ impl Batched {
         let mut places: Option<Arc<[u32]>> = None;
         let mut batch = Batch { columns: Vec::with_capacity(self.columns.len()), rows: positions.len() };
         for &c in &self.columns {
+            if self.measured.contains(&c) {
+                let at = Arc::clone(places.get_or_insert_with(|| positions.into()));
+                if let Some(column) = measured::column(self.source.as_ref(), group, (&pages, &mut self.prepared), (c, types.get(c)), at)? {
+                    batch.columns.push(column);
+                    continue;
+                }
+            }
             if let Some(late) = self.late_column(c, &mut places, || positions.to_vec()) {
                 batch.columns.push(late);
                 continue;

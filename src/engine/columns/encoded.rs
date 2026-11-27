@@ -29,6 +29,7 @@
 //! a field be 8 bytes, any 8 bytes being a signed integer.
 
 mod dictionary;
+mod lengths;
 mod words;
 
 use super::alp::{Alp, Factors, Trials};

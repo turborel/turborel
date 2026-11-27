@@ -815,6 +815,7 @@ verification approach DO-178C expects (§8).
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
+| D1267 | A column read only for its octet length is given by its scan with its lengths and never decoded |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
@@ -23354,6 +23355,79 @@ numbers, so a set function whose state depends on the order of its
 values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
+#### D1267. A column read only for its octet length is given by its scan with its lengths and never decoded
+
+OCTET_LENGTH of a column counted the octets of each value's text
+(`functions/strings/counts.rs`), so the scan first made that text. Of a
+column store that meant decoding every chunk the statement read, a
+dictionary's entries checked and copied and texts coded by symbols
+written out, to read from each value only how long it was. A chunk
+holds that length without its text. A varying chunk has it between two
+ends, a constant chunk in its one field, a dictionary in the ends of the
+value's entry, and texts coded by symbols in the lengths of their codes'
+symbols, an escaped octet counting one.
+
+A column whose text no operator of a stream reads, nor whoever reads
+the stream, is now asked of its scan measured
+(`exec/batch/late.rs`, `Deferred::measuring`). The scan of a column
+store reads the length of each row's value from the chunks it has open
+(`engine/columns/encoded/lengths.rs`, `scan/lengths.rs`) and gives the
+column late, as its rows' places (D361), with those lengths beside them
+(`storage/batch/late/measured.rs`). OCTET_LENGTH of such a column reads
+the lengths. `Batch::resolve` leaves the column late, so it is not
+decoded at the stream's end, and it is measured whether or not an
+operator drops rows.
+
+Two readers do not read a column's text. One is OCTET_LENGTH of the
+column itself, alone or within an expression. The other is a filter's
+conjunct that compares the column with the empty string by octets,
+neither padded, as a collation of NO PAD that orders strings as their
+octets do compares them (D1183). Under that comparison alone a string
+of no octets equals the empty string and every other string comes after
+it, so the conjunct is the comparison of the string's octet length with
+0, and the filter judges it of the lengths
+(`exec/batch/judge/measured.rs`). The scan, told the same conjunct,
+judges it of the lengths it takes of the run
+(`engine/columns/judged/lengths.rs`), and the lengths of a run judged
+whole are kept for the run's batch (`prepared/lengths.rs`), so a run's
+chunks are read for their lengths once. This does not hold under a collation
+that pads with spaces, where a string of spaces equals the empty string
+whatever its length, nor for any other constant. Such a conjunct reads
+the column's text, as CHAR_LENGTH, a grouping column and every other
+expression do, and the column is then decoded as before. Readers that
+ask for measured columns are a grouping, on one thread or many, by the
+arguments of its set functions and its grouping columns, and a
+projection that computes, of a statement or within a stream. A join's
+operand asks for none.
+
+The lengths are exact. A VARCHAR value is written in a chunk as the
+octets of its text (D31), and texts coded by symbols decode to exactly
+their symbols' octets, so the length read is the length of the text the
+scan would have made. A null's length is null. Only VARCHAR is
+measured, as a CHARACTER value is padded as it is read and no chunk
+holds its padded length, and no chunk records how many characters its
+octets make, so CHAR_LENGTH reads the text. A chunk whose ends lie
+outside its octets, or whose codes name no symbol, gives no length, and
+the run's column is then decoded, which raises what is malformed. What
+is no longer done is the check that a chunk's octets are UTF-8, for a
+chunk nobody reads as text (as D1251 leaves it for LIKE).
+
+A column measured where its text is read after all is slow, never
+wrong, and this holds by how the column is made, not by the choice of
+when to ask. A measured column is still the late column of D361. It
+keeps where its rows are and how to decode them, and its lengths are
+only a second way to read one property of the same values. Every reader
+of a late column that is not resolved reads its values decoded whole,
+so a reader the plan did not foresee, or an expression evaluated again
+a row at a time after its vectors gave none, reads what the scan would
+have given. The tree's rows of a column store and the rows of a row
+store are given as text, and the function measures the text it is
+given.
+
+The scan is asked through `TableStorage::scan_measured` and
+`Split::morsel_measured`, whose defaults ask for nothing measured, so
+an engine that does not measure answers as before.
+
 #### D1270. A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch
 
 A leaf taken out of a B-link tree is freed once no operation that may

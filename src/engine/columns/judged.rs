@@ -48,6 +48,7 @@
 
 mod coded;
 mod entries;
+mod lengths;
 mod sketched;
 mod sorted;
 
