@@ -18,15 +18,25 @@
 //! given and their order are the plan's. WITH TIES asks for the peers of
 //! the last row under the sort's own keys, which the number would part,
 //! so such a sort reads the grouping's rows as before.
+//!
+//! \[EXTENSION\] (RULES.md D378, D1254) An analyzed plan counts the
+//! projection and the grouping, and the first rows are taken under those
+//! counts as under none, so the statement analyzed runs as the statement
+//! does. The grouping is counted the groups its tables made, and the
+//! projection the rows the partitions kept of them for the sort.
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::runs::{Ordered, Run};
 use super::{Given, Grouping};
 use crate::error::Result;
+use crate::exec::counted::Tally;
 use crate::exec::sort::first_of_morsel;
 use crate::exec::table::GroupTable;
 use crate::exec::{Db, RowIter, broken};
 use crate::logical::{Expr, Most, SortKey};
-use crate::physical::Plan;
+use crate::physical::{NodeCount, Plan};
 use crate::storage::{Batch, Column, Ints, Row};
 use crate::txn::TxId;
 use crate::value::Value;
@@ -63,6 +73,29 @@ impl Pick {
     }
 }
 
+/// \[EXTENSION\] (RULES.md D378, D1254) What an analyzed plan counts of
+/// the first rows taken from a grouping. It holds the count of the
+/// operator over the part, a projection's, and the grouping's, if the
+/// plan has them, and what the threads counted for each, the rows given
+/// for the sort and the groups made.
+#[derive(Default)]
+struct Counts {
+    projected: Option<Arc<NodeCount>>,
+    grouped: Option<Arc<NodeCount>>,
+    given: Arc<AtomicU64>,
+    made: Arc<AtomicU64>,
+}
+
+/// `plan` under an analyzed plan's count of it, and that count.
+fn uncounted(plan: &Plan) -> (&Plan, Option<Arc<NodeCount>>) {
+    if let Plan::Counted(c) = plan { (&c.input, Some(Arc::clone(&c.count))) } else { (plan, None) }
+}
+
+/// Adds `more` to `counted`.
+fn add(counted: &AtomicU64, more: usize) {
+    counted.fetch_add(u64::try_from(more).unwrap_or(u64::MAX), Ordering::Relaxed);
+}
+
 /// The first rows asked of a grouping's groups: what the projection over
 /// it gives of a group's row, in its order; the sort's keys, of those,
 /// then the first row's number after them; and how many rows.
@@ -71,30 +104,52 @@ pub(in crate::exec::parallel) struct Top {
     keys: Vec<SortKey>,
     most: usize,
     run: (Db, TxId),
+    counts: Counts,
 }
 
 impl Top {
     /// The first rows a sort by `keys` asks, `most` of them, of `input`,
-    /// and the part under it, if `input` is a grouping by hash run in
-    /// parallel, or a projection of columns and constants alone over one,
-    /// and the sort asks no peers.
+    /// with the grouping under it and its part's degree, if `input` is a
+    /// grouping by hash run in parallel, or a projection of columns and
+    /// constants alone over one, and the sort asks no peers. An analyzed
+    /// plan's counts of the projection and of the grouping are passed
+    /// and kept (RULES.md D1254).
     pub(in crate::exec::parallel) fn of<'p>(
         (keys, most): (&[SortKey], Most),
         input: &'p Plan,
         (db, tx): (&Db, TxId),
-    ) -> Option<(Top, &'p Plan)> {
+    ) -> Option<(Top, &'p Plan, usize)> {
+        let (input, projected) = uncounted(input);
         let (asked, part) = if let Plan::Project { exprs, input: part, .. } = input {
             (Some(exprs.iter().map(Pick::of).collect::<Option<Vec<_>>>()?), &**part)
         } else {
             (None, input)
         };
         let Plan::Parallel(p) = part else { return None };
-        let Plan::Aggregate { groups, aggs, streamed: false, .. } = &p.input else { return None };
+        let (grouping, grouped) = uncounted(&p.input);
+        let Plan::Aggregate { groups, aggs, streamed: false, .. } = grouping else { return None };
         // Of no projection, every column of a group's row.
         let columns = asked.unwrap_or_else(|| (0..groups.len().saturating_add(aggs.len())).map(Pick::Column).collect());
         let mut keys = keys.to_vec();
         keys.push(SortKey::ascending(columns.len()));
-        (!most.ties).then(|| (Top { columns, keys, most: most.rows, run: (db.clone(), tx) }, part))
+        let counts = Counts { projected, grouped, ..Counts::default() };
+        (!most.ties).then(|| (Top { columns, keys, most: most.rows, run: (db.clone(), tx), counts }, grouping, p.degree))
+    }
+
+    /// \[EXTENSION\] (RULES.md D378, D1254) The rows `run` gives, the
+    /// first rows asked, counted as an analyzed plan counts them. The
+    /// grouping's count takes the groups made and the count over the part
+    /// the rows given for the sort, each with the time of `run` and of
+    /// every row pulled. Of a plan that counts neither, `run`'s rows.
+    pub(in crate::exec::parallel) fn counted(top: &Arc<Top>, run: impl FnOnce() -> RowIter) -> RowIter {
+        let (db, counts) = (&top.run.0, &top.counts);
+        if counts.projected.is_none() && counts.grouped.is_none() {
+            return run();
+        }
+        let mut grouped = counts.grouped.as_ref().map(|count| Tally::opened(Arc::clone(count), db));
+        let mut projected = counts.projected.as_ref().map(|count| Tally::opened(Arc::clone(count), db));
+        let rows = timed((&mut grouped, &mut projected), run);
+        Box::new(Counting { rows, top: Arc::clone(top), grouped, projected })
     }
 
     /// The sort's own keys, the first row's number's left out.
@@ -115,6 +170,7 @@ impl Top {
     ///
     /// As a set function's `finish`, or the sort, fails.
     pub(super) fn of_table(&self, table: GroupTable) -> Result<Vec<Row>> {
+        add(&self.counts.made, table.len());
         let (batch, firsts) = table.into_batch()?;
         let rows = batch.rows;
         let mut held: Vec<Option<Column>> = batch.columns.into_iter().map(Some).collect();
@@ -137,7 +193,9 @@ impl Top {
         let numbers = firsts.iter().map(|&first| i64::try_from(first).unwrap_or(i64::MAX)).collect();
         columns.push(Column::Ints(Ints::new(numbers, 0, None)));
         let batches = Box::new(std::iter::once(Ok((Batch { columns, rows }, None))));
-        first_of_morsel(&self.keys, batches, (self.most, None), (&self.run.0, self.run.1))
+        let first = first_of_morsel(&self.keys, batches, (self.most, None), (&self.run.0, self.run.1))?;
+        add(&self.counts.given, first.len());
+        Ok(first)
     }
 
     /// [X3.135-1986 §8.3 GR3b] The first rows of `rows`, the partitions'
@@ -189,8 +247,52 @@ impl Top {
     /// sorted by the sort's keys, stably.
     pub(in crate::exec::parallel) fn of_rows(&self, rows: RowIter) -> RowIter {
         let asked = self.columns.clone();
-        let picked = move |row: Row| asked.iter().map(|pick| pick.value(&row)).collect();
+        let (made, given) = (Arc::clone(&self.counts.made), Arc::clone(&self.counts.given));
+        let picked = move |row: Row| {
+            // Every group is made a row and projected (RULES.md D1254).
+            add(&made, 1);
+            add(&given, 1);
+            asked.iter().map(|pick| pick.value(&row)).collect()
+        };
         let (db, tx) = &self.run;
         crate::exec::sort::first(self.own(), Box::new(rows.map(move |row| row.and_then(&picked))), self.most(), db, *tx)
+    }
+}
+
+/// `f`, timed by each tally there is, the grouping's within the
+/// projection's, as an operator's time holds its input's.
+fn timed<R>((grouped, projected): (&mut Option<Tally>, &mut Option<Tally>), f: impl FnOnce() -> R) -> R {
+    let within = || if let Some(tally) = grouped { tally.timed(f) } else { f() };
+    if let Some(tally) = projected { tally.timed(within) } else { within() }
+}
+
+/// \[EXTENSION\] (RULES.md D378, D1254) The first rows asked, each pull
+/// timed for the counts of an analyzed plan, which take what the threads
+/// counted once the rows are read and dropped.
+struct Counting {
+    rows: RowIter,
+    top: Arc<Top>,
+    grouped: Option<Tally>,
+    projected: Option<Tally>,
+}
+
+impl Iterator for Counting {
+    type Item = Result<Row>;
+
+    fn next(&mut self) -> Option<Result<Row>> {
+        let rows = &mut self.rows;
+        timed((&mut self.grouped, &mut self.projected), || rows.next())
+    }
+}
+
+impl Drop for Counting {
+    fn drop(&mut self) {
+        let counts = &self.top.counts;
+        if let Some(tally) = &mut self.grouped {
+            tally.rows(counts.made.load(Ordering::Relaxed));
+        }
+        if let Some(tally) = &mut self.projected {
+            tally.rows(counts.given.load(Ordering::Relaxed));
+        }
     }
 }

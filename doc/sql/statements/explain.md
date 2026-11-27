@@ -161,6 +161,11 @@ still, as tests give, shows no time, and so do the examples below. An
 operator of a part run on several threads counts its rows over all the
 threads. Its pipeline's steps have no time of their own.
 
+A sort that asks for its first rows takes them from a grouping run on
+several threads without reading every group. The grouping then shows the
+groups it made, and a projection between the two shows the rows the
+threads kept for the sort.
+
 The query runs in the session's transaction and takes the locks a cursor
 of it would take, so it changes nothing a query would not. A query that
 raises an exception makes EXPLAIN ANALYZE raise it. A program reaches
