@@ -702,10 +702,9 @@ verification approach DO-178C expects (§8).
 | D1092 | A table opened gathers its first statistics on the thread of the plan that asks, and a sampled pass costs its sample |
 | D1093 | A table's statistics are saved with its pages at each checkpoint, sealed as its rows are, and are a table opened's from the first |
 | D1094 | A chunk whose page passed through no encoding is read in the pool by each run, and is not copied out of it |
+| D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1098 | A join hashes a vector of integers of scale 0 by a loop with no branch, the kernels' hash of words, as their buckets hash |
 | D1099 | A join keeps a vector of texts as codes of a dictionary: a built operand's parts of one, and a built operand's texts of no more rows than a batch |
-| D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
-| D1097 | A fetch of a frozen row is priced by the number of columns it reads |
 | D1100 | A group's shadow bits are trusted only once the entries the tree held as it was published are marked |
 | D1110 | A grouping run in parallel merges each morsel's groups a column at a time, into tables made with room |
 | D1111 | A HAVING condition judged by its grouping's part is judged of a group before the group takes a row |
@@ -795,6 +794,7 @@ verification approach DO-178C expects (§8).
 | D1235 | A load by column into a table of keys and indexes adds each group's entries at once, a leaf's run at a time |
 | D1236 | A key of a row in another transaction's open load is pending to a UNIQUE check |
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
+| D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
 
 ### The project
 
@@ -19233,6 +19233,31 @@ Which a page is is known as it is read, page by page, so a table whose
 encodings changed reads each page as it was written. No format
 changes.
 
+#### D1097. A fetch of a frozen row is priced by the number of columns it reads
+
+The planner priced a fetch of a frozen row as one of four columns
+(D1091), whatever it read. A frozen row read by its id reads one chunk
+of each column asked for, each on a page of its own, so a fetch of one
+column costs less than a fetch of the tree's row and one of every
+column of a wide table more. One figure could not be
+right for both, and a join that fetched one column of a frozen table
+was priced as if it read four.
+
+`TableStorage::fetch_cost` is now given the number of columns read,
+and every planner's and executor's caller passes the columns its plan
+reads. A frozen row costs `FROZEN_FETCH` to find its group and place
+and `FROZEN_FETCH_COLUMN` for each column read, against a fetch of the
+tree's row costing 1 (`engine/rows/frozen.rs`). The two are the line
+through the cases of `bench/fetch.rs` that read one and four columns of
+a frozen table by scattered ids, against its case of the tree's row
+read by scattered ids. Its cases of eight and of all seventeen columns
+lie near that line, the seventeen, wide texts among them, a little
+above it, so a column's cost is taken as one whatever its type. A
+table whose rows are
+in its tree reads them whole, and its fetch costs the same whatever is
+read. So does that of an engine that does not keep its columns apart,
+the default.
+
 #### D1098. A join hashes a vector of integers of scale 0 by a loop with no branch, the kernels' hash of words, as their buckets hash
 
 A join hashed each integer of a key's vector one at a time (D368). It
@@ -19302,53 +19327,6 @@ its texts, charged to no grant.
 A built operand of a row more is gathered as texts, as it was before, so
 past the bound a join costs what it did and never more. The step at the
 bound is the gain, not a loss.
-
-#### D1242. A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up
-
-A join whose built operand passes its grant builds and probes it in
-passes, each pass holding some parts of it. A pass pairs the probing
-rows whose keys fall in its parts, and leaves the rest to the pass that
-holds theirs. The probe of a shared table (`batch/joined/shared/kept.rs`)
-and its whole batch's match (`matched_kept`) take what a pass keeps, a
-test of a row's key hash. The hash they are told is the one a hashed
-table's probe makes, seeded as the table's. A direct table's probe finds
-its rows by a key's number (D601), so its rows are hashed a second time
-for the test, and a row falls in the same pass whatever kind of table a
-pass makes. A key that matches no row, a null's where a null matches
-nothing, has no hash, and the test is told so. The pass that takes the
-rows of no part, the first, keeps it.
-
-A row a pass does not keep is dropped once the batch is hashed, before
-it is screened by a Bloom filter (D1087), looked up or paired. So
-no slot is read for it, and a LEFT join pairs it with nulls only in the
-pass that keeps it, never twice. A probe told nothing to keep makes its
-hashes once and drops no row, its loop over the rows unchanged, at the
-cost of one test of the batch.
-
-#### D1097. A fetch of a frozen row is priced by the number of columns it reads
-
-The planner priced a fetch of a frozen row as one of four columns
-(D1091), whatever it read. A frozen row read by its id reads one chunk
-of each column asked for, each on a page of its own, so a fetch of one
-column costs less than a fetch of the tree's row and one of every
-column of a wide table more. One figure could not be
-right for both, and a join that fetched one column of a frozen table
-was priced as if it read four.
-
-`TableStorage::fetch_cost` is now given the number of columns read,
-and every planner's and executor's caller passes the columns its plan
-reads. A frozen row costs `FROZEN_FETCH` to find its group and place
-and `FROZEN_FETCH_COLUMN` for each column read, against a fetch of the
-tree's row costing 1 (`engine/rows/frozen.rs`). The two are the line
-through the cases of `bench/fetch.rs` that read one and four columns of
-a frozen table by scattered ids, against its case of the tree's row
-read by scattered ids. Its cases of eight and of all seventeen columns
-lie near that line, the seventeen, wide texts among them, a little
-above it, so a column's cost is taken as one whatever its type. A
-table whose rows are
-in its tree reads them whole, and its fetch costs the same whatever is
-read. So does that of an engine that does not keep its columns apart,
-the default.
 
 #### D1100. A group's shadow bits are trusted only once the entries the tree held as it was published are marked
 
@@ -22368,6 +22346,28 @@ keeps few of them, so such a run now leaves its late columns late
 The rows given, their order and the errors are as before. EXPLAIN shows
 `Parallel` over such a sort, and EXPLAIN ANALYZE counts fewer rows of
 its scan.
+
+#### D1242. A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up
+
+A join whose built operand passes its grant builds and probes it in
+passes, each pass holding some parts of it. A pass pairs the probing
+rows whose keys fall in its parts, and leaves the rest to the pass that
+holds theirs. The probe of a shared table (`batch/joined/shared/kept.rs`)
+and its whole batch's match (`matched_kept`) take what a pass keeps, a
+test of a row's key hash. The hash they are told is the one a hashed
+table's probe makes, seeded as the table's. A direct table's probe finds
+its rows by a key's number (D601), so its rows are hashed a second time
+for the test, and a row falls in the same pass whatever kind of table a
+pass makes. A key that matches no row, a null's where a null matches
+nothing, has no hash, and the test is told so. The pass that takes the
+rows of no part, the first, keeps it.
+
+A row a pass does not keep is dropped once the batch is hashed, before
+it is screened by a Bloom filter (D1087), looked up or paired. So
+no slot is read for it, and a LEFT join pairs it with nulls only in the
+pass that keeps it, never twice. A probe told nothing to keep makes its
+hashes once and drops no row, its loop over the rows unchanged, at the
+cost of one test of the batch.
 
 ## 2. Project layout
 
