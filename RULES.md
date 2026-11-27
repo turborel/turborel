@@ -23405,8 +23405,8 @@ scan found them and judges the LIKE of the rows from it on, after its
 other conjuncts (`Judged::rest_kept`). So the rows the scan judged
 before it could tell that the run keeps most of its rows are not judged
 again either. One conjunct of a run is said so, the first, and it is
-said only of a run given whole, as the rows gathered of several runs
-have places of their own. A group or a zone
+said only of a run given whole of which another conjunct was judged
+exactly, as the rows gathered of several runs have places of their own. A group or a zone
 passed over by its bounds says nothing of any row given. A batch of the
 rows kept of several runs holds only the conjuncts each of those runs
 judged exactly (`batches/pending.rs`). A batch of the tree's rows, which
@@ -23417,8 +23417,12 @@ Of a run given whole the set speaks of the rows the scan kept alone.
 The other rows of the batch are rows a told conjunct is false of or a
 sort's bound leaves out, and the filter would keep none of them, as a
 scan is told only conjuncts every row its filter keeps satisfies (D15).
-So the filter starts from the rows kept whether or not anything was
-judged exactly.
+So the filter starts from the rows kept. A run given whole of which no
+conjunct was judged exactly comes with nothing said, every row of it for
+the filter, as before. The filter then passes over nothing, and it
+judges a conjunct of a whole batch, its vectors where they lie, more
+cheaply than of most of the batch's rows picked out, as a LIKE the scan
+stopped judging and no other conjunct beside it leaves them.
 
 A filter's conjunct and a told conjunct are the same predicate where
 the scan was told that conjunct as itself (`logical::told_conjuncts`).

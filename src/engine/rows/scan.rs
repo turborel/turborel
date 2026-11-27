@@ -325,7 +325,7 @@ impl RowTable {
         let unreadable = self.pending(keep, Some(columns)).map(|read| read.map(|(id, row, _)| (id, row)));
         let frozen = match self.frozen.directory() {
             Ok(directory) => Merged::new(Arc::clone(&self), (Merging::FrozenOnly, directory), columns.to_vec(), None),
-            Err(e) => return Box::new(std::iter::once(Err(e))),
+            Err(e) => return Box::new(iter::once(Err(e))),
         };
         let columns = columns.to_vec();
         // Held to the end, so no entry of a row frozen meanwhile is taken out before it is read.

@@ -13,9 +13,10 @@
 //!
 //! \[DESIGN\] (RULES.md D1266) With each batch of frozen rows the scan
 //! notes what it judged of them (`Batched::vetted`): of a run given
-//! whole, the rows its conjuncts kept, which the filter starts from, the
-//! conjuncts judged exactly of those rows, and the one judged of the
-//! first of them alone, if one was; of a batch of the rows kept of
+//! whole, if a conjunct was judged exactly of it, the rows its conjuncts
+//! kept, which the filter starts from, the conjuncts judged exactly of
+//! those rows, and the one judged of the first of them alone, if one
+//! was; of a batch of the rows kept of
 //! several runs, the conjuncts every one of those runs judged exactly. The filter over the scan does not judge those again
 //! (`exec/batch/vetted.rs`).
 
@@ -66,8 +67,11 @@ impl Batched {
                 // given, so late columns stay late (RULES.md D1241).
                 let batch = self.dense(&group, (from, to), (judged.decoded, self.judgment.bounded()))?;
                 // The run whole, with the rows of it judging kept, whose
-                // places from its first are the batch's (RULES.md D1266).
-                self.vetted = Some(Vetted { rows: (judged.kept.len() < rows).then_some(judged.kept), exact, partly });
+                // places from its first are the batch's (RULES.md D1266):
+                // said only if a conjunct was judged exactly, as else the
+                // filter passes over nothing, and it judges a batch whole
+                // more cheaply than most of its rows picked out.
+                self.vetted = (exact != 0).then(|| Vetted { rows: (judged.kept.len() < rows).then_some(judged.kept), exact, partly });
                 return Ok(Some(batch));
             }
             let mut once = Pending::default();

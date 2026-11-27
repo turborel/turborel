@@ -27,7 +27,7 @@ const REST: &str = "exec::batch::judge::vetted::tests::a_conjunct_judged_of_the_
 
 /// Mechanisms whose removal must fail the requirements of a filter
 /// passing over what its scan judged exactly.
-pub const VETTED: [Mutation; 18] = [
+pub const VETTED: [Mutation; 19] = [
     Mutation {
         name: "vetted-like-stopped-early-said-exact",
         package: Package::Core,
@@ -127,6 +127,16 @@ pub const VETTED: [Mutation; 18] = [
         replacement: "rows: (judged.kept.len() > rows).then_some(judged.kept), exact, partly });",
         integration: &[],
         unit: &[DEAF],
+    },
+    Mutation {
+        name: "vetted-whole-run-said-with-nothing-exact",
+        package: Package::Core,
+        breaks: "a run given whole of which no conjunct was judged exactly is given as its rows picked out, which the filter judges more dearly",
+        file: "src/engine/rows/frozen/batches/run.rs",
+        original: "                self.vetted = (exact != 0).then(|| Vetted {",
+        replacement: "                self.vetted = (exact != u64::MAX).then(|| Vetted {",
+        integration: &["vetted_scans::the_filter_is_given_only_the_rows_the_scan_kept"],
+        unit: &[],
     },
     Mutation {
         name: "vetted-word-kept-for-the-next-batch",

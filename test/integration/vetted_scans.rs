@@ -200,9 +200,11 @@ fn a_filter_that_passes_over_what_the_scan_judged_gives_the_same_rows() {
 /// gives the filter the rows it kept alone, as many as the filter keeps,
 /// where a run given whole gave every row of it; by batches and in
 /// parallel. Of a LIKE of no prefix that the scan stops judging part way
-/// through a run it gives more than the filter keeps, nulls it did not
-/// reach among them, and fewer than the table holds, and of
-/// a conjunct it does not judge, every row, as of a condition that can
+/// through a run, beside a conjunct it judges exactly, it gives more than
+/// the filter keeps, texts it did not reach among them, and fewer than
+/// the table holds. Of such a LIKE alone, of which nothing is judged
+/// exactly, and of
+/// a conjunct it does not judge, it gives every row, as of a condition that can
 /// raise an error (RULES.md D15), which is told nothing and sees every
 /// row its scan gives.
 #[test]
@@ -217,9 +219,10 @@ fn the_filter_is_given_only_the_rows_the_scan_kept() {
         assert_eq!(given, kept, "{set:?}: the filter is given the rows the scan kept of {predicate}");
     }
     let a = db.session("A");
-    let kept = rows(&a, "SELECT K FROM C WHERE U LIKE '%http%'").unwrap().len();
-    let given = scanned(&a, "SELECT K, P FROM C WHERE U LIKE '%http%'");
-    assert!(kept < given && given < MANY, "a LIKE judged in part: {given} rows given, {kept} kept");
+    let kept = rows(&a, "SELECT K FROM C WHERE N IS NOT NULL AND U LIKE '%site1%'").unwrap().len();
+    let given = scanned(&a, "SELECT K, P FROM C WHERE N IS NOT NULL AND U LIKE '%site1%'");
+    assert!(kept < given && given < MANY * 6 / 7 + 1, "a LIKE judged in part beside a null test: {given} rows given, {kept} kept");
+    assert_eq!(scanned(&a, "SELECT K, P FROM C WHERE U LIKE '%http%'"), MANY, "a LIKE judged in part alone: nothing said");
     assert_eq!(scanned(&a, "SELECT K, P FROM C WHERE N + K >= 0"), MANY, "a conjunct the scan is not told");
     assert_eq!(scanned(&a, "SELECT K, P FROM C WHERE K / (N + 1000) >= 0 AND N < 50"), MANY, "a condition that can raise");
 }
