@@ -1,5 +1,5 @@
 //! A plan's operators of one input pruned (`blind/pruned.rs`, RULES.md
-//! D1167): a scan, a filter, a projection and a grouping.
+//! D1167): a scan, a filter, a projection, a sort, a limit and a grouping.
 
 use super::super::super::{PhysicalPlanner, Plan};
 use super::super::width::Sized;
@@ -41,6 +41,29 @@ impl PhysicalPlanner<'_> {
         }
         let live = self.pruned_in(input, sizes, &project_reads(exprs, needed))?;
         Some(projected_live(exprs, &live))
+    }
+
+    /// Prunes `plan`, a sort, its input of the widths `sizes`: its input to
+    /// `needed` and its keys' columns, a key made of a column's own octets
+    /// read of the column first (`octets.rs`, RULES.md D1185). A function
+    /// of its own, so the walk's frame holds none of its locals.
+    #[inline(never)]
+    pub(super) fn sort_pruned(&self, plan: &mut Plan, sizes: &Sized, needed: &[usize]) -> Live {
+        let Plan::Sort { keys, input, .. } = plan else { return None };
+        super::octets::in_place(keys, input, needed);
+        let reads: Vec<usize> = needed.iter().copied().chain(keys.iter().map(|k| k.column)).collect();
+        self.operand_pruned(input, sizes, &reads)
+    }
+
+    /// Prunes `plan`, a limit, its input of the widths `sizes`: its input
+    /// to `needed` and, of WITH TIES, the keys whose peers it keeps, which
+    /// it reads of the rows it is given [ISO/IEC 9075-2:2023 §7.17 GR7d i].
+    #[inline(never)]
+    pub(super) fn limit_pruned(&self, plan: &mut Plan, sizes: &Sized, needed: &[usize]) -> Live {
+        let Plan::Limit { limit, input, .. } = plan else { return None };
+        let Some(peers) = limit.fetch.as_ref().and_then(|f| f.ties.as_ref()) else { return self.pruned_in(input, sizes, needed) };
+        let reads: Vec<usize> = needed.iter().copied().chain(peers.iter().map(|k| k.column)).collect();
+        self.pruned_in(input, sizes, &reads)
     }
 
     /// Prunes `plan`, a grouping, its input of the widths `sizes`: its

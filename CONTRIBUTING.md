@@ -104,87 +104,65 @@ empty inputs.
 For the wire protocol (D45) and settings (D36), say what an older client or
 an existing database sees.
 
-## Spatial benchmarks
+## Web log benchmark
 
-`cargo xtask bench geometry --save initial` separates direct geometry
-intersection, WKB and SQL-value decoding, and SQL intersection scans.
-It queries 10,000 points against a square and a 512-edge polygon, with
-SQL scans on one, four and eight threads. Query polygons are supplied as
-prepared parameters; every result is fetched. These cases measure the geometry
-implementation, not an indexed geometry query or a PostGIS comparison.
+`cargo xtask bench weblog --save before` runs the 43 queries of a web
+analytics service on a log of page views, a column store table of 105
+columns. Its use is to rank the queries by time, to profile one, to read
+a plan, and to tell whether a change moved one, on a developer's machine
+in a few minutes. The rows are made from a seed in the shape measured of
+a reference log too large for that, so the suite stands in for runs on
+the reference log between measurements there.
 
-`cargo xtask bench geometry_sql --save before` measures complete geometry
-intersection queries over 100,000 points, narrow and broad windows, and
-80% reads with 20% committed updates on one, four and eight threads.
-Read-only cases retain a prepared query per worker and report latency
-percentiles; each mixed run starts with a fresh database outside the timer.
-Both kinds fetch every result and maintain the geometry R-tree. The report
-states whether the planner could use that tree in each compared build.
+Each query runs once untimed and three times timed. The table at the end
+ranks the queries by their fastest run, with the rows each gave and a
+checksum of them. `--compare before` then shows each query's change,
+names the queries whose result is not the saved one's, and fails if
+there is one. A query that cuts its rows off among ties, or has no ORDER
+BY, may give other rows from one build to the next and still be right,
+so read such a failure before believing it. Compare two builds on one
+kept table, since a table made again has its groups in another order.
 
-`cargo xtask bench geometry_nearest --save before` measures complete
-`ORDER BY ST_DISTANCE ... FETCH FIRST 10 ROWS ONLY` queries over 100,000
-points and rectangular polygons, on one, four and eight sessions. It checks
-every query's nearest IDs against independent integer squared distances
-before timing. The default is 16 queries per worker per run; set
-`TURBOREL_NEAREST_QUERIES` for longer runs. The case label records the count.
-Latency includes opening, refinement, sorting, fetching and commit.
+Do not trust it for these.
 
-`cargo xtask bench geometry_mixed --save initial` runs 100,000 operations
-per worker with one, four and eight sessions: 80% complete intersection
-or nearest queries and 20% committed geometry moves. Every run starts
-with a fresh database. Workers write disjoint ID partitions and revisit
-them without turning updates into zero-row operations. Read and write
-latencies are reported separately. Final rows and spatial query results
-are checked outside the timer. `TURBOREL_MIXED_OPERATIONS` changes the
-count, recorded in each case label. This is an in-memory workload; it
-does not measure file-sync latency or conflicting writes to the same row.
+- Times against another system, or as a statement of how fast the
+  database is. The rows are fewer and made, not real.
+- Anything that depends on the memory a table of the reference log's
+  size needs. Nothing spills at the default size, the groupings of many
+  groups stay in memory, and the cache of group headers is only scaled
+  to the rows, not grown past them.
+- A change it shows as a gain. Confirm it on the reference log before
+  it is claimed.
+- A change smaller than its own runs differ by on the machine, or any
+  time taken while other work shared its processors. Between the queries
+  the run times a fixed piece of work, marks as `disturbed` each query
+  beside which that work ran slow, and prints the load average at its
+  start and end. Run a marked query again before comparing it.
 
-`cargo xtask bench geometry_join --save before` joins 100,000 geometry
-points to 32 square windows, with narrow and broad widths and one, four
-and eight concurrent sessions. It fetches every pair and reports complete
-joins per second, including query planning. Before timing, it compares
-the entire result to integer-coordinate inclusion. Filter benchmarks
-likewise validate every measured window outside the timer.
+Its options follow.
 
-`cargo xtask bench geometry_shapes --save before` extends the join cases
-to holed diamonds, concave 128-edge polygons, clustered point data and
-short and long line segments. It uses 32 or 256 regions, covering both
-single-leaf and multiple-leaf adaptive builds. Every output pair is checked
-against an independent integer-coordinate oracle before timing. These
-are deterministic synthetic workloads with in-memory tables and one,
-four and eight sessions. Temporary spill files use disk by default;
-`TURBOREL_SHAPES_SPILL=memory` uses files held in the database's memory
-budget instead. Labels record the mode. These cases do not replace real
-datasets, durable table storage or sustained-update measurements.
-
-`cargo xtask bench geometry_fetch --save initial` isolates fetching and
-decoding geometry rows from spatial candidates. It compares traversal
-order with sorting bounded blocks by row id, at several block sizes and
-session counts. It excludes SQL evaluation and transaction bookkeeping;
-use it to investigate storage locality, not to claim SQL query rates.
-
-`cargo xtask bench spatial --save before` measures SQL filters, joins,
-nearest-point sorting and mixed sessions for scans, B-trees and R-trees.
-The nearest SQL case still sorts its squared-distance expression; the
-R-tree's best-first nearest traversal is measured by the index suite. `cargo xtask bench spatial_index
---save initial` measures the paged index itself, without SQL planning or
-row materialization. These are separate measurements, not interchangeable
-query rates.
-
-The index suite defaults to 100,000 entries and covers uniform points,
-clusters, a diagonal, coincident points, and overlapping rectangles. Set
-`TURBOREL_SPATIAL_ROWS=1000000` for a million entries, or
-`TURBOREL_SPATIAL_DISTRIBUTION=uniform` to run one distribution. Coincident
-input is capped at 5,000 entries. Other distributions require at least
-16,000 entries. Query coordinates come from a separate fixed sequence.
-
-The harness warms each case once and measures five runs. Sampled cases
-also report p50, p95 and p99 latency, including lock waits, and keep them
-as `@latency` rows in the saved TSV. Each worker waits for its operation
-before starting another: these are closed-loop latencies, without an
-independent arrival queue. The small-pool case measures buffer-pool misses;
-it does not flush the operating system's cache. Run comparisons on an
-otherwise idle machine with the same settings and toolchain.
+- `--rows N` sets the rows made, 5,000,000 if not given. The queries'
+  thresholds follow the rows, so each returns rows at any size.
+- `--only q02,q29` runs those queries alone. Saving after it keeps only
+  those under the label.
+- `--threads N` sets the threads a query runs on at most, the system's
+  if not given.
+- `--cpus 4-7,12-15` keeps the run to those processors, by `taskset`,
+  apart from other work on the machine. A comparison of two builds needs
+  it on a machine that is doing anything else.
+- `--dir PATH` keeps the table in that directory, so only the first run
+  makes and loads it. Remove the directory after a change to the stored
+  format or to the rows made.
+- `--profile q29` runs that query in a loop and measures nothing. It
+  prints the process's number and waits five seconds first, so `perf
+  record -p NUMBER` can attach. `--secs N` sets how long the loop lasts,
+  30 if not given. The program is built by cargo's `bench` profile,
+  which is the release profile, optimized and with its symbols, so a
+  profile names functions. It has no frame pointers, so for call graphs
+  build with `RUSTFLAGS=-Cforce-frame-pointers=yes` and record with
+  `perf record -g`.
+- `--plan q10,q29` runs those queries once and prints the plan of each
+  with what each step did, as EXPLAIN ANALYZE gives it.
 
 ## Commit messages
 

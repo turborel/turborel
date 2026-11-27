@@ -129,7 +129,7 @@ impl Merged {
             if !entry.summary.may_match(self.condition.as_ref()) {
                 continue;
             }
-            let group = self.table.group_of(&entry)?;
+            let group = self.table.group_of(&entry, None)?;
             let pages = self.table.pages_for(&group)?;
             let ids = group.row_ids(&pages)?;
             let candidates = read_candidates(&group, &pages, self.condition.as_ref())?;

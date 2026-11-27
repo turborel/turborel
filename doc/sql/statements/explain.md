@@ -59,7 +59,9 @@ rows every transaction sees alike, and reads only the others. The column
 store adds the rows of its frozen groups as its directory records them,
 and reads only the rows not frozen and those changed or deleted since.
 Either way the count is the one a scan makes at any isolation level. The
-plan then ends with a line `-- counted by storage:` naming the table.
+plan then ends with a line `-- counted by storage:` naming the table. A
+COUNT of a column declared NOT NULL, or of a literal that is not null,
+counts rows as COUNT(*) does, and is answered the same way.
 
 A query of only MIN, MAX and COUNT(*) of a table of the column store,
 with no WHERE clause or grouping, takes each column's least and greatest

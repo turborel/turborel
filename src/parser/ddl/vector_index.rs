@@ -34,10 +34,10 @@
 //! option of the method's group, its name the method's in upper case:
 //! DISTANCE its METRIC, TARGET ACCURACY its TARGET_ACCURACY, QUANTIZATION
 //! its QUANTIZER (INVERTED's QUANTIZATION), PQ(m) a QUANTIZER of PQ and a
-//! PQ_BYTES of m, RERANK its RERANK, and each parameter its own name, Oracle's
-//! names for HNSW and IVF taken as theirs. In WITH, METRIC, TYPE,
-//! TARGET_ACCURACY, QUANTIZATION, RERANK, MAXDOP and ONLINE are SQL
-//! Server's words, a name with a period an option as it is. LOCAL and
+//! PQ_BYTES of m, RERANK its RERANK, and each parameter its own name, the
+//! PARAMETERS names for HNSW and IVF taken as theirs. In WITH, METRIC, TYPE,
+//! TARGET_ACCURACY, QUANTIZATION, RERANK, MAXDOP and ONLINE are the
+//! options' words, a name with a period an option as it is. LOCAL and
 //! GLOBAL choose nothing of a table that is not partitioned, as no table
 //! is; ONLINE nothing, as every build lets writers go on (RULES.md D34);
 //! PARALLEL and MAXDOP allow a build that many threads, and a build takes
@@ -63,7 +63,7 @@ pub const INVERTED: &str = "inverted";
 /// The other name of `inverted`, as USING may give it.
 pub const SPARSE: &str = "sparse";
 
-/// The words of the clauses and of SQL Server's options.
+/// The words of the clauses and of WITH's options.
 mod words {
     pub const VECTOR: &str = "VECTOR";
     pub const ORGANIZATION: &str = "ORGANIZATION";
@@ -110,7 +110,7 @@ pub fn method_of_type(word: &str) -> Option<&'static str> {
 }
 
 /// \[EXTENSION\] The option of `method` a parameter `word` names (§10.2):
-/// Oracle's HNSW and IVF names as the methods name them, every other
+/// the PARAMETERS names of HNSW and IVF as the methods name them, every other
 /// under the method's group; a name with a period as it is.
 pub fn option_of(method: &str, word: &str) -> String {
     if word.contains('.') {
@@ -202,7 +202,7 @@ impl Parser {
         }
         if self.is_kw(kw::WITH) && matches!(self.peek_at(1), Tok::Delimiter(d) if *d == delim::LEFT_PAREN) {
             self.advance();
-            self.server_options(&mut read)?;
+            self.with_options(&mut read)?;
         } else {
             while self.vector_index_clause(&mut read)? {}
         }
@@ -311,8 +311,8 @@ impl Parser {
         Ok(())
     }
 
-    /// SQL Server's WITH ( ... ), after WITH.
-    fn server_options(&mut self, read: &mut Read) -> Result<()> {
+    /// The options of WITH ( ... ), after WITH.
+    fn with_options(&mut self, read: &mut Read) -> Result<()> {
         for option in self.table_options()? {
             let Some(value) = option.value else { continue };
             let text = match &value {

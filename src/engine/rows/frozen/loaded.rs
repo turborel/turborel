@@ -90,7 +90,7 @@ impl RowTable {
         let length = u64::try_from(extent.len()).unwrap_or(u64::MAX);
         let Some(segment) = self.stream_segment(tx, length)? else { return Ok(None) };
         let base = segment.append(&extent)?;
-        let summary = Summary { extent: Some(Placed { segment: segment.n, base, length }), ..Summary::of(&group, header) };
+        let summary = Summary { extent: Some(Placed { segment: segment.n, base, length }), ..Summary::of(&group, header)? };
         Ok(Some((group, summary, segment, (extent, held))))
     }
 
@@ -138,13 +138,13 @@ impl RowTable {
         let base = blocks.append_frames(extent)?.0;
         let held = Pages { file: self.pool.add_held_blocks(&blocks), base, ..self.group_pages()? };
         let types = self.format.types();
-        let group = group::read(&held, header, types)?;
+        let group = group::read(&held, header, types, None)?;
         let ids = group.row_ids(&held)?;
         let all: Vec<usize> = (0..types.len()).collect();
         let rows = rows(&group, &held, types, &all, (0, group.rows))?;
         let columns = (*read(&self.frozen.columns)?).unwrap_or_default();
         let written = self.group_from(&self.group_pages()?, ids, Batch::Rows(&rows), &columns)?;
-        let pages = written.pages();
+        let pages = written.pages()?;
         let entry = self.entry_of(written)?;
         self.publish_entry((None, Some((entry, pages))), Vec::new())
     }
@@ -153,8 +153,8 @@ impl RowTable {
     /// `length` bytes, read from its header at `header`.
     fn summary_at(&self, segment: &Segment, (base, length): (u64, u64), header: PageId) -> Result<Summary> {
         let pages = Pages { file: segment.file, base, ..self.group_pages()? };
-        let group = group::read(&pages, header, self.format.types())?;
-        Ok(Summary { extent: Some(Placed { segment: segment.n, base, length }), ..Summary::of(&group, header) })
+        let group = group::read(&pages, header, self.format.types(), None)?;
+        Ok(Summary { extent: Some(Placed { segment: segment.n, base, length }), ..Summary::of(&group, header)? })
     }
 }
 

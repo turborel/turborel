@@ -38,7 +38,17 @@ impl PhysicalPlanner<'_> {
         let make = |rows: Plan, streamed: bool| {
             let (reduced, aggs) = self.blind_joins(rows, (unseeded, aggs.clone(), &reads));
             let (groups, collations, seeds) = (groups.clone(), collations.clone(), seeds.clone());
-            Plan::Aggregate { groups, collations, aggs, seeds, detail: detail.clone(), input: Box::new(reduced), est, streamed }
+            Plan::Aggregate {
+                groups,
+                collations,
+                aggs,
+                seeds,
+                detail: detail.clone(),
+                input: Box::new(reduced),
+                est,
+                streamed,
+                first: None,
+            }
         };
         self.grouped(g, &inner, make)
     }
