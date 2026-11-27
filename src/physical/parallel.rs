@@ -400,7 +400,12 @@ fn uncounted(plan: &Plan) -> &Plan {
 /// subqueries judged of `db`'s tables if given (`stream_in`).
 fn rooted(plan: &Plan, db: Option<&State>) -> Option<usize> {
     if let Some(first) = first_level(plan) {
-        return rooted(first, db);
+        // The first's input is the part's pipeline (RULES.md D1219). A
+        // first that is itself over a grouping, as the second of three,
+        // has none, so the three are no part, and the lower two are
+        // walked for one.
+        let Plan::Aggregate { input, .. } = first else { return None };
+        return stream_in(input, db);
     }
     // A streamed grouping or DISTINCT reads its input in order, a group
     // at a time, which no morsel's table of groups does (RULES.md D550).

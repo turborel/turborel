@@ -381,13 +381,20 @@ fn a_distinct_set_function_s_pair_groups_unpadded_10_9() {
 /// padded column, whose keys are grouped by; of an integer; of no rows,
 /// one row of 0; under HAVING. Beside SUM(DISTINCT), whose values the
 /// second grouping takes in their order, the second stays above the part.
-/// Each gives what the plan run alone gives, of both stores.
+/// Of three groupings one over another, a count of no grouping at the top
+/// or a grouped one, the upper two are no part and the query gives its
+/// rows. Each gives what the plan run alone gives, of both stores.
 #[test]
 fn a_count_of_distinct_values_of_no_grouping_is_one_part_10_9() {
     let (_db, a) = tables();
     let strings = (0..ROWS).map(u_of).collect::<std::collections::HashSet<_>>().len();
     let numbers = (0..ROWS).map(|k| k - k % 21).collect::<std::collections::HashSet<_>>();
     let summed: usize = numbers.iter().sum();
+    // How many sizes the groups of S have, and how many sizes share a count.
+    let size_of = |g: &&str| of(g).count();
+    let sizes = STRINGS.iter().map(size_of).collect::<std::collections::HashSet<_>>();
+    let shared = |n: &usize| STRINGS.iter().filter(|g| size_of(*g) == *n).count();
+    let (sizes, shares) = (sizes.len(), sizes.iter().map(shared).collect::<std::collections::HashSet<_>>().len());
     for degree in [1, 4] {
         for set in [
             format!("SET EXECUTOR.DEGREE = {degree}"),
@@ -401,7 +408,7 @@ fn a_count_of_distinct_values_of_no_grouping_is_one_part_10_9() {
             ("SELECT COUNT(DISTINCT U) FROM {t}", strings.to_string()),
             ("SELECT COUNT(DISTINCT P) FROM {t}", "5".to_owned()),
             ("SELECT COUNT(DISTINCT K - MOD(K, 21)) FROM {t}", numbers.len().to_string()),
-            ("SELECT COUNT(DISTINCT S) FROM {t} WHERE K < 0", "0".to_owned()),
+            ("SELECT COUNT(DISTINCT S) FROM {t} WHERE U = 'none'", "0".to_owned()),
         ] {
             assert_eq!(of_both(&a, sql), [expected], "{sql}, degree {degree}");
             let shown = physical(&a, &sql.replace("{t}", "C"));
@@ -409,6 +416,12 @@ fn a_count_of_distinct_values_of_no_grouping_is_one_part_10_9() {
         }
         assert_eq!(of_both(&a, "SELECT COUNT(DISTINCT S) FROM {t} HAVING COUNT(DISTINCT S) > 7"), Vec::<String>::new());
         assert_eq!(of_both(&a, "SELECT COUNT(DISTINCT S) FROM {t} HAVING COUNT(DISTINCT S) > 6"), ["7"]);
+        // Three groupings, one over another: the upper two are no part,
+        // as the middle one reads no pipeline, and the lower two are.
+        let three = "SELECT COUNT(*) FROM (SELECT N, COUNT(*) AS M FROM (SELECT S, COUNT(*) AS N FROM {t} WHERE S IS NOT NULL GROUP BY S) AS Q GROUP BY N) AS W";
+        assert_eq!(of_both(&a, three), [sizes.to_string()], "degree {degree}");
+        let grouped = "SELECT COUNT(*) FROM (SELECT M, COUNT(*) AS L FROM (SELECT N, COUNT(*) AS M FROM (SELECT S, COUNT(*) AS N FROM {t} WHERE S IS NOT NULL GROUP BY S) AS Q GROUP BY N) AS W GROUP BY M) AS V";
+        assert_eq!(of_both(&a, grouped), [shares.to_string()], "degree {degree}");
         let beside = "SELECT COUNT(DISTINCT S), SUM(DISTINCT K - MOD(K, 21)) FROM {t}";
         assert_eq!(of_both(&a, beside), [format!("7,{summed}")], "degree {degree}");
         assert!(!pair_in_a_part(&physical(&a, &beside.replace("{t}", "C"))), "SUM in the second keeps it above the part");
