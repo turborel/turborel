@@ -778,6 +778,7 @@ verification approach DO-178C expects (§8).
 | D1225 | A node stopped waits for its driver's turn in flight before its database is deposed |
 | D1226 | A grouping run in parallel whose partitions outgrow its grant holds them in the spill and merges them back a partition at a time |
 | D1227 | A window or set operation run in parallel holds each partition's result in a list that spills and merges the lists as they are read |
+| D1228 | A second grouping crossing the first's partitions holds its groups of a grant of its own and spills them by key past it |
 | D1229 | A sort that asks for its last row's peers is run in parallel, each morsel sorted whole |
 | D1230 | A structure's tally counts a miss only when the pool evicted a page for it |
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
@@ -21525,6 +21526,32 @@ memory, one grant in all, and a row of each.
 A window computed over batches (D560) computes its partitions in
 pieces up to its work area and gives them as they are done; it gathers
 no partition's result, and is as it was.
+#### D1228. A second grouping crossing the first's partitions holds its groups of a grant of its own and spills them by key past it
+
+A second grouping over a first that crosses its partitions, by a set
+function's result of the first or an expression of one (D1133), has
+each partition's thread group its own groups of the first again and
+write their states, and the statement's thread merges the states of each
+group of all. Every partition's groups were gathered in one list, then
+merged into a table of every group, neither charged to any grant. Of a
+second grouping of many groups, each of them came from up to 64
+partitions, and the list held them all before the merge began.
+
+The groups the partitions give are now held of a work grant of the
+second grouping's own, made of the budget when the first are given, as
+a second operator's would be (`exec/parallel/grouped/regrouped/
+crossing.rs`). Once they pass it, those held and every partition's
+after are written to the spill, each to one of 64 runs by the hash of
+its key as the grouping compares keys, so all of a key's groups share a
+run: its grouping values, then each state as a binary string. At the end
+each run is read back and merged alone, its groups finished, numbered by
+their least firsts and kept as the HAVING condition keeps them, and
+written to a run of their own in that order, which the statement's
+thread merges with the others as it reads them, as a spilled first
+grouping's are (D1226). No more is held at once than one run's groups.
+
+A run whose groups alone pass the grant is still merged whole: the
+groups of one key cannot be parted, and a run holds a 64th of the keys.
 #### D1229. A sort that asks for its last row's peers is run in parallel, each morsel sorted whole
 
 FETCH FIRST n ROWS WITH TIES asks for the first n rows of a sort and

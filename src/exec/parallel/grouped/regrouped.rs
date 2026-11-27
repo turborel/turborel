@@ -31,10 +31,12 @@
 //! projection between the two, a partition's groups of the first are
 //! read as a batch from their table (`second.rs`), no row made of one.
 
+mod crossing;
+
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use super::{Merging, feed, finished, fresh};
 use crate::error::Result;
@@ -46,6 +48,7 @@ use crate::logical::Expr;
 use crate::physical::parallel::{between, counted_between, crosses};
 use crate::physical::{NodeCount, Plan, first_level};
 use crate::storage::Row;
+use crossing::{Crossing, Merged};
 
 /// The second grouping of a pair: what it groups the first's groups by
 /// and computes, and, of an analyzed plan, the count of the first's.
@@ -68,17 +71,6 @@ pub(super) struct Outer {
     read: Option<Read>,
 }
 
-/// What a second grouping crossing the first's partitions keeps of them.
-struct Crossing {
-    steps: Vec<Vec<Expr>>,
-    groups: Mutex<Vec<Written>>,
-    failed: AtomicBool,
-}
-
-/// A group of a partition: its first, its grouping values and each set
-/// function's state written.
-type Written = (u64, Row, Vec<Vec<u8>>);
-
 impl Outer {
     /// The second grouping of `plan` and the first under it, if `plan` is
     /// such a pair (`physical::first_level`).
@@ -94,7 +86,7 @@ impl Outer {
         let steps: Vec<Vec<Expr>> = steps.into_iter().map(<[Expr]>::to_vec).collect();
         // Through a projection its groups are made rows, each evaluated.
         let batched = steps.is_empty();
-        let crossing = crosses(plan).then(|| Crossing { steps, groups: Mutex::new(Vec::new()), failed: AtomicBool::new(false) });
+        let crossing = crosses(plan).then(|| Crossing::new(steps));
         let projected = counted_between(input, 0);
         for c in count.iter().chain(&projected) {
             c.opened();
@@ -150,7 +142,7 @@ impl Outer {
         }
         if let Some(crossing) = &self.crossing {
             let written = made.into_iter().map(|(first, values, states)| (first, values, written(&states)));
-            crossing.groups.lock().unwrap_or_else(PoisonError::into_inner).extend(written);
+            crossing.add(&self.spec, written.collect(), runner)?;
             return Ok(Vec::new());
         }
         made.into_iter().map(|(first, values, states)| Ok((first, finished(states, values)?))).collect()
@@ -200,7 +192,7 @@ impl Outer {
             });
             (table.first(g), table.values(g), states.collect())
         });
-        crossing.groups.lock().unwrap_or_else(PoisonError::into_inner).extend(written);
+        crossing.add(&self.spec, written.collect(), runner)?;
         Ok(Vec::new())
     }
 
@@ -222,38 +214,16 @@ impl Outer {
     }
 
     /// [X3.135-1986 §5.22 GR2] Of one that crosses the partitions, its
-    /// groups of all, each partition's states of a group merged, numbered
-    /// by the least first, in that order; none if a projection failed.
+    /// groups of all, merged, those `keep` keeps of them, in the order of
+    /// their firsts (`Crossing::merged`); of any other, none; none if a
+    /// projection failed.
     ///
     /// # Errors
     ///
-    /// As merging a state fails.
-    pub(super) fn merged(&self) -> Result<Option<Vec<(u64, Row)>>> {
-        let Some(crossing) = &self.crossing else { return Ok(Some(Vec::new())) };
-        if crossing.failed.load(Ordering::Relaxed) {
-            return Ok(None);
-        }
-        let groups = std::mem::take(&mut *crossing.groups.lock().unwrap_or_else(PoisonError::into_inner));
-        let mut found: HashMap<Vec<u8>, usize> = HashMap::new();
-        let mut made: Vec<Merging> = Vec::new();
-        for (number, values, states) in groups {
-            let at = *found.entry(group_key(&self.spec, &values)?).or_insert_with(|| {
-                made.push((number, values, fresh(&self.spec.aggs)));
-                made.len().saturating_sub(1)
-            });
-            let group = made.get_mut(at).ok_or_else(|| broken("a merged group is missing"))?;
-            group.0 = group.0.min(number);
-            for (acc, state) in group.2.iter_mut().zip(&states) {
-                acc.merge(state)?;
-            }
-        }
-        if made.is_empty() && self.spec.groups.is_empty() {
-            // [X3.135-1986 §5.23 GR1, §5.25 GR1] one group even of no rows.
-            made.push((0, Row::new(), fresh(&self.spec.aggs)));
-        }
-        let mut out = made.into_iter().map(|(first, values, states)| Ok((first, finished(states, values)?))).collect::<Result<Vec<_>>>()?;
-        out.sort_unstable_by_key(|g| g.0);
-        Ok(Some(out))
+    /// As merging a state, reading the spill back, or `keep` fails.
+    pub(super) fn merged(&self, keep: impl FnMut(Vec<(u64, Row)>) -> Result<Vec<(u64, Row)>>) -> Result<Option<Merged>> {
+        let Some(crossing) = &self.crossing else { return Ok(Some((Vec::new(), Vec::new()))) };
+        crossing.merged(&self.spec, keep)
     }
 }
 

@@ -228,3 +228,25 @@ fn partitions_past_the_depth_give_way() {
     let shown = in_parallel(&a, asked);
     assert!(areas > 1, "the grouping's area and one of the grouping given way to: {areas} areas\n{shown}");
 }
+
+/// Verifies: [DESIGN] (RULES.md D1228, D1133) a second grouping that
+/// crosses the first's partitions, by a set function's result of the
+/// first or a projection of it, of many groups, at the smallest
+/// MEMORY.WORK_BYTES, its groups held in the spill and merged run by run,
+/// gives the rows it gives run alone, in their order, under HAVING too.
+#[test]
+fn a_crossing_second_grouping_past_the_grant_gives_its_rows() {
+    let (db, a, _threads) = table();
+    let queries = [
+        "SELECT X.M, COUNT(*) FROM (SELECT G, SUM(N) AS M FROM C GROUP BY G) AS X GROUP BY X.M",
+        "SELECT X.M, COUNT(*) FROM (SELECT G, SUM(N) AS M FROM C GROUP BY G) AS X GROUP BY X.M HAVING COUNT(*) > 1",
+        "SELECT Y.P, COUNT(Y.G) FROM (SELECT X.G, X.M + 1 AS P FROM (SELECT G, SUM(N) AS M FROM C GROUP BY G) AS X) AS Y GROUP BY Y.P",
+    ];
+    let in_memory: Vec<Vec<String>> = queries.iter().map(|q| alone(&a, q)).collect();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    for (q, expected) in queries.iter().zip(&in_memory) {
+        assert!(expected.len() > 100, "{q}: many groups of the second");
+        assert_eq!(&parallel(&a, q), expected, "{q}");
+        in_parallel(&a, q);
+    }
+}

@@ -64,13 +64,25 @@ pub(super) struct Spilled {
 type Finished = Option<Vec<Box<dyn SpillRun>>>;
 
 /// The groups of a run of finished groups read back, each with its number,
-/// what their records name held by `lobs`, and the spill whose area holds
-/// the run, kept while it is read.
+/// what their records name held by `lobs`, and what holds the area of the
+/// run, kept while it is read.
 struct Read {
     records: Records,
     types: TypeRegistry,
     lobs: SpilledLobs,
-    _spilled: Arc<Spilled>,
+    _held: Arc<dyn Send + Sync>,
+}
+
+/// The groups of `records`, a run of finished groups each numbered by its
+/// first (`partition::numbered`), read back as they are given, of the
+/// types `types`, what they name held by `lobs`, and `held`, which holds
+/// the run's area, kept while they are read.
+pub(in crate::exec::parallel::grouped) fn given_of(
+    records: Records,
+    (types, lobs): (TypeRegistry, SpilledLobs),
+    held: Arc<dyn Send + Sync>,
+) -> Given {
+    Box::new(Read { records, types, lobs, _held: held })
 }
 
 impl Iterator for Read {
@@ -123,7 +135,8 @@ impl Spilled {
             let work = self.work.lock().unwrap_or_else(PoisonError::into_inner);
             (work.types().clone(), work.lobs().clone())
         };
-        Ok(Box::new(Read { records: run.into_records()?, types, lobs, _spilled: Arc::clone(self) }))
+        let held: Arc<Spilled> = Arc::clone(self);
+        Ok(given_of(run.into_records()?, (types, lobs), held))
     }
 
     /// Writes `made`, the groups of partition `p` frozen whole, to a run
