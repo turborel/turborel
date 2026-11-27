@@ -80,7 +80,7 @@ impl PhysicalPlanner<'_> {
 }
 
 /// Whether `e` reads nothing but the columns it names: no subquery in it.
-fn plain(e: &Expr) -> bool {
+pub(super) fn plain(e: &Expr) -> bool {
     !Cond::Value(e.clone()).has_subquery()
 }
 

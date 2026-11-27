@@ -33,7 +33,8 @@ fn sum(a: Option<usize>, b: Option<usize>) -> Option<usize> {
 
 impl PhysicalPlanner<'_> {
     /// The widths of `plan` and of its inputs: a scan's, its table's and
-    /// its row id's; a join's, its operands'; a semi join's, its left's.
+    /// its row id's; a join's, its operands'; a semi join's, its left's;
+    /// a window's, its input's and its calls'.
     pub(super) fn sized(&self, plan: &Plan) -> Sized {
         let table = |name| self.db.catalog.table(name).map(|t| t.columns.len());
         let alone = |width| Sized { width, kids: Vec::new() };
@@ -59,6 +60,11 @@ impl PhysicalPlanner<'_> {
             Plan::OuterJoin { left, right, widths, .. } => {
                 Sized { width: Some(widths.0.saturating_add(widths.1)), kids: vec![self.sized(left), self.sized(right)] }
             }
+            // A window's columns are its input's, then its calls'.
+            Plan::Window { window, .. } => {
+                let kid = self.sized(&window.input);
+                Sized { width: kid.width.map(|w| w.saturating_add(window.calls.len())), kids: vec![kid] }
+            }
             // A grouping's own width is not needed here, its input's is.
             Plan::Aggregate { input, .. } => Sized { width: None, kids: vec![self.sized(input)] },
             Plan::Nearest(_)
@@ -77,7 +83,6 @@ impl PhysicalPlanner<'_> {
             | Plan::Transition { .. }
             | Plan::Shared(_)
             | Plan::Unnest(_)
-            | Plan::Window { .. }
             | Plan::Recognize { .. }
             | Plan::Polymorphic(_)
             | Plan::Parallel(_)

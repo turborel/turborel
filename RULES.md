@@ -801,6 +801,7 @@ verification approach DO-178C expects (§8).
 | D1241 | A scan judges a top-N's bound of each row, and a top-N of the column store runs in parallel on one shared bound |
 | D1242 | A probe of a table built for a pipeline pairs the rows a pass keeps alone, told each row's seeded key hash, and drops the rest before it looks any up |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
+| D1245 | A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked |
 
 ### The project
 
@@ -22266,10 +22267,10 @@ the server was given, at any grant.
 Each partition's thread now pushes its result into a list of its own
 share of the grant, which spills past it as the partition's input does
 (`exec/parallel/partitioned.rs`), and the statement's thread merges the
-lists as it reads them (`partitioned/merged.rs`): of each list's next
-row, the least by the window's sort keys, or, of a set operation, by the
-place of the first operand's row carried after its columns, a tie taken
-from the earlier partition. A window's partitions are never tied, as
+lists as it reads them (`partitioned/merged.rs`). Of each list's next
+row it takes the least by the window's sort keys, or, of a set
+operation, by the place of the first operand's row carried after its
+columns, a tie taken from the earlier partition. A window's partitions are never tied, as
 its sort keys begin with its partitioning, and the place is a number
 each row has alone, so the rows come in the order the plan alone gives
 them. No more of the result is held at once than the lists hold in
@@ -22586,6 +22587,65 @@ and forgets it, or the write finds the transaction over and notes none.
 Recovery is unchanged. Nothing in the log tells a transaction rolled
 back in memory from one a crash stopped, so the rule is kept where
 records are written.
+
+#### D1245. A window carries only the columns it and those above read, its rows narrowed to them, and merges its partitions in order only where an order is asked
+
+The pruning of the columns no one reads (D1167) left a window as it
+was, with all it read. So every window over a wide table read every
+column of it, and a window run a row at a time on its threads (D295,
+D1227) held, sorted, split and spilled each row whole. Over a table of
+a hundred columns the rows its partitions held were mostly text no one
+read, and the statement's thread spent its time sizing and spilling
+them.
+
+A window now reads its partitioning's columns, its ordering's, and its
+calls' arguments, filters and frames' offsets, and passes on those of
+its input's columns read above it (`physical/blind/pruned/windowed.rs`).
+Every call is computed whether or not one above reads it, so no error a
+call raises is lost, as a projection's expressions are. Its input is
+pruned as a sort's is, so the scan under it reads those columns alone.
+A window that searches for a row pattern, or whose call holds a
+subquery, is left as it is.
+
+Pruned, a window's input still gives a row a place for each column,
+null where nothing reads it, and so does a scan that reads some of its
+table's columns. A window under a projection is then narrowed
+(`pruned/narrowed.rs`). The projection under it keeps the columns that
+hold a value, or a projection of them is put over the scan, and the
+window's partitioning, its ordering, its calls, its sort's keys and the
+projection above it are numbered anew. A column a nested window function
+gives (ISO/IEC 9075-2:2023 §6.11) moves with the calls'. The projection
+above gives what it gave, so nothing above it changes. A window under
+any other operator keeps its nulls, which cost nothing in a batch's
+vectors.
+
+A window run in parallel a row at a time merged its partitions' lists
+back by its sort keys on the statement's thread (D1227). A window
+planned for no order asked of it now says so (`ordered`, set in
+`physical/ordered.rs`), and its lists are read one after another
+instead. Every other window, and any made elsewhere, is ordered, so the
+merge is left out only where the planner knows nothing above reads its
+rows in an order.
+
+A window split by row stops at a cancel in each of its phases as a scan
+does. Its rows are split as the scans' morsels are read, which look for
+a cancel, and each partition's thread reads its rows through the
+statement's stop and looks again at each chunk of a run its sort
+writes (D44). Cancelled wherever it lands, it leaves nothing of its
+lists held.
+
+A run of morsels whose reader dropped it (D290) took no more morsels
+and woke the idle workers, but its work and the results not read went
+only with the pool's last hold on the run, as a worker next looked at
+it. So a statement could return, cancelled or ended early, with its
+partitions' lists and their spill areas still held, seen by the next
+statement's grant and by MEMORY_RESERVATIONS. The drop now waits for
+the morsels running, which a cancelled statement's do at their next
+row, as each reads through the statement's stop. It then lets go of the
+work and of the unread results on the reader's thread before it
+returns (`exec/parallel/run.rs`). A statement that ends early with no
+cancel, as a FETCH FIRST met does, waits for at most a morsel's work on
+each thread, which no stop bounds, as the statement has not stopped.
 
 ## 2. Project layout
 

@@ -8,14 +8,15 @@
 //! A plan is now walked from the top with the columns of each operator's
 //! rows read above it, its own columns all. A scan reads those and the
 //! ones it is ordered by alone. A filter reads its condition's, a sort its
-//! keys', a grouping its groups' and its set functions', and a join its
-//! keys' and its conditions'. A projection's column moved is read only if
+//! keys', a grouping its groups' and its set functions', a join its
+//! keys' and its conditions', and a window its partitioning's, its
+//! ordering's and its calls' (`pruned/windowed.rs`, RULES.md D1245). A projection's column moved is read only if
 //! one above reads it; any other expression reads its columns whether or
 //! not it is read, so no error it raises is lost. An operator with a
 //! subquery is left as it is, with all it reads, as the subquery may read
 //! the row, and so is one of any other kind.
 //!
-//! An operand of a join, or the input of a sort, that gives a column
+//! An operand of a join, or the input of a sort or a window, that gives a column
 //! neither it nor one above reads is put under a projection of its
 //! columns that gives that column null (`exec/batch/picks.rs`), or, if it
 //! is a projection of columns, gives null itself, so the join or the sort
@@ -26,14 +27,21 @@
 //! each such projection, the columns kept by name and the others as NULL
 //! (`pruned/named.rs`).
 //!
+//! A window under a projection, its input such a projection or a scan
+//! of some of its table's columns, is given
+//! the columns that hold a value alone, numbered anew, so a window run a
+//! row at a time carries no nulls (`pruned/narrowed.rs`, RULES.md D1245).
+//!
 //! A sort whose key is a column's own octets, made by the projection under
 //! it and read above by none, is keyed by the column in place
 //! (`pruned/octets.rs`, RULES.md D1185).
 
 mod joins;
 mod named;
+mod narrowed;
 mod octets;
 mod single;
+mod windowed;
 
 use super::super::{PhysicalPlanner, Plan};
 use super::width::Sized;
@@ -56,6 +64,7 @@ impl PhysicalPlanner<'_> {
     /// own columns as they were.
     pub(in crate::physical) fn pruned(&self, mut plan: Plan) -> Plan {
         self.prune(&mut plan);
+        self.narrowed(&mut plan);
         plan
     }
 
@@ -88,6 +97,7 @@ impl PhysicalPlanner<'_> {
             Plan::HashJoin { .. } | Plan::Product { .. } => self.join_pruned(plan, sizes, needed),
             Plan::OuterJoin { .. } => self.outer_pruned(plan, sizes, needed),
             Plan::SemiJoin(semi) => self.semi_pruned(semi, sizes, needed),
+            Plan::Window { .. } => self.window_pruned(plan, sizes.kid(0), needed),
             Plan::Nearest(_)
             | Plan::IndexScan { .. }
             | Plan::IndexJoin { .. }
@@ -105,7 +115,6 @@ impl PhysicalPlanner<'_> {
             | Plan::Transition { .. }
             | Plan::Shared(_)
             | Plan::Unnest(_)
-            | Plan::Window { .. }
             | Plan::Recognize { .. }
             | Plan::Polymorphic(_)
             | Plan::Parallel(_)
