@@ -157,6 +157,34 @@ fn on_half_stack(db: &Database, sql: &str) -> Result<usize, Code> {
     })
 }
 
+/// Verifies: [DESIGN] RULES.md D1206, D404, D1167: in a chain of tables
+/// each joined to the first by one value, the equalities of each pair
+/// that predicate transitivity adds are of one column of each join's
+/// right operand, and the filters of its left operand imply all but one.
+/// They stay its hash keys. No filter of keys stands over a join, and no
+/// join is put under a projection for a key no longer read, so the plan
+/// is no deeper for them. The statement gives its one row.
+///
+/// Regression test: each join once stood under a filter of the
+/// equalities it did not hash, two more calls a level as the chain was
+/// read, and the deepest chain overflowed half the default stack.
+#[test]
+fn a_chain_joined_on_one_value_stands_under_no_filter_of_its_keys() {
+    let db = tables();
+    let s = db.session("APP");
+    let sql = joined_deep(6);
+    let plan = physical(&s, &sql);
+    assert_eq!(plan.matches("HashJoin").count(), 6, "{plan}");
+    let of_keys = |line: &&str| line.contains("Filter") && line.contains(".K = B");
+    assert_eq!(plan.lines().filter(of_keys).count(), 0, "{plan}");
+    let over_a_join =
+        |pair: &[&str]| pair.first().is_some_and(|l| l.contains("Project")) && pair.get(1).is_some_and(|l| l.contains("HashJoin"));
+    let lines: Vec<&str> = plan.lines().collect();
+    // The topmost projection alone, the select list's, is over a join.
+    assert_eq!(lines.windows(2).filter(|pair| over_a_join(pair)).count(), 1, "{plan}");
+    assert_eq!(rows(&s, &sql).unwrap().len(), 1);
+}
+
 /// Verifies: [DESIGN] RULES.md D1167, R-CF-6: the deepest chain of joins
 /// the parser accepts is pruned, run and shown within half the default
 /// stack.
