@@ -159,15 +159,15 @@ fn handed(rows: &[Given], seed: &Seed) -> Made {
 #[test]
 fn groups_merged_in_one_pass_are_those_found_or_made_in_turn() {
     let seed = Seed::fixed(0x5EED);
-    let row = |key: i128, n: u64, collides: bool| {
+    let given = |key: i128, n: u64, collides: bool| {
         let key = vec![exact(key)];
         (if collides { 42 } else { hash_values(&seed, &key) }, key, n)
     };
-    let apart: Vec<Given> = (0..1500).map(|n| row(i128::from(n), n, false)).collect();
-    let shared: Vec<Given> = (0..3000).map(|n| row(i128::from(n * 7 % 2500), 5000 + n, false)).collect();
-    let mut colliding: Vec<Given> = (0..300).map(|n| row(i128::from(3000 + n % 200), 9000 + n, false)).collect();
-    colliding.extend((0..600).map(|n| row(i128::from(4000 + n % 150), 9300 + n, true)));
-    colliding.extend((0..300).map(|n| row(i128::from(n * 11 % 5000), 9900 + n, false)));
+    let apart: Vec<Given> = (0..1500).map(|n| given(i128::from(n), n, false)).collect();
+    let shared: Vec<Given> = (0..3000).map(|n| given(i128::from(n * 7 % 2500), 5000 + n, false)).collect();
+    let mut colliding: Vec<Given> = (0..300).map(|n| given(i128::from(3000 + n % 200), 9000 + n, false)).collect();
+    colliding.extend((0..600).map(|n| given(i128::from(4000 + n % 150), 9300 + n, true)));
+    colliding.extend((0..300).map(|n| given(i128::from(n * 11 % 5000), 9900 + n, false)));
     let (mut merged, mut in_turn) = (GroupTable::new(1, &calls(), &seed, usize::MAX), GroupTable::new(1, &calls(), &seed, usize::MAX));
     for (rows, keyed) in [(&apart, false), (&shared, false), (&colliding, true)] {
         merged.absorb_whole(&handed(rows, &seed)).unwrap();
