@@ -2,16 +2,24 @@
 //! (RULES.md R-TEST-9, D340 to D344): the rule's place among the rules,
 //! MAX and MIN without DISTINCT, the slots, the marker of each copy, the
 //! filter's truth, the copies read again, the copy of the functions computed whole, the parts
-//! merged and given, and the bag of values a function took.
+//! merged and given, and the bag of values a function took; and, of a part
+//! kept in its function's column of states (D1186), what a group gives,
+//! what a column sent between threads is, and what it turns into.
 
 use super::super::{Mutation, Package};
 
 /// The alike test of the rule, which compares every form of query.
 const ALIKE: &str = "distinct_aggregates::distinct_functions_alike_with_and_without_the_rewrite_10_9";
 
+/// A part kept in a column is its accumulator's part.
+const PART_COLUMN: &str = "exec::table::states::tests::a_part_kept_in_a_column_is_its_accumulators_part";
+
+/// The parts kept in columns give the results the query has without the rule.
+const PARTS_ALIKE: &str = "distinct_aggregates::parts_kept_in_columns_give_the_results_without_the_rule";
+
 /// Mechanisms whose removal must fail the DISTINCT set functions'
 /// requirements.
-pub const DISTINCT_AGGREGATES: [Mutation; 13] = [
+pub const DISTINCT_AGGREGATES: [Mutation; 16] = [
     Mutation {
         name: "distinct-aggregates-unregistered",
         package: Package::Core,
@@ -141,5 +149,35 @@ pub const DISTINCT_AGGREGATES: [Mutation; 13] = [
         replacement: "",
         integration: &[ALIKE],
         unit: &[],
+    },
+    Mutation {
+        name: "part-column-gives-result",
+        package: Package::Core,
+        breaks: "a part kept in a column gives its function's result, not the part the second grouping merges (D1186)",
+        file: "src/exec/table/states.rs",
+        original: "            States::Part(typed) => parts::finished(typed, g),",
+        replacement: "            States::Part(typed) => typed.finish(g),",
+        integration: &[PARTS_ALIKE],
+        unit: &[PART_COLUMN],
+    },
+    Mutation {
+        name: "part-column-sent-plain",
+        package: Package::Core,
+        breaks: "a part's column sent to another thread is its function's there, and gives results for parts (D1186)",
+        file: "src/exec/table/states.rs",
+        original: "            return Ok(if parts::is_part(agg) { States::Part(typed) } else { States::Typed(typed) });",
+        replacement: "            return Ok(States::Typed(typed));",
+        integration: &[PARTS_ALIKE],
+        unit: &[PART_COLUMN],
+    },
+    Mutation {
+        name: "part-column-boxed-bare",
+        package: Package::Core,
+        breaks: "a part's column turned into accumulators holds its function's, which give results for parts (D1186)",
+        file: "src/exec/table/states/parts.rs",
+        original: "    typed.to_boxed_by(agg, part_acc)",
+        replacement: "    typed.to_boxed_by(agg, |acc| if agg.distinct { part_acc(acc) } else { acc })",
+        integration: &[],
+        unit: &["exec::table::states::tests::a_parts_column_widens_into_the_parts_accumulators"],
     },
 ];

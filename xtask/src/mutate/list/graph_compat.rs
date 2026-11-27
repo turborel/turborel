@@ -1,5 +1,5 @@
 //! The mutations of the compatibility syntax of property graphs
-//! (RULES.md R-TEST-9): SQL Server's MATCH as GPML and its lowering to a
+//! (RULES.md R-TEST-9): MATCH in a WHERE clause as GPML and its lowering to a
 //! GRAPH_TABLE joined with the FROM clause's tables, Cypher's lengths,
 //! labels, restrictor, abbreviated relationships and clauses, PGQL's one
 //! graph, reachability and path macros, and the frames that take a
@@ -63,7 +63,7 @@ pub const GRAPH_COMPAT: [Mutation; 35] = [
         name: "server-edge-left",
         package: Package::Core,
         breaks: "a MATCH edge <-( e )- points right [GS §10.1]",
-        file: "src/parser/graph/compat/server.rs",
+        file: "src/parser/graph/compat/predicate.rs",
         original: "            self.expect_delim(delim::MINUS)?;\n            Orientation::Left\n",
         replacement: "            self.expect_delim(delim::MINUS)?;\n            Orientation::Right\n",
         integration: &["graph_compat::match_reads_node_tables_10_1"],
@@ -73,7 +73,7 @@ pub const GRAPH_COMPAT: [Mutation; 35] = [
         name: "server-shortest",
         package: Package::Core,
         breaks: "SHORTEST_PATH keeps every path, not one shortest of each end [GS §10.1]",
-        file: "src/parser/graph/compat/server.rs",
+        file: "src/parser/graph/compat/predicate.rs",
         original: "PathPrefix { selector: Some(Selector::AnyShortest), restrictor: None, at }",
         replacement: "PathPrefix { selector: None, restrictor: None, at }",
         integration: &["graph_compat::shortest_path_aggregates_its_path_10_1"],
@@ -83,7 +83,7 @@ pub const GRAPH_COMPAT: [Mutation; 35] = [
         name: "server-last-node-ends",
         package: Package::Core,
         breaks: "LAST_NODE ( x ) = LAST_NODE ( y ) is not read [GS §10.1]",
-        file: "src/parser/graph/compat/server.rs",
+        file: "src/parser/graph/compat/predicate.rs",
         original: "self.at_last_node() && *self.peek_at(4) == Tok::Delimiter(delim::EQUALS)",
         replacement: "self.at_last_node() && *self.peek_at(5) == Tok::Delimiter(delim::EQUALS)",
         integration: &["graph_compat::last_node_joins_paths_10_1"],
@@ -146,7 +146,7 @@ pub const GRAPH_COMPAT: [Mutation; 35] = [
         file: "src/binder/query/graph_match.rs",
         original: "SearchCondition::Predicand(v, _) => condition_of(v).is_some_and(has_match),",
         replacement: "SearchCondition::Predicand(v, _) => condition_of(v).is_some_and(|_| false),",
-        integration: &["graph_compat::match_beyond_sql_server_10_1"],
+        integration: &["graph_compat::match_under_or_and_not_10_1"],
         unit: &[],
     },
     Mutation {
@@ -166,7 +166,7 @@ pub const GRAPH_COMPAT: [Mutation; 35] = [
         file: "src/binder/query/graph_match.rs",
         original: "Predicate::InSubquery { value, subquery, not: false }",
         replacement: "Predicate::InSubquery { value, subquery, not: true }",
-        integration: &["graph_compat::match_beyond_sql_server_10_1"],
+        integration: &["graph_compat::match_under_or_and_not_10_1"],
         unit: &[],
     },
     Mutation {
@@ -196,7 +196,7 @@ pub const GRAPH_COMPAT: [Mutation; 35] = [
         file: "src/logical/graph/identity.rs",
         original: "if let (true, [Value::Char(id)]) = (native, key) {",
         replacement: "if let (true, [Value::Char(id)]) = (false, key) {",
-        integration: &["graph_compat::oracle::identity_spellings_5_1"],
+        integration: &["graph_compat::identity::identity_spellings_5_1"],
         unit: &[],
     },
     Mutation {

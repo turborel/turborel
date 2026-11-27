@@ -230,6 +230,13 @@ pub trait Kernels: Send + Sync {
     fn find_bytes(&self, haystack: &[u8], needle: &[u8]) -> Option<usize> {
         portable::find::find_bytes(haystack, needle)
     }
+
+    /// The text `bytes` hold, if they are UTF-8, as `str::from_utf8`
+    /// judges them (RULES.md D1175). A column's texts are judged by it as
+    /// a scan reads them, so a set of kernels may judge them faster.
+    fn utf8<'a>(&self, bytes: &'a [u8]) -> Option<&'a str> {
+        std::str::from_utf8(bytes).ok()
+    }
 }
 
 /// \[DESIGN\] The term a distance kernel sums over each pair of elements

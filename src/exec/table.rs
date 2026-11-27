@@ -32,7 +32,7 @@ pub(in crate::exec) use hash::{hash_rows, hash_values};
 pub(in crate::exec) use join::{BUILD_PARTS, BuiltPart, Parted, Parting, Span};
 pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, Located, keys_equal, numbers_hashed, values_hash};
 pub(in crate::exec) use keys::{Key, Keys};
-pub(in crate::exec) use made::Made;
+pub(in crate::exec) use made::{Made, PIECE};
 pub(in crate::exec) use runtime::RuntimeFilter;
 
 use crate::error::Result;
@@ -54,7 +54,7 @@ pub(in crate::exec) struct Pending {
 }
 
 /// A place in a batch, or a group's number, as a `u32`: every one fits.
-fn narrow(n: usize) -> u32 {
+pub(in crate::exec) fn narrow(n: usize) -> u32 {
     u32::try_from(n).unwrap_or(u32::MAX)
 }
 

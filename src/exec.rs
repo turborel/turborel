@@ -6,7 +6,7 @@
 //! constructors [ISO/IEC 9075:1992 §7.10, §7.2], with three-valued logic
 //! [X3.135-1986 §5.18].
 //!
-//! \[DESIGN\] Each plan node becomes an iterator over rows (the Volcano /
+//! \[DESIGN\] Each plan node becomes an iterator over rows (the
 //! iterator model). Rows are pulled one at a time from the top; an
 //! aggregation, projection, sort, EXCEPT or INTERSECT of tables' scans
 //! reads them a batch at a time where it can (`exec/batch.rs`,
@@ -533,6 +533,7 @@ mod tests {
             input: Box::new(one_row(row.clone())),
             est: 0.0_f64,
             streamed: false,
+            first: None,
         };
         assert_eq!(code(execute(aggregate, &st, NO_TRANSACTION)), Some(Code::Api));
         let keys = vec![SortKey::ascending(1)];

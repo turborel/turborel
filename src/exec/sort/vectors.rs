@@ -337,15 +337,38 @@ pub(super) fn row_of(batch: &Batch, r: usize) -> Row {
 
 /// [X3.135-1986 §8.3 GR3b; ISO/IEC 9075-2:2023 §10.10 GR1] The order of
 /// row `ra` of `a` and row `rb` of `b` under `keys`, as `compare_rows`
-/// orders the rows of their values.
+/// orders the rows of their values: two character strings of a key by
+/// octets as their octets order, where they lie (RULES.md D1185).
 pub(super) fn compare_cells(keys: &[SortKey], (a, ra): (&Batch, usize), (b, rb): (&Batch, usize)) -> Ordering {
     keys.iter()
         .map(|k| {
             let (x, y) = (a.cell(k.column, ra), b.cell(k.column, rb));
-            k.order().placed((x.is_null(), y.is_null()), || cell_cmp(x, y))
+            k.order().placed((x.is_null(), y.is_null()), || {
+                if k.octets
+                    && let (Some(s), Some(t)) = (text_of(x), text_of(y))
+                {
+                    return s.cmp(t);
+                }
+                cell_cmp(x, y)
+            })
         })
         .find(|o| o.is_ne())
         .unwrap_or(Ordering::Equal)
+}
+
+/// The octets of the character string `cell` holds, if it holds one.
+fn text_of(cell: Cell<'_>) -> Option<&[u8]> {
+    match cell {
+        Cell::Text(t) => Some(t.as_bytes()),
+        Cell::Value(v) => {
+            if let Value::Char(s) = v {
+                Some(s.as_bytes())
+            } else {
+                None
+            }
+        }
+        Cell::Exact(..) | Cell::Approx(_) | Cell::Datetime(_) | Cell::Bool(_) | Cell::Null => None,
+    }
 }
 
 /// The order of the values of cells `x` and `y`, as `sort_cmp` orders the
@@ -425,5 +448,37 @@ mod tests {
         }
         let (a, b) = (Value::Char("b".into()), Value::Char("a".into()));
         assert_eq!(cell_cmp(Cell::Value(&a), Cell::Value(&b)), Ordering::Greater);
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1185 [ISO/IEC 9075-2:2023 §4.3.2]:
+    /// under a key by octets two character strings compare by their
+    /// octets where they lie, a text of a vector and a value alike, so
+    /// `'a'` is below `'a '` and above neither a tab after it nor itself;
+    /// under any other key they compare padded; a null is placed by the
+    /// key, and cells that are not both strings compare as they did.
+    ///
+    /// MC/DC of `k.octets && both strings`: the key by octets of two
+    /// strings, the padded key of the same, and the key by octets of a
+    /// string and a number.
+    #[test]
+    fn cells_of_a_key_by_octets_compare_unpadded() {
+        let texts = crate::storage::Texts::new("aa a\t".to_owned(), vec![1_usize, 3_usize, 5_usize], None);
+        let spaced = Value::Char("a ".into());
+        let values = Column::Values(vec![Value::Char("a".into()), spaced, Value::Null]);
+        let numbers = Column::Ints(Ints::new(vec![1_i64, 2_i64, 3_i64], 0_u32, None));
+        let batch = Batch { columns: vec![Column::Texts(texts), values, numbers], rows: 3 };
+        let octets = |c: usize| [SortKey { octets: true, ..SortKey::ascending(c) }];
+        let of = |keys: &[SortKey], a: usize, b: usize| compare_cells(keys, (&batch, a), (&batch, b));
+        assert_eq!(of(&octets(0), 0, 1), Ordering::Less, "a prefix is the less");
+        assert_eq!(of(&octets(0), 1, 2), Ordering::Greater, "a space is above a tab");
+        assert_eq!(of(&octets(0), 0, 2), Ordering::Less);
+        assert_eq!(of(&[SortKey::ascending(0)], 0, 1), Ordering::Equal, "padded");
+        assert_eq!(of(&[SortKey::ascending(0)], 0, 2), Ordering::Greater, "padded");
+        assert_eq!(of(&octets(1), 0, 1), Ordering::Less, "values");
+        assert_eq!(of(&octets(1), 2, 1), Ordering::Greater, "a null last");
+        assert_eq!(of(&octets(2), 0, 1), Ordering::Less, "numbers as they were");
+        let mixed = [SortKey { octets: true, ..SortKey::ascending(0) }];
+        let other = Batch { columns: vec![Column::Ints(Ints::new(vec![7_i64], 0_u32, None))], rows: 1 };
+        assert_eq!(compare_cells(&mixed, (&batch, 0), (&other, 0)), sort_cmp(&Value::Char("a".into()), &other.cell(0, 0).to_value()));
     }
 }

@@ -24,6 +24,8 @@ use crate::value::codec::{put_value, value};
 use super::super::Pending;
 use super::Boxed;
 
+mod written;
+
 /// Each group's value, whether it has one yet, and the bytes the values
 /// hold apart from themselves.
 #[derive(Debug, Default)]

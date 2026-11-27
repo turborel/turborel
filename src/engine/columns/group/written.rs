@@ -106,7 +106,7 @@ impl Group {
             rows: count32(values.first().map_or(ids.len(), Column::len))?,
             ids: id_runs,
             by_id,
-            columns,
+            columns: columns.into_iter().map(Some).collect(),
             order: order.to_vec(),
             pax: pages.pax,
             edges,
