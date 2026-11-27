@@ -31,8 +31,10 @@ fn values(k: usize) -> String {
 }
 
 /// T, kept by column in groups of 2,048 rows, frozen; then rows written,
-/// changed and deleted and left in its tree, which its scan judges
-/// nothing of.
+/// and rows of its first group changed and deleted, and left in its
+/// tree, which its scan judges nothing of. So the first group's runs are
+/// read at the places the tree has no entry for, and the other groups'
+/// runs whole where their conjuncts keep most rows.
 fn table() -> (Database, Session) {
     let db = Database::new();
     db.schema(
@@ -50,8 +52,8 @@ fn table() -> (Database, Session) {
     db.maintain().unwrap();
     let written: Vec<String> = (20_000..20_200).map(values).collect();
     a.run(&format!("INSERT INTO T VALUES {}", written.join(", "))).unwrap();
-    a.run("UPDATE T SET N = 99 - N, W = 'grey', U = 'http://site12.example/moved' WHERE MOD(K, 37) = 4").unwrap();
-    a.run("DELETE FROM T WHERE MOD(K, 41) = 5").unwrap();
+    a.run("UPDATE T SET N = 99 - N, W = 'grey', U = 'http://site12.example/moved' WHERE MOD(K, 37) = 4 AND K < 2048").unwrap();
+    a.run("DELETE FROM T WHERE MOD(K, 41) = 5 AND K < 2048").unwrap();
     a.commit().unwrap();
     db.set_setting("EXECUTOR.MORSEL_ROWS", &Value::Exact(Decimal::new(4096, 0))).unwrap();
     (db, a)

@@ -74,7 +74,7 @@ pub const VETTED: [Mutation; 17] = [
         breaks: "a comparison a sketch's codes answered for is said to be judged exactly",
         file: CODED,
         original: "    Ok(Some((out, if sketch.is_none() { Reach::Every } else { Reach::Part })))",
-        replacement: "    Ok(Some((out, if sketch.is_none() || !out.is_empty() { Reach::Every } else { Reach::Part })))",
+        replacement: "    Ok(Some((out, if sketch.is_none() || from < to { Reach::Every } else { Reach::Part })))",
         integration: &[],
         unit: &["engine::columns::judged::sketched::tests::a_run_judged_by_a_sketch_is_not_said_judged_exactly"],
     },
