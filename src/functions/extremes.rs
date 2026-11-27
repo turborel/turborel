@@ -1,15 +1,58 @@
 //! MAX and MIN, the set functions that keep the best value of a group
 //! [X3.135-1986 §5.8].
+//!
+//! \[DESIGN\] (RULES.md D1290) Given a vector of character strings, each
+//! compares the strings where they lie in the vector and makes a value of
+//! the one that wins it alone (`TextOrder`).
 
 use super::columnar::{Columnar, Kind};
 use super::{Accumulator, AggregateFunction, floats, ints};
 use crate::bytes::Reader;
 use crate::error::{Code, Result, SqlError};
 use crate::lexer::kw;
-use crate::storage::{Floats, Ints};
+use crate::storage::sel::nth;
+use crate::storage::{Floats, Ints, Texts};
 use crate::value::codec::{put_value, value};
 use crate::value::collation::CollationRef;
-use crate::value::{DataType, Value, compare};
+use crate::value::{DataType, Value, compare, compare_strings};
+
+/// \[DESIGN\] (RULES.md D1290) How MAX or MIN orders the character
+/// strings it compares where they lie: whether it keeps the greatest, and
+/// whether by their octets as they are, as a collation of NO PAD whose
+/// sort key is the text orders them (RULES.md D1183), or with the shorter
+/// padded with spaces, as a comparison with no collation does
+/// [X3.135-1986 §5.11 GR5].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TextOrder {
+    max: bool,
+    unpadded: bool,
+}
+
+impl TextOrder {
+    /// Whether `candidate` takes the place of `best`: only if it is the
+    /// greater, or the less, so of two that compare equal the one met
+    /// first is kept, as `ExtremeAcc::update` keeps it.
+    fn better(self, candidate: &str, best: &str) -> bool {
+        let order = if self.unpadded { candidate.as_bytes().cmp(best.as_bytes()) } else { compare_strings(candidate, best) };
+        order == if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }
+    }
+
+    /// The string of `texts` at `rows`, or of all, that takes the place
+    /// of `held`, the best so far, and of every string of them before it;
+    /// none if none betters `held`. Each is read where it lies, a null
+    /// passed over, no value made.
+    fn best_of<'t>(self, texts: &'t Texts, rows: Option<&[u32]>, held: Option<&str>) -> Option<&'t str> {
+        let mut found: Option<&'t str> = None;
+        for n in 0..rows.map_or(texts.len(), <[u32]>::len) {
+            let Some(candidate) = texts.get(nth(rows, n)) else { continue };
+            let against = if found.is_some() { found } else { held };
+            if against.is_none_or(|best| self.better(candidate, best)) {
+                found = Some(candidate);
+            }
+        }
+        found
+    }
+}
 
 /// MAX and MIN. [X3.135-1986 §5.8 SR8] the result type is the argument's. [X3.135-1986 §5.8 GR4d] by the [X3.135-1986 §5.11] rules.
 pub(super) struct Extreme {
@@ -79,6 +122,24 @@ impl Accumulator for ExtremeAcc {
     fn update_floats(&mut self, floats: &Floats, rows: Option<&[u32]>) -> Result<()> {
         floats::extreme(floats, rows, self.max).map_or(Ok(()), |v| self.update(&v))
     }
+    /// \[DESIGN\] (RULES.md D1290) The best of the vector's strings found
+    /// where they lie, by `update`'s rule of two strings, and a value made
+    /// of it alone, if it betters the best so far. A best so far that is
+    /// no string is given the values, as before.
+    fn update_texts(&mut self, texts: &Texts, rows: Option<&[u32]>) -> Result<()> {
+        let order = TextOrder { max: self.max, unpadded: false };
+        let found = if let Value::Char(best) = &self.best {
+            order.best_of(texts, rows, Some(best))
+        } else if self.best.is_null() {
+            order.best_of(texts, rows, None)
+        } else {
+            return self.update_many(texts.values(), rows);
+        };
+        if let Some(best) = found {
+            self.best = Value::Char(best.into());
+        }
+        Ok(())
+    }
     /// The best value so far, null if none, as `codec::put_value` writes it.
     fn write_state(&self, out: &mut Vec<u8>) -> bool {
         if self.written {
@@ -143,14 +204,15 @@ impl Accumulator for CollatedAcc {
         if v.is_null() {
             return Ok(());
         }
-        let wanted = if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less };
         if let (true, Value::Char(text)) = (self.octets, v) {
-            let better = |best: &Value| if let Value::Char(b) = best { text.as_bytes().cmp(b.as_bytes()) == wanted } else { true };
+            let order = TextOrder { max: self.max, unpadded: true };
+            let better = |best: &Value| if let Value::Char(b) = best { order.better(text, b) } else { true };
             if self.best.as_ref().is_none_or(|(_, best)| better(best)) {
                 self.best = Some((Value::Null, v.clone()));
             }
             return Ok(());
         }
+        let wanted = if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less };
         let key = self.collation.sort_key(v)?;
         if self.best.as_ref().is_none_or(|(best, _)| compare(&key, best) == Some(wanted)) {
             self.best = Some((key, v.clone()));
@@ -162,6 +224,22 @@ impl Accumulator for CollatedAcc {
             Some(rows) => rows.iter().filter_map(|&r| values.get(crate::storage::mask::index(r))).try_for_each(|v| self.update(v)),
             None => values.iter().try_for_each(|v| self.update(v)),
         }
+    }
+    /// \[DESIGN\] (RULES.md D1290) Under a collation whose key is the
+    /// text itself, the best of the vector's strings found where they lie,
+    /// by their octets, and a value made of it alone, if it betters the
+    /// best so far. Under any other each string's value is made, as its
+    /// sort key is made of a value.
+    fn update_texts(&mut self, texts: &Texts, rows: Option<&[u32]>) -> Result<()> {
+        if !self.octets {
+            return self.update_many(texts.values(), rows);
+        }
+        let order = TextOrder { max: self.max, unpadded: true };
+        let held = if let Some((_, Value::Char(best))) = &self.best { Some(&**best) } else { None };
+        if let Some(best) = order.best_of(texts, rows, held) {
+            self.best = Some((Value::Null, Value::Char(best.into())));
+        }
+        Ok(())
     }
     fn update_ints(&mut self, _: &Ints, _: Option<&[u32]>, _: &dyn crate::kernels::Kernels) -> Result<()> {
         Ok(())

@@ -3,8 +3,9 @@
 //! REVOKE USAGE and DROP SCHEMA revert a collation's columns; and, of a
 //! collation of NO PAD that orders strings as their octets do, each place
 //! its strings are compared in place (D1183), the pair of groupings a
-//! DISTINCT set function makes under one (D1184), and the bound a sort
-//! of its first rows by one tells its scan (D1187).
+//! DISTINCT set function makes under one (D1184), the bound a sort of
+//! its first rows by one tells its scan (D1187), and a vector of texts
+//! MAX and MIN compare where it lies (D1290).
 
 use super::{Mutation, Package};
 
@@ -19,8 +20,15 @@ const OCTETS_BOUND: &str = "storage::condition::threshold::tests::a_threshold_by
 /// The unit test of a bound of a key by octets shared by a sort's morsels.
 const OCTETS_SHARED: &str = "storage::condition::threshold::tests::a_shared_threshold_by_octets_counts_strings_by_their_octets";
 
+/// The file of MAX and MIN.
+const EXTREMES: &str = "src/functions/extremes.rs";
+/// The unit test of a vector of texts taken where it lies against its values.
+const TEXTS_TAKEN: &str = "functions::extremes::tests::extremes_take_a_vector_of_texts_where_it_lies";
+/// The unit test of the two orders a vector of texts is taken in.
+const TEXTS_ORDERED: &str = "functions::extremes::tests::a_vector_of_texts_is_ordered_padded_or_by_its_octets";
+
 /// The mutations of collations, in the order they run.
-pub const COLLATIONS: [Mutation; 38] = [
+pub const COLLATIONS: [Mutation; 42] = [
     Mutation {
         name: "collated-read-tracked",
         package: Package::Core,
@@ -261,11 +269,51 @@ pub const COLLATIONS: [Mutation; 38] = [
         name: "unpadded-extreme-padded",
         package: Package::Core,
         breaks: "MAX and MIN under a collation of octets compare padded (D1183)",
-        file: "src/functions/extremes.rs",
-        original: "text.as_bytes().cmp(b.as_bytes()) == wanted",
-        replacement: "crate::value::compare_strings(text, b) == wanted",
+        file: EXTREMES,
+        original: "let order = if self.unpadded { candidate.as_bytes().cmp(best.as_bytes()) } else { compare_strings(candidate, best) };",
+        replacement: "let order = compare_strings(candidate, best);",
         integration: &["unpadded_collations::grouping_and_extremes_are_unpadded_8_2"],
-        unit: &[],
+        unit: &[TEXTS_ORDERED],
+    },
+    Mutation {
+        name: "texts-extreme-tie-replaces",
+        package: Package::Core,
+        breaks: "MAX and MIN of a vector of texts: a string equal to the best so far takes its place (D1290)",
+        file: EXTREMES,
+        original: "order == if self.max { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }",
+        replacement: "order != if self.max { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater }",
+        integration: &[],
+        unit: &[TEXTS_ORDERED],
+    },
+    Mutation {
+        name: "texts-extreme-every-row",
+        package: Package::Core,
+        breaks: "MAX and MIN of a vector of texts read every row of it, not the rows asked (D1290)",
+        file: EXTREMES,
+        original: "let Some(candidate) = texts.get(nth(rows, n)) else { continue };",
+        replacement: "let Some(candidate) = texts.get(n) else { continue };",
+        integration: &[],
+        unit: &[TEXTS_TAKEN],
+    },
+    Mutation {
+        name: "texts-extreme-forgets-the-best",
+        package: Package::Core,
+        breaks: "MAX and MIN of a vector of texts: its best takes the place of a better one kept before (D1290)",
+        file: EXTREMES,
+        original: "let against = if found.is_some() { found } else { held };",
+        replacement: "let against = found;",
+        integration: &[],
+        unit: &[TEXTS_TAKEN],
+    },
+    Mutation {
+        name: "texts-extreme-of-keys-in-place",
+        package: Package::Core,
+        breaks: "MAX and MIN under a collation that makes sort keys compare a vector's texts by their octets (D1290)",
+        file: EXTREMES,
+        original: "        if !self.octets {\n            return self.update_many(texts.values(), rows);",
+        replacement: "        if false {\n            return self.update_many(texts.values(), rows);",
+        integration: &[],
+        unit: &[TEXTS_TAKEN],
     },
     Mutation {
         name: "unpadded-key-trimmed",

@@ -814,6 +814,7 @@ verification approach DO-178C expects (§8).
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1290 | MAX and MIN compare a vector of character strings where it lies, and make a value of the one that wins it alone |
 
 ### The project
 
@@ -21051,7 +21052,8 @@ where `CollationRef::is_octets` holds.
   (`Seed::unpadded`), and a table made by it hashes those strings whole
   (`Kernels::hash_texts_unpadded`) and compares their octets
   (`Lane::equal`).
-- MAX and MIN compare the strings' octets (`CollatedAcc`).
+- MAX and MIN compare the strings' octets (`CollatedAcc`), a vector of
+  them where it lies since D1290.
 - ORDER BY, a join's keys and COUNT(DISTINCT) still take a key, made of a
   vector of texts in one pass as the text's octets (`calls::octets`), which
   sort, join and compare as binary strings do. A sort by a column reads
@@ -23228,6 +23230,33 @@ A split that fails after it took a page now gives back every page it
 took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
+
+#### D1290. MAX and MIN compare a vector of character strings where it lies, and make a value of the one that wins it alone
+
+A set function fed by batches is given a vector at a time. A vector of
+character strings is one text with where each string ends, or the codes
+of a dictionary's entries (D31), and `Accumulator::update_texts` hands
+it over as it is. COUNT counted its strings so. MAX and MIN did not
+override it, so the default made a value of every string of the batch,
+the first time any group's accumulator asked, to compare each with the
+best so far. Nearly all of those values lost and were dropped with the
+batch.
+
+MAX and MIN now find the best string of the vector where the strings
+lie (`TextOrder::best_of`, `functions/extremes.rs`) and make a value of
+it alone, and only if it betters the best so far.
+
+- With no collation two strings compare with the shorter padded with
+  spaces [X3.135-1986 §5.11 GR5], by `compare_strings`, as two values
+  do. Of two that compare equal the one met first is kept, as before.
+- Under a collation of NO PAD whose sort key is the text itself (D1183)
+  they compare by their octets. A string given as a value compares by
+  the same rule (`TextOrder::better`), so the two ways cannot differ.
+- Under any other collation a sort key is made of each string's value,
+  as before.
+
+The rows asked of the vector are read in the order asked, and a null is
+passed over. What an accumulator writes, merges and gives is unchanged.
 
 ## 2. Project layout
 
