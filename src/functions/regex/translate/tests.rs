@@ -100,3 +100,147 @@ fn substring_regex_of_a_large_object_is_a_slice() {
     assert_eq!(lob_text(&call("OCTETS", 3, 0)), format!("<{}>", "€".repeat(9)), "octet 3 is within the second character");
     assert!(matches!(call("CHARACTERS", i128::try_from(before.chars().count()).unwrap() + 2, 0), Value::Null), "from past the match");
 }
+
+/// Seven subjects as a vector of texts, the fourth null: with a match,
+/// with several, with none, the empty string, one not of ASCII.
+const SUBJECTS: [&str; 7] =
+    ["http://www.example.test/a/b", "https://b.test/", "ftp://x", "", "", "http://ü.test/é/x", "http://a/http://b/"];
+
+/// `SUBJECTS` as a vector of texts.
+fn subjects() -> Column {
+    let (joined, ends) = SUBJECTS.iter().fold((String::new(), Vec::new()), |(mut all, mut ends), s| {
+        all.push_str(s);
+        ends.push(all.len());
+        (all, ends)
+    });
+    let nulls = Mask::from_bools(&[false, false, false, true, false, false, false]);
+    Column::Texts(Texts::new(joined, ends, Some(nulls)))
+}
+
+/// The operands of a TRANSLATE_REGEX of `pattern` with `replacement`
+/// beside its subject: the units, ALL or OCCURRENCE, the pattern, the
+/// flag, the replacement, the start position and the occurrence.
+fn operands(pattern: &str, replacement: &str, every: &str, occurrence: i128) -> [Value; 7] {
+    [chars("CHARACTERS"), chars(every), chars(pattern), chars(""), chars(replacement), number(1), number(occurrence)]
+}
+
+/// `consts` and the vector `column` in the subject's place, as a call
+/// over vectors takes them.
+fn over<'a>(consts: &'a [Value; 7], column: &'a Column) -> [Arg<'a>; 8] {
+    let [units, all, p, flag, with, from, nth] = consts;
+    [
+        Arg::Const(units),
+        Arg::Const(all),
+        Arg::Const(p),
+        Arg::Const(flag),
+        Arg::Column(column),
+        Arg::Const(with),
+        Arg::Const(from),
+        Arg::Const(nth),
+    ]
+}
+
+/// `consts` and `subject` in the subject's place, as a call takes them.
+fn beside(consts: &[Value; 7], subject: Value) -> [Value; 8] {
+    let [units, all, p, flag, with, from, nth] = consts.clone();
+    [units, all, p, flag, subject, with, from, nth]
+}
+
+/// Verifies: [DESIGN] RULES.md D1188, D363 [ISO/IEC 9075-2:2023 §6.33
+/// GR9]: TRANSLATE_REGEX over a vector of subjects, its other operands
+/// constants, gives each row what a call of that row gives, the pattern's
+/// searcher and replacement kept across the rows: a subject with a match,
+/// with several, with none, a null, the empty string, one not of ASCII;
+/// of ALL and of an occurrence.
+#[test]
+fn a_vector_of_subjects_is_translated_as_each_row_is() {
+    let column = subjects();
+    let row = |n: usize| if n == 3 { Value::Null } else { chars(SUBJECTS[n]) };
+    let cases = [
+        ("^https?://(www\\.)?([^/]+)/.*$", "$2", kw::ALL, 1_i128),
+        ("/[a-z]", "#", kw::ALL, 1),
+        ("/[a-z]", "#", OCCURRENCE_WORD, 2),
+        ("t+", "<$0>", OCCURRENCE_WORD, 1),
+    ];
+    for (pattern, replacement, every, occurrence) in cases {
+        let consts = operands(pattern, replacement, every, occurrence);
+        let function = Translate::default();
+        let made = function.eval_batch(&over(&consts, &column), SUBJECTS.len()).unwrap().unwrap();
+        for n in 0..SUBJECTS.len() {
+            let alone = function.call(&beside(&consts, row(n))).unwrap();
+            assert_eq!(format!("{:?}", made.values()[n]), format!("{alone:?}"), "{pattern:?} row {n}");
+        }
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1188, D363 [ISO/IEC 9075-2:2023 §6.33
+/// GR9b i, §9.29 GR3]: over a vector of subjects a null pattern gives
+/// nulls; a pattern that matches no characters fails as the call of a
+/// row does; and operands that are not constants beside the vector have
+/// no call over vectors, so each row is called.
+#[test]
+fn a_vector_call_gives_nulls_fails_or_gives_way_as_rows_do() {
+    let column = subjects();
+    let mut nulled = operands("a", "b", kw::ALL, 1);
+    nulled[2] = Value::Null;
+    let made = Translate::default().eval_batch(&over(&nulled, &column), 2).unwrap().unwrap();
+    assert!(made.values()[0].is_null() && made.values()[1].is_null());
+    let consts = operands("a", "b", kw::ALL, 1);
+    let mut varied = over(&consts, &column);
+    varied[2] = Arg::Column(&column);
+    assert!(Translate::default().eval_batch(&varied, 2).is_none(), "a pattern of each row");
+    let empty = operands("x*", "-", kw::ALL, 1);
+    let state = |r: Result<Value>| r.err().map(|e| e.sqlstate().as_str().to_owned());
+    let failed = Translate::default().eval_batch(&over(&empty, &column), 3).unwrap().map(|_| Value::Null);
+    assert_eq!(state(failed), state(Translate::default().call(&beside(&empty, chars(SUBJECTS[0])))));
+    assert!(state(Translate::default().call(&beside(&empty, chars(SUBJECTS[0])))).is_some());
+}
+
+/// Verifies: [DESIGN] RULES.md D1188 [ISO/IEC 9075-2:2023 §9.29 GR9a]: a
+/// match is replaced as fn:replace replaces the match as a string of its
+/// own, whether it is searched again or replaced from its own groups:
+/// `(^a)|(a)` matches the `a` after `b` by its second group and that `a`
+/// alone by its first, so the first is what is put; a match that is the
+/// whole subject, and one of a pattern that reads nothing beside a
+/// character, give their own groups.
+#[test]
+fn a_match_is_replaced_as_the_match_alone_is() {
+    let temp = Temp::default();
+    let made = |subject: &str, pattern: &str, replacement: &str| {
+        format!("{:?}", translate(&temp, &chars(subject), (pattern, replacement), None).unwrap())
+    };
+    let wanted = |s: &str| format!("{:?}", chars(s));
+    assert_eq!(made("ba", "(^a)|(a)", "[$1|$2]"), wanted("b[a|]"));
+    assert_eq!(made("a", "(^a)|(a)", "[$1|$2]"), wanted("[a|]"));
+    assert_eq!(made("ba", "(c)|(a)", "[$1|$2]"), wanted("b[|a]"));
+    assert_eq!(made("http://www.a.test/b", "^https?://(www\\.)?([^/]+)/.*$", "$2"), wanted("a.test"));
+}
+
+/// Verifies: [DESIGN] RULES.md D1188 [ISO/IEC 9075-2:2023 §9.29 GR3]:
+/// once a match of a subject is replaced, no match is searched for at
+/// the subject's end, where only one of no characters could begin and the
+/// pattern is known to have none: subjects that each match whole are a
+/// search each, every one finding a match, so their searcher stops
+/// asking its automaton first; subjects with no match keep it asking; and
+/// a pattern that matches no characters still fails at the end of a
+/// subject it has not matched before.
+#[test]
+fn no_match_is_searched_for_at_the_end_of_a_subject_replaced() {
+    let (units, every, one) = (chars("CHARACTERS"), chars(kw::ALL), number(1));
+    let asked = Asked { units: &units, every: &every, replacement: Cow::Borrowed("$2"), start: 1, occurrence: &one };
+    let regex = Regex::new("^https?://(www\\.)?([^/]+)/.*$", "s").unwrap();
+    let (mut searcher, mut with, mut out) = (regex.searcher(), None, String::new());
+    assert!(searcher.asks_first(), "at first");
+    for _ in 0..64_usize {
+        assert!(asked.of_text("http://www.a.test/b", (&mut searcher, &mut with), &mut out).unwrap());
+    }
+    assert_eq!(out, "a.test".repeat(64));
+    assert!(!searcher.asks_first(), "every search found a match");
+    for _ in 0..64_usize {
+        assert!(asked.of_text("ftp://a.test/b", (&mut searcher, &mut with), &mut out).unwrap());
+    }
+    assert!(searcher.asks_first(), "none found one");
+    let empty = Regex::new("b*", "").unwrap();
+    let failed = asked.of_text("a", (&mut empty.searcher(), &mut None), &mut out).unwrap_err();
+    assert_eq!(failed.sqlstate().as_str(), "2201U");
+}

@@ -45,6 +45,34 @@ impl Text for [char] {
     }
 }
 
+/// \[DESIGN\] (RULES.md D1188) A string of ASCII characters alone, read
+/// where it lies: its octets are its characters, so no vector of
+/// characters is made of it to match it.
+#[derive(Debug, Clone, Copy)]
+pub struct Ascii<'t>(&'t str);
+
+impl<'t> Ascii<'t> {
+    /// `text`, if every character of it is ASCII's.
+    pub fn of(text: &'t str) -> Option<Ascii<'t>> {
+        text.is_ascii().then_some(Ascii(text))
+    }
+
+    /// Its characters `from` to `to`, the empty string past its end.
+    pub fn span(&self, from: usize, to: usize) -> &'t str {
+        self.0.get(from..to).unwrap_or_default()
+    }
+}
+
+impl Text for Ascii<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    #[inline]
+    fn at(&self, at: usize) -> Result<Option<char>> {
+        Ok(self.0.as_bytes().get(at).map(|&octet| char::from(octet)))
+    }
+}
+
 /// Characters `from` to `to` of a text, a text of their own: what
 /// fn:replace replaces within one match [ISO/IEC 9075-2:2023 §9.29].
 pub struct Window<'t, T: Text + ?Sized> {
