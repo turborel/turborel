@@ -172,7 +172,7 @@ impl Top {
         keys.push(SortKey::ascending(columns.len()));
         let counts = Counts { projected, grouped, ..Counts::default() };
         let top = Top { columns, keys, most: most.rows, run: (db.clone(), tx), counts, filled: BATCH_ROWS };
-        (!most.ties).then(|| (top, grouping, p.degree))
+        (!most.ties).then_some((top, grouping, p.degree))
     }
 
     /// \[EXTENSION\] (RULES.md D378, D1254) The rows `run` gives, the
