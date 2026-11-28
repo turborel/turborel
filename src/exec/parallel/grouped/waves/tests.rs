@@ -401,6 +401,12 @@ fn the_groups_are_the_same_whether_partitions_go_wide() {
 /// `by`, the greatest first, its waves run as `how` says on three
 /// threads: every partition's rows, in the order of their text.
 fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> Vec<String> {
+    first_rows_as(a, sql, how, |functions, db| Top::by_function((1, functions), (by, most), (db, NO_TRANSACTION)))
+}
+
+/// As `first_rows`, under the sort `top` makes of the count of the
+/// grouping's set functions.
+fn first_rows_as(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> Vec<String> {
     let (st, optimized) = a.optimized(sql).unwrap();
     let planned = PhysicalPlanner::new(&st).plan(&optimized);
     let aggregate = if let Plan::Project { input, .. } = planned { *input } else { planned };
@@ -411,7 +417,7 @@ fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> 
     grouping.read = pipeline.batched.as_ref().and_then(|by_batch| read_of(&grouping, by_batch));
     let unpadded = grouping.read.as_ref().map(|by_batch| by_batch.unpadded.clone());
     grouping.seed = grouping.seed.unpadded(&unpadded.expect("grouped by batch"));
-    grouping.top = Some(Arc::new(Top::by_function((1, grouping.spec.aggs.len()), (by, most), (&db, NO_TRANSACTION))));
+    grouping.top = Some(Arc::new(top(grouping.spec.aggs.len(), &db)));
     let Held::Kept((runs, given)) = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, how).unwrap() else {
         panic!("the grouping gave way")
     };
@@ -424,8 +430,11 @@ fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> 
 /// only of a grouping whose reader reads the groups where they lie. A
 /// grouping every group of which is read merges each wave into tables
 /// however many groups a partition holds, and gives the groups it gives
-/// with no partition wide. The same grouping asked the first rows of a
-/// sort merges its waves into wide partitions, and gives the same rows.
+/// with no partition wide. So does the same grouping asked the first
+/// rows of a sort by its grouping column, which makes every group's row
+/// of a table to sort it. Asked the first rows of a sort by a set
+/// function, it merges its waves into wide partitions, and gives the
+/// same rows.
 #[test]
 fn a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie() {
     let (_db, a) = table();
@@ -434,6 +443,11 @@ fn a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie() {
     let how = How { forced: NONE, widen: Widen::read_as_they_lie(5), ..How::default() };
     assert_eq!(differing(&waved(&a, sql, &how, 3), &waved(&a, sql, &never, 3)), None);
     assert_eq!(how.widen.merged.load(Ordering::Relaxed), 0, "every group is read, and a partition went wide");
+    let by_group = |run_as: &How| {
+        first_rows_as(&a, sql, run_as, |functions, db| Top::by_function((1, functions), (1, 7), (db, NO_TRANSACTION)).by_group())
+    };
+    assert_eq!(by_group(&how), by_group(&never));
+    assert_eq!(how.widen.merged.load(Ordering::Relaxed), 0, "a sort by a grouping column reads a table, and a partition went wide");
     assert_eq!(first_rows(&a, sql, &how, (1, 7)), first_rows(&a, sql, &never, (1, 7)));
     assert!(how.widen.merged.load(Ordering::Relaxed) > 0, "the first rows of a sort, and no partition went wide");
 }
