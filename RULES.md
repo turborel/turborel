@@ -25056,6 +25056,7 @@ What a search finds is unchanged, held to the matcher of threads over
 the corpus as before. TRANSLATE_REGEX already searches a subject once
 where its match ends at the subject's end, so nothing was to be gained
 there for a program anchored at the start.
+
 #### D1316. A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows
 
 A column store gives a run's character strings as codes of dictionary
