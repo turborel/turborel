@@ -431,6 +431,14 @@ fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> 
 /// As `first_rows`, under the sort `top` makes of the count of the
 /// grouping's set functions.
 fn first_rows_as(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> Vec<String> {
+    let mut rows: Vec<String> = first_rows_of(a, sql, how, top).0.iter().map(|row| format!("{row:?}")).collect();
+    rows.sort();
+    rows
+}
+
+/// As `first_rows_as`, the rows as they are, and the sort as the run
+/// left it.
+fn first_rows_of(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> (Vec<Row>, Arc<Top>) {
     let (st, optimized) = a.optimized(sql).unwrap();
     let planned = PhysicalPlanner::new(&st).plan(&optimized);
     let aggregate = if let Plan::Project { input, .. } = planned { *input } else { planned };
@@ -441,13 +449,51 @@ fn first_rows_as(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db)
     grouping.read = pipeline.batched.as_ref().and_then(|by_batch| read_of(&grouping, by_batch));
     let unpadded = grouping.read.as_ref().map(|by_batch| by_batch.unpadded.clone());
     grouping.seed = grouping.seed.unpadded(&unpadded.expect("grouped by batch"));
-    grouping.top = Some(Arc::new(top(grouping.spec.aggs.len(), &db)));
+    let top = Arc::new(top(grouping.spec.aggs.len(), &db));
+    grouping.top = Some(Arc::clone(&top));
     let Held::Kept((runs, given)) = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, how).unwrap() else {
         panic!("the grouping gave way")
     };
-    let mut rows: Vec<String> = Ordered::of(runs, given).unwrap().map(|row| format!("{:?}", row.unwrap())).collect();
-    rows.sort();
-    rows
+    (Ordered::of(runs, given).unwrap().map(Result::unwrap).collect(), top)
+}
+
+/// Verifies: [DESIGN] RULES.md D1338, D1241 the partitions of a grouping
+/// share the bound of the first key of a sort's first rows picked by a
+/// set function, of tables and of wide partitions. Ten groups took ten
+/// rows each and every other group one, and the sort asks the seven of
+/// the greatest counts. Told a bound of ten before any partition runs,
+/// as another partition's rows would set it, the partitions keep those
+/// ten groups alone, each the row it keeps under no bound, and no group
+/// of one row. Told none, their own sorts raise it to ten, the seventh
+/// greatest count of all, and the ten are among the rows they keep.
+#[test]
+fn the_partitions_share_the_bound_of_a_sorts_first_rows() {
+    let (_db, a) = table();
+    let sql =
+        "SELECT G, COUNT(*), SUM(V), MAX(K) FROM (SELECT CASE WHEN K < 100 THEN MOD(K, 10) ELSE K END AS G, K, V FROM T) AS Q GROUP BY G";
+    let ten = Value::Exact(Decimal::new(10, 0));
+    let shown = |value: Option<&Value>| format!("{value:?}");
+    let of_ten = |rows: &[Row]| {
+        let mut tens: Vec<String> =
+            rows.iter().filter(|row| shown(row.get(1)) == shown(Some(&ten))).map(|row| format!("{row:?}")).collect();
+        tens.sort();
+        tens
+    };
+    let alone = |functions: usize, db: &Db| Top::by_function((1, functions), (0, 7), (db, NO_TRANSACTION));
+    let never = How { forced: NONE, widen: Widen::past(usize::MAX), ..How::default() };
+    let wide = How { forced: NONE, widen: Widen::past(5).parted(8), ..How::default() };
+    let (unbounded, _) = first_rows_of(&a, sql, &never, alone);
+    let tens = of_ten(&unbounded);
+    assert!(tens.len() == 10 && unbounded.len() > 100, "{} of {} rows", tens.len(), unbounded.len());
+    for (how, lying) in [(&never, "tables"), (&wide, "wide partitions")] {
+        let (kept, top) = first_rows_of(&a, sql, how, |functions, db| alone(functions, db).bounded(&vec![ten.clone(); 7]));
+        assert_eq!((kept.len(), of_ten(&kept)), (10, tens.clone()), "told the bound, of {lying}");
+        assert_eq!(shown(top.bound().as_ref()), shown(Some(&ten)), "the bound told, of {lying}");
+        let (kept, top) = first_rows_of(&a, sql, how, |functions, db| alone(functions, db).bounded(&[]));
+        assert_eq!(of_ten(&kept), tens, "raising the bound themselves, of {lying}");
+        assert_eq!(shown(top.bound().as_ref()), shown(Some(&ten)), "the bound raised, of {lying}");
+    }
+    assert!(wide.widen.merged.load(Ordering::Relaxed) > 0, "no partition went wide");
 }
 
 /// Verifies: [DESIGN] RULES.md D1300 a statement's partitions go wide

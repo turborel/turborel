@@ -60,10 +60,11 @@ use crate::exec::table::GroupTable;
 use crate::exec::{Db, RowIter, Runner, broken};
 use crate::logical::{Expr, Most, SortKey};
 use crate::physical::{NodeCount, Plan};
-use crate::storage::{BATCH_ROWS, Batch, Column, Ints, Row};
+use crate::storage::{BATCH_ROWS, Batch, Column, Ints, Row, Sel, Threshold};
 use crate::txn::TxId;
 use crate::value::{Decimal, Value};
 
+mod bound;
 mod wide;
 
 /// The groups a test's sort fills a batch of a wide partition's Mades
@@ -143,6 +144,9 @@ pub(in crate::exec::parallel) struct Top {
     /// The groups a batch read of a wide partition's Mades is filled to
     /// (`top/wide.rs`).
     filled: usize,
+    /// \[DESIGN\] (RULES.md D1338) The bound of the sort's first key
+    /// the partitions share, if it has one (`top/bound.rs`).
+    bound: Option<Arc<Threshold>>,
 }
 
 impl Top {
@@ -168,10 +172,10 @@ impl Top {
         let Plan::Aggregate { groups, aggs, streamed: false, .. } = grouping else { return None };
         // Of no projection, every column of a group's row.
         let columns = asked.unwrap_or_else(|| (0..groups.len().saturating_add(aggs.len())).map(Pick::Column).collect());
-        let mut keys = keys.to_vec();
+        let (bound, mut keys) = (bound::shared(keys, most.rows), keys.to_vec());
         keys.push(SortKey::ascending(columns.len()));
         let counts = Counts { projected, grouped, ..Counts::default() };
-        let top = Top { columns, keys, most: most.rows, run: (db.clone(), tx), counts, filled: BATCH_ROWS };
+        let top = Top { columns, keys, most: most.rows, run: (db.clone(), tx), counts, filled: BATCH_ROWS, bound };
         (!most.ties).then_some((top, grouping, p.degree))
     }
 
@@ -199,6 +203,12 @@ impl Top {
     /// How many rows are asked for.
     fn most(&self) -> Most {
         Most { rows: self.most, ties: false }
+    }
+
+    /// \[DESIGN\] (RULES.md D1338) What a partition judges its batches
+    /// of the sort keys' results by before its sort is given them.
+    fn judge(&self) -> bound::Judge {
+        bound::Judge { bound: self.bound.clone(), kernels: crate::db::kernels::chosen(&self.run.0) }
     }
 
     /// \[DESIGN\] (RULES.md D1124, D1281) The first rows of a partition
@@ -300,10 +310,16 @@ impl Top {
     /// under the keys are taken of that, and only those groups' rows are
     /// made of the table and projected. Every other set function is
     /// finished of every group for the error it may raise, no value kept.
+    /// The sort is given the groups at or before the bound the
+    /// partitions share (RULES.md D1338), and none if there is none.
     fn picked_of(&self, table: &GroupTable, sorted_by: &[usize]) -> Result<Vec<Row>> {
         let rows = table.len();
         let mut columns = sorted_by.iter().map(|&agg| table.results_of(agg)).collect::<Result<Vec<Column>>>()?;
         table.checked_but(sorted_by)?;
+        let kept = self.judge().kept(columns.first());
+        if kept.as_ref().is_some_and(Sel::is_empty) {
+            return Ok(Vec::new());
+        }
         let narrow = |n: usize| i64::try_from(n).unwrap_or(i64::MAX);
         columns.push(Column::Ints(Ints::new(
             table.firsts().iter().map(|&first| i64::try_from(first).unwrap_or(i64::MAX)).collect(),
@@ -313,8 +329,8 @@ impl Top {
         columns.push(Column::Ints(Ints::new((0..rows).map(narrow).collect(), 0, None)));
         let mut keys: Vec<SortKey> = self.own().iter().enumerate().map(|(at, key)| SortKey { column: at, ..*key }).collect();
         keys.push(SortKey::ascending(sorted_by.len()));
-        let batches = Box::new(std::iter::once(Ok((Batch { columns, rows }, None))));
-        let first = first_of_morsel(&keys, batches, (self.most, None), (&self.run.0, self.run.1))?;
+        let batches = Box::new(std::iter::once(Ok((Batch { columns, rows }, kept))));
+        let first = first_of_morsel(&keys, batches, (self.most, self.bound.clone()), (&self.run.0, self.run.1))?;
         add(&self.counts.given, first.len());
         first.into_iter().map(|picked| self.made_of(table, picked)).collect()
     }
@@ -399,13 +415,32 @@ impl Top {
     /// `functions` set functions: every column of a group's row, the first
     /// `most` rows by the set function at `by`, the greatest first. Its
     /// batches of a wide partition's Mades are filled to `FEW` groups, so
-    /// a partition of a test's few groups is read in several.
+    /// a partition of a test's few groups is read in several. Its
+    /// partitions share no bound, so each keeps the rows it would alone.
     #[cfg(test)]
     pub(super) fn by_function((width, functions): (usize, usize), (by, most): (usize, usize), (db, tx): (&Db, TxId)) -> Top {
         let columns: Vec<Pick> = (0..width.saturating_add(functions)).map(Pick::Column).collect();
         let key = SortKey { descending: true, ..SortKey::ascending(width.saturating_add(by)) };
         let keys = vec![key, SortKey::ascending(columns.len())];
-        Top { columns, keys, most, run: (db.clone(), tx), counts: Counts::default(), filled: FEW }
+        Top { columns, keys, most, run: (db.clone(), tx), counts: Counts::default(), filled: FEW, bound: None }
+    }
+
+    /// This sort, for tests, its partitions sharing the bound of its
+    /// first key as a statement's do, each of `offered` offered it
+    /// first, as the first keys of rows another partition holds.
+    #[cfg(test)]
+    pub(super) fn bounded(mut self, offered: &[Value]) -> Top {
+        self.bound = bound::shared(self.own(), self.most);
+        for value in offered {
+            self.bound.iter().for_each(|bound| bound.offer(value));
+        }
+        self
+    }
+
+    /// The value the bound its partitions share holds, for tests.
+    #[cfg(test)]
+    pub(super) fn bound(&self) -> Option<Value> {
+        self.bound.as_ref().and_then(|bound| bound.bound())
     }
 
     /// This sort, for tests, by the first grouping column in place of its

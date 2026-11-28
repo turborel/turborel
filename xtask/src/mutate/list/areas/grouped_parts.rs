@@ -5,15 +5,19 @@
 //! another that a part makes whole, and one that crosses its partitions,
 //! merged by the statement's thread (D1133), and the second grouping of
 //! a pair made in a table of the first's groups given as a batch (D1123),
-//! the first rows of a sort taken from a grouping's tables (D1124), a
-//! partition's groups given as a batch (D1125), the batches a parent that
+//! the first rows of a sort taken from a grouping's tables (D1124) under
+//! the bound its partitions share (D1338), a partition's groups given as a
+//! batch (D1125), the batches a parent that
 //! reads by batch takes of them (D1220), and COUNT(DISTINCT) of no GROUP
 //! BY run as one part, its string argument grouped as it is (D1219).
 
 use super::super::{Mutation, Package};
 
+/// The partitions' sorts of a grouping's first rows under one bound.
+const TOP_BOUND: &str = "exec::parallel::grouped::waves::tests::the_partitions_share_the_bound_of_a_sorts_first_rows";
+
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 36] = [
+pub const GROUPED_PARTS: [Mutation; 39] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -373,5 +377,35 @@ pub const GROUPED_PARTS: [Mutation; 36] = [
         replacement: "digits.map_or(u128::MAX, |_| u128::MAX)",
         integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
         unit: &[],
+    },
+    Mutation {
+        name: "top-groups-past-the-bound-given-the-sort",
+        package: Package::Core,
+        breaks: "a partition gives its sort every group, those past the bound the partitions share too, a key written of each (RULES.md D1338)",
+        file: "src/exec/parallel/grouped/top/bound.rs",
+        original: "        within(bound, column, &*self.kernels)",
+        replacement: "        within(bound, column, &*self.kernels).filter(|_| false)",
+        integration: &[],
+        unit: &[TOP_BOUND],
+    },
+    Mutation {
+        name: "top-groups-of-a-table-raise-no-bound",
+        package: Package::Core,
+        breaks: "the sort of a partition's table is told no bound, so its rows neither raise nor count toward the one the partitions share (RULES.md D1338)",
+        file: "src/exec/parallel/grouped/top.rs",
+        original: "let first = first_of_morsel(&keys, batches, (self.most, self.bound.clone()), (&self.run.0, self.run.1))?;",
+        replacement: "let first = first_of_morsel(&keys, batches, (self.most, None), (&self.run.0, self.run.1))?;",
+        integration: &[],
+        unit: &[TOP_BOUND],
+    },
+    Mutation {
+        name: "top-groups-of-a-wide-partition-raise-no-bound",
+        package: Package::Core,
+        breaks: "the sort of a wide partition is told no bound, so its rows neither raise nor count toward the one the partitions share (RULES.md D1338)",
+        file: "src/exec/parallel/grouped/top/wide.rs",
+        original: "let first = first_of_morsel(&keys, Box::new(batches), (self.most, self.bound.clone()), (&self.run.0, self.run.1))?;",
+        replacement: "let first = first_of_morsel(&keys, Box::new(batches), (self.most, None), (&self.run.0, self.run.1))?;",
+        integration: &[],
+        unit: &[TOP_BOUND],
     },
 ];

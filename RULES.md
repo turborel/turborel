@@ -854,6 +854,7 @@ verification approach DO-178C expects (§8).
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
 | D1323 | A grouping looks up the first row alone of rows of one key that come one after another |
+| D1338 | The partitions of a grouping share the bound of a sort's first rows, and judge their groups by it before the sort |
 
 ### The project
 
@@ -25475,6 +25476,56 @@ a count of distinct values among them, under WHERE and HAVING, of both
 stores, and counts the rows each group took. One of them groups by a
 text the column store gives as codes, in runs, on one thread, which
 fails where runs are followed of rows taken by their codes.
+
+#### D1338. The partitions of a grouping share the bound of a sort's first rows, and judge their groups by it before the sort
+
+A sort's first rows picked of a grouping by set functions (D1256) are
+taken a partition at a time. Each partition's thread made the sort
+keys' results of every group of its own and gave them all to its sort,
+which wrote a key of each to compare it with the greatest it held. Of
+a grouping of many groups nearly every one of those keys was of a group
+no partition would keep, and a partition knew nothing of the rows
+another already held.
+
+The partitions now share one bound of the sort's first key
+(`exec/parallel/grouped/top/bound.rs`), the bound the morsels of a sort
+run in parallel share (D1241, `Threshold::among`). It is made where a
+serial sort would tell its scan one (`sort::topped_of`, D379), of a key
+whose nulls sort last, for as many first rows as a batch holds at
+most. Each partition's sort offers it the first key of every row it
+takes among its first, and raises it once it holds as many rows as are
+asked, as a morsel's sort does. A partition judges each batch of
+results against the bound before its sort is given the batch, of a
+table (`Top::picked_of`) and of a wide partition's own tables and
+Mades alike (`top/wide.rs`). A count is compared as the integer it is,
+by the kernel a scan judges a comparison by, and any other result as
+its value. The sort is given the batch with the rows at or before the
+bound, and is not given a batch none of whose rows is. A wide partition
+reads the tables of its own first, whose groups took the most rows, so
+of a sort by a count the bound is raised before its groups of one row
+are judged.
+
+A row past the bound is past the greatest of as many rows as are asked,
+whichever partitions hold them, so no partition's sort would have had
+it among the first of all. A row equal to the bound is kept, as the
+sort's other keys and the first rows' numbers decide of it. A null is
+left out, as the bound is told only of a key whose nulls sort last and
+holds as many rows that are not null. The bound only narrows, and a
+batch judged by a bound read before another partition narrowed it only
+keeps more. So the rows a statement returns and their order are as
+before, in whatever order the partitions' threads run. Every set
+function is still finished of every group before its batch is judged,
+so an error a group raises is raised as before (D1256). What does
+differ from one run to the next is how many rows each partition keeps
+for the statement's thread, which an analyzed plan counts over the part
+(D1254), as it counts fewer rows of a scan judged by a bound (D1241).
+
+A unit test groups rows into ten groups of ten rows and thousands of
+one, asks the seven greatest counts, and runs the partitions as tables
+and wide. Told a bound of ten before any partition runs, the
+partitions keep the ten groups alone, each the row it keeps under no
+bound. Told none, their sorts raise it to ten, and the ten are among
+the rows kept.
 
 ## 2. Project layout
 
