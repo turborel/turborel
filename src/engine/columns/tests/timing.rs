@@ -12,7 +12,8 @@ use crate::kernels::Portable;
 use crate::value::Spelled;
 
 const T: DataType = DataType::Exact { precision: 18, scale: 0, spelled: Spelled::Numeric };
-const ROWS: usize = 3731;
+/// A vector of rows, as a scan reads at a call.
+const ROWS: usize = 2048;
 
 struct Rng(u64);
 impl Rng {
@@ -67,7 +68,7 @@ fn chunk_of(values: &[i64], plan: impl Fn(i64, u32, usize) -> Plan) -> Vec<u8> {
 /// Nanoseconds a row of `read`, the least of five passes of `REPS` calls.
 fn timed(mut read: impl FnMut(&mut Vec<i64>)) -> f64 {
     const REPS: usize = 4000;
-    let mut out: Vec<i64> = Vec::with_capacity(ROWS);
+    let mut out: Vec<i64> = Vec::with_capacity(ROWS + 64);
     let mut best = f64::MAX;
     for _ in 0..5 {
         let t0 = Instant::now();
