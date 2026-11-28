@@ -306,12 +306,12 @@ impl<'a> Reader<'a> {
     }
 
     /// \[DESIGN\] (RULES.md D1319) The lengths lanes a header ends with if
-    /// its layout says so, `laned`, by their columns' places among
+    /// its layout says they `follow`, by their columns' places among
     /// `width`, those of the columns `wanted` read and the others passed
     /// over: none of a header whose layout names none.
-    fn lanes(&mut self, width: usize, wanted: Option<&[usize]>, laned: bool) -> Result<Vec<Option<Vec<Zone>>>> {
+    fn lanes(&mut self, width: usize, wanted: Option<&[usize]>, follow: bool) -> Result<Vec<Option<Vec<Zone>>>> {
         let mut lanes = vec![None; width];
-        if !laned {
+        if !follow {
             return Ok(lanes);
         }
         for _ in 0..self.count()? {
@@ -360,7 +360,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType], wa
     }
     let (first_id, last, rows) = (r.u64()?, r.u64()?, r.u32()?);
     let order = r.places()?;
-    let (pax, laned) = r.laned_layout()?;
+    let (pax, follow) = r.laned_layout()?;
     let ids = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     let by_id = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     if r.count()? != types.len() {
@@ -378,7 +378,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType], wa
     let edges = types.iter().map(|t| (0..r.count()?).map(|_| r.bound(t)).collect::<Result<Vec<_>>>()).collect::<Result<Vec<_>>>()?;
     let named = r.places()?;
     let sketches = types.iter().map(|t| r.sketch(t)).collect::<Result<Vec<_>>>()?;
-    let lanes = r.lanes(types.len(), wanted, laned)?;
+    let lanes = r.lanes(types.len(), wanted, follow)?;
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }
