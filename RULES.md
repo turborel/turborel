@@ -826,6 +826,7 @@ verification approach DO-178C expects (§8).
 | D1281 | A sort's first rows over a pair of groupings are taken from the second's table of each partition |
 | D1282 | The runs that merge and finish a grouping's partitions lead their reader by every partition |
 | D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
+| D1288 | A join key that is a whole number of 64 bits is hashed by itself, and any other number by its nearest `f64` |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1290 | MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states |
 | D1291 | A regular expression function over a dictionary's codes is run once of each entry a row reads |
@@ -23940,6 +23941,48 @@ Nothing stored changes, so data frozen before is read so with no
 reload. The grain is the chunk, so the chunks of a group that hold no
 value past 64 bits are integers though another chunk of it holds one.
 
+#### D1288. A join key that is a whole number of 64 bits is hashed by itself, and any other number by its nearest `f64`
+
+A join hashed every number by the bits of its nearest `f64` (D368), so
+that an exact key of any scale and an approximate one that match hash
+alike. An `f64` keeps 53 bits. Whole numbers past 2^53 share their
+nearest `f64` with their neighbours, 1,024 of them near 2^63. Keys one
+after another there, as identifiers of 19 digits are, fell 1,024 to a
+hash, and each probe compared its key with every row of its hash. Keys
+of 18 digits fell 128 to a hash. A key of 2^51 or more was also made
+its `f64` through its digits, a row at a time.
+
+Two numbers match by their algebraic value, an exact one against an
+approximate one too (`value::compare_numbers`). So the word a number is
+hashed of can be chosen by the number alone, with no word of its type
+or of the other side's. It is now the number itself if the number is a
+whole number 64 bits hold, and the bits of its nearest `f64` if it is
+not (`table/join/keys.rs`). An exact number is such a whole number if
+its units divide by its scale's power of ten into 64 bits. An
+approximate number is one if it has no fraction and lies within them,
+read from its bits. A decimal floating-point number is first made the
+exact number equal to it. Values that match are one number, so they
+have one word, whatever their types, and nothing is decided as a join
+is planned. A fraction, and a number past 64 bits, keep the nearest
+`f64`, which is one for values that match.
+
+A whole number below 2^51 keeps the bits of its `f64` as its word, which
+is the number exactly, so a direct table reads its place of them as
+before (D601). A wider one's word is its 64 bits crossed with the number
+a null is given as to a direct table, so no key's word is a null's.
+Such a word can be the bits of one small number's `f64`, so a wide key
+near 4.6 × 10^18 may share its word with one small key. That is one
+stray pair a key at most, told apart as keys are compared, and never a
+run of keys in one hash. The
+hashes a build makes of its keys' numbers are those a probe makes
+(D1080). A vector of integers of scale 0 is hashed whole by the
+kernels' hash of words (D1098) whatever its values, where one value of
+2^51 or more sent the vector a row at a time before. The hash itself
+is unchanged (D460).
+
+Keys past 64 bits one after another still share their nearest `f64`.
+A table of such keys compares more rows a probe, as before, and gives
+the same rows.
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
 
 A batch's vector of integers, of approximate numbers or of datetimes

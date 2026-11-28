@@ -522,6 +522,7 @@ mod views;
 mod warnings;
 mod weblog;
 mod wide_exact;
+mod wide_key_joins;
 mod wide_narrowed;
 mod width_bucket;
 mod window_batches;
