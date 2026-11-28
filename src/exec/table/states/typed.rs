@@ -21,6 +21,7 @@ use crate::storage::{Batch, Column, Ints, Mask};
 use crate::value::codec::value;
 use crate::value::{DataType, Decimal, Value};
 
+mod apart;
 mod best;
 mod few;
 mod merged;

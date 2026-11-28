@@ -28,23 +28,6 @@ fn one_scale(held: &Held, c: usize) -> Option<u32> {
     held.iter().all(|(batch, _)| ints_of(batch, c).is_some_and(|ints| ints.scale == scale)).then_some(scale)
 }
 
-/// Where each row kept of `held` is read, the batch and the row in it,
-/// in the order of the places `places` gives the rows as they come.
-fn sources(held: &Held, places: &[u32]) -> Vec<(u32, u32)> {
-    let mut order = vec![(0_u32, 0_u32); places.len()];
-    let mut place = places.iter();
-    for (b, (batch, rows)) in (0_u32..).zip(held) {
-        let rows = rows.as_ref().map(Sel::as_slice);
-        for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
-            let at = place.next().and_then(|&p| order.get_mut(index(p)));
-            if let Some(at) = at {
-                *at = (b, u32::try_from(nth(rows, n)).unwrap_or(u32::MAX));
-            }
-        }
-    }
-    order
-}
-
 impl Lane {
     /// The lane of the integers of scale `scale` at `c` of the rows kept
     /// of `held`, each at its place of `places`: a null's unit 0, as a
@@ -94,14 +77,14 @@ impl Keys {
     /// of the columns at `at`, the key of the `n`th row as they come at
     /// place `places[n]`, each lane compared as `like`'s is: the keys
     /// those rows appended in the order they come and then put in the
-    /// order of their places hold.
-    pub(in crate::exec::table) fn placed(held: &Held, at: &[usize], places: &[u32], like: &Keys) -> Keys {
-        let mut order = None;
+    /// order of their places hold. `sources` names the row at each
+    /// place, its batch and its row in it.
+    pub(in crate::exec::table) fn placed(held: &Held, at: &[usize], (places, sources): (&[u32], &[(u32, u32)]), like: &Keys) -> Keys {
         let lanes = at.iter().zip(&like.lanes).map(|(&c, like)| {
             if let Some(scale) = one_scale(held, c) {
                 return Lane { unpadded: like.unpadded, ..Lane::placed_ints(held, (c, scale), places) };
             }
-            Lane::placed_cells(held, c, order.get_or_insert_with(|| sources(held, places)), like.unpadded)
+            Lane::placed_cells(held, c, sources, like.unpadded)
         });
         Keys { lanes: lanes.collect() }
     }

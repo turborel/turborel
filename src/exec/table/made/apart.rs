@@ -9,28 +9,81 @@
 //! before it of its partition and of the partitions before. Then every
 //! column is made at its size and each row's value written at its place:
 //! the hashes, the first rows' numbers, the keys (`keys/placed.rs`), and
-//! the states, grown once and fed each batch's rows with their places as
-//! their groups, as a table's states are fed. What is handed over is what
-//! the rows appended and gathered give, a partition's rows one after
-//! another in the order they came.
+//! the states, a set function at a time. A column of states that one row
+//! sets is made whole, each group's written once
+//! (`states/typed/apart.rs`). Any other is grown once and fed each
+//! batch's rows with their places as their groups, as a table's states
+//! are fed. What is handed over is what the rows appended and gathered
+//! give, a partition's rows one after another in the order they came.
 
 use super::{Made, part_of};
 use crate::error::Result;
-use crate::exec::table::{GroupTable, Keys, Seed, narrow};
+use crate::exec::Runner;
+use crate::exec::batch::{Fed, Taken, eliminated};
+use crate::exec::table::{GroupTable, Keys, Pending, Seed, narrow};
 use crate::logical::AggCall;
 use crate::storage::mask::index;
-use crate::storage::{Batch, Sel};
+use crate::storage::sel::nth;
+use crate::storage::{Batch, Row, Sel};
 
 /// Where the rows of a table written by partition lie: the place of each
-/// row as it came, where each partition's rows begin and the last's end,
-/// the lanes of the keys the partitions are of, none of whole keys, and
-/// how many of the rows were taken to be fed so far.
+/// row as it came, the row at each place, its batch and its row in it,
+/// where each partition's rows begin and the last's end, and the lanes
+/// of the keys the partitions are of, none of whole keys.
 #[derive(Debug)]
 pub(in crate::exec::table) struct Placed {
     places: Vec<u32>,
+    sources: Vec<(u32, u32)>,
     starts: Vec<u32>,
     lanes: Vec<usize>,
-    fed: usize,
+}
+
+/// Where each row kept of `held` is read, the batch and the row in it,
+/// in the order of the places `places` gives the rows as they come.
+fn sources(held: &[(Batch, Option<Sel>)], places: &[u32]) -> Vec<(u32, u32)> {
+    let mut order = vec![(0_u32, 0_u32); places.len()];
+    let mut place = places.iter();
+    for (b, (batch, rows)) in (0_u32..).zip(held) {
+        let rows = rows.as_ref().map(Sel::as_slice);
+        for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
+            let at = place.next().and_then(|&p| order.get_mut(index(p)));
+            if let Some(at) = at {
+                *at = (b, u32::try_from(nth(rows, n)).unwrap_or(u32::MAX));
+            }
+        }
+    }
+    order
+}
+
+/// Of each batch of `held`, in order, which of the rows kept of them all
+/// are its own: from which to which, as they come.
+fn spans(held: &[(Batch, Option<Sel>)]) -> Vec<(usize, usize)> {
+    let mut from = 0_usize;
+    let span = |(batch, rows): &(Batch, Option<Sel>)| {
+        let to = from.saturating_add(rows.as_ref().map_or(batch.rows, Sel::len));
+        let own = (from, to);
+        from = to;
+        own
+    };
+    held.iter().map(span).collect()
+}
+
+impl Placed {
+    /// Notes in `pending` the rows kept of a batch, `rows` or all, those
+    /// from `from` to `to` of the rows it was placed of, each to be fed
+    /// to the group at its place, and nothing else.
+    fn take(&self, pending: &mut Pending, (from, to): (usize, usize), rows: Option<&[u32]>) {
+        let count = to.saturating_sub(from);
+        pending.given.clear();
+        pending.read.clear();
+        pending.groups.clear();
+        pending.given.extend((0..count).map(narrow));
+        match rows {
+            Some(rows) => pending.read.extend_from_slice(rows),
+            None => pending.read.extend((0..count).map(narrow)),
+        }
+        pending.groups.extend_from_slice(self.places.get(from..to).unwrap_or(&[]));
+    }
 }
 
 /// Where each partition's rows begin among `parts` partitions, and the
@@ -86,31 +139,52 @@ impl GroupTable {
     ) -> GroupTable {
         let (starts, places) = placed_by(by.unwrap_or(hashes), parts);
         let mut table = GroupTable::new(at.len(), aggs, seed, usize::MAX);
-        table.keys = Keys::placed(held, at, &places, &table.keys);
+        let rows_at = sources(held, &places);
+        table.keys = Keys::placed(held, at, (&places, &rows_at), &table.keys);
         table.hashes = scattered(hashes.iter().copied(), &places);
         table.firsts = scattered((0_u64..).map(|n| first.saturating_add(n)), &places);
-        table.states.iter_mut().for_each(|states| states.grow_by(places.len()));
-        (table.apart, table.placed) = (true, Some(Placed { places, starts, lanes: lanes.to_vec(), fed: 0 }));
+        (table.apart, table.taken) = (true, places.len());
+        table.placed = Some(Placed { places, sources: rows_at, starts, lanes: lanes.to_vec() });
         table
     }
 
-    /// Takes the `count` rows kept of the next batch, `rows` or all, each
-    /// into the group at its place, to be fed to its states (`feed`). The
-    /// batches are taken in the order the table was placed of them, so
-    /// these are the rows after those taken before.
-    pub(in crate::exec) fn take_placed(&mut self, rows: Option<&[u32]>, count: usize) {
-        self.taken = self.taken.saturating_add(count);
-        let Self { placed, pending, aggs, .. } = self;
-        let Some(placed) = placed.as_mut() else { return };
-        let from = placed.fed;
-        placed.fed = from.saturating_add(count);
-        let Some(groups) = placed.places.get(from..placed.fed).filter(|_| !aggs.is_empty()) else { return };
-        pending.given.extend((0..count).map(narrow));
-        match rows {
-            Some(rows) => pending.read.extend_from_slice(rows),
-            None => pending.read.extend((0..count).map(narrow)),
+    /// \[DESIGN\] (RULES.md D1313) Gives each group its row's states, of
+    /// the batches `held` the table was placed of, a set function at a
+    /// time, so one function's states alone are being written. A column
+    /// of states that one row sets is made whole, each group's written
+    /// once in the order they lie (`States::set_apart`). Any other is
+    /// grown to the groups' count and fed each batch's rows with their
+    /// places as their groups, as `taken` says, of `lanes`, a batch's
+    /// each, where evaluated by vectors; an expression's row made in
+    /// `scratch`, warnings heard by `runner`.
+    ///
+    /// # Errors
+    ///
+    /// As a set function, or an expression it takes, fails.
+    pub(in crate::exec) fn feed_placed(
+        &mut self,
+        held: &[(Batch, Option<Sel>)],
+        (taken, lanes): (&[Taken], &[Vec<Option<Fed<'_>>>]),
+        (scratch, runner): (&mut Row, &Runner),
+    ) -> Result<()> {
+        let Self { placed, states, aggs, pending, .. } = self;
+        let Some(placed) = placed.as_ref() else { return Ok(()) };
+        let spans = spans(held);
+        for (s, ((column, agg), take)) in states.iter_mut().zip(aggs.iter()).zip(taken).enumerate() {
+            if let Some(nulls) = column.set_apart(take, held, &placed.sources) {
+                eliminated(nulls, runner);
+                continue;
+            }
+            column.grow_by(placed.places.len());
+            for (((batch, rows), of_batch), &span) in held.iter().zip(lanes).zip(&spans) {
+                placed.take(pending, span, rows.as_ref().map(Sel::as_slice));
+                if let Some(lane) = of_batch.get(s) {
+                    column.feed((&*pending, agg), (batch, take, lane), (&mut *scratch, runner))?;
+                }
+            }
         }
-        pending.groups.extend_from_slice(groups);
+        placed.take(pending, (0, 0), None);
+        Ok(())
     }
 
     /// Where each partition's groups begin, and the last's end, if its

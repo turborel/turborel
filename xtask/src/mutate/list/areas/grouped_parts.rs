@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 36] = [
+pub const GROUPED_PARTS: [Mutation; 38] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -341,6 +341,26 @@ pub const GROUPED_PARTS: [Mutation; 36] = [
         file: "src/exec/parallel/grouped/waves.rs",
         original: "self.left.load(Ordering::Relaxed) > APART_PER_MILLE",
         replacement: "self.left.load(Ordering::Relaxed) < APART_PER_MILLE",
+        integration: &[],
+        unit: &["exec::parallel::grouped::waves::tests::morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing"],
+    },
+    Mutation {
+        name: "rows-apart-probed-every-morsel",
+        package: Package::Core,
+        breaks: "every morsel past the sixteenth after a table that reduced probes, so no rows are handed on ungrouped from then on (RULES.md D1260)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "let probes = past >= PROBE_EVERY && past.is_power_of_two();",
+        replacement: "let probes = past >= PROBE_EVERY;",
+        integration: &[],
+        unit: &["exec::parallel::grouped::waves::tests::morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing"],
+    },
+    Mutation {
+        name: "rows-apart-probes-counted-from-the-first-morsel",
+        package: Package::Core,
+        breaks: "the probes are counted from the grouping's first morsel whatever table reduced since, so the gap after a table that reduced is not sixteen (RULES.md D1260)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "                self.since.fetch_max(m, Ordering::Relaxed);\n",
+        replacement: "",
         integration: &[],
         unit: &["exec::parallel::grouped::waves::tests::morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing"],
     },

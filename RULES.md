@@ -23571,9 +23571,18 @@ in all, so that the partitions merge the rows anyway into tables that
 stay small, it was ahead at 730 and above. The bound sits between the
 ratio measured level and the least measured ahead of both kinds.
 
-One morsel in sixteen still makes a table. It gives back a sixteenth of
-what the others save, and data that turns to few groups is grouped in
-its morsels again within sixteen of them.
+A morsel now and then still makes a table, a probe. The first comes
+sixteen morsels after the last table that reduced its rows, and the gap
+to each next is twice the last while no probe reduces. So the morsels
+handed on between two probes are never more than those handed on since
+that table. Data that turns to few groups is seen after as many morsels
+more as were handed on already, at most, and what a turn seen late
+costs is no more than the hand-over cost so far. A grouping that never
+reduces probes as many times as its morsels halve to sixteen, where a
+probe every sixteenth morsel gave back a sixteenth of what the others
+saved. A probe that reduces has every morsel make its table again, and
+the next probes are counted from it. No bound is put on the gap, as
+none is needed for that.
 
 Two things follow from rows of one key arriving as several groups. A
 partition's table finds a key the morsel holds twice in the group its
@@ -25238,9 +25247,15 @@ value written at its place. The hashes and the first rows' numbers are
 written so. A key lane of integers of one scale is written straight from
 the batches' vectors, and a lane of any other type takes its values one
 at a time in the order of the places, as a table's lane takes them
-(`exec/table/keys/placed.rs`). The states are grown once to the rows'
-count and fed each batch's rows with their places as their groups, by
-the feed every table uses, so every kind of state is fed as it was.
+(`exec/table/keys/placed.rs`). The states are made a set function at a
+time, so one function's states alone are being written. A row that is
+a group of its own gives its group the state of one row, so COUNT(\*)
+and a set function of an integer column are made whole, each group's
+state written once in the order the groups lie, with nothing taken of
+a null (`exec/table/states/typed/apart.rs`). Any other column of states
+is grown once to the rows' count and fed each batch's rows with their
+places as their groups, by the feed every table uses, so every kind of
+state holds what it held.
 
 What is handed over is what the two steps gave. A partition's rows lie
 in the order they came, their places count from zero, and the Made says

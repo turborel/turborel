@@ -105,13 +105,8 @@ fn rows_apart(
     }
     let by = (!by_lanes.is_empty()).then_some(by.as_slice());
     let mut table = GroupTable::placed((held.as_slice(), at), (aggs, seed), (hashes.as_slice(), by, first), (parts, by_lanes));
-    let mut scratch = Vec::new();
-    for (batch, rows) in &held {
-        let rows = rows.as_ref().map(Sel::as_slice);
-        table.take_placed(rows, rows.map_or(batch.rows, <[u32]>::len));
-        let lanes = lanes(&read.taken, batch, rows);
-        table.feed(batch, (&read.taken, &lanes), (&mut scratch, runner))?;
-    }
+    let vectors: Vec<_> = held.iter().map(|(batch, rows)| lanes(&read.taken, batch, rows.as_ref().map(Sel::as_slice))).collect();
+    table.feed_placed(&held, (&read.taken, &vectors), (&mut Vec::new(), runner))?;
     Ok(table)
 }
 
