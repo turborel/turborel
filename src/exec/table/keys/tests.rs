@@ -161,3 +161,33 @@ fn integers_are_found_equal_by_their_words_as_by_their_cells() {
     assert!(!last.equal(2, Key::Group(&zero, 0), &mut scratch) && last.equal(2, Key::Group(&zero, 1), &mut scratch));
     assert!(last.equal(1, Key::Group(&zero, 0), &mut scratch) && !last.equal(1, Key::Group(&zero, 1), &mut scratch));
 }
+
+/// Verifies: [DESIGN] (RULES.md D1323, D1113) [X3.135-1986 §5.11 GR4]
+/// the hash of a group's key of some of its lanes is the hash of those
+/// values, whichever way a lane reads its own: an integer of no fraction
+/// by its word, a null among them and the least integer of 64 bits; a
+/// number of two fractional digits, a text and a null by their cells.
+/// So a group goes to the partition its values hash to, and an integer
+/// hashes as the same number held with fractional digits.
+#[test]
+fn a_groups_hash_of_its_lanes_is_that_of_their_values() {
+    let seed = Seed::fixed(0x5EED);
+    let rows = [
+        vec![exact(7, 0), exact(150, 2), Value::Char("ab ".into())],
+        vec![Value::Null, exact(-3, 2), Value::Null],
+        vec![exact(i128::from(i64::MIN), 0), Value::Null, Value::Char(String::new().into())],
+        vec![exact(70, 0), exact(700, 2), Value::Char("ab".into())],
+    ];
+    let mut keys = Keys::new(3);
+    for row in &rows {
+        keys.push(Key::Values(row));
+    }
+    for (g, row) in rows.iter().enumerate() {
+        for lanes in [&[0_usize][..], &[1], &[0, 1], &[2, 0], &[0, 1, 2]] {
+            let values: Vec<Value> = lanes.iter().map(|&at| row[at].clone()).collect();
+            assert_eq!(keys.hash_of(g, lanes, &seed), crate::exec::table::hash_values(&seed, &values), "group {g} by {lanes:?}");
+        }
+    }
+    assert_eq!(keys.hash_of(0, &[0], &seed), keys.hash_of(3, &[1], &seed));
+    assert_ne!(keys.hash_of(0, &[0], &seed), keys.hash_of(3, &[0], &seed));
+}

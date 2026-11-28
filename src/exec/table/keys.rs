@@ -540,7 +540,7 @@ impl Keys {
     /// of any vector: so the groups of every morsel that agree on them
     /// agree on it.
     pub(super) fn hash_of(&self, g: usize, lanes: &[usize], seed: &Seed) -> u64 {
-        let mut hashes = lanes.iter().map(|&at| seed.key_cell(at, self.lanes.get(at).map_or(Cell::Null, |lane| lane.cell(g))));
+        let mut hashes = lanes.iter().map(|&at| self.lanes.get(at).map_or_else(|| seed.null(), |lane| lane.hash(g, at, seed)));
         let first = hashes.next().unwrap_or_else(|| seed.null());
         hashes.fold(first, |so_far, next| seed.joined(so_far, next))
     }
