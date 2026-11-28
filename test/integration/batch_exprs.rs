@@ -1,9 +1,10 @@
 //! \[DESIGN\] Expressions evaluated a vector at a time (RULES.md D362,
-//! D363): projections, filters and set functions of arithmetic of every
-//! scale, CASE, CAST, comparisons and three-valued logic, and calls of
-//! functions with bodies over vectors give by batches what they give a
-//! row at a time, of either engine; one that raises an error raises the
-//! error a row at a time raises, after the rows before it.
+//! D363, D1320): projections, filters and set functions of arithmetic of
+//! every scale, CASE, CAST, comparisons and three-valued logic, and calls
+//! of functions with bodies over vectors, the fields and casts of
+//! datetimes among them, give by batches what they give a row at a time,
+//! of either engine; one that raises an error raises the error a row at
+//! a time raises, after the rows before it.
 
 use turborel::db::{Database, Session};
 use turborel::error::Code;
@@ -193,6 +194,101 @@ fn a_filter_s_subquery_of_no_outer_reference_is_run_once_as_rows_run_it() {
     // Whichever row is judged first divides by 0 before it runs the subquery.
     let before = "SELECT K FROM C WHERE 10 / (K - K) > 0 AND N > (SELECT N FROM C WHERE K < 3)";
     assert_eq!(rows(&a, before), Err(Code::Data), "the operand before the subquery raises first");
+}
+
+/// The datetimes of row `k`: K, TS a timestamp of six digits null every
+/// 9th, T0 one of none, TZ one WITH TIME ZONE of five displacements, TM a
+/// time of three digits, D a date.
+fn moments(k: i64) -> String {
+    let date = format!("{}-{:02}-{:02}", 1990 + k % 40, 1 + k % 12, 1 + k % 28);
+    let time = format!("{:02}:{:02}:{:02}", k % 24, k * 7 % 60, k * 13 % 60);
+    let stamp = if k % 9 == 0 { "NULL".to_owned() } else { format!("TIMESTAMP '{date} {time}.{:06}'", k * 104_729 % 1_000_000) };
+    let zone = ["+00:00", "+05:30", "-08:00", "+14:00", "-12:59"][usize::try_from(k % 5).unwrap()];
+    format!(
+        "({k}, {stamp}, TIMESTAMP '{date} {time}', TIMESTAMP '{date} {time}.{:03}{zone}', TIME '{time}.{:03}', DATE '{date}')",
+        k % 1000,
+        k * 31 % 1000
+    )
+}
+
+/// Tables RT, of the row store, and CT, of the column store, alike, of
+/// datetimes written in UTC: frozen, then changed.
+fn moment_tables() -> (Database, Session) {
+    let db = Database::new();
+    db.set_job_policy(JobPolicy::Manual).unwrap();
+    let columns = "K INTEGER PRIMARY KEY, TS TIMESTAMP(6), T0 TIMESTAMP(0), TZ TIMESTAMP(3) WITH TIME ZONE, TM TIME(3), D DATE";
+    db.schema(&format!(
+        "CREATE SCHEMA AUTHORIZATION A CREATE TABLE RT ({columns}) CREATE TABLE CT ({columns}) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)"
+    ))
+    .unwrap();
+    let a = db.session("A");
+    for table in ["RT", "CT"] {
+        for first in (0..3000).step_by(500) {
+            let values: Vec<String> = (first..first + 500).map(moments).collect();
+            a.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
+        }
+        a.commit().unwrap();
+        db.maintain().unwrap();
+        a.run(&format!("UPDATE {table} SET TS = TS + INTERVAL '90' MINUTE, T0 = NULL WHERE K BETWEEN 700 AND 760")).unwrap();
+        a.run(&format!("DELETE FROM {table} WHERE K BETWEEN 2000 AND 2040")).unwrap();
+        a.commit().unwrap();
+    }
+    (db, a)
+}
+
+/// Fields and casts of datetimes, projected, filtered and grouped by.
+const MOMENTS: [&str; 10] = [
+    "SELECT K, EXTRACT(YEAR FROM TS), EXTRACT(MONTH FROM TS), EXTRACT(DAY FROM TS), EXTRACT(HOUR FROM TS), EXTRACT(MINUTE FROM TS), EXTRACT(SECOND FROM TS) FROM {t} WHERE K < 800",
+    "SELECT K, EXTRACT(HOUR FROM T0), EXTRACT(SECOND FROM T0), EXTRACT(MINUTE FROM TM), EXTRACT(SECOND FROM TM), EXTRACT(DAY FROM D) FROM {t} WHERE K < 800",
+    "SELECT K, EXTRACT(DAY FROM TZ), EXTRACT(HOUR FROM TZ), EXTRACT(MINUTE FROM TZ), EXTRACT(TIMEZONE_HOUR FROM TZ), EXTRACT(TIMEZONE_MINUTE FROM TZ) FROM {t} WHERE K < 800",
+    "SELECT M, COUNT(*), MIN(K) FROM (SELECT EXTRACT(MINUTE FROM TS) AS M, K FROM {t}) AS Q GROUP BY M",
+    "SELECT H, M, COUNT(*), MAX(K) FROM (SELECT EXTRACT(HOUR FROM TS) AS H, EXTRACT(MINUTE FROM T0) AS M, K FROM {t}) AS Q GROUP BY H, M",
+    "SELECT COUNT(*), SUM(K) FROM {t} WHERE EXTRACT(HOUR FROM TS) < 7 AND EXTRACT(MINUTE FROM TS) <> 30",
+    "SELECT K, CAST(TS AS DATE), CAST(TS AS TIME(2)), CAST(TS AS TIMESTAMP(1)), CAST(D AS TIMESTAMP(0)) FROM {t} WHERE K < 800",
+    "SELECT K, CAST(TS AS TIMESTAMP(3) WITH TIME ZONE), CAST(TZ AS TIMESTAMP(0)), CAST(TZ AS DATE), CAST(TM AS TIME(0) WITH TIME ZONE) FROM {t} WHERE K < 800",
+    "SELECT K, TS - EXTRACT(SECOND FROM TS) * INTERVAL '1' SECOND FROM {t} WHERE K < 800",
+    "SELECT D2, COUNT(*) FROM (SELECT CAST(TS AS DATE) AS D2 FROM {t} WHERE EXTRACT(YEAR FROM TS) > 2020) AS Q GROUP BY D2",
+];
+
+/// Verifies: [DESIGN] RULES.md D1320, D363, D15 [ISO/IEC 9075:1992 §6.6
+/// GR3, §6.10 GR9, GR10, GR11, §6.1 GR5, GR6]: every field of timestamps,
+/// times and dates, with a time zone or without, and casts between the
+/// datetime types, projected, filtered and grouped by, give by batch the
+/// rows a row at a time gives, of either engine, in sessions of three
+/// displacements, the fields of a type without time zone read as the
+/// session shows them. A timestamp the session shows in the year before
+/// 0001 raises SQLSTATE 22007 by batch as a row at a time, and nothing
+/// where no row of its batch is read.
+#[test]
+fn fields_and_casts_of_datetimes_give_by_batch_what_rows_give() {
+    let (_db, a) = moment_tables();
+    for zone in ["INTERVAL '00:00' HOUR TO MINUTE", "INTERVAL '05:30' HOUR TO MINUTE", "INTERVAL -'08:00' HOUR TO MINUTE"] {
+        exec(&a, &format!("SET TIME ZONE {zone}")).unwrap();
+        for table in ["RT", "CT"] {
+            for query in MOMENTS {
+                let sql = query.replace("{t}", table);
+                let (batched, by_rows) = both(&a, &sql);
+                assert!(by_rows.as_ref().is_ok_and(|r| !r.is_empty()), "{sql} at {zone}: {by_rows:?}");
+                assert_eq!(batched, by_rows, "{sql} at {zone}");
+            }
+        }
+    }
+    exec(&a, "SET TIME ZONE INTERVAL '05:30' HOUR TO MINUTE").unwrap();
+    // Row 100 was written 04:40:40 in UTC.
+    let shown = "SELECT EXTRACT(HOUR FROM TS), EXTRACT(MINUTE FROM TS), EXTRACT(SECOND FROM T0) FROM CT WHERE K = 100";
+    assert_eq!(rows(&a, shown).unwrap(), ["10,10,40"]);
+    exec(&a, "SET TIME ZONE INTERVAL '00:00' HOUR TO MINUTE").unwrap();
+    for table in ["RT", "CT"] {
+        exec(&a, &format!("INSERT INTO {table} (K, TS) VALUES (5000, TIMESTAMP '0001-01-01 00:30:00')")).unwrap();
+    }
+    a.commit().unwrap();
+    exec(&a, "SET TIME ZONE INTERVAL -'01:00' HOUR TO MINUTE").unwrap();
+    for table in ["RT", "CT"] {
+        let (batched, by_rows) = both(&a, &format!("SELECT K, EXTRACT(MINUTE FROM TS) FROM {table}"));
+        assert_eq!((batched, by_rows), (Err(Code::Data), Err(Code::Data)), "{table}: shown in the year before 0001");
+        let (batched, by_rows) = both(&a, &format!("SELECT K, EXTRACT(MINUTE FROM TS) FROM {table} WHERE K < 600"));
+        assert!(by_rows.is_ok() && batched == by_rows, "{table}: the rows before it");
+    }
 }
 
 /// The rows of `sql`, sorted, or its error: read by batches where it can
