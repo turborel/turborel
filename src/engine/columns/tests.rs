@@ -201,19 +201,29 @@ fn chunks_give_their_integers() {
     assert_eq!(ints_of(&fixed, false, (0, 21)), None, "past the end");
 }
 
-/// The texts a chunk of `values` of `t`, compressed, gives of its positions
-/// `from` to `to`, and its values there as they read one at a time, if it
-/// holds text.
-fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Option<(Vec<String>, Vec<String>)> {
+/// The texts a chunk of `values` of `t`, compressed, gives of its rows
+/// `asked`, gathered as a run's (`texts.rs`), whether they are codes of
+/// entries, and its values there as they read one at a time, if it holds
+/// text.
+fn gathered_of(t: &DataType, values: &[Value], asked: texts::Asked<'_>) -> Option<(Vec<String>, Vec<String>, bool)> {
     let fields = Fields::of(t, values.iter().cloned()).unwrap();
     let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
     let chunk = Chunk::parse(&bytes).unwrap();
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::new(), Mask::default());
-    chunk.texts((from, to), (&mut text, &mut ends, &mut nulls), (t, &crate::kernels::Portable))?;
-    let texts = crate::storage::Texts::new(text, ends, nulls.any().then_some(nulls));
+    let places: Vec<usize> = match asked {
+        texts::Asked::Run(from, to) => (from..to).collect(),
+        texts::Asked::At(places) => places.to_vec(),
+    };
+    let mut into = texts::Gathered::with_room(places.len(), 0);
+    chunk.gather(asked, padding(t)?, &mut into)?;
+    let texts = into.finish(&crate::kernels::Portable)?;
     let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
-    let read = (from..to).map(|n| chunk.value(n, t).unwrap().to_string()).collect();
-    Some((made, read))
+    let read = places.iter().map(|&n| chunk.value(n, t).unwrap().to_string()).collect();
+    Some((made, read, texts.coded.is_some()))
+}
+
+/// As `gathered_of`, of the positions `from` to `to`.
+fn texts_of(t: &DataType, values: &[Value], (from, to): (usize, usize)) -> Option<(Vec<String>, Vec<String>)> {
+    gathered_of(t, values, texts::Asked::Run(from, to)).map(|(made, read, _)| (made, read))
 }
 
 /// Verifies: [DESIGN] RULES.md D31, D1131 [X3.135-1986 §8.7 GR7b], a
@@ -256,42 +266,27 @@ fn chunks_give_their_texts() {
     assert_eq!(texts_of(&TEXT, &constant, (0, 21)), None, "past the end");
 }
 
-/// The texts a chunk of `values` of `t`, compressed, gives of `positions`
-/// as a dictionary's codes, and its values there as they read one at a
-/// time, if it is a dictionary.
-fn coded_of(t: &DataType, values: &[Value], positions: &[usize]) -> Option<(Vec<String>, Vec<String>)> {
-    let fields = Fields::of(t, values.iter().cloned()).unwrap();
-    let bytes = fields.chunk(t, 0, (fields.len(), true)).unwrap();
-    let chunk = Chunk::parse(&bytes).unwrap();
-    let (mut text, mut ends, mut codes, mut nulls) = (String::new(), Vec::new(), Vec::new(), Mask::default());
-    chunk.coded(positions, (&mut text, &mut ends, &mut codes, &mut nulls), (t, &crate::kernels::Portable))?;
-    let dictionary = crate::storage::Coded { codes, entries: std::sync::Arc::new(crate::storage::Texts::new(text, ends, None)) };
-    let texts = crate::storage::Texts::coded(dictionary, nulls.any().then_some(nulls));
-    let made = (0..texts.len()).map(|n| texts.get(n).map_or_else(|| "NULL".to_owned(), str::to_owned)).collect();
-    let read = positions.iter().map(|&n| chunk.value(n, t).unwrap().to_string()).collect();
-    Some((made, read))
-}
-
-/// Verifies: [DESIGN] RULES.md D31, a dictionary's codes: a chunk of few
-/// strings, some not ASCII, nulls among them, gives of any of its
-/// positions, all or some, its entries and each one's entry, which read
-/// as the values one at a time; a chunk not a dictionary gives none, nor
-/// a position past its end.
+/// Verifies: [DESIGN] RULES.md D31, D1316, a dictionary's codes: a chunk
+/// of few strings, some not ASCII, nulls among them, gives of any of
+/// its positions, all or some, entries and each row's entry, which read
+/// as the values one at a time; a chunk of varying fields gives its
+/// texts with no codes, and a position past the end gives none.
 #[test]
 fn chunks_give_their_codes() {
     let few: Vec<Value> =
         (0_usize..300_usize).map(|n| if n % 11 == 0 { Value::Null } else { Value::Char(["red", "grün", "blue"][n % 3].into()) }).collect();
     let all: Vec<usize> = (0..300).collect();
-    let (made, read) = coded_of(&TEXT, &few, &all).unwrap();
-    assert_eq!(made, read, "all");
-    let (made_padded, read_padded) = coded_of(&CHAR, &few, &all).unwrap();
-    assert_eq!(made_padded, read_padded, "all, of CHARACTER, padded");
+    let (made, read, coded) = gathered_of(&TEXT, &few, texts::Asked::At(&all)).unwrap();
+    assert_eq!((made, coded), (read, true), "all");
+    let (made_padded, read_padded, coded_padded) = gathered_of(&CHAR, &few, texts::Asked::At(&all)).unwrap();
+    assert_eq!((made_padded, coded_padded), (read_padded, true), "all, of CHARACTER, padded");
     let some = [0_usize, 7, 11, 150, 299];
-    let (made_some, read_some) = coded_of(&TEXT, &few, &some).unwrap();
-    assert_eq!(made_some, read_some, "some");
+    let (made_some, read_some, coded_some) = gathered_of(&TEXT, &few, texts::Asked::At(&some)).unwrap();
+    assert_eq!((made_some, coded_some), (read_some, true), "some");
     let varying: Vec<Value> = (0_u32..30_u32).map(|n| Value::Char(format!("value {n}").into())).collect();
-    assert_eq!(coded_of(&TEXT, &varying, &[0, 1]), None, "varying fields");
-    assert_eq!(coded_of(&TEXT, &few, &[300]), None, "past the end");
+    let (made_varying, read_varying, coded_varying) = gathered_of(&TEXT, &varying, texts::Asked::At(&[0, 1])).unwrap();
+    assert_eq!((made_varying, coded_varying), (read_varying, false), "varying fields");
+    assert_eq!(gathered_of(&TEXT, &few, texts::Asked::At(&[300])), None, "past the end");
 }
 
 /// Verifies: [DESIGN] RULES.md D31, runs of one value: a sorted column of

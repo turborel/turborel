@@ -470,10 +470,13 @@ const PLACES: [usize; 14] = [0, 1, 13, 14, 15, 16, 29, 30, 31, 32, 33, 63, 64, 9
 const LATER: [u8; 10] = [0x00, 0x7F, 0x80, 0x8F, 0x90, 0x9F, 0xA0, 0xBF, 0xC0, 0xFF];
 
 /// Checks that `kernels` judge `bytes` as `str::from_utf8` does, the
-/// text compared as bytes, so a text wrongly judged is never printed.
+/// text compared as bytes, so a text wrongly judged is never printed;
+/// and that a vector of them is made a string (RULES.md D1252) where
+/// they are judged text, of the same octets, and only there.
 fn same(kernels: &dyn Kernels, bytes: &[u8]) {
     let ok = std::str::from_utf8(bytes).is_ok().then_some(bytes);
     assert_eq!(kernels.utf8(bytes).map(str::as_bytes), ok, "{bytes:02X?}");
+    assert_eq!(kernels.text(bytes.to_vec()).as_deref().map(str::as_bytes), ok, "as a string, {bytes:02X?}");
 }
 
 /// `bytes` at `at` of 99 bytes of `a`.
@@ -496,7 +499,8 @@ fn leads(kernels: &dyn Kernels, [lead, second]: [u8; 2]) {
     }
 }
 
-/// Checks the UTF-8 `kernels` judge (RULES.md D1175) against
+/// Checks the UTF-8 `kernels` judge (RULES.md D1175), of bytes read in
+/// place and of a vector made a string (RULES.md D1252), against
 /// `str::from_utf8`: of text of characters of one to four bytes, from
 /// every place of a step to every length past three steps, cut within
 /// characters among them; of every pair of bytes, and every lead of three

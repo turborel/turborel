@@ -36,6 +36,7 @@ pub mod prepared;
 mod runs;
 pub mod scan;
 pub mod sketch;
+mod texts;
 
 pub(crate) use encoded::kind_name;
 pub use fields::Fields;
@@ -45,7 +46,7 @@ use crate::error::{Code, Result, SqlError};
 use crate::storage::Mask;
 use crate::value::{CharUnits, DataType, Value};
 
-use encoded::{Body, Entries};
+use encoded::Body;
 use fsst::Symbols;
 
 /// Bytes of a count, a width or an offset.
@@ -221,57 +222,6 @@ impl<'a> Chunk<'a> {
             self.nulls_of((from, to), nulls);
         }
         Some(ran)
-    }
-
-    /// \[DESIGN\] Its values at positions `from` to `to`, character strings
-    /// of type `t`, as text pushed to `text` and where each ends to `ends`,
-    /// a CHARACTER string padded as it is read, and whether each is null to
-    /// `nulls` (`encoded::Body::texts`), judged UTF-8 by `kernels`: none if
-    /// `t` is not a character string type or its encoding does not hold
-    /// them as text.
-    pub fn texts(
-        &self,
-        (from, to): (usize, usize),
-        (text, ends, nulls): (&mut String, &mut Vec<usize>, &mut Mask),
-        (t, kernels): (&DataType, &dyn crate::kernels::Kernels),
-    ) -> Option<()> {
-        if to > self.count {
-            return None;
-        }
-        self.body.texts((from, to), (text, ends), (|n| self.is_null(n), padding(t)?, kernels))?;
-        self.nulls_of((from, to), nulls);
-        Some(())
-    }
-
-    /// \[DESIGN\] Of a dictionary, its entries and the entry of each of
-    /// `positions` pushed to `coded`, and whether each is null to `nulls`
-    /// (`encoded::Body::coded`), as `texts` gives those of type `t`, judged
-    /// by `kernels`: none if its encoding is not a dictionary.
-    pub fn coded(
-        &self,
-        positions: &[usize],
-        (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Mask),
-        (t, kernels): (&DataType, &dyn crate::kernels::Kernels),
-    ) -> Option<()> {
-        self.coded_with(positions, (text, ends, codes, nulls), &self.body.entry_texts(padding(t)?, kernels)?)
-    }
-
-    /// As `coded`, its entries' text `entries`, read once for the runs of
-    /// a group (`prepared.rs`).
-    fn coded_with(
-        &self,
-        positions: &[usize],
-        (text, ends, codes, nulls): (&mut String, &mut Vec<usize>, &mut Vec<u32>, &mut Mask),
-        entries: &Entries,
-    ) -> Option<()> {
-        if positions.iter().any(|&n| n >= self.count) {
-            return None;
-        }
-        self.body.coded(positions, (text, ends, codes), (|n| self.is_null(n), entries))?;
-        for &n in positions {
-            nulls.push(self.is_null(n));
-        }
-        Some(())
     }
 
     /// Its `n`th value, of type `t`.

@@ -193,6 +193,14 @@ pub(super) fn liked(x: &Vector<'_>, pattern: Option<&LikePattern>, count: usize,
         {
             return Some(bools(judged(count, texts.nulls.clone(), |n| all.get(n).copied())));
         }
+        // Of a store's entries no more than the rows, the entries' text
+        // searched at once and each row's taken by its code (RULES.md D1316).
+        if let Some(coded) = texts.coded.as_deref().filter(|coded| coded.codes.len() == count && coded.entries.len() <= count)
+            && let Some(all) = pattern.matches_all((coded.entries.text.as_bytes(), &coded.entries.ends), kernels)
+        {
+            let of_row = |n: usize| coded.codes.get(n).and_then(|&code| all.get(index(code)).copied());
+            return Some(bools(judged(count, texts.nulls.clone(), of_row)));
+        }
         return Some(bools(judged(count, texts.nulls.clone(), |n| Some(texts.get(n).is_some_and(|s| pattern.matches(s))))));
     }
     let seq = x.seq();

@@ -251,7 +251,9 @@ mod tests {
     }
 
     /// A batch of four rows of a column of each kind: integers, a null
-    /// among them; values; approximate numbers; texts, a null among them.
+    /// among them; values; approximate numbers; texts, a null among them;
+    /// and texts as codes of a scan's entries, a null and the empty
+    /// string among them (RULES.md D1316).
     fn batch() -> Batch {
         let ints = Column::Ints(Ints::new(vec![7_i64, -3_i64, 0_i64, i64::MIN], 2_u32, Some(vec![false, true, false, false].into())));
         let values = Column::Values(vec![
@@ -263,14 +265,17 @@ mod tests {
         let floats = Column::Floats(Floats::new(vec![1.5_f64, -0.0_f64, 2.0_f64, 3.0_f64], None));
         let ends = vec![1_usize, 3_usize, 3_usize, 5_usize];
         let texts = Column::Texts(Texts::new("xyzzy".to_owned(), ends, Some(vec![false, false, true, false].into())));
-        Batch { columns: vec![ints, values, floats, texts], rows: 4 }
+        let entries = std::sync::Arc::new(Texts::new("redgrün".to_owned(), vec![3_usize, 3_usize, 8_usize], None));
+        let coded = crate::storage::Coded { codes: vec![2_u32, 0_u32, 0_u32, 1_u32], entries };
+        let by_entry = Column::Texts(Texts::coded(coded, Some(vec![false, true, false, false].into())));
+        Batch { columns: vec![ints, values, floats, texts, by_entry], rows: 4 }
     }
 
     /// Verifies: [DESIGN] RULES.md D31, D38: rows of a batch written as a
     /// record (`put_batch`) read back (`batch_of`) as the same rows, in the
     /// order given, each with its number: integers as integers, of their
     /// scale, nulls kept, none marked if none is null; other columns as
-    /// their values.
+    /// their values, texts given as codes of entries among them.
     #[test]
     fn rows_of_a_batch_are_read_back_as_written() {
         let batch = batch();
@@ -282,8 +287,8 @@ mod tests {
         assert_eq!(read.rows, 3_usize);
         assert!(matches!(&read.columns[0], Column::Ints(ints) if ints.scale == 2_u32 && ints.units[0] == i64::MIN));
         for (n, &(_, r, _)) in rows.iter().enumerate() {
-            let made: Vec<Value> = (0..4).map(|at| read.cell(at, n).to_value()).collect();
-            let was: Vec<Value> = (0..4).map(|at| batch.cell(at, r).to_value()).collect();
+            let made: Vec<Value> = (0..5).map(|at| read.cell(at, n).to_value()).collect();
+            let was: Vec<Value> = (0..5).map(|at| batch.cell(at, r).to_value()).collect();
             assert_eq!(format!("{made:?}"), format!("{was:?}"), "row {r}");
         }
         let one = Batch { columns: vec![Column::Ints(Ints::new(vec![1_i64], 0_u32, None))], rows: 1 };

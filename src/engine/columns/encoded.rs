@@ -35,12 +35,11 @@ mod words;
 use super::alp::{Alp, Factors, Trials};
 use super::fields::Cells;
 use super::fsst::{Coded, Symbols, Table};
-use super::packed::{bits_for, dense, get, pack, packed_len, unpack_words};
+use super::packed::{bits_for, get, pack, packed_len};
 use super::runs::{Runs, runs_len};
-use super::{HEADER, WORD, corrupt, nulls_len, padded, read_word, too_large, word};
+use super::{HEADER, WORD, corrupt, nulls_len, read_word, too_large, word};
 use crate::error::Result;
 use crate::hash::xxhash::Xxh3Map;
-use crate::kernels::Kernels;
 use crate::value::{DataType, Value};
 
 pub(super) const FIXED: u8 = 1;
@@ -273,14 +272,6 @@ fn framed(fields: Cells<'_>, (least, bits): (i64, u32), out: &mut Vec<u8>) {
     pack(deltas, bits, out);
 }
 
-/// Of a dictionary of texts, its entries as text, one after another, and
-/// where each ends.
-#[derive(Debug, Clone, Default)]
-pub(super) struct Entries {
-    text: String,
-    ends: Vec<usize>,
-}
-
 /// A chunk's values, read in place, as their encoding wrote them.
 pub(super) enum Body<'a> {
     Fixed { width: usize, values: &'a [u8] },
@@ -412,94 +403,6 @@ impl Body<'_> {
         }
     }
 
-    /// \[DESIGN\] The text of each value at positions `from` to `to`, a
-    /// character string written as it is, pushed to `text`, and where each
-    /// ends to `ends`, of those `null` says are not nulls (`Texts`), each
-    /// padded with spaces to `pad` characters if given, as a CHARACTER
-    /// string is read: none if the encoding is of fixed fields, a frame,
-    /// runs or decimals, or a value is not UTF-8, as `kernels` judges it.
-    pub(super) fn texts(
-        &self,
-        (from, to): (usize, usize),
-        (text, ends): (&mut String, &mut Vec<usize>),
-        (null, pad, kernels): (impl Fn(usize) -> bool, Option<usize>, &dyn Kernels),
-    ) -> Option<()> {
-        if let Body::Fsst(coded) = self {
-            // Of VARCHAR texts alone (`columns.rs`), never padded.
-            return pad.is_none().then(|| coded.texts((from, to), (text, ends), (null, kernels))).flatten();
-        }
-        if let Body::Varying { offsets, values } = self {
-            return varying_texts((offsets, values), (from, to), (text, ends), (null, pad, kernels));
-        }
-        for n in from..to {
-            if !null(n) {
-                padded(text, kernels.utf8(self.field(n)?)?, pad);
-            }
-            ends.push(text.len());
-        }
-        Some(())
-    }
-
-    /// \[DESIGN\] Of a dictionary, its entries' text, `entries`, pushed to
-    /// `text` and where each ends to `ends`, then of each of `positions`
-    /// its entry's place among all those `ends` holds pushed to `codes`, 0
-    /// of those `null` says are nulls (`Coded`): none if the encoding is
-    /// not a dictionary. The codes from the first of `positions`, in
-    /// order, to the last are unpacked at once, unless they are too few of
-    /// that span (`packed::dense`), each then read alone.
-    pub(super) fn coded(
-        &self,
-        positions: &[usize],
-        (text, ends, codes): (&mut String, &mut Vec<usize>, &mut Vec<u32>),
-        (null, entries): (impl Fn(usize) -> bool, &Entries),
-    ) -> Option<()> {
-        let Body::Dictionary { bits, codes: packed, .. } = self else { return None };
-        let base = u32::try_from(ends.len()).ok()?;
-        let at = text.len();
-        text.push_str(&entries.text);
-        ends.extend(entries.ends.iter().map(|&end| end.saturating_add(at)));
-        let (Some(&first), Some(&last)) = (positions.first(), positions.last()) else { return Some(()) };
-        let span = last.checked_sub(first)?.saturating_add(1);
-        // Positions few of their span each read alone (RULES.md D360).
-        if !dense(positions.len(), span) {
-            for &n in positions {
-                let code = u32::try_from(get(packed, *bits, n)?).ok()?;
-                codes.push(if null(n) { 0 } else { base.checked_add(code)? });
-            }
-            return Some(());
-        }
-        let mut held = Vec::with_capacity(span);
-        unpack_words(packed, (*bits, 0), (first, last.checked_add(1)?), &mut held)?;
-        for &n in positions {
-            let code = u32::try_from(*held.get(n.checked_sub(first)?)?).ok()?;
-            codes.push(if null(n) { 0 } else { base.checked_add(code)? });
-        }
-        Some(())
-    }
-
-    /// \[DESIGN\] Of a dictionary, its entries' text, each padded to `pad`
-    /// characters if given, as `texts` pads: none if the encoding is not a
-    /// dictionary, or an entry is not UTF-8. The octets from the first
-    /// entry's start to the last's end are judged UTF-8 once by `kernels`,
-    /// each entry then a slice of them, as `varying_texts` judges fields
-    /// (RULES.md D1131, D1175).
-    pub(super) fn entry_texts(&self, pad: Option<usize>, kernels: &dyn Kernels) -> Option<Entries> {
-        let Body::Dictionary { offsets, entries, .. } = self else { return None };
-        let count = offsets.len().checked_div(WORD)?.checked_sub(1)?;
-        let mut held = Entries { text: String::new(), ends: Vec::with_capacity(count) };
-        let Some(last) = count.checked_sub(1) else { return Some(held) };
-        let (start, end) = (between(offsets, 0)?.0, between(offsets, last)?.1);
-        let span = kernels.utf8(entries.get(start..end)?)?;
-        // Room for every entry's octets at once, all an unpadded text takes.
-        held.text.reserve(span.len());
-        for e in 0..count {
-            let (from, to) = between(offsets, e)?;
-            padded(&mut held.text, span.get(from.checked_sub(start)?..to.checked_sub(start)?)?, pad);
-            held.ends.push(held.text.len());
-        }
-        Some(held)
-    }
-
     /// The entry of the `n`th value of a dictionary.
     fn code(&self, n: usize) -> Option<u16> {
         let Body::Dictionary { bits, codes, .. } = self else { return None };
@@ -535,33 +438,8 @@ impl Body<'_> {
     }
 }
 
-/// \[DESIGN\] (RULES.md D1131) As `Body::texts`, of varying fields of
-/// `values` that `offsets` place: the octets from the first's start to
-/// the last's end judged UTF-8 once by `kernels` (D1175), each field then
-/// a slice of them, none if they are not UTF-8 or a field does not begin
-/// and end on a character. Fields that are each UTF-8 are UTF-8 together, so this
-/// gives what judging each would.
-fn varying_texts(
-    (offsets, values): (&[u8], &[u8]),
-    (from, to): (usize, usize),
-    (text, ends): (&mut String, &mut Vec<usize>),
-    (null, pad, kernels): (impl Fn(usize) -> bool, Option<usize>, &dyn Kernels),
-) -> Option<()> {
-    let Some(last) = to.checked_sub(1).filter(|&last| last >= from) else { return Some(()) };
-    let (start, end) = (between(offsets, from)?.0, between(offsets, last)?.1);
-    let span = kernels.utf8(values.get(start..end)?)?;
-    for n in from..to {
-        if !null(n) {
-            let (a, b) = between(offsets, n)?;
-            padded(text, span.get(a.checked_sub(start)?..b.checked_sub(start)?)?, pad);
-        }
-        ends.push(text.len());
-    }
-    Some(())
-}
-
 /// Where the `e`th of the fields `offsets` gives begins and ends.
-fn between(offsets: &[u8], e: usize) -> Option<(usize, usize)> {
+pub(super) fn between(offsets: &[u8], e: usize) -> Option<(usize, usize)> {
     read_word(offsets, e.checked_mul(WORD)?).ok().zip(read_word(offsets, e.checked_add(1)?.checked_mul(WORD)?).ok())
 }
 

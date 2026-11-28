@@ -75,7 +75,8 @@ fn every_lane_is_read_back_as_written() {
         let mut reader = Reader::new(&out, "keys");
         let back = Keys::read(&mut reader, piece.len()).unwrap();
         reader.finish().unwrap();
-        let whole = read.get_or_insert_with(|| back.like());
+        let empty = || Keys { lanes: back.lanes.iter().map(|lane| Lane { unpadded: lane.unpadded, ..Lane::default() }).collect() };
+        let whole = read.get_or_insert_with(empty);
         whole.extend(&back, &(0..u32::try_from(piece.len()).unwrap()).collect::<Vec<_>>());
     }
     let read = read.unwrap();

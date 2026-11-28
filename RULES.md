@@ -809,8 +809,10 @@ verification approach DO-178C expects (§8).
 | D1247 | A grouping stops handing morsels whole once the statement thread's table holds more groups than a morsel has rows |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1251 | A column store's scan judges a LIKE of a constant pattern of each chunk's texts where they lie, those coded by symbols by the pattern's machine stepped a code at a time |
+| D1252 | A run's texts are gathered into one vector of octets and judged UTF-8 once, texts coded by symbols decoded straight into it |
 | D1253 | A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
+| D1255 | A table's text keys lie in chunks that never move, and a morsel's groups are put in their partitions' order with their texts where they are |
 | D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
@@ -840,7 +842,11 @@ verification approach DO-178C expects (§8).
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
+| D1305 | A grouping column that is an expression of other grouping columns is computed after the grouping |
+| D1306 | A select list's expressions that cannot raise are computed after FETCH FIRST |
 | D1311 | The matcher that marks does a step's work once a step |
+| D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
+| D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
 | D1321 | An older row version the undo store cannot give back is reported with what the store knew of it |
 
 ### The project
@@ -10775,7 +10781,8 @@ each argument a column or a constant. It gives what the function's call
 gives of each row, or nothing, so the call is made for each row's
 values, borrowed from the vectors. ABS of integers and approximate
 numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
-(`functions/over_vectors.rs`). Strings of a dictionary are folded or
+(`functions/over_vectors.rs`), as has CAST of a datetime to a datetime
+type (D1320). Strings of a dictionary are folded or
 counted once an entry. A function that may warn has its body skipped
 and is called as a row's evaluation calls it.
 
@@ -20019,6 +20026,10 @@ are now judged once, and each field is a slice of them
 together, and a field that begins or ends within a character gives no
 text as before, so the batch is the one each judgment gave.
 
+D1252 took this to the run. The octets of every chunk a run reads are
+judged once together (`engine/columns/texts.rs`), and a run of varying
+fields is copied there at once.
+
 IN a list of strings judged of a vector's text (D1126) compared a
 string of a short list with each constant, each made unpadded again for
 each row, and hashed it for a longer one. The constants are now unpadded
@@ -23142,6 +23153,61 @@ reads. Zone maps, Bloom filters and imprints pass over nothing by it, as
 the prefix's bounds do that, so the share of a table the planner prices
 a scan by (`scan_share`) is what it was.
 
+#### D1252. A run's texts are gathered into one vector of octets and judged UTF-8 once, texts coded by symbols decoded straight into it
+
+A scan gives a character string column of a run of rows as text (D361),
+one string of every row's text and where each ends. A run is at most a
+vector of rows (D31). The chunks of a column of long strings hold a
+hundred or two rows each, as a chunk is what a page holds, so a run
+reads a dozen chunks or more.
+
+The string was begun empty and grew as rows were pushed to it, so a run
+allocated it again and copied it many times. A dictionary's rows were
+pushed one at a time, each read by its own code and judged UTF-8 by
+itself. Texts coded by symbols were decoded into a vector of their
+chunk's own, judged there and copied to the string. And a run was first
+tried as dictionary codes, which copied each dictionary's entries until
+a chunk that was no dictionary was met, and all of it was then dropped.
+
+A run's texts are now gathered into one vector of octets
+(`engine/columns/texts.rs`). Room is made for it once, of as many octets
+as the chunks the run reads take stored, which a dictionary's entries,
+varying fields and one value never pass. Texts coded by symbols may pass
+it, and the vector then grows as any vector does. Each chunk adds its
+octets and where each text ends, and nothing is judged as it is added. A
+dictionary's entries and a run of varying fields are added by one copy,
+as each field begins where the one before it ends (D1131). Texts coded
+by symbols are decoded straight after the octets held
+(`engine/columns/fsst.rs`), and copied nowhere else.
+
+The vector is then made the run's text by one judgement of all its
+octets, `Kernels::text`, which gives the vector itself as the string
+where the octets are UTF-8 as `str::from_utf8` judges them. The core
+forbids `unsafe` (R-SAFE-1), so its body is `String::from_utf8`.
+`turborel-simd` judges on AVX2 as D1175 does and then takes the vector
+for the string, which is sound because every octet of it was just
+judged. Each text's end must then lie on a character's boundary, so each
+text is UTF-8 alone. Strings that are each UTF-8 are UTF-8 together, and
+a text that begins or ends within a character fails that test, so a run
+gives text exactly where judging each value by itself would.
+
+Octets that are no text, a position past a chunk's end and a chunk whose
+offsets or codes are malformed give no column. The rows are then read as
+values, which raises what is malformed, as before.
+
+A CHARACTER string is padded as it is read [X3.135-1986 §8.7 GR7b]. The
+spaces are added to the octets by the count of the field's characters,
+which are its octets that go on with no character. That is the count of
+the text once the octets are judged, and octets that are not text give
+no column whatever was counted.
+
+Nothing is made of a dictionary of texts when its chunk is opened, and
+nothing of it is kept for the chunk's other runs, which withdraws the
+cell of D1298. A run copies the entries it reads from the chunk's own
+octets, which costs no more than copying them from a text kept, and
+judges them with the rest of the run. A reader that asks for no text
+still pays for none.
+
 #### D1253. A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code
 
 A chunk kept as a dictionary holds each distinct text once, its entries'
@@ -23195,6 +23261,96 @@ the projection over the part takes the rows the partitions kept for the
 sort, as those are the rows that leave the part. Both take the time of
 the part's run and of each row pulled. A part that gives way, and a sort
 whose rows are not taken from the tables, count every group in both.
+
+#### D1255. A table's text keys lie in chunks that never move, and a morsel's groups are put in their partitions' order with their texts where they are
+
+A lane of a table's keys held its character strings one after another in
+one buffer (D356). A lane that grew took a larger buffer and copied every
+text it held into it, again at each doubling. A morsel's groups put in
+the order of their partitions (D1110) were copied, text by text, into a
+second such buffer that grew the same way, and a partition's table that
+took a new group copied its text into a third. Of a grouping by a long
+text key, growing the buffers and copying between them was a large part
+of what the grouping did, and the memory it touched for the first time
+most of its page faults.
+
+A lane of texts now holds them in chunks (`exec/table/keys/texts.rs`). A
+chunk is a buffer made once with its room and filled no further, so a
+text stays where it was written and a lane that grows copies nothing it
+holds. A group's text is told by its chunk and where it lies there,
+twelve bytes a group. A new chunk is made with room for as much text as
+the lane holds, at least 1 KiB and at most 1 MiB. So a lane of few short
+texts holds little, a lane of many makes a chunk for every mebibyte, and
+no lane holds more room unfilled than its texts fill or than one chunk.
+A text longer than 1 MiB has a chunk of its own, of its length, and the
+chunk open before it stays open. A text of four gibibytes or more is not
+told by a place of 32 bits, and turns the lane into values as a value of
+another type does (D356). Nothing is sized by an estimate of the groups.
+
+Both bounds were measured. On the lanes alone, in the shape of a grouping
+of tens of millions of text keys of 7 to 7,770 octets made by eight
+threads and merged into 64 partitions, the lanes cost the same with at
+most 32 KiB to 16 MiB a chunk, and with 16 KiB their merge cost more. A
+first chunk of 64 bytes to 4 KiB cost the same on lanes of four short
+texts, so it is a kibibyte, the least of what a partition holds of a
+text column while its keys are few.
+
+What chooses the most is the statement that runs next. A grouping's
+chunks are freed when it ends, and the system's allocator, which the
+server runs on (D765), keeps freed memory and hands the next statement
+only the blocks its requests fit. Measured in the server, a grouping by
+integers run after groupings by long texts took more fresh memory, held
+more at its peak and ran longer after chunks of 64 KiB than after chunks
+of 1 MiB or 16 MiB, which read alike, as a morsel's lane seldom holds
+more than a few mebibytes. Run first in a server it cost the same after
+any. So the most is 1 MiB, the least measured that leaves the next
+statement room it can use. A lane holds one chunk part filled, so a
+grouping's partitions hold at most a mebibyte a text column each
+unfilled, and only once each holds that much text.
+
+A morsel's groups are put in their partitions' order with their texts
+left where they are (`Keys::gathered`, `exec/table/made.rs`). Only what
+tells where each lies is put in that order, so no text is copied there.
+A partition's table that takes a new group copies its text once, into a
+chunk that is not grown. A wide partition (D1300) copies none, and reads
+a key where its morsel wrote it. So a text key is written once by its
+morsel, and once more only by a partition that holds its groups in a
+table of its own. Measured the same way, leaving the texts where they
+are cost the same as copying them in order where the partition copies
+each new key again, and less where the partition is wide.
+
+The room of every chunk is counted in what the lane holds as the chunk
+is made, before a text fills it, so a table or a morsel's groups charge
+their grant with it at once (`Chunks::bytes`). A table frozen gives back
+the room its open chunk has not filled.
+
+A lane given as a column of a batch (D1123) is one buffer. Texts that lie
+in one chunk in their groups' order are that chunk as it is. Any others
+are copied once into a buffer made with their whole length.
+
+A lane written to a spill (D1226) writes its texts' whole length, each
+one's length, and their octets in one run. It is read back into one
+chunk of that length, each text copied once and none into a buffer that
+grows, and bytes whose lengths do not make that whole, or that are not
+UTF-8, are refused as a record that is not one (SQLCODE -916). The
+record's form changed within its version, as nothing spilled outlives
+its statement.
+
+The groups, their order, their values and their results are unchanged:
+a key is equal to what it was equal to, with and without its trailing
+spaces as its collation says (D1183), and is given as its first row gave
+it.
+
+The chunks' tests are in `exec/table/keys/texts/tests.rs`. They show
+that a text never moves, the room of each chunk and that it is counted,
+a text longer than a chunk, groups gathered, texts joined and a lane
+shortened. One takes text keys, a null, the empty text, texts that
+differ by a trailing space and a text longer than a chunk among them,
+through two morsels merged whole, split among partitions, written to a
+spill, read back and given as columns, padded and unpadded, and expects
+the same groups each way. Another refuses the records that are no lane
+of texts. The eight mutations are in
+`xtask/src/mutate/list/areas/text_lanes.rs`.
 
 #### D1256. A sort by set functions alone picks its first groups of a partition before their rows are made
 
@@ -24582,6 +24738,11 @@ chunks opened belong to the one scan that reads them, or to one decoding
 of a late column at a time (D361), so no two threads ask one cell at
 once, and the cell would still make the text once if they did.
 
+D1252 withdrew the cell. A run that asks for text copies the entries it
+reads from the chunk into the run's own vector and judges them there,
+so nothing is made of a dictionary of texts and nothing of it is kept.
+A reader that asks for no text pays for none, as this decision meant.
+
 #### D1299. A table's sample remembers a function by its handle, not by its name alone
 
 A table's sample remembers what was asked of it under a fingerprint of
@@ -24706,6 +24867,118 @@ So the rule is the reader's, not a count of groups
 which goes wide whatever reads, is what the tests of the gathered table
 ask.
 
+#### D1305. A grouping column that is an expression of other grouping columns is computed after the grouping
+
+A grouping by the columns of a derived table, a view or a WITH query
+may name a column beside expressions of it, as `GROUP BY A, B, C` of
+`SELECT A, A - 1 AS B, A - 2 AS C`. Every row of a group the first
+makes has one value of each expression, so the first alone tells the
+groups apart [ISO/IEC 9075-2:2023 §9.12, §4.26.1]. The grouping hashed,
+compared and kept every column written, and the projection below it
+computed each expression of every row. The rule of D1201 left such a
+grouping as written, as it carries a column only where the column's
+declared type is known, and a projection's expression has none.
+
+The rule `compute_keys_after_grouping`
+(`optimizer/dependent_keys/computed.rs`) now leaves out of the grouping
+each column that is an expression of other grouping columns alone, or
+of none, a constant. A projection over the grouping computes it of each
+group's columns and puts every column where it was. The projection
+below computes it of the rows no more, and where only column references
+are left of that projection the grouping reads its input in its place.
+The plan is then the one of the query that groups by the columns kept
+and writes the expressions in its select list.
+
+An expression is taken under these conditions.
+
+- It gives the same value of the same columns each time, so it holds
+  no NEXT VALUE FOR and calls no function or routine that is possibly
+  non-deterministic [§4.35.1].
+- It cannot raise or warn, judged by its columns' declared types
+  (D373). Its rows are then evaluated for no longer and its groups once
+  each, which hides no error and adds none (D15). An expression that
+  may raise stays a grouping column and is computed of every row, as it
+  was.
+- Each column it reads is a grouping column, and a base table's column
+  of a type whose values not distinct are one value to every
+  expression, an exact number, a truth value or a datetime of no zone,
+  as D1201 asks of a determinant. Two character strings equal but for
+  trailing spaces are of one group and differ in length, two
+  approximate zeros differ in sign, and two zoned datetimes of one
+  instant differ in zone, so an expression of such a column stays a
+  grouping column. A column of the types taken has no collation. The
+  null value is one value too, and the expression gives of the group
+  what it gave of each of its rows.
+- It is found through the nodes that hand each row of its projection
+  on whole. Those are filters, products, semi joins and the preserved
+  operand of an outer join. The operand an outer join extends with
+  nulls has a null in the column where the expression of nulls may
+  have none, so its columns are left.
+- The grouping makes no group before any row, of an empty grouping set
+  [§7.13 GR2a], and one column at least is kept, as a grouping by none
+  is one group even of no rows. Of constants alone the first written
+  is kept.
+
+A column left out is compared by nothing, so the collation it was
+grouped by drops out, and the columns kept are grouped by theirs as
+before. ROLLUP, CUBE and GROUPING SETS group by columns that read the
+set a row was made for, which is no base table's column, so their
+groupings are left and GROUPING is as it was. HAVING, ORDER BY, the
+select list and a window over the groups read the projection where the
+grouping column was. A HAVING condition over the projection is moved
+below it, onto the grouping, so it is still judged with a grouping run
+in parallel (D1073), and a select list over the projection is merged
+with it. Both are done only over a projection whose expressions read
+grouping columns alone and are of the kind above, so the condition and
+the select list are evaluated of the groups they were.
+
+The rule is a late one (D1201), before `reduce_grouping_keys`, which
+then reads the columns kept and carries those a key determines. The
+planner estimates the groups of the columns kept by their own
+statistics. A grouping column the rule leaves, an expression that may
+raise or reads a column not grouped by, is still bounded by the values
+of the columns it reads (D1082) and by its table's sample (D1279).
+
+Not covered are SELECT DISTINCT of a column and expressions of it,
+which is no grouping in the plan, an expression of a column that is
+itself an expression, and an expression that may raise.
+
+#### D1306. A select list's expressions that cannot raise are computed after FETCH FIRST
+
+A query that sorts its rows and keeps the first of them, as `SELECT A,
+A - 1, COUNT(*) ... GROUP BY A ORDER BY 3 DESC FETCH FIRST 10 ROWS
+ONLY`, computed every expression of its select list of every row it
+sorted, though ten rows show them. A select list that holds an
+expression also kept a grouping run in parallel from giving only its
+first groups (D1124), which it does under a select list of its columns
+and of constants alone. So the grouping of D1305, with its expressions in the
+select list, ran longer than the grouping by every column written.
+
+The rule `compute_after_fetch_first`
+(`optimizer/late_fetch/projected.rs`) now computes above the FETCH
+FIRST each expression of the select list below the sort that gives the
+same value of the same columns each time and can neither raise nor
+warn, judged by its columns' declared types (D373). The select list
+below keeps every other expression where it was and hands on the
+columns the expressions moved read. A projection above the FETCH FIRST
+puts every column where it was.
+
+The rows are the same, in the same order. Which rows are kept and how
+they are ordered is the sort keys' doing alone, and OFFSET, FETCH FIRST
+of rows or of a percentage and WITH TIES read nothing else. An
+expression moved is evaluated of the rows kept alone, which hides no
+error, as it raises none (D15). An expression that may raise stays
+below and is evaluated of every row, so a row the FETCH FIRST drops
+still raises what it raised.
+
+The rule takes a sort by column references of the select list, the set
+functions of a grouping among them. A sort by an expression is left, as
+a search by a distance is planned of that shape. A FETCH FIRST with no
+sort is left, as it reads no row past those it keeps. The rule is a
+late one, after the grouping columns are computed (D1305) and before
+`fetch_dependents_late` (D1202), which then finds a select list of
+column references below the FETCH FIRST.
+
 #### D1311. The matcher that marks does a step's work once a step
 
 The matcher of a program with no back-reference over a short text
@@ -24747,6 +25020,117 @@ in those than in anything the pattern asked.
 What a search finds is unchanged. The model tests hold the matcher to
 the matcher of threads over the corpus, of texts read by their
 characters and by their octets.
+
+#### D1316. A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows
+
+A column store gives a run's character strings as codes of dictionary
+entries where it can (`storage::Coded`), and what reads them works an
+entry once and not a row once. Grouping finds a code's group once
+(D1161), and a hash, a comparison, a LIKE and a regular expression
+function are run of each entry (D1099, D1253, D1291). A run was given so
+only if every chunk it read was a dictionary. A column of long strings
+has a chunk to a page, and each chunk takes the encoding that is
+smallest for it, so its runs read dictionaries, texts coded by symbols
+and varying fields together. Such a run was given as plain text, and
+each of its rows was hashed, compared and copied.
+
+A run's texts are entries (D1252), and its rows are entries, one each,
+until a chunk gives entries its rows share
+(`engine/columns/texts.rs`). A dictionary gives its entries and each
+row's code among them. A chunk of one value gives one entry. From the
+first such chunk every row of the run has a code. The rows gathered
+before it are given the codes of the entries they are, with nothing
+copied, and the rows of a later chunk that shares nothing are each an
+entry and its code. A run none of whose chunks shares entries is texts
+and their ends as before, so a reader of plain text pays for no codes.
+
+A dictionary asked for no fewer rows than it has entries gives its
+entries whole. One asked for fewer gives only the entries those rows
+read, each once, in the order the rows meet them. That is so of a run
+that ends within the chunk and of the few rows a condition kept (D360).
+A dictionary was given whole before whatever was asked of it, so a scan
+that kept one row of a chunk copied every entry of the chunk. The entry
+a code was given is kept by code while the chunk is read. An entry given
+of a chunk lies after those the run held before the chunk, so what an
+earlier chunk left by a code is told by its place, and nothing is
+cleared between chunks.
+
+So a run holds no more entries than rows. Each reader's rule that works
+entries only where they are no more than the rows (D1161, D1291) holds
+of every run a scan gives. Two chunks' entries of the same text are two
+entries, as two dictionaries' were, and every reader already finds them
+equal by their text.
+
+More runs reach their readers as codes, so the two readers that searched
+only plain text at once now search entries too. A LIKE of a piece
+between two `%`s, judged by a filter (`exec/batch/judge/texts.rs`) or as
+an expression (`exec/batch/expr/compare.rs`), searches a coded column's
+entries as one arena (D1119) and takes each row by its code. A filter
+asked of fewer rows than the column has entries judges each of those
+rows' texts instead, as an entry no row asked reads is judged for
+nothing. That holds of every conjunct a filter judges of texts.
+
+A null's code is 0 and its row is marked null, as before. A null row
+gathered before the run had codes is the empty entry of its place.
+
+#### D1320. A field or a cast of datetimes is computed over a vector's microseconds
+
+EXTRACT of a field of a time or timestamp without time zone reads the
+value as the session shows it (ISO/IEC 9075:1992 §6.1 GR5). So the
+binder wraps its source in a CAST to its own type that takes the
+session's displacement (`binder/datetime.rs`, `shown`), as it wraps the
+datetime of datetime arithmetic, of AT TIME ZONE and of a difference of
+datetimes. That CAST had no body over vectors (D363). Over a batch each
+timestamp was made a value, cast as a row's is, and made a value again.
+The body EXTRACT had took a vector of datetimes alone, so it too was
+called a row at a time, and it read the calendar for a field of the
+time of day. A grouping by the field then received a vector of values,
+where it hashes and keeps integers a vector at a time.
+
+- CAST of a vector of datetimes to a datetime type has a body
+  (`functions/over_vectors/datetimes.rs`, `cast`). It follows the rule
+  of the two types on each row's microseconds and displacement. That is
+  the day of a date or timestamp as shown (§6.10 GR9), the midnight of
+  a date in the session's displacement (GR11b), the instant of a time
+  or timestamp (GR10, GR11d), or a time of day on the current date
+  (GR11c). It cuts the fraction to the precision and gives a vector of
+  datetimes that carries each value's displacement, a null of a null.
+- A cast whose value would leave the years 0001 to 9999, in UTC or as
+  shown (§6.1 GR6), gives no vector if its row is not null. The batch's
+  rows are then cast one by one, and the first such row raises SQLSTATE
+  22007 after the rows before it (D15). A null's slot is not judged
+  (D1289).
+- A cast to or from a character string, a cast of a constant, and a
+  cast of a date to a time or of a time to a date, which raises, are
+  called a row at a time as before.
+- EXTRACT's body computes each field of the microseconds as shown
+  (`fields`). HOUR, MINUTE and SECOND are arithmetic alone. A day is 24
+  whole hours and an hour 60 whole minutes, so the hour is the local
+  hours modulo 24, the minute the local minutes modulo 60, and the
+  second what is left of the local microseconds after its minutes, cut
+  to the scale of SECOND. YEAR, MONTH and DAY ask the calendar of each
+  row's day. TIMEZONE_HOUR and TIMEZONE_MINUTE are the hours and
+  minutes of each row's displacement, of its sign. The result is a
+  vector of integers, of the scale of SECOND or of 0, null where the
+  datetime is. A field the type has not gives no vector, and its rows
+  are null as before.
+- A column store reads a datetime type WITH TIME ZONE as values
+  (`engine/columns/scan.rs`, `datetime_shape`), so a field of such a
+  column is still called a row at a time. A vector of datetimes that
+  carries displacements, as the row store gathers one and as a cast
+  gives one, takes both bodies.
+
+Each body gives of a row what the function's call gives of that row's
+value, its instant, its displacement, its precision and whether it is
+WITH TIME ZONE. Unit tests hold `fields` to `Datetime::field` and `cast`
+to `cast_at`, of every pair of datetime types in sessions of four
+displacements, over the first instant and the ones before it, the ends
+of a minute, an hour and a day, leap days, the last instant of 9999 and
+the ones past it, the least and greatest words, the least and greatest
+displacements, and a spread of a fixed seed. No datetime holds a leap
+second, so none is among them. An integration test holds queries of
+both engines, in sessions of three displacements, to the rows they give
+a row at a time.
 
 #### D1321. An older row version lost is told with what the store knew
 

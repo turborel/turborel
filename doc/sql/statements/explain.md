@@ -690,6 +690,75 @@ EXPLAIN SELECT D.ID, D.NAME, SUM(E.PAY) AS PAID FROM OFFICE D JOIN HAND E ON E.D
 (38 rows)
 ```
 
+The hands of each department counted, grouped by the department and by
+a number computed of it in a derived table. The rule
+compute_keys_after_grouping groups by the department alone and computes
+the number of each group, as a query that wrote the expression in its
+select list would
+([Functionally dependent columns](../06-queries.md#functionally-dependent-columns)):
+
+```sql
+EXPLAIN SELECT DEPT, ROOM, COUNT(*) FROM (SELECT DEPT, DEPT + 100 AS ROOM FROM HAND) AS H GROUP BY DEPT, ROOM;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Project HAND.DEPT, (HAND.DEPT + 100), COUNT(*)
+   Aggregate group by [HAND.DEPT, (HAND.DEPT + 100)] computing [COUNT(*)]
+     Project HAND.DEPT, (HAND.DEPT + 100)
+       Scan ANN.HAND
+ -- rules: compute_keys_after_grouping x2
+ -- optimized:
+ Project HAND.DEPT, (HAND.DEPT + 100), COUNT(*)
+   Aggregate group by [HAND.DEPT] computing [COUNT(*)]
+     Scan ANN.HAND
+ -- physical:
+ Project HAND.DEPT, (HAND.DEPT + 100), COUNT(*)
+   Aggregate group by [HAND.DEPT] computing [COUNT(*)]
+     SeqScan ANN.HAND  (rows=3, cost=2.6)
+(14 rows)
+```
+
+The department of the most hands, of the same query. The rule
+compute_after_fetch_first computes the number above the FETCH FIRST, of
+the one row kept, and the grouping below is sorted by its count as if
+the query had selected the department and the count alone:
+
+```sql
+EXPLAIN SELECT DEPT, ROOM, COUNT(*) AS N FROM (SELECT DEPT, DEPT + 100 AS ROOM FROM HAND) AS H GROUP BY DEPT, ROOM
+    ORDER BY N DESC FETCH FIRST 1 ROW ONLY;
+```
+
+```
+ PLAN
+--------------------------------------------------------------
+ -- bound:
+ Limit fetch 1
+   Sort COUNT(*) DESC
+     Project HAND.DEPT, (HAND.DEPT + 100), COUNT(*)
+       Aggregate group by [HAND.DEPT, (HAND.DEPT + 100)] computing [COUNT(*)]
+         Project HAND.DEPT, (HAND.DEPT + 100)
+           Scan ANN.HAND
+ -- rules: compute_keys_after_grouping x2, compute_after_fetch_first
+ -- optimized:
+ Project HAND.DEPT, (HAND.DEPT + 100), COUNT(*)
+   Limit fetch 1
+     Sort COUNT(*) DESC
+       Project HAND.DEPT, COUNT(*)
+         Aggregate group by [HAND.DEPT] computing [COUNT(*)]
+           Scan ANN.HAND
+ -- physical:
+ Project HAND.DEPT, (HAND.DEPT + 100), COUNT(*)
+   Limit fetch 1
+     Sort COUNT(*) DESC
+       Project HAND.DEPT, COUNT(*)
+         Aggregate group by [HAND.DEPT] computing [COUNT(*)]
+           SeqScan ANN.HAND  (rows=3, cost=2.6)
+(22 rows)
+```
+
 A join of SALES and PARTS, run on one thread. Each row of SALES probes
 the index of PARTS's key:
 
