@@ -14,11 +14,17 @@ use super::*;
 /// about, and of several.
 const LENGTHS: [usize; 12] = [1, 2, 3, 7, 8, 9, 1, 15, 16, 17, 40, 1];
 
+/// The value of the `r`th run of a test's chunk: no two runs in a row of
+/// one value, some below zero.
+fn value_of(r: i64) -> i64 {
+    r.saturating_mul(1_000_003).rem_euclid(4099).saturating_sub(2000)
+}
+
 /// The integers of a chunk of runs of `LENGTHS`, taken `turns` times, no
 /// two runs in a row of one value, some below zero.
 fn held(turns: usize) -> Vec<i64> {
-    let lengths = LENGTHS.iter().cycle().take(LENGTHS.len() * turns);
-    (0_i64..).zip(lengths).flat_map(|(r, &len)| std::iter::repeat_n(r * 1_000_003 % 4099 - 2000, len)).collect()
+    let lengths = LENGTHS.iter().cycle().take(LENGTHS.len().saturating_mul(turns));
+    (0_i64..).zip(lengths).flat_map(|(r, &len)| std::iter::repeat_n(value_of(r), len)).collect()
 }
 
 /// `values` as a chunk's runs.
@@ -34,9 +40,11 @@ fn runs_of(values: &[i64]) -> Vec<u8> {
 /// Where each run of `values` among positions `from` to `to` ends, past
 /// `base`, the last at `to`.
 fn ends_of(values: &[i64], (from, to): (usize, usize), base: usize) -> Vec<usize> {
-    let mut ends: Vec<usize> = (from + 1..to).filter(|&n| values[n] != values[n - 1]).map(|n| base + n - from).collect();
+    let past = |n: usize| base.saturating_add(n).saturating_sub(from);
+    let changes = |n: &usize| values[*n] != values[n.saturating_sub(1)];
+    let mut ends: Vec<usize> = (from.saturating_add(1)..to).filter(changes).map(past).collect();
     if to > from {
-        ends.push(base + to - from);
+        ends.push(past(to));
     }
     ends
 }
