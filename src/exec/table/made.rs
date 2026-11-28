@@ -15,7 +15,9 @@ use super::slots::MAX_PROBE;
 use super::states::{Sent, States};
 use super::{GroupTable, Key, Keys, Seed, narrow};
 
+mod wide;
 mod written;
+pub(in crate::exec) use wide::{Adopted, Wide};
 pub(in crate::exec) use written::PIECE;
 
 /// \[DESIGN\] The bits of a hash below those a partition is found by, as
@@ -177,10 +179,21 @@ impl GroupTable {
     ///
     /// As `Accumulator::merge`.
     pub(in crate::exec) fn thawed(made: Made, aggs: &[AggCall], seed: &Seed) -> Result<GroupTable> {
+        let mut table = GroupTable::thawed_unplaced(made, aggs, seed)?;
+        table.slots.rebuilt(table.keyed.as_deref().unwrap_or(&table.hashes));
+        Ok(table)
+    }
+
+    /// As `thawed`, none of the groups given a slot: of a table no key is
+    /// looked up in (`made/wide.rs`).
+    ///
+    /// # Errors
+    ///
+    /// As `Accumulator::merge`.
+    fn thawed_unplaced(made: Made, aggs: &[AggCall], seed: &Seed) -> Result<GroupTable> {
         let len = made.hashes.len();
         let mut table = GroupTable::new(made.keys.width(), aggs, seed, usize::MAX);
         table.states = made.states.into_iter().zip(aggs).map(|(sent, agg)| States::thawed(sent, agg, len)).collect::<Result<_>>()?;
-        table.slots.rebuilt(made.keyed.as_deref().unwrap_or(&made.hashes));
         (table.keys, table.hashes, table.firsts, table.keyed) = (made.keys.of_seed(seed), made.hashes, made.firsts, made.keyed);
         Ok(table)
     }

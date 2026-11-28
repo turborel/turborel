@@ -819,6 +819,7 @@ verification approach DO-178C expects (§8).
 | D1267 | A column read only for its octet length is given by its scan with its lengths and never decoded |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1274 | A table of groups compares integer keys by their words, and a lane that holds no null reads none |
 | D1275 | A partition merges a morsel's groups in one pass, a new group given its slot as it is met |
 | D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
@@ -837,6 +838,7 @@ verification approach DO-178C expects (§8).
 | D1295 | An IN list of exact constants is judged of integers by its units folded to their scale once, found by a bit or by halving |
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
+| D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 | D1305 | A grouping column that is an expression of other grouping columns is computed after the grouping |
 | D1306 | A select list's expressions that cannot raise are computed after FETCH FIRST |
 
@@ -23215,7 +23217,12 @@ A set function that no key names is still finished of every group, with
 no value kept (`checked_but`). Its result may raise, as a sum past the
 range of its type does [ISO/IEC 9075:1992 §6.5 GR2b iv], and the plan run
 alone finishes every group and raises it, so the part raises it too. A
-count raises nothing and is not finished.
+count raises nothing and is not finished. An exact total raises only
+past the most digits a number has, and a mean only if its total written
+at its result's scale is past them, so a column of totals is passed over
+by their units, and only a total large enough to raise is finished to
+know (`exec/table/states/typed/quiet.rs`). The least or greatest string
+is given as it is, raises nothing, and is not finished either.
 
 A sort with a key that names a grouping column or a constant sorts the
 batch of every column, as before. A column of results is made at its
@@ -23583,6 +23590,32 @@ A split that fails after it took a page now gives back every page it
 took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
+
+#### D1274. A table of groups compares integer keys by their words, and a lane that holds no null reads none
+
+A table of groups finds a key by its hash and then compares it with
+the group whose slot matched (D356). The compare went lane by lane
+through cells. Each side's value was made a cell of its type, the two
+were matched by type, and an integer was widened before it was
+compared. That is right for every type and every pair of types, and it
+is what a key of two integer columns paid for each of its lanes, in the
+morsels' tables and again in the partitions'.
+
+A lane of integers is now compared by its words where the key gives
+words (`exec/table/keys/words.rs`). A key comes as a row of a batch or
+as a group of another table. Where its value of the lane is read from a
+vector of integers of the lane's scale, the two are equal as their
+units are, and nulls are equal to each other alone. No cell is made and
+no bytes are written. Any other pair, an integer of another scale, a
+value, a lane of another type, is compared by cells as before, so the
+keys that are equal are the same keys (D356).
+
+A lane also notes whether any of its groups is null
+(`exec/table/keys.rs`, `nulled`). While none is, it does not read its
+vector of nulls to learn that a group's value is not one. In a table of
+many groups a compare reads the group's place in each vector from
+memory the processor does not hold, so a lane of integers with no null
+now reads one word there where it read two.
 
 #### D1275. A partition merges a morsel's groups in one pass, a new group given its slot as it is met
 
@@ -24885,6 +24918,83 @@ was fixed that week, and lint baselines and over-long files were paid down.
   M. E. Kounavis and F. L. Berry, *A Systematic Approach to Building High
   Performance Software-based CRC Generators* (2005); D. V. Sarwate,
   *Computation of Cyclic Redundancy Checks via Table Look-Up* (1988).
+
+#### D1300. A partition of a grouping that holds many groups adopts them where its morsels put them
+
+A grouping run in parallel merges each partition's groups into a table
+of the partition's own (D356, D1110). Every new group is copied there
+out of the groups its morsel handed over (`exec/table/made.rs`), key,
+first row's number and states, and found again through the table's
+slots. For a partition of many groups, most of them new, that copy and
+those slots are most of what a group costs to merge, and while a wave is
+merged its groups are held twice, in the Mades and in the tables.
+
+A partition whose table holds more groups than a cache keeps close goes
+wide (`exec/table/made/wide.rs`, `exec/parallel/grouped/waves/wide.rs`).
+A wide partition copies nothing of a new group. It keeps the Mades it
+was handed, shared as they were, and of each group its hash and where
+the group lies, the Made and the place of its first row. A Made is never
+written once its morsel's thread has made it, so any thread may read it,
+and a group that takes a second row cannot merge it there. The first
+time a row meets a group held already, the group is taken up into a
+table of the partition's own, and that row and every later one merge
+there. A group of one row has no state but the Made's. A group is taken
+up alone, its key appended and each state of its first row merged into
+one fed nothing, and the table of its own gives no group a slot, as the
+partition's slots find a group wherever it lies and no key is ever
+looked up there.
+
+The groups, their order and each set function's result are those of the
+table the partition would have merged. A wave holds its Mades in the
+morsels' order and a Made holds a partition's rows in the morsel's, so
+the first row of a group to be looked up is its first row, and the
+groups listed are in the order of their first rows. A group taken up is
+given the states of its first row and then those of its later rows in
+the order they come, which is the order a table merges them in, so a
+state that depends on that order is the same: the least of strings
+equal as padded, the value of a group's first row. A sum of approximate
+numbers writes no state and is not merged at all (D53).
+
+A partition goes wide by its table's own count of groups after a Made
+is merged, never by a count handed nor an estimate, and stays wide for
+the rest of the statement. A grouping whose partitions hold few groups,
+though many are handed them, is merged as before. Which morsels a wave
+holds may differ from one run to the next, as before, and nothing a
+statement returns depends on it.
+
+Between waves a wide partition is kept as it is and charged its share
+of each Made it adopted, the hashes and places of its groups and its own
+table. A sort's first rows by set functions alone (D1256) are picked
+where the groups lie: the sort keys' results are made a Made at a time,
+each as a table makes a new group's, the Made's state merged into one
+fed nothing, so no value differs from a table's; one top-N takes them
+with the partition's own table's, so as many rows are kept as of a
+table; and only the groups picked are made rows, no key copied. Every
+other reader reads a table, so a wide partition is gathered into one
+for it, each group taken up from where it lies in the order of the
+first rows, as it is before it is written to the spill, whose form is
+unchanged. A wide partition whose probe
+grows long places its groups by keyed hashes, each key read where its
+group lies (D357).
+
+Unit tests merge the same Mades into a table and into a partition that
+goes wide before its first Made, after its first and after its second,
+frozen between two Mades or not, and compare every group, first row and
+state, and run groupings with their partitions forced wide against the
+same not wide, held by the grant, through several waves and through the
+spill, and compare the first rows a sort by a count, a sum and a
+greatest value keeps of wide partitions with those it keeps of tables.
+
+A partition goes wide only of a grouping whose reader reads the groups
+where they lie: the first rows of a sort, and no second grouping over
+it. Whatever else reads a partition reads a table, and a wide partition
+gathered into one for it writes every group a second time, which costs
+what the merge into a table would have and the adoption besides, as a
+grouping under a HAVING condition showed when its partitions went wide.
+So the rule is the reader's, not a count of groups
+(`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
+which goes wide whatever reads, is what the tests of the gathered table
+ask.
 
 #### D447. A unique constraint added in a transaction fills its index with every version
 

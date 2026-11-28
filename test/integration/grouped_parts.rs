@@ -321,11 +321,17 @@ fn the_first_rows_by_set_functions_are_picked_before_they_are_made() {
         assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
         assert_eq!(alone, together, "{sql}");
     }
-    let raising = "SELECT G, COUNT(*), SUM(X) FROM E GROUP BY G ORDER BY 2 DESC FETCH FIRST 3 ROWS ONLY";
-    let (alone, together, shown) = both(&a, raising);
-    assert!(grouped_part(&shown), "{raising}\n{shown}");
-    assert_eq!(alone, Err(turborel::error::Code::Data), "the sum of group 77 is past its type's precision");
-    assert_eq!(alone, together, "{raising}");
+    // A total too small to raise is passed over, and one large enough
+    // is finished, of a sum and of a mean.
+    for raising in [
+        "SELECT G, COUNT(*), SUM(X) FROM E GROUP BY G ORDER BY 2 DESC FETCH FIRST 3 ROWS ONLY",
+        "SELECT G, COUNT(*), SUM(K), AVG(X) FROM E GROUP BY G ORDER BY 2 DESC FETCH FIRST 3 ROWS ONLY",
+    ] {
+        let (alone, together, shown) = both(&a, raising);
+        assert!(grouped_part(&shown), "{raising}\n{shown}");
+        assert_eq!(alone, Err(turborel::error::Code::Data), "{raising}: group 77's total is past its type's precision");
+        assert_eq!(alone, together, "{raising}");
+    }
 }
 
 /// Verifies: [X3.135-1986 §5.22 GR2] (RULES.md D1260) a grouping whose
