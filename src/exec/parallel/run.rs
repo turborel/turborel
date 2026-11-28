@@ -71,6 +71,18 @@ pub(in crate::exec) struct Lead<T> {
     pub(in crate::exec) room: Box<dyn Fn() -> usize + Send + Sync>,
 }
 
+impl<T> Lead<T> {
+    /// \[DESIGN\] (RULES.md D1282) The lead of a run whose reader keeps
+    /// every result until it has the last, `wide` morsels a thread, its
+    /// results counted as no bytes. What such a run finishes early its
+    /// reader would hold a moment later all the same, so nothing paces
+    /// it. A run over an operator's partitions asks it, so that the
+    /// threads do not wait behind one partition that takes long.
+    pub(in crate::exec) fn unmetered(wide: usize) -> Lead<T> {
+        Lead { wide, size: |_| 0, room: Box::new(|| usize::MAX) }
+    }
+}
+
 /// A run's lead, and the bytes it holds ahead of its reader now.
 struct Led<T> {
     lead: Lead<T>,

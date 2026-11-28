@@ -8,12 +8,17 @@
 //! never held whole (RULES.md D79); SUBSTRING_REGEX and TRANSLATE_REGEX of
 //! one give one [§6.33 SR8f i 2, SR12f i].
 //!
+//! \[DESIGN\] (RULES.md D1291) Over a vector of a dictionary's codes,
+//! LIKE_REGEX and TRANSLATE_REGEX are run once of each entry a row reads
+//! (`regex/entries.rs`).
+//!
 //! The binder makes each call its own function, so each keeps the last
 //! pattern it compiled, and none is registered. The parser passes what is
 //! a key word in the syntax, the units and START, AFTER or ALL, as
 //! character literals before the operands, as TRIM passes its
 //! specification.
 
+mod entries;
 mod search;
 mod subject;
 mod translate;
@@ -28,6 +33,7 @@ use super::{Arg, ScalarFunction};
 use crate::error::{Code, Result, SqlError, fail};
 use crate::params::ParameterType;
 use crate::regex::{LobText, Regex};
+use crate::storage::mask::index;
 use crate::storage::{Bools, Column, Mask, Nulls, Texts};
 use crate::value::{BIGINT_PRECISION, CharUnits, DataType, Decimal, Spelled, Value};
 use subject::short;
@@ -219,8 +225,9 @@ impl ScalarFunction for LikeRegex {
     /// \[DESIGN\] (RULES.md D1188, D363) Over a vector of values in
     /// memory, the pattern and the flag constants: the pattern compiled
     /// and its searcher made once for the vector, so its automaton is
-    /// kept from one value to the next. None of any other operands, each
-    /// row then called.
+    /// kept from one value to the next. Of a dictionary's codes, each
+    /// entry a row reads is matched once (RULES.md D1291). None of any
+    /// other operands, each row then called.
     fn eval_batch(&self, args: &[Arg<'_>], rows: usize) -> Option<Result<Column>> {
         let [Arg::Column(Column::Texts(values)), Arg::Const(pattern), Arg::Const(flag)] = args else { return None };
         Some(self.of_texts(values, (pattern, flag), rows))
@@ -235,6 +242,18 @@ impl LikeRegex {
         let (Some(pattern), Some(flag)) = (short(pattern)?, short(flag)?) else { return Ok(Column::Nulls(Nulls::new(rows))) };
         let regex = self.cache.compiled(&pattern, &flag)?;
         let mut searcher = regex.searcher();
+        if let Some((coded, read)) = entries::read(values, rows) {
+            let mut matched = Vec::with_capacity(read.len());
+            for (e, wanted) in read.iter().enumerate() {
+                let entry = coded.entries.get(e).filter(|_| *wanted);
+                matched.push(entry.map(|entry| searcher.is_match(entry)).transpose()?);
+            }
+            let found: Vec<bool> = matched.iter().map(|m| *m == Some(true)).collect();
+            let given: Vec<bool> = matched.iter().map(Option::is_some).collect();
+            let of_row = |n: usize| coded.codes.get(n).is_some_and(|&code| found.get(index(code)) == Some(&true));
+            let bits = Mask::from_bools(&(0..rows).map(|n| !values.is_null(n) && of_row(n)).collect::<Vec<_>>());
+            return Ok(Column::Bools(Bools::new(bits, entries::nulls(values, coded, &given))));
+        }
         let (mut bits, mut nulls) = (Mask::none(rows), Mask::none(rows));
         for n in 0..rows {
             match values.get(n) {

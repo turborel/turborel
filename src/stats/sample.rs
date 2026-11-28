@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::functions::ScalarRef;
 use crate::storage::Row;
 use crate::value::Value;
 use crate::value::lob::Lob;
@@ -39,12 +40,37 @@ pub const ROW_OCTETS: u32 = 256;
 /// all and begins again.
 pub const REMEMBERED: usize = 1_024;
 
+/// \[DESIGN\] (RULES.md D1299) A question asked of a sample: its key,
+/// and the functions the key was written of, each by the address of its
+/// handle. Two functions of one name may hold what differs, as EXTRACT
+/// of two fields does, and only the handle tells them apart, so an
+/// answer kept under the key keeps the handles: none is freed, and its
+/// address taken by another function, while the answer may be given.
+#[derive(Debug, Default)]
+pub struct Asked {
+    key: u64,
+    held: Vec<ScalarRef>,
+}
+
+impl Asked {
+    /// The question of key `key`, written of the functions `held`.
+    pub fn new(key: u64, held: Vec<ScalarRef>) -> Asked {
+        Asked { key, held }
+    }
+
+    /// Its key.
+    pub fn key(&self) -> u64 {
+        self.key
+    }
+}
+
 /// A sample of a table's rows, and the answers asked of it.
 #[derive(Debug, Default)]
 pub struct RowSample {
     rows: Vec<Row>,
-    /// What was found of it, by the question's key (`remembered`).
-    answers: Mutex<HashMap<u64, f64>>,
+    /// What was found of it, by the question's key (`remembered`), with
+    /// the functions the key was written of.
+    answers: Mutex<HashMap<u64, (f64, Vec<ScalarRef>)>>,
 }
 
 impl Clone for RowSample {
@@ -64,14 +90,16 @@ impl RowSample {
         &self.rows
     }
 
-    /// The answer to the question of key `key`, by `find` the first time
-    /// it is asked, remembered after: the sample never changes, and the
+    /// The answer to the question `asked`, by `find` the first time it
+    /// is asked, remembered after: the sample never changes, and the
     /// planner asks the same of it for each plan it weighs and each
     /// statement it plans, where evaluating up to `SAMPLE_ROWS` rows each
     /// time would cost more than the rest of planning. At most
-    /// `REMEMBERED` answers are kept.
-    pub fn remembered(&self, key: u64, find: impl FnOnce() -> f64) -> f64 {
-        if let Some(answer) = self.answers.lock().ok().and_then(|a| a.get(&key).copied()) {
+    /// `REMEMBERED` answers are kept, each with the functions its key was
+    /// written of (`Asked`), let go when the answer is forgotten or the
+    /// sample dropped.
+    pub fn remembered(&self, asked: Asked, find: impl FnOnce() -> f64) -> f64 {
+        if let Some(answer) = self.answers.lock().ok().and_then(|a| a.get(&asked.key).map(|&(answer, _)| answer)) {
             return answer;
         }
         let answer = find();
@@ -79,7 +107,7 @@ impl RowSample {
             if answers.len() >= REMEMBERED {
                 answers.clear();
             }
-            answers.insert(key, answer);
+            answers.insert(asked.key, (answer, asked.held));
         }
         answer
     }
