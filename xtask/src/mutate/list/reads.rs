@@ -151,7 +151,7 @@ pub const READS: [Mutation; 48] = [
     Mutation {
         name: "runs-positions-judged-by-their-count",
         package: Package::Core,
-        breaks: "positions are judged dense among a chunk's runs by their count, not by the reads their searches take, so those a search apiece would cost more are still each found alone (RULES.md D1340)",
+        breaks: "positions are weighed against a chunk's runs by their count, not by the reads their searches take (RULES.md D1340)",
         file: "src/engine/columns/runs.rs",
         original: "dense(count.saturating_mul(steps.saturating_add(1)), runs.saturating_mul(PAIR))",
         replacement: "dense(count, runs.saturating_mul(PAIR))",
