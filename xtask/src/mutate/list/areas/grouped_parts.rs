@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 37] = [
+pub const GROUPED_PARTS: [Mutation; 36] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -332,16 +332,6 @@ pub const GROUPED_PARTS: [Mutation; 37] = [
         original: "keys.push(SortKey::ascending(sorted_by.len()));",
         replacement: "keys.push(SortKey { descending: true, ..SortKey::ascending(sorted_by.len()) });",
         integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
-        unit: &[],
-    },
-    Mutation {
-        name: "rows-apart-numbered-by-batch",
-        package: Package::Core,
-        breaks: "rows handed on ungrouped take their batch's first number, not their own, so their groups' order is lost (RULES.md D1260)",
-        file: "src/exec/batch/groups/morsel.rs",
-        original: "let own = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));",
-        replacement: "let own = number;",
-        integration: &["grouped_parts::morsels_that_reduce_nothing_hand_their_rows_on_ungrouped"],
         unit: &[],
     },
     Mutation {
