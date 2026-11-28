@@ -844,6 +844,7 @@ verification approach DO-178C expects (§8).
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 | D1301 | A wide partition looks a wave's rows up a sub-part at a time, in slots a cache holds |
+| D1302 | A partition goes wide only of rows mostly new, or on course to hold many groups |
 | D1305 | A grouping column that is an expression of other grouping columns is computed after the grouping |
 | D1306 | A select list's expressions that cannot raise are computed after FETCH FIRST |
 | D1308 | An exact total is held in 64 bits and widened at the first add that leaves them |
@@ -24859,8 +24860,9 @@ equal as padded, the value of a group's first row. A sum of approximate
 numbers writes no state and is not merged at all (D53).
 
 A partition goes wide by its table's own count of groups after a Made
-is merged, never by a count handed nor an estimate, and stays wide for
-the rest of the statement. A grouping whose partitions hold few groups,
+is merged, and by what it has counted of the wave it is merging
+(D1302), never by an estimate, and stays wide for the rest of the
+statement. A grouping whose partitions hold few groups,
 though many are handed them, is merged as before. Which morsels a wave
 holds may differ from one run to the next, as before, and nothing a
 statement returns depends on it.
@@ -24956,6 +24958,80 @@ of one sub-part and of sub-parts of eight, as one wave and as several
 with the sub-parts split between them, of keys that collide in one
 sub-part past the longest probe, and compare every group, first row and
 state. The groupings forced wide run with sub-parts of eight as well.
+
+#### D1302. A partition goes wide only of rows mostly new, or on course to hold many groups
+
+A partition went wide once its table held more groups than `WIDE`
+(D1300), whatever its rows were. A wide partition saves a new group's
+copy and looks rows up in slots a cache holds (D1301), and pays for a
+row that meets a group held already. That row's key and states are read
+in its Made, at a place far from the row read before it, where a table
+reads a Made's rows one after another, and its group is taken up the
+first time. So groupings whose partitions end not far past `WIDE`, a
+good share of their rows meeting a held group, ran slower with their
+partitions wide than as tables.
+
+A partition now counts the wave while it merges it as a table
+(`exec/parallel/grouped/waves/wide.rs`, `merged_while_a_table`). It
+counts the rows the Mades merged so far handed it, the groups they
+made, which are those its table holds more than when the wave began,
+and it knows the rows the wave hands it in all. Once its table has
+passed `WIDE`, a Made merged, it goes wide for either of two reasons
+(`Widen::goes_wide`).
+
+- At most `MET` in a thousand of the rows handed so far met a group it
+  held. Nearly every row is then a group whose copy a wide partition
+  saves, whatever the partition's size.
+- The groups it held when the wave began, with those the wave is on
+  course to make of all its rows at the rate of those handed so far,
+  are `COURSE` or more. A table that far past a cache costs more to
+  look up than a wide partition does, even where many rows meet a held
+  group.
+
+A table that goes wide for neither stays a table and is judged again
+after each Made, of this wave and of every later one, each wave counted
+anew. A partition that keeps growing therefore goes wide when what it
+holds and what the wave is on course to add reach `COURSE`. Such a
+table is given room once for the rest of the wave's rows, as a table
+was before D1300. Every count is the partition's own, of the Mades a
+wave holds in their order, and none is an estimate. The groups, their
+order and each result are those of D1300 either way, and which
+partitions are wide shows in nothing a statement returns.
+
+Both constants come from counts taken at the moment a partition's table
+passed `WIDE`, of eight groupings of a hundred million rows, each
+merged in one wave, set against which way each ran faster. The counts
+are a partition's, the middle one of the sixty four, with the least and
+the greatest partition's share.
+
+| Grouped by | Rows handed | Groups | Met a held group, in a thousand | On course for | Faster |
+|---|---|---|---|---|---|
+| two integers, every row a group | 1,562,000 | 1,562,000 | 0 | 1,562,000 | wide |
+| an integer and a text | 424,000 | 376,000 | 23 (21 to 25) | 414,000 | wide |
+| an integer | 342,000 | 275,000 | 37 (34 to 39) | 329,000 | wide |
+| an integer, a minute and a text | 994,000 | 881,000 | 51 (45 to 57) | 944,000 | wide |
+| a long text | 470,000 | 287,000 | 201 (192 to 211) | 375,000 | wide |
+| a text | 143,000 | 94,000 | 253 (231 to 301) | 107,000 | a table |
+| a small integer and a text | 155,000 | 101,000 | 254 (234 to 297) | 115,000 | a table |
+| a small integer and an integer | 165,000 | 90,000 | 370 (355 to 390) | 104,000 | a table |
+
+The share of rows that met a held group puts the eight in the order of
+the last column, but the grouping by a long text lies close under those
+faster as tables, and over the whole wave its share is above two of
+theirs. So the share alone bounds only the partitions of rows mostly
+new. `MET` is 125, the middle of 57, the greatest share among the four
+groupings of rows mostly new, and 192, the least among the rest. The
+groups a partition is on course for part the eight by a factor of
+three. `COURSE` is 196,608, three times 65,536, the middle in the
+logarithm of 115,000 and 329,000, so the nearest grouping on each side
+is a factor of 1.7 away.
+
+A unit test runs a grouping each of whose rows is a group, which goes
+wide, and one nine in ten of whose rows meet a held group, whose
+partitions pass the same count and stay tables, go wide where whatever
+share may meet one, and go wide where a partition on course for forty
+five groups does, and compares the first rows of each with those of no
+partition wide.
 
 #### D1305. A grouping column that is an expression of other grouping columns is computed after the grouping
 
