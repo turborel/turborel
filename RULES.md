@@ -850,6 +850,7 @@ verification approach DO-178C expects (§8).
 | D1314 | The listing of a table's bytes holds none of the headers it reads |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
+| D1341 | A cast of a vector of datetimes chooses its rule once, and drops a fraction by a constant |
 
 ### The project
 
@@ -25257,6 +25258,36 @@ displacements, and a spread of a fixed seed. No datetime holds a leap
 second, so none is among them. An integration test holds queries of
 both engines, in sessions of three displacements, to the rows they give
 a row at a time.
+
+#### D1341. A cast of a vector of datetimes chooses its rule once, and drops a fraction by a constant
+
+A cast of a vector of datetimes (D1320) called one function a row. That
+function asked at every row which rule of §6.10 the two types name,
+computed the row's day whether or not the rule reads it, and cut the
+fraction past the precision by dividing by a number read from the cast.
+In a statement that reads a field of a timestamp shown in the session's
+displacement, the cast then cost more than the field.
+
+- The rule is chosen once a vector (`functions/over_vectors/datetimes.rs`,
+  `Cast::rows`). Each rule has a loop of its own over the vector's
+  microseconds and displacements. The loop of a time or timestamp cast
+  to its own fields, the cast every field of a type without time zone
+  goes through (D1320), adds the displacement it takes and takes it off
+  again, saturating as a row's cast does, and reads no day.
+- The fraction past the precision is what is left after the unit of the
+  precision's last digit, a constant for each precision from none to
+  five digits and nothing at six (`Cast::fraction`). No row divides by
+  a number read.
+- The cast of one row (`Cast::row`) stays. It judges the rows of a
+  vector whose year leaves 0001 to 9999 where a null's slot may be the
+  one that does (D1289), and the loops are held to it.
+
+Every result is the one before this decision. A unit test holds each
+rule's loop to the cast of each row alone, of every pair of datetime
+types a cast takes, to each precision, over the first and last
+instants, the ends of a day, the least and greatest words and nulls'
+slots, and the fraction to the remainder it stands for. The tests of
+D1320 still hold the vector to `cast_at` of each value.
 
 ## 2. Project layout
 

@@ -15,6 +15,8 @@ const DATETIMES: &str = "src/functions/over_vectors/datetimes.rs";
 const FIELDS: &str = "functions::over_vectors::datetimes::tests::every_field_of_a_vector_is_the_field_of_each_value";
 /// Every cast of a vector against the cast of each value.
 const CASTS: &str = "functions::over_vectors::datetimes::tests::a_cast_of_a_vector_is_the_cast_of_each_value";
+/// Every rule's loop over a vector against the cast of a row.
+const RULES: &str = "functions::over_vectors::datetimes::tests::every_rule_s_loop_casts_a_row_as_the_row_s_cast_does";
 /// A slot past the years, under a null and not.
 const SLOTS: &str = "functions::over_vectors::datetimes::tests::a_slot_past_the_years_under_a_null_is_not_judged";
 /// Fields and casts of datetimes by batch and by rows, of either engine.
@@ -22,7 +24,7 @@ const MOMENTS: &str = "batch_exprs::fields_and_casts_of_datetimes_give_by_batch_
 
 /// Mechanisms whose removal must fail the requirements of expressions
 /// over vectors.
-pub const EXPR: [Mutation; 14] = [
+pub const EXPR: [Mutation; 16] = [
     Mutation {
         name: "expr-flag-ignored",
         package: Package::Core,
@@ -118,8 +120,8 @@ pub const EXPR: [Mutation; 14] = [
         package: Package::Core,
         breaks: "a cast of a vector of timestamps without time zone reads their day in UTC, not as the session shows it",
         file: DATETIMES,
-        original: "        let shown = if self.keeps { zone } else { self.session.0 };",
-        replacement: "        let shown = zone;",
+        original: "            let shown = if self.keeps { zone } else { self.session.0 };",
+        replacement: "            let shown = zone;",
         integration: &[MOMENTS],
         unit: &[CASTS],
     },
@@ -128,7 +130,7 @@ pub const EXPR: [Mutation; 14] = [
         package: Package::Core,
         breaks: "a cast of a vector of datetimes to fewer digits keeps the fraction past them",
         file: DATETIMES,
-        original: "        let cut = made.saturating_sub(floor_rem(made, self.unit));",
+        original: "        let cut = made.saturating_sub(self.fraction(made));",
         replacement: "        let cut = made;",
         integration: &[MOMENTS],
         unit: &[CASTS],
@@ -162,5 +164,25 @@ pub const EXPR: [Mutation; 14] = [
         replacement: "datetimes::cast(given, fields(&self.to)?, self.now).filter(|_| false).map(",
         integration: &[],
         unit: &["binder::datetime::tests::extract_of_timestamps_as_shown_is_computed_over_vectors"],
+    },
+    Mutation {
+        name: "datetime-cast-rule-of-no-day",
+        package: Package::Core,
+        breaks: "a vector of timestamps cast to dates keeps each one's time of day, where a row's cast gives its midnight (RULES.md D1341)",
+        file: DATETIMES,
+        original: "Rule::Day => self.each(datetimes, |local, _, _| (midnight_of(local), 0)),",
+        replacement: "Rule::Day => self.each(datetimes, |local, _, _| (local, 0)),",
+        integration: &[MOMENTS],
+        unit: &[RULES, CASTS],
+    },
+    Mutation {
+        name: "datetime-cast-fraction-of-another-digit",
+        package: Package::Core,
+        breaks: "a cast to three digits of the second's fraction keeps a fourth (RULES.md D1341)",
+        file: DATETIMES,
+        original: "            3 => floor_rem(made, 1_000),",
+        replacement: "            3 => floor_rem(made, 100),",
+        integration: &[],
+        unit: &[RULES, CASTS],
     },
 ];

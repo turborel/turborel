@@ -15,6 +15,12 @@
 //! and DAY ask the calendar of each row's day (`civil_from_days`). The
 //! fields of the displacement read the displacement alone.
 //!
+//! \[DESIGN\] (RULES.md D1341) A cast follows one rule of §6.10 for its
+//! whole vector, the rule its two types name. The rule is chosen once a
+//! vector, and each rule has a loop of its own, so no row asks which rule
+//! it is under nor computes a day another rule reads. The fraction past
+//! the precision is what is left after a constant, one a precision.
+//!
 //! A cast whose value would leave the years 0001 to 9999 [§6.1 GR6], of
 //! a row not null, gives no vector, so the rows are cast one by one and
 //! the first of them raises as it does a row at a time.
@@ -102,8 +108,13 @@ struct Cast {
     zoned: bool,
     /// The session's displacement, and its current date in days.
     session: (i16, i64),
-    /// The microseconds the precision cast to keeps whole.
-    unit: i64,
+    /// The digits of the second's fraction the precision cast to keeps.
+    digits: u32,
+}
+
+/// The microseconds from a day's start to `local`'s day's.
+fn midnight_of(local: i64) -> i64 {
+    floor_div(local, MICROS_PER_DAY).saturating_mul(MICROS_PER_DAY)
 }
 
 impl Cast {
@@ -125,8 +136,34 @@ impl Cast {
             keeps: from.1 || from.0 == Moment::Date,
             zoned,
             session: (now.zone, today),
-            unit: 10_i64.checked_pow(MAX_TIME_PRECISION.saturating_sub(precision)).unwrap_or(1),
+            digits: precision,
         })
+    }
+
+    /// What of `made` lies past the digits kept, as `Datetime::truncated`
+    /// drops it: what is left of it after the unit of its last digit,
+    /// each unit a constant, so no row divides by a number read.
+    fn fraction(&self, made: i64) -> i64 {
+        match self.digits {
+            0 => floor_rem(made, 1_000_000),
+            1 => floor_rem(made, 100_000),
+            2 => floor_rem(made, 10_000),
+            3 => floor_rem(made, 1_000),
+            4 => floor_rem(made, 100),
+            5 => floor_rem(made, 10),
+            6.. => 0,
+        }
+    }
+
+    /// `made`, the microseconds a rule gave with the displacement
+    /// `carried`, as the type cast to holds them: within its day of a
+    /// time, cut to the digits kept; and whether its year, in UTC and as
+    /// shown, is from 0001 to 9999 [§6.1 GR6], as every time is.
+    fn cut(&self, made: i64, carried: i16) -> (i64, bool) {
+        let made = if self.times.1 { floor_rem(made, MICROS_PER_DAY) } else { made };
+        let cut = made.saturating_sub(self.fraction(made));
+        let within = |micros: i64| (0..=LAST_INSTANT).contains(&micros);
+        (cut, self.times.1 || (within(cut) && within(cut.saturating_add(shift(carried)))))
     }
 
     /// The microseconds in UTC and the displacement of the value of `utc`
@@ -137,20 +174,55 @@ impl Cast {
         let taken = if self.zoned { shown } else { self.session.0 };
         let local = utc.saturating_add(shift(shown));
         let local = if self.times.0 { floor_rem(local, MICROS_PER_DAY) } else { local };
-        let midnight = floor_div(local, MICROS_PER_DAY).saturating_mul(MICROS_PER_DAY);
         let (made, carried) = match self.rule {
-            Rule::Day => (midnight, 0),
-            Rule::Midnight => (midnight.saturating_sub(shift(self.session.0)), self.session.0),
+            Rule::Day => (midnight_of(local), 0),
+            Rule::Midnight => (midnight_of(local).saturating_sub(shift(self.session.0)), self.session.0),
             Rule::Instant => (utc.saturating_add(shift(taken)).saturating_sub(shift(taken)), taken),
             Rule::Today => {
                 let at = self.session.1.saturating_mul(MICROS_PER_DAY).saturating_add(floor_rem(local, MICROS_PER_DAY));
                 (at.saturating_sub(shift(taken)), taken)
             }
         };
-        let made = if self.times.1 { floor_rem(made, MICROS_PER_DAY) } else { made };
-        let cut = made.saturating_sub(floor_rem(made, self.unit));
-        let within = |micros: i64| (0..=LAST_INSTANT).contains(&micros);
-        (cut, carried, self.times.1 || (within(cut) && within(cut.saturating_add(shift(carried)))))
+        let (cut, within) = self.cut(made, carried);
+        (cut, carried, within)
+    }
+
+    /// \[DESIGN\] (RULES.md D1341) Every row of `datetimes` cast as `row`
+    /// casts it, the rule chosen once for the vector and not at each
+    /// row: the microseconds, the displacements, and whether every row's
+    /// year is within. A rule reads a row's local microseconds, its
+    /// microseconds in UTC and the displacement it takes. None if the
+    /// vector keeps displacements of other rows than it has.
+    fn rows(&self, datetimes: &Datetimes) -> Option<(Vec<i64>, Vec<i16>, bool)> {
+        let (session, today) = (self.session.0, self.session.1.saturating_mul(MICROS_PER_DAY));
+        match self.rule {
+            Rule::Day => self.each(datetimes, |local, _, _| (midnight_of(local), 0)),
+            Rule::Midnight => self.each(datetimes, |local, _, _| (midnight_of(local).saturating_sub(shift(session)), session)),
+            Rule::Instant => self.each(datetimes, |_, utc, taken| (utc.saturating_add(shift(taken)).saturating_sub(shift(taken)), taken)),
+            Rule::Today => self.each(datetimes, |local, _, taken| {
+                (today.saturating_add(floor_rem(local, MICROS_PER_DAY)).saturating_sub(shift(taken)), taken)
+            }),
+        }
+    }
+
+    /// Every row of `datetimes` cast by `rule`, which gives a row's
+    /// microseconds and displacement of its local microseconds, its
+    /// microseconds in UTC and the displacement it takes; then cut
+    /// (`cut`). As `rows` gives them.
+    fn each(&self, datetimes: &Datetimes, rule: impl Fn(i64, i64, i16) -> (i64, i16)) -> Option<(Vec<i64>, Vec<i16>, bool)> {
+        let (mut sound, mut zones) = (true, Vec::with_capacity(datetimes.utc.len()));
+        let utc = of_each(datetimes, |utc, zone| {
+            let shown = if self.keeps { zone } else { self.session.0 };
+            let taken = if self.zoned { shown } else { self.session.0 };
+            let local = utc.saturating_add(shift(shown));
+            let local = if self.times.0 { floor_rem(local, MICROS_PER_DAY) } else { local };
+            let (made, carried) = rule(local, utc, taken);
+            let (cut, within) = self.cut(made, carried);
+            sound &= within;
+            zones.push(carried);
+            cut
+        })?;
+        Some((utc, zones, sound))
     }
 }
 
@@ -162,13 +234,7 @@ impl Cast {
 /// vector keeps displacements of other rows than it has.
 pub(crate) fn cast(datetimes: &Datetimes, to: (Moment, u32, bool), now: Now) -> Option<Datetimes> {
     let cast = Cast::of((datetimes.moment, datetimes.zoned), to, now)?;
-    let (mut sound, mut zones) = (true, Vec::with_capacity(datetimes.utc.len()));
-    let utc = of_each(datetimes, |utc, zone| {
-        let (made, carried, within) = cast.row(utc, zone);
-        sound &= within;
-        zones.push(carried);
-        made
-    })?;
+    let (utc, zones, sound) = cast.rows(datetimes)?;
     if !sound && !sound_but_nulls(datetimes, &cast) {
         return None;
     }

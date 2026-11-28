@@ -254,3 +254,38 @@ fn a_slot_past_the_years_under_a_null_is_not_judged() {
     assert!(cast(&first, to, Now { utc: 0, zone: -60 }).is_none());
     assert!(cast(&first, to, Now::default()).is_some());
 }
+
+/// Verifies: [DESIGN] RULES.md D1341 [ISO/IEC 9075:1992 §6.10 GR9, GR10,
+/// GR11]: the loop of each rule over a vector gives of every row, a
+/// null's slot too, the microseconds and the displacement the cast of
+/// that row alone gives, and says every year is within exactly when
+/// every row's is; of every pair of datetime types a cast takes, to each
+/// precision from none to six digits, in four sessions, over the first
+/// and last instants, the ends of a day and the least and greatest
+/// words. The fraction a precision drops is what is left after the unit
+/// of its last digit.
+#[test]
+fn every_rule_s_loop_casts_a_row_as_the_row_s_cast_does() {
+    let (mut rows, mut casts) = (0_usize, 0_usize);
+    let kinds = [(Moment::Date, false), (Moment::Time, false), (Moment::Time, true), (Moment::Timestamp, false), (Moment::Timestamp, true)];
+    let all = kinds.into_iter().flat_map(|from| kinds.into_iter().flat_map(move |to| (0..=6_u32).map(move |digits| (from, to, digits))));
+    for ((from, to, digits), now) in all.flat_map(|pair| sessions().map(|now| (pair, now))) {
+        let Some(cast) = Cast::of(from, (to.0, digits, to.1), now) else {
+            assert!(matches!((from.0, to.0), (Moment::Date, Moment::Time) | (Moment::Time, Moment::Date)));
+            continue;
+        };
+        casts = casts.saturating_add(1);
+        for vector in vectors((from.0, 6, from.1), 5) {
+            let (utc, zones, sound) = cast.rows(&vector).unwrap();
+            let zone = |n: usize| vector.zones.as_ref().map_or(0, |held| held[n]);
+            let alone: Vec<(i64, i16, bool)> = vector.utc.iter().enumerate().map(|(n, &at)| cast.row(at, zone(n))).collect();
+            assert_eq!(utc, alone.iter().map(|made| made.0).collect::<Vec<_>>(), "{from:?} to {to:?} of {digits} at {now:?}");
+            assert_eq!(zones, alone.iter().map(|made| made.1).collect::<Vec<_>>(), "{from:?} to {to:?} of {digits} at {now:?}");
+            assert_eq!(sound, alone.iter().all(|made| made.2), "{from:?} to {to:?} of {digits} at {now:?}");
+            rows = rows.saturating_add(alone.len());
+        }
+        let unit = 10_i64.pow(6_u32.saturating_sub(digits));
+        assert!(instants().into_iter().all(|at| cast.fraction(at) == at.rem_euclid(unit)), "{digits} digits");
+    }
+    assert!(casts > 500 && rows > 100_000, "{casts} casts, {rows} rows");
+}
