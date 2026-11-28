@@ -849,8 +849,6 @@ verification approach DO-178C expects (§8).
 | D1313 | Rows handed on ungrouped are written once, each where its partition's run lies |
 | D1314 | The listing of a table's bytes holds none of the headers it reads |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
-| D1317 | Texts coded by symbols are decoded through a block, a code one store of a fixed width |
-| D1318 | The room made for a run's texts follows the most octets a stored octet has given in a run of its column |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
 
 ### The project
@@ -23177,13 +23175,12 @@ A run's texts are now gathered into one vector of octets
 (`engine/columns/texts.rs`). Room is made for it once, of as many octets
 as the chunks the run reads take stored, which a dictionary's entries,
 varying fields and one value never pass. Texts coded by symbols may pass
-it, and the vector then grows as any vector does (D1318 makes the room
-by what the column's runs before needed). Each chunk adds its
+it, and the vector then grows as any vector does. Each chunk adds its
 octets and where each text ends, and nothing is judged as it is added. A
 dictionary's entries and a run of varying fields are added by one copy,
 as each field begins where the one before it ends (D1131). Texts coded
-by symbols are decoded and added after the octets held
-(`engine/columns/fsst.rs`, through a block since D1317).
+by symbols are decoded straight after the octets held
+(`engine/columns/fsst.rs`), and copied nowhere else.
 
 The vector is then made the run's text by one judgement of all its
 octets, `Kernels::text`, which gives the vector itself as the string
@@ -25201,65 +25198,6 @@ nothing. That holds of every conjunct a filter judges of texts.
 
 A null's code is 0 and its row is marked null, as before. A null row
 gathered before the run had codes is the empty entry of its place.
-
-#### D1317. Texts coded by symbols are decoded through a block, a code one store of a fixed width
-
-A text coded by a table of symbols (D31) was decoded straight onto the
-vector that takes it. Each code added its symbol's word of 8 octets to
-the vector and cut the vector back to the symbol's length, so each code
-asked the vector whether it had room and set its length twice. Once a
-run's texts were gathered in one vector (D1252), the rows of the chunks
-coded by symbols, fewer than one row in five of a column of long
-strings, cost more than all its other rows.
-
-A text is now decoded through a block of 256 octets
-(`engine/columns/fsst.rs`, `Decoder`). A code's word is stored whole at
-the block's place, and the place moves on by the symbol's length. An
-escape stores the octet it quotes and moves on by one. The store is of
-a fixed width whatever the symbol's length, and nothing is called for a
-code. At the text's end the block's octets are added to the vector by
-one copy. A text longer than a block is added a block at a time, the
-block begun again when the next symbol might not fit. The block is kept
-from text to text of a chunk, so a run clears it once a chunk.
-
-The block is 256 octets, thirty-two of the longest symbol. A page of
-8 KiB that holds a hundred texts or more holds each in about 80 octets
-of codes, so nearly every such text is decoded whole before it is
-copied out, and a decoder made to read one value clears no more than
-that. The block, the table and the codes being read lie together in a
-first-level cache.
-
-What is decoded is what was decoded before, octet for octet. Codes that
-end in an escape, or a code of no symbol, give no text, as before.
-
-#### D1318. The room made for a run's texts follows the most octets a stored octet has given in a run of its column
-
-A run's texts are gathered in one vector whose room is made once
-(D1252), of the octets the run's chunks store for its rows. A
-dictionary's entries, varying fields and one value never pass that. A
-chunk coded by symbols gives about twice what it stores, and a scan
-does not know a chunk's encoding before it reads the chunk's page. So a
-run that read such chunks outgrew its room, and the vector was
-allocated again and copied once or twice a run.
-
-A scan now remembers, for each column, the run that gave the most
-octets a stored octet (`engine/columns/prepared.rs`, `gave`), and makes
-the room of each later run of the column by it (`room`). The room is
-never less than what the chunks store. Nothing is tuned. The room is
-what the column's own runs needed at their most, so after a scan has
-read one run of texts coded by symbols, its runs of that column grow no
-more.
-
-A stored octet is taken to give no more than 8 octets, a symbol's most,
-which no code passes. A run that read a few long rows of a chunk gives
-more than that for the share of the chunk it is counted, and it is
-noted at 8, so it does not set the room of every run after it. A run
-read at positions makes its room the same way and notes nothing, as its
-share of a chunk tells little of the next run's.
-
-The room is only the vector's first size. A run that needs more still
-grows its vector, and one that needs less leaves the rest unused until
-the batch is dropped.
 
 #### D1320. A field or a cast of datetimes is computed over a vector's microseconds
 

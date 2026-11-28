@@ -203,7 +203,7 @@ pub fn texts_at<S: Seal>(
 ) -> Result<Option<Texts>> {
     let Some(pad) = padding(t) else { return Ok(None) };
     let Some(zones) = group.zones(column)? else { return Ok(None) };
-    let room = prepared.room(column, stored(pages, asked_of(zones, positions).map(|(zone, these)| (zone, these.len()))));
+    let room = stored(pages, asked_of(zones, positions).map(|(zone, these)| (zone, these.len())));
     let (mut gathered, mut at) = (Gathered::with_room(positions.len(), room), Vec::new());
     for (zone, these) in asked_of(zones, positions) {
         at.clear();

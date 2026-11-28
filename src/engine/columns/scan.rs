@@ -486,18 +486,16 @@ pub fn texts<S: Seal>(
     // Each chunk with a row of the run, and the rows of the run it holds.
     let read = |z: &Zone| (z.run.first.max(from), z.run.first.saturating_add(z.run.rows).min(to));
     let touched = || zones.iter().map(|z| (z, read(z))).filter(|(_, (first, end))| first < end);
-    let held = stored(pages, touched().map(|(z, (first, end))| (z, usize::try_from(end.saturating_sub(first)).unwrap_or(0))));
-    let mut gathered = Gathered::with_room(count, prepared.room(column, held));
+    let room = stored(pages, touched().map(|(z, (first, end))| (z, usize::try_from(end.saturating_sub(first)).unwrap_or(0))));
+    let mut gathered = Gathered::with_room(count, room);
     for (zone, (first, end)) in touched() {
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        let added =
+        let held =
             prepared.with(pages, (column, zone, t), |chunk, _| Ok(chunk.gather(Asked::Run(at(first), at(end)), pad, &mut gathered)))?;
-        if added.is_none() {
+        if held.is_none() {
             return Ok(None);
         }
     }
-    // What this run's stored octets gave makes the room of the next (RULES.md D1318).
-    prepared.gave(column, (gathered.octets(), held));
     Ok(gathered.finish(pages.kernels))
 }
 

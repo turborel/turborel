@@ -86,18 +86,9 @@ pub struct Prepared {
     /// are coded by (`fsst/stepped.rs`, RULES.md D1251), kept from group
     /// to group, as each is found again by its table.
     pub(super) stepped: super::fsst::Stepped,
-    /// \[DESIGN\] (RULES.md D1318) By column, of the run of texts that
-    /// gave the most octets a stored octet so far, its octets and the
-    /// octets its chunks stored for its rows (`room`).
-    rooms: Vec<(usize, usize)>,
     /// How many chunks were opened, as a test counts them.
     #[cfg(test)]
     pub(super) opened: usize,
-}
-
-/// `n` as a number that holds the product of two counts.
-fn wide(n: usize) -> u128 {
-    u128::try_from(n).unwrap_or(u128::MAX)
 }
 
 impl Prepared {
@@ -110,37 +101,6 @@ impl Prepared {
             spare.extend(kept.drain(..).map(|h| h.bytes));
         }
         spare.truncate(KEPT);
-    }
-
-    /// \[DESIGN\] (RULES.md D1318) The room to make for the texts of a
-    /// run of column `column` whose chunks store `stored` octets for its
-    /// rows: `stored` by the most octets a stored octet has given in a
-    /// run of the column so far (`gave`), and `stored` until a run has
-    /// told. A dictionary's entries and varying fields are no more than
-    /// their chunk stores, and texts coded by symbols are about twice
-    /// it, so a column that mixes them is given room by the run that
-    /// needed most, and its vector grows no more once such a run is read.
-    pub(super) fn room(&self, column: usize, stored: usize) -> usize {
-        let Some(&(octets, of)) = self.rooms.get(column) else { return stored };
-        let scaled = wide(stored).saturating_mul(wide(octets)).checked_div(wide(of)).unwrap_or(0);
-        usize::try_from(scaled).unwrap_or(stored).max(stored)
-    }
-
-    /// \[DESIGN\] (RULES.md D1318) Notes that a run of column `column`
-    /// whose chunks stored `stored` octets for its rows gave `octets`, if
-    /// no run of the column before gave more a stored octet. A stored
-    /// octet is taken to give no more than a symbol's most
-    /// (`fsst::LONGEST`), as no code does, so a run that read a few long
-    /// rows of a chunk does not set the room of all that follow.
-    pub(super) fn gave(&mut self, column: usize, (octets, stored): (usize, usize)) {
-        if self.rooms.len() <= column {
-            self.rooms.resize(column.saturating_add(1), (0, 0));
-        }
-        let Some(best) = self.rooms.get_mut(column) else { return };
-        let told = octets.min(stored.saturating_mul(super::fsst::LONGEST));
-        if wide(told).saturating_mul(wide(best.1)) > wide(best.0).saturating_mul(wide(stored)) || best.1 == 0 {
-            *best = (told, stored);
-        }
     }
 
     /// What `read` makes of the chunk `zone` of column `column` of type

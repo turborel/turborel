@@ -2,9 +2,7 @@
 //! (RULES.md R-TEST-9): a run's texts gathered into one vector and
 //! judged once, each end on a character's boundary, texts coded by
 //! symbols decoded straight into it, and a vector made a string only
-//! where its octets are judged (D1252); texts decoded through a block
-//! (D1317) and the room of a run's texts by what the runs before gave
-//! (D1318); a run's rows given codes once a
+//! where its octets are judged (D1252); a run's rows given codes once a
 //! chunk shares entries, a dictionary's entries whole or those its rows
 //! read, each once a chunk, one value one entry, and a LIKE searched in
 //! the entries where they are no more than the rows asked (D1316); and a
@@ -24,10 +22,6 @@ const EVERY: &str = "engine::columns::texts::tests::every_encoding_gives_its_row
 const ENTRIES: &str = "engine::columns::texts::tests::a_dictionary_gives_its_entries_whole_or_those_its_rows_read";
 /// The test of a run across chunks of several encodings.
 const ACROSS: &str = "engine::columns::texts::tests::a_run_across_encodings_has_codes_once_a_chunk_shares_entries";
-/// The test of texts decoded through a block.
-const BLOCKS: &str = "engine::columns::fsst::tests::texts_longer_than_a_block_are_decoded_whole";
-/// The test of the room made for a run's texts.
-const ROOM: &str = "engine::columns::prepared::tests::mixed::the_room_of_a_runs_texts_follows_the_most_a_stored_octet_gave";
 /// The test of a LIKE over a coded column's entries.
 const LIKE_ENTRIES: &str = "exec::batch::judge::tests::a_like_over_entries_keeps_the_rows_their_texts_keep";
 /// The test of octets that are no text.
@@ -39,7 +33,7 @@ const BY_LENGTHS: &str =
 
 /// Mechanisms whose removal must fail the requirements of a scan's texts,
 /// gathered once a run, and of texts made only for a reader.
-pub const UNREAD_TEXTS: [Mutation; 30] = [
+pub const UNREAD_TEXTS: [Mutation; 26] = [
     Mutation {
         name: "texts-ends-within-characters",
         package: Package::Core,
@@ -55,50 +49,10 @@ pub const UNREAD_TEXTS: [Mutation; 30] = [
         package: Package::Core,
         breaks: "a text coded by symbols adds no octets to its run's vector",
         file: TEXTS,
-        original: "            decoder.decode(coded.codes_of(n)?, &mut into.octets)?;\n",
+        original: "            coded.text_onto(n, &mut into.octets)?;\n",
         replacement: "",
         integration: &[],
         unit: &[EVERY],
-    },
-    Mutation {
-        name: "decoder-block-kept-full",
-        package: Package::Core,
-        breaks: "a block of decoded octets added to its vector is not begun again, so a long text is refused",
-        file: "src/engine/columns/fsst.rs",
-        original: "                out.extend_from_slice(self.block.get(..at)?);\n                at = 0;",
-        replacement: "                out.extend_from_slice(self.block.get(..at)?);",
-        integration: &[],
-        unit: &[BLOCKS],
-    },
-    Mutation {
-        name: "decoder-symbol-moves-on-by-the-longest",
-        package: Package::Core,
-        breaks: "a symbol's place in the block moves on by the longest symbol, not by its own length",
-        file: "src/engine/columns/fsst.rs",
-        original: ".copy_from_slice(word);\n            at = at.saturating_add(len);",
-        replacement: ".copy_from_slice(word);\n            at = at.saturating_add(LONGEST);",
-        integration: &[],
-        unit: &[BLOCKS],
-    },
-    Mutation {
-        name: "room-as-stored",
-        package: Package::Core,
-        breaks: "the room of a run's texts is what its chunks store whatever the runs before gave",
-        file: "src/engine/columns/prepared.rs",
-        original: "        usize::try_from(scaled).unwrap_or(stored).max(stored)",
-        replacement: "        stored",
-        integration: &[],
-        unit: &[ROOM],
-    },
-    Mutation {
-        name: "room-of-the-last-run",
-        package: Package::Core,
-        breaks: "a run that gave less a stored octet than one before lowers the room",
-        file: "src/engine/columns/prepared.rs",
-        original: "> wide(best.0).saturating_mul(wide(stored)) || best.1 == 0 {",
-        replacement: "> wide(best.0).saturating_mul(wide(stored)) || best.1 < usize::MAX {",
-        integration: &[],
-        unit: &[ROOM],
     },
     Mutation {
         name: "text-made-unjudged",

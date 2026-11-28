@@ -143,31 +143,3 @@ fn positions_across_chunks_of_several_encodings_read_as_their_rows() {
     assert_eq!(of_texts(&made), few.map(|n| whole[usize::try_from(n).unwrap()][1].to_string()));
     assert!(texts_at(&group, (&pages, &mut prepared), (1, &TEXT), &[5, ROWS]).unwrap().is_none(), "a position past the group");
 }
-
-/// Verifies: [DESIGN] RULES.md D1318, the room of a run's texts: until a
-/// run of a column has told, the room is what its chunks store; a run of
-/// dictionaries, which gives no more than they store, leaves it so; a run
-/// of texts coded by symbols, which gives more, makes the room of the
-/// runs after it more than they store and no more than a symbol's most
-/// octets a stored one; another column's room is its own; and a run that
-/// gave less a stored octet than one before does not lower the room.
-/// MC/DC of the run noted: one that gave more a stored octet (noted)
-/// against one that gave less (not).
-#[test]
-fn the_room_of_a_runs_texts_follows_the_most_a_stored_octet_gave() {
-    let (pool, file) = file();
-    let (pages, group, _) = group(&pool, file);
-    let mut prepared = Prepared::default();
-    assert_eq!(prepared.room(1, 1000), 1000, "no run has told");
-    texts(&group, (&pages, &mut prepared), (1, &TEXT), (0, 600)).unwrap().unwrap();
-    assert_eq!(prepared.room(1, 1000), 1000, "dictionaries give no more than they store");
-    texts(&group, (&pages, &mut prepared), (1, &TEXT), (900, 1400)).unwrap().unwrap();
-    let room = prepared.room(1, 1000);
-    assert!(room > 1000 && room <= 8000, "texts coded by symbols give more than they store: {room}");
-    assert_eq!(prepared.room(2, 1000), 1000, "a column's room is its own");
-    prepared.gave(5, (300, 100));
-    prepared.gave(5, (100, 100));
-    assert_eq!(prepared.room(5, 10), 30, "a run that gave less does not lower it");
-    prepared.gave(5, (10_000, 100));
-    assert_eq!(prepared.room(5, 10), 80, "no stored octet is taken to give more than a symbol's most");
-}
