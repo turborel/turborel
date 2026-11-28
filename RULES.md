@@ -809,6 +809,7 @@ verification approach DO-178C expects (§8).
 | D1247 | A grouping stops handing morsels whole once the statement thread's table holds more groups than a morsel has rows |
 | D1250 | A record of a transaction reaches the log only while it may still commit, or with its abort record after it |
 | D1251 | A column store's scan judges a LIKE of a constant pattern of each chunk's texts where they lie, those coded by symbols by the pattern's machine stepped a code at a time |
+| D1252 | A run's texts are gathered into one vector of octets and judged UTF-8 once, texts coded by symbols decoded straight into it |
 | D1253 | A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
 | D1255 | A table's text keys lie in chunks that never move, and a morsel's groups are put in their partitions' order with their texts where they are |
@@ -844,6 +845,7 @@ verification approach DO-178C expects (§8).
 | D1305 | A grouping column that is an expression of other grouping columns is computed after the grouping |
 | D1306 | A select list's expressions that cannot raise are computed after FETCH FIRST |
 | D1311 | The matcher that marks does a step's work once a step |
+| D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 
 ### The project
 
@@ -20021,6 +20023,10 @@ are now judged once, and each field is a slice of them
 together, and a field that begins or ends within a character gives no
 text as before, so the batch is the one each judgment gave.
 
+D1252 took this to the run. The octets of every chunk a run reads are
+judged once together (`engine/columns/texts.rs`), and a run of varying
+fields is copied there at once.
+
 IN a list of strings judged of a vector's text (D1126) compared a
 string of a short list with each constant, each made unpadded again for
 each row, and hashed it for a longer one. The constants are now unpadded
@@ -23144,6 +23150,61 @@ reads. Zone maps, Bloom filters and imprints pass over nothing by it, as
 the prefix's bounds do that, so the share of a table the planner prices
 a scan by (`scan_share`) is what it was.
 
+#### D1252. A run's texts are gathered into one vector of octets and judged UTF-8 once, texts coded by symbols decoded straight into it
+
+A scan gives a character string column of a run of rows as text (D361),
+one string of every row's text and where each ends. A run is at most a
+vector of rows (D31). The chunks of a column of long strings hold a
+hundred or two rows each, as a chunk is what a page holds, so a run
+reads a dozen chunks or more.
+
+The string was begun empty and grew as rows were pushed to it, so a run
+allocated it again and copied it many times. A dictionary's rows were
+pushed one at a time, each read by its own code and judged UTF-8 by
+itself. Texts coded by symbols were decoded into a vector of their
+chunk's own, judged there and copied to the string. And a run was first
+tried as dictionary codes, which copied each dictionary's entries until
+a chunk that was no dictionary was met, and all of it was then dropped.
+
+A run's texts are now gathered into one vector of octets
+(`engine/columns/texts.rs`). Room is made for it once, of as many octets
+as the chunks the run reads take stored, which a dictionary's entries,
+varying fields and one value never pass. Texts coded by symbols may pass
+it, and the vector then grows as any vector does. Each chunk adds its
+octets and where each text ends, and nothing is judged as it is added. A
+dictionary's entries and a run of varying fields are added by one copy,
+as each field begins where the one before it ends (D1131). Texts coded
+by symbols are decoded straight after the octets held
+(`engine/columns/fsst.rs`), and copied nowhere else.
+
+The vector is then made the run's text by one judgement of all its
+octets, `Kernels::text`, which gives the vector itself as the string
+where the octets are UTF-8 as `str::from_utf8` judges them. The core
+forbids `unsafe` (R-SAFE-1), so its body is `String::from_utf8`.
+`turborel-simd` judges on AVX2 as D1175 does and then takes the vector
+for the string, which is sound because every octet of it was just
+judged. Each text's end must then lie on a character's boundary, so each
+text is UTF-8 alone. Strings that are each UTF-8 are UTF-8 together, and
+a text that begins or ends within a character fails that test, so a run
+gives text exactly where judging each value by itself would.
+
+Octets that are no text, a position past a chunk's end and a chunk whose
+offsets or codes are malformed give no column. The rows are then read as
+values, which raises what is malformed, as before.
+
+A CHARACTER string is padded as it is read [X3.135-1986 §8.7 GR7b]. The
+spaces are added to the octets by the count of the field's characters,
+which are its octets that go on with no character. That is the count of
+the text once the octets are judged, and octets that are not text give
+no column whatever was counted.
+
+Nothing is made of a dictionary of texts when its chunk is opened, and
+nothing of it is kept for the chunk's other runs, which withdraws the
+cell of D1298. A run copies the entries it reads from the chunk's own
+octets, which costs no more than copying them from a text kept, and
+judges them with the rest of the run. A reader that asks for no text
+still pays for none.
+
 #### D1253. A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code
 
 A chunk kept as a dictionary holds each distinct text once, its entries'
@@ -24674,6 +24735,11 @@ chunks opened belong to the one scan that reads them, or to one decoding
 of a late column at a time (D361), so no two threads ask one cell at
 once, and the cell would still make the text once if they did.
 
+D1252 withdrew the cell. A run that asks for text copies the entries it
+reads from the chunk into the run's own vector and judges them there,
+so nothing is made of a dictionary of texts and nothing of it is kept.
+A reader that asks for no text pays for none, as this decision meant.
+
 #### D1299. A table's sample remembers a function by its handle, not by its name alone
 
 A table's sample remembers what was asked of it under a fingerprint of
@@ -24951,6 +25017,57 @@ in those than in anything the pattern asked.
 What a search finds is unchanged. The model tests hold the matcher to
 the matcher of threads over the corpus, of texts read by their
 characters and by their octets.
+#### D1316. A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows
+
+A column store gives a run's character strings as codes of dictionary
+entries where it can (`storage::Coded`), and what reads them works an
+entry once and not a row once. Grouping finds a code's group once
+(D1161), and a hash, a comparison, a LIKE and a regular expression
+function are run of each entry (D1099, D1253, D1291). A run was given so
+only if every chunk it read was a dictionary. A column of long strings
+has a chunk to a page, and each chunk takes the encoding that is
+smallest for it, so its runs read dictionaries, texts coded by symbols
+and varying fields together. Such a run was given as plain text, and
+each of its rows was hashed, compared and copied.
+
+A run's texts are entries (D1252), and its rows are entries, one each,
+until a chunk gives entries its rows share
+(`engine/columns/texts.rs`). A dictionary gives its entries and each
+row's code among them. A chunk of one value gives one entry. From the
+first such chunk every row of the run has a code. The rows gathered
+before it are given the codes of the entries they are, with nothing
+copied, and the rows of a later chunk that shares nothing are each an
+entry and its code. A run none of whose chunks shares entries is texts
+and their ends as before, so a reader of plain text pays for no codes.
+
+A dictionary asked for no fewer rows than it has entries gives its
+entries whole. One asked for fewer gives only the entries those rows
+read, each once, in the order the rows meet them. That is so of a run
+that ends within the chunk and of the few rows a condition kept (D360).
+A dictionary was given whole before whatever was asked of it, so a scan
+that kept one row of a chunk copied every entry of the chunk. The entry
+a code was given is kept by code while the chunk is read. An entry given
+of a chunk lies after those the run held before the chunk, so what an
+earlier chunk left by a code is told by its place, and nothing is
+cleared between chunks.
+
+So a run holds no more entries than rows. Each reader's rule that works
+entries only where they are no more than the rows (D1161, D1291) holds
+of every run a scan gives. Two chunks' entries of the same text are two
+entries, as two dictionaries' were, and every reader already finds them
+equal by their text.
+
+More runs reach their readers as codes, so the two readers that searched
+only plain text at once now search entries too. A LIKE of a piece
+between two `%`s, judged by a filter (`exec/batch/judge/texts.rs`) or as
+an expression (`exec/batch/expr/compare.rs`), searches a coded column's
+entries as one arena (D1119) and takes each row by its code. A filter
+asked of fewer rows than the column has entries judges each of those
+rows' texts instead, as an entry no row asked reads is judged for
+nothing. That holds of every conjunct a filter judges of texts.
+
+A null's code is 0 and its row is marked null, as before. A null row
+gathered before the run had codes is the empty entry of its place.
 
 ## 2. Project layout
 

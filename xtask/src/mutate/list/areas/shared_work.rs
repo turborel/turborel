@@ -4,9 +4,10 @@
 //! subquery with no outer reference made a constant as its first row is
 //! judged (D1127), a subquery run once planned with its parts in parallel
 //! (D1128), and a grouping a filter's input and its subqueries compute
-//! alike computed once (D1129), a chunk's texts judged UTF-8 once and
-//! strings looked for among a list's in order (D1131), and a filter's
-//! quiet scalar subqueries bound before a part's morsels (D1132).
+//! alike computed once (D1129), strings looked for among a list's in
+//! order (D1131), and a filter's quiet scalar subqueries bound before a
+//! part's morsels (D1132). A chunk's texts copied at once (D1131) are
+//! with the texts a scan gathers (`unread_texts.rs`).
 
 use super::super::{Mutation, Package};
 
@@ -32,7 +33,7 @@ const UNJOINED: &str = "optimizer::unnesting::quiet::tests::a_quiet_subquery_is_
 const SUBSTRING_FREE: &str = "logical::raises::tests::a_substring_of_constant_bounds_raises_nothing";
 
 /// Mechanisms of the work done once whose removal must fail their tests.
-pub const SHARED_WORK: [Mutation; 17] = [
+pub const SHARED_WORK: [Mutation; 16] = [
     Mutation {
         name: "substring-vector-slice-end",
         package: Package::Core,
@@ -102,16 +103,6 @@ pub const SHARED_WORK: [Mutation; 17] = [
         replacement: "        rows.held()?;",
         integration: &[],
         unit: &["exec::shared::tests::readers_of_a_cell_read_what_the_first_ran"],
-    },
-    Mutation {
-        name: "texts-span-unshifted",
-        package: Package::Core,
-        breaks: "a field of a chunk's texts judged UTF-8 at once is cut from the octets it begins at, past the range's start (D1131)",
-        file: "src/engine/columns/encoded.rs",
-        original: "            padded(text, span.get(a.checked_sub(start)?..b.checked_sub(start)?)?, pad);",
-        replacement: "            padded(text, span.get(a..b)?, pad);",
-        integration: &[],
-        unit: &["engine::columns::tests::chunks_give_their_texts"],
     },
     Mutation {
         name: "text-list-unsorted",
