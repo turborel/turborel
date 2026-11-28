@@ -21,7 +21,7 @@ fn shown_from(s: &turborel::db::Session, sql: &str, from: &str) -> String {
 /// group has the null the expression gives of it; a CASE; under ORDER BY
 /// of the column computed with FETCH FIRST; under a HAVING condition
 /// that reads it and a set function; with set functions that read it,
-/// DISTINCT and filtered; under a window over the groups; under a select
+/// filtered, alone and beside a DISTINCT one; under a window over the groups; under a select
 /// list of expressions of it; through a derived table of a derived
 /// table; and with a column a key decides, which the rule of D1201 then
 /// carries.
@@ -37,6 +37,7 @@ fn a_grouping_column_computed_of_the_others_is_computed_after_the_grouping() {
         "SELECT P, P1, COUNT(*) AS C FROM (SELECT P, P + 1 AS P1 FROM {CH}) T GROUP BY P, P1 ORDER BY P1 DESC, C FETCH FIRST 4 ROWS ONLY",
         "SELECT P, P1, COUNT(*) FROM (SELECT P, P + 1 AS P1 FROM {CH}) T GROUP BY P, P1 HAVING COUNT(*) > 3 AND P1 < 9",
         "SELECT V, V1, SUM(V1), COUNT(DISTINCT S), COUNT(*) FILTER (WHERE V1 > 3) FROM (SELECT V, V + 1 AS V1, S FROM {CH}) T GROUP BY V, V1",
+        "SELECT V, V1, MAX(V1), COUNT(*) FILTER (WHERE V1 > 3) FROM (SELECT V, V + 1 AS V1, S FROM {CH}) T GROUP BY V, V1",
         "SELECT V, V1, COUNT(*), RANK() OVER (ORDER BY V1 DESC) FROM (SELECT V, V + 1 AS V1 FROM {CH}) T GROUP BY V, V1 ORDER BY V",
         "SELECT V1 * 2, COUNT(*) + V1, V1 FROM (SELECT V, V + 1 AS V1 FROM {CH}) T GROUP BY V, V1",
         "SELECT V, V1, COUNT(*) FROM (SELECT V, V1 FROM (SELECT S, V, V + 1 AS V1 FROM {CH}) U) T GROUP BY V, V1",
