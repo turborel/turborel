@@ -841,6 +841,8 @@ verification approach DO-178C expects (§8).
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 | D1311 | The matcher that marks does a step's work once a step |
+| D1305 | A grouping column that is an expression of other grouping columns is computed after the grouping |
+| D1306 | A select list's expressions that cannot raise are computed after FETCH FIRST |
 
 ### The project
 
@@ -24746,6 +24748,117 @@ in those than in anything the pattern asked.
 What a search finds is unchanged. The model tests hold the matcher to
 the matcher of threads over the corpus, of texts read by their
 characters and by their octets.
+#### D1305. A grouping column that is an expression of other grouping columns is computed after the grouping
+
+A grouping by the columns of a derived table, a view or a WITH query
+may name a column beside expressions of it, as `GROUP BY A, B, C` of
+`SELECT A, A - 1 AS B, A - 2 AS C`. Every row of a group the first
+makes has one value of each expression, so the first alone tells the
+groups apart [ISO/IEC 9075-2:2023 §9.12, §4.26.1]. The grouping hashed,
+compared and kept every column written, and the projection below it
+computed each expression of every row. The rule of D1201 left such a
+grouping as written, as it carries a column only where the column's
+declared type is known, and a projection's expression has none.
+
+The rule `compute_keys_after_grouping`
+(`optimizer/dependent_keys/computed.rs`) now leaves out of the grouping
+each column that is an expression of other grouping columns alone, or
+of none, a constant. A projection over the grouping computes it of each
+group's columns and puts every column where it was. The projection
+below computes it of the rows no more, and where only column references
+are left of that projection the grouping reads its input in its place.
+The plan is then the one of the query that groups by the columns kept
+and writes the expressions in its select list.
+
+An expression is taken under these conditions.
+
+- It gives the same value of the same columns each time, so it holds
+  no NEXT VALUE FOR and calls no function or routine that is possibly
+  non-deterministic [§4.35.1].
+- It cannot raise or warn, judged by its columns' declared types
+  (D373). Its rows are then evaluated for no longer and its groups once
+  each, which hides no error and adds none (D15). An expression that
+  may raise stays a grouping column and is computed of every row, as it
+  was.
+- Each column it reads is a grouping column, and a base table's column
+  of a type whose values not distinct are one value to every
+  expression, an exact number, a truth value or a datetime of no zone,
+  as D1201 asks of a determinant. Two character strings equal but for
+  trailing spaces are of one group and differ in length, two
+  approximate zeros differ in sign, and two zoned datetimes of one
+  instant differ in zone, so an expression of such a column stays a
+  grouping column. A column of the types taken has no collation. The
+  null value is one value too, and the expression gives of the group
+  what it gave of each of its rows.
+- It is found through the nodes that hand each row of its projection
+  on whole. Those are filters, products, semi joins and the preserved
+  operand of an outer join. The operand an outer join extends with
+  nulls has a null in the column where the expression of nulls may
+  have none, so its columns are left.
+- The grouping makes no group before any row, of an empty grouping set
+  [§7.13 GR2a], and one column at least is kept, as a grouping by none
+  is one group even of no rows. Of constants alone the first written
+  is kept.
+
+A column left out is compared by nothing, so the collation it was
+grouped by drops out, and the columns kept are grouped by theirs as
+before. ROLLUP, CUBE and GROUPING SETS group by columns that read the
+set a row was made for, which is no base table's column, so their
+groupings are left and GROUPING is as it was. HAVING, ORDER BY, the
+select list and a window over the groups read the projection where the
+grouping column was. A HAVING condition over the projection is moved
+below it, onto the grouping, so it is still judged with a grouping run
+in parallel (D1073), and a select list over the projection is merged
+with it. Both are done only over a projection whose expressions read
+grouping columns alone and are of the kind above, so the condition and
+the select list are evaluated of the groups they were.
+
+The rule is a late one (D1201), before `reduce_grouping_keys`, which
+then reads the columns kept and carries those a key determines. The
+planner estimates the groups of the columns kept by their own
+statistics. A grouping column the rule leaves, an expression that may
+raise or reads a column not grouped by, is still bounded by the values
+of the columns it reads (D1082) and by its table's sample (D1279).
+
+Not covered are SELECT DISTINCT of a column and expressions of it,
+which is no grouping in the plan, an expression of a column that is
+itself an expression, and an expression that may raise.
+
+#### D1306. A select list's expressions that cannot raise are computed after FETCH FIRST
+
+A query that sorts its rows and keeps the first of them, as `SELECT A,
+A - 1, COUNT(*) ... GROUP BY A ORDER BY 3 DESC FETCH FIRST 10 ROWS
+ONLY`, computed every expression of its select list of every row it
+sorted, though ten rows show them. A select list that holds an
+expression also kept a grouping run in parallel from giving only its
+first groups (D1124), which it does under a select list of its columns
+and of constants alone. So the grouping of D1305, with its expressions in the
+select list, ran longer than the grouping by every column written.
+
+The rule `compute_after_fetch_first`
+(`optimizer/late_fetch/projected.rs`) now computes above the FETCH
+FIRST each expression of the select list below the sort that gives the
+same value of the same columns each time and can neither raise nor
+warn, judged by its columns' declared types (D373). The select list
+below keeps every other expression where it was and hands on the
+columns the expressions moved read. A projection above the FETCH FIRST
+puts every column where it was.
+
+The rows are the same, in the same order. Which rows are kept and how
+they are ordered is the sort keys' doing alone, and OFFSET, FETCH FIRST
+of rows or of a percentage and WITH TIES read nothing else. An
+expression moved is evaluated of the rows kept alone, which hides no
+error, as it raises none (D15). An expression that may raise stays
+below and is evaluated of every row, so a row the FETCH FIRST drops
+still raises what it raised.
+
+The rule takes a sort by column references of the select list, the set
+functions of a grouping among them. A sort by an expression is left, as
+a search by a distance is planned of that shape. A FETCH FIRST with no
+sort is left, as it reads no row past those it keeps. The rule is a
+late one, after the grouping columns are computed (D1305) and before
+`fetch_dependents_late` (D1202), which then finds a select list of
+column references below the FETCH FIRST.
 
 ## 2. Project layout
 

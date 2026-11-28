@@ -57,6 +57,14 @@ impl Known {
         self.collations.iter().find(|(at, _)| *at == attribute).map(|(_, own)| own)
     }
 
+    /// Whether two values of its column `c` not distinct are one value
+    /// to every expression: a base table's column of such a type, so an
+    /// expression of it is one value of every row of a group it is
+    /// grouped by (RULES.md D1305).
+    pub(crate) fn one_value(&self, c: usize) -> bool {
+        self.attribute_of(c).and_then(|a| self.type_of(a)).is_some_and(plain)
+    }
+
     /// The declared type of the attribute `a`, if a base table's column.
     fn type_of(&self, a: usize) -> Option<&DataType> {
         self.types.iter().find(|(at, _)| *at == a).map(|(_, t)| t)
