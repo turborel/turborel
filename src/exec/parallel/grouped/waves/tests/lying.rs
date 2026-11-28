@@ -39,15 +39,15 @@ fn the_partitions_share_the_bound_of_a_sorts_first_rows() {
     let alone = |functions: usize, db: &Db| Top::by_function((1, functions), (0, 7), (db, NO_TRANSACTION));
     let never = How { forced: NONE, widen: Widen::past(usize::MAX), ..How::default() };
     let wide = How { forced: NONE, widen: Widen::past(5).parted(8), ..How::default() };
-    let (unbounded, _) = first_rows_of(&a, sql, &never, alone).unwrap();
+    let unbounded = first_rows_of(&a, sql, &never, alone).0.unwrap();
     let tens = of_ten(&unbounded);
     assert!(tens.len() == 10 && unbounded.len() > 100, "{} of {} rows", tens.len(), unbounded.len());
     for (how, lying) in [(&never, "tables"), (&wide, "wide partitions")] {
-        let (kept, top) = first_rows_of(&a, sql, how, |functions, db| alone(functions, db).bounded(&vec![ten.clone(); 7])).unwrap();
-        assert_eq!((kept.len(), of_ten(&kept)), (10, tens.clone()), "told the bound, of {lying}");
+        let (kept, top) = first_rows_of(&a, sql, how, |functions, db| alone(functions, db).bounded(&vec![ten.clone(); 7]));
+        assert_eq!(kept.map(|rows| (rows.len(), of_ten(&rows))).unwrap(), (10, tens.clone()), "told the bound, of {lying}");
         assert_eq!(shown(top.bound().as_ref()), shown(Some(&ten)), "the bound told, of {lying}");
-        let (theirs, raised) = first_rows_of(&a, sql, how, |functions, db| alone(functions, db).bounded(&[])).unwrap();
-        assert_eq!(of_ten(&theirs), tens, "raising the bound themselves, of {lying}");
+        let (theirs, raised) = first_rows_of(&a, sql, how, |functions, db| alone(functions, db).bounded(&[]));
+        assert_eq!(of_ten(&theirs.unwrap()), tens, "raising the bound themselves, of {lying}");
         assert_eq!(shown(raised.bound().as_ref()), shown(Some(&ten)), "the bound raised, of {lying}");
     }
     assert!(wide.widen.merged.load(Ordering::Relaxed) > 0, "no partition went wide");
@@ -82,7 +82,7 @@ fn a_group_read_where_it_lies_gives_and_raises_what_the_table_merged_of_it_does(
     let wide = How { forced: NONE, apart: NONE, widen: Widen::past(5).parted(8), ..How::default() };
     let shown = |how: &How, by: usize| {
         let top = move |functions: usize, run: &Db| Top::by_function((1, functions), (by, 7), (run, NO_TRANSACTION));
-        let mut rows: Vec<String> = first_rows_of(&a, &grouped("Y"), how, top).unwrap().0.iter().map(|row| format!("{row:?}")).collect();
+        let mut rows: Vec<String> = first_rows_of(&a, &grouped("Y"), how, top).0.unwrap().iter().map(|row| format!("{row:?}")).collect();
         rows.sort();
         rows
     };
@@ -90,7 +90,7 @@ fn a_group_read_where_it_lies_gives_and_raises_what_the_table_merged_of_it_does(
         assert_eq!(shown(&wide, by), shown(&never, by), "by the set function at {by}");
     }
     for (how, lying) in [(&never, "tables"), (&wide, "wide partitions")] {
-        let raised = first_rows_of(&a, &grouped("X"), how, by_greatest).map(drop).map_err(|e| e.code);
+        let raised = first_rows_of(&a, &grouped("X"), how, by_greatest).0.map(drop).map_err(|e| e.code);
         assert_eq!(raised, Err(Code::Data), "a group not picked whose sum is past its type's precision, of {lying}");
     }
     assert!(wide.widen.merged.load(Ordering::Relaxed) > 0, "no partition went wide");

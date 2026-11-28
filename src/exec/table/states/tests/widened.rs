@@ -279,8 +279,9 @@ fn results_that_raise_are_raised_of_totals_in_either_form() {
 /// fed nothing (`Sent::placed`), its result or its error, a place past
 /// the column's end too; that the column finished at places for its
 /// errors alone raises what the merged states finished for theirs
-/// raise; and that what reads a group where it lies gives both
-/// (`Sent::finished_at`, `Sent::checked_of`).
+/// raise; and that what reads a group where it lies gives both, and
+/// the column of results the merged states give
+/// (`Sent::finished_at`, `Sent::checked_of`, `Sent::results_of`).
 fn lying_as_merged(agg: &AggCall, batches: &[&Rows], runner: &Runner) {
     let sent = states_of(agg, 4, batches, runner).sent().unwrap();
     let Sent::Typed(typed) = &sent else { panic!("{} sent as a column", agg.label) };
@@ -297,6 +298,11 @@ fn lying_as_merged(agg: &AggCall, batches: &[&Rows], runner: &Runner) {
         assert_eq!(format!("{:?}", typed.checked_at(places)), format!("{fed_nothing:?}"), "{} checked at {places:?}", agg.label);
         let read = Sent::checked_of(agg, &[(&sent, places)], &groups);
         assert_eq!(format!("{read:?}"), format!("{fed_nothing:?}"), "{} read and checked at {places:?}", agg.label);
+        // The column a sort reads, counts as integers and any other
+        // result as values, is the one the merged states give.
+        let given = Sent::placed(agg, &[(&sent, places)], &groups).and_then(|states| states.results(groups.len()));
+        let results = Sent::results_of(agg, &[(&sent, places)], &groups);
+        assert_eq!(format!("{results:?}"), format!("{given:?}"), "{} results read at {places:?}", agg.label);
     }
     assert_eq!(typed.counts().is_some(), agg.label == "COUNT", "COUNT's counts alone are given as they lie");
 }

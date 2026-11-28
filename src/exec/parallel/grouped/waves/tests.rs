@@ -431,14 +431,14 @@ fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> 
 /// As `first_rows`, under the sort `top` makes of the count of the
 /// grouping's set functions.
 fn first_rows_as(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> Vec<String> {
-    let mut rows: Vec<String> = first_rows_of(a, sql, how, top).unwrap().0.iter().map(|row| format!("{row:?}")).collect();
+    let mut rows: Vec<String> = first_rows_of(a, sql, how, top).0.unwrap().iter().map(|row| format!("{row:?}")).collect();
     rows.sort();
     rows
 }
 
-/// As `first_rows_as`, the rows as they are, and the sort as the run
-/// left it, or the error a partition raised.
-fn first_rows_of(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> crate::error::Result<(Vec<Row>, Arc<Top>)> {
+/// As `first_rows_as`, the rows as they are or the error a partition
+/// raised, and the sort as the run left it.
+fn first_rows_of(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> (crate::error::Result<Vec<Row>>, Arc<Top>) {
     let (st, optimized) = a.optimized(sql).unwrap();
     let planned = PhysicalPlanner::new(&st).plan(&optimized);
     let aggregate = if let Plan::Project { input, .. } = planned { *input } else { planned };
@@ -451,10 +451,12 @@ fn first_rows_of(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db)
     grouping.seed = grouping.seed.unpadded(&unpadded.expect("grouped by batch"));
     let top = Arc::new(top(grouping.spec.aggs.len(), &db));
     grouping.top = Some(Arc::clone(&top));
-    let Held::Kept((runs, given)) = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, how)? else {
-        panic!("the grouping gave way")
+    let rows = match waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, how) {
+        Ok(Held::Kept((runs, given))) => Ordered::of(runs, given).and_then(Iterator::collect),
+        Ok(Held::GaveWay) => panic!("the grouping gave way"),
+        Err(e) => Err(e),
     };
-    Ok((Ordered::of(runs, given)?.collect::<crate::error::Result<Vec<Row>>>()?, top))
+    (rows, top)
 }
 
 /// Verifies: [DESIGN] RULES.md D1300 a statement's partitions go wide
