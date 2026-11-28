@@ -840,6 +840,7 @@ verification approach DO-178C expects (§8).
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 | D1313 | Rows handed on ungrouped are written once, each where its partition's run lies |
+| D1314 | The listing of a table's bytes holds none of the headers it reads |
 
 ### The project
 
@@ -24935,6 +24936,41 @@ No constant is added and none changed. A morsel holds its batches until
 it hands over, which a morsel of a join that makes many rows of each
 holds too. They are less than the table it held before and the gathered
 copy of it together.
+
+#### D1314. The listing of a table's bytes holds none of the headers it reads
+
+A group's header is held by its entry of the directory, read for the
+columns its readers asked for, and the cache bounds the bytes of the
+headers held (D1090, D1173). A scan asks for the few columns it reads,
+so the headers the scans of a table hold are small beside the table's
+whole headers. The listing of a table's bytes by column
+(INFORMATION_SCHEMA.COLUMN_STORAGE, D1165) asks every group for every
+column, as it tells every column's chunks. It read each header whole
+and held it, as a scan holds what it reads.
+
+Of a table of a hundred columns and many groups the whole headers
+together pass the cache's bound, a 64th of the memory budget. So the
+listing gave up the headers the scans held, group after group, to hold
+whole ones it would not read again, and the scans after it read their
+headers again. A profile of groupings of such a table taken after a
+listing showed a header read for about every group in each of three
+statements running. The same statements in a session with no listing
+showed none after each column's first use, and a session of scans alone
+showed them read again once after a listing.
+
+The listing now reads through (`engine/rows/frozen/held.rs`,
+`group_passed`). A header held for every column is taken as it is held,
+without counting as a read of it. Any other is read for every column
+and let go when the group is told, never put in the cache, so the cache
+holds after a listing what it held before it. The listing reads the
+first bytes of every chunk as well, which is far more than its headers,
+so reading them each time costs it little.
+
+The bound itself is left as it is. The headers the scans of that table
+hold together stay well within it, and no reader but one that walks a
+whole table for every column brought them near it. The other readers
+of whole headers take the groups they rewrite or sample, a few at a
+time.
 
 #### D447. A unique constraint added in a transaction fills its index with every version
 
