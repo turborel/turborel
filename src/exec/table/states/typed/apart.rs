@@ -55,22 +55,28 @@ impl Typed {
 impl Exact {
     /// As `Typed::set_apart`, of a column of integers of one scale: each
     /// group's total or best value its row's integer, taken once, and of
-    /// a null nothing taken [X3.135-1986 §5.8 GR1].
+    /// a null nothing taken [X3.135-1986 §5.8 GR1]. The totals and the
+    /// counts are each made at their size of the rows in turn, with no
+    /// vector grown a row at a time, and where no batch holds a null the
+    /// counts are all one and no row's null is looked for.
     fn set_apart(&mut self, take: &Taken, held: &Held, sources: &[(u32, u32)]) -> Option<bool> {
         let Taken::Column(c) = take else { return None };
         let (ints, scale) = ints_of(held, *c)?;
         if self.totals.len() != 0 || self.scale.is_some_and(|of| of != scale) {
             return None;
         }
-        let (mut units, mut counts) = (Vec::with_capacity(sources.len()), Vec::with_capacity(sources.len()));
-        let mut any = false;
-        for &(b, r) in sources {
-            let r = index(r);
-            let read = ints.get(index(b)).filter(|of| !of.is_null(r)).and_then(|of| of.units.get(r));
-            any = any || read.is_none();
-            units.push(read.copied().unwrap_or(0));
-            counts.push(i64::from(read.is_some()));
-        }
+        let in_batch = |b: u32| ints.get(index(b)).copied();
+        let unit = |&(b, r): &(u32, u32)| in_batch(b).and_then(|column| column.units.get(index(r))).copied().unwrap_or(0);
+        let (units, counts, any): (Vec<i64>, Vec<i64>, bool) = if ints.iter().all(|of| of.nulls.is_none()) {
+            (sources.iter().map(unit).collect(), vec![1; sources.len()], false)
+        } else {
+            // A null's unit has no meaning (RULES.md D1289), so its group's total is that of no row.
+            let taken = |at: &(u32, u32)| i64::from(in_batch(at.0).is_some_and(|column| !column.is_null(index(at.1))));
+            let counts: Vec<i64> = sources.iter().map(taken).collect();
+            let units = sources.iter().zip(&counts).map(|(at, &n)| if n == 0 { 0 } else { unit(at) }).collect();
+            let any = counts.contains(&0);
+            (units, counts, any)
+        };
         (self.totals, self.counts, self.scale) = (Totals::Narrow(units), counts, Some(scale));
         Some(any)
     }

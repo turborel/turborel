@@ -24,7 +24,7 @@ const GATHERED: &str = "exec::table::made::apart::tests::a_table_written_by_othe
 
 /// Mechanisms whose removal must fail the requirements of rows written
 /// by partition.
-pub const PLACED_ROWS: [Mutation; 12] = [
+pub const PLACED_ROWS: [Mutation; 13] = [
     Mutation {
         name: "placed-rows-one-place-a-partition",
         package: Package::Core,
@@ -130,8 +130,8 @@ pub const PLACED_ROWS: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a set function of an integer column is set to nothing of every row handed on ungrouped (RULES.md D1313)",
         file: STATES_FILE,
-        original: "units.push(read.copied().unwrap_or(0));",
-        replacement: "units.push(0);",
+        original: "column.units.get(index(r))).copied().unwrap_or(0);",
+        replacement: "column.units.get(index(r))).copied().unwrap_or(0).saturating_mul(0);",
         integration: &[],
         unit: &[WRITTEN],
     },
@@ -140,8 +140,18 @@ pub const PLACED_ROWS: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a null is taken as a value of a state set as its row's, so SUM of a null alone is 0 (RULES.md D1313)",
         file: STATES_FILE,
-        original: "counts.push(i64::from(read.is_some()));",
-        replacement: "counts.push(1);",
+        original: "let taken = |at: &(u32, u32)| i64::from(in_batch(at.0).is_some_and(|column| !column.is_null(index(at.1))));",
+        replacement: "let taken = |at: &(u32, u32)| i64::from(in_batch(at.0).is_some());",
+        integration: &[],
+        unit: &["exec::table::made::apart::tests::states_set_as_their_rows_take_nothing_of_a_null"],
+    },
+    Mutation {
+        name: "placed-rows-nulls-not-looked-for",
+        package: Package::Core,
+        breaks: "a column's nulls are not looked for where a batch holds some, so each null is taken as a value (RULES.md D1313)",
+        file: STATES_FILE,
+        original: "if ints.iter().all(|of| of.nulls.is_none()) {",
+        replacement: "if ints.iter().all(|of| of.nulls.is_none() || of.scale == scale) {",
         integration: &[],
         unit: &["exec::table::made::apart::tests::states_set_as_their_rows_take_nothing_of_a_null"],
     },
