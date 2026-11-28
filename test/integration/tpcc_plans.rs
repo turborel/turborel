@@ -432,3 +432,30 @@ fn stock_level_probes_stock_as_orders_grow_past_the_statistics() {
     assert!(plan.contains("IndexNestedLoop TPCC.STOCK"), "{plan}");
     assert!(!plan.contains("HashJoin"), "{plan}");
 }
+
+/// Scratch, never merged: the stock level's two forms, 50 CALLs each,
+/// bindings and plannings per CALL.
+#[test]
+#[ignore = "scratch"]
+fn fm_slev_runs() {
+    let (_db, s) = loaded();
+    s.run(
+        "CREATE PROCEDURE SLEV_JOINED (IN ST_W_ID INTEGER, IN ST_D_ID INTEGER, IN THRESHOLD INTEGER)
+    READS SQL DATA
+    BEGIN
+    DECLARE STOCK_COUNT INTEGER;
+    SELECT COUNT(DISTINCT S_I_ID) INTO STOCK_COUNT FROM DISTRICT, ORDER_LINE, STOCK
+        WHERE D_W_ID = ST_W_ID AND D_ID = ST_D_ID AND OL_W_ID = D_W_ID AND OL_D_ID = D_ID
+        AND OL_O_ID < D_NEXT_O_ID AND OL_O_ID >= D_NEXT_O_ID - 20
+        AND S_W_ID = OL_W_ID AND S_I_ID = OL_I_ID AND S_QUANTITY < THRESHOLD;
+    END",
+    )
+    .unwrap();
+    s.commit().unwrap();
+    for name in ["SLEV", "SLEV_JOINED"] {
+        let call = s.prepare(&format!("CALL {name}(?,?,?)")).unwrap();
+        let mut r = Sequence(5);
+        let runs: Vec<u64> = (0..50).map(|_| planned(&s, &call, &[int(1), int(r.between(1, 10)), int(r.between(10, 20))])).collect();
+        eprintln!("FMSLEV {name} {runs:?}");
+    }
+}

@@ -33,10 +33,14 @@ dump() { # dump TAG
     echo "TPCH $tag ${u#*:} plans $(grep -c '^===' $O/$tag-tpch-${u#*:}.plans) errors $(grep -c 'ERROR' $O/$tag-tpch-${u#*:}.plans) lines $(wc -l < $O/$tag-tpch-${u#*:}.plans)"
   done
 }
-dump new
+slev() { FMO_PLANS=1 cargo test -q --test integration -- --ignored --exact tpcc_plans::fm_slev_runs --nocapture 2>&1 | grep -E "FMSLEV|FMOPLAN" | grep -E "FMSLEV|COUNT.DISTINCT" | while read -r k line; do if [ "$k" = FMSLEV ]; then echo "FMSLEV $1 $line"; else echo "SLEVPLAN $1 $(echo "$line" | grep -q Dynamic && echo S || echo V) $(echo "$line" | grep -oE "^[A-Za-z]+|[A-Z][A-Za-z]*(Join|Loop|Scan) \{|est: [0-9.e-]+|ident: \"[A-Z_]+\"" | tr "\n" " ")"; fi; done; }
+slev new
+[ -n "${SLEVONLY:-}" ] || dump new
 git checkout $BASE -- src/optimizer/transitivity.rs
 grep -c "Held::Place" src/optimizer/transitivity.rs
-dump base
+slev base
+[ -n "${SLEVONLY:-}" ] || dump base
+[ -n "${SLEVONLY:-}" ] && CASES=""
 for c in $CASES; do
   for k in slotted valued; do
     echo "=== $k $c: base shapes $(wc -l < $O/base-$c.$k) plannings $(awk '{n+=$1} END {print n+0}' $O/base-$c.$k), new shapes $(wc -l < $O/new-$c.$k) plannings $(awk '{n+=$1} END {print n+0}' $O/new-$c.$k)"
@@ -45,7 +49,7 @@ for c in $CASES; do
     grep '^[<>]' $O/d.txt | while read -r side line; do echo "$side $(grep -cF "$line" $O/base-$c.$k)/$(grep -cF "$line" $O/new-$c.$k) n=$(grep -F "$line" $O/$( [ "$side" = "<" ] && echo base || echo new)-$c.$k | head -1 | cut -d' ' -f1) $line"; done | cut -c1-12000
   done
 done
-for s in c r; do
+for s in ${SLEVONLY:+none} c r; do [ "$s" = none ] && break
   if cmp -s $O/base-tpch-$s.plans $O/new-tpch-$s.plans; then echo "TPCH SAME $s"; else echo "TPCH CHANGED $s"; diff $O/base-tpch-$s.plans $O/new-tpch-$s.plans | head -40; fi
 done
 echo ST-PLANS-END
