@@ -5,6 +5,12 @@
 //! one loop, no row made, a run of a column kept as runs taken whole; held whole, as a grouping run in parallel charges
 //! what each morsel's groups hold to its grant once they are made
 //! (`parallel/grouped.rs`).
+//!
+//! \[DESIGN\] (RULES.md D1260) A morsel whose rows a table would not
+//! reduce is not grouped here at all. Each row is made a group of its
+//! own, its key appended and its state fed, with no group looked for and
+//! no slot taken, and the partition that merges the morsel finds each
+//! key's group as it merges any morsel's.
 
 use super::super::{Batches, Read, fed, lanes};
 use super::coded::{Memo, grouped, hash_of};
@@ -20,7 +26,8 @@ use crate::storage::{Batch, Sel};
 /// keyed by hashes of `seed`, each its first row numbered from `first` in
 /// the order the rows come, its set functions `aggs` fed and not finished;
 /// their warnings heard by `runner`. The table is made with room for
-/// `room` groups, as many as the morsel is expected to make.
+/// `room` groups, as many as the morsel is expected to make. If `apart`,
+/// every row is a group of its own, none looked for (RULES.md D1260).
 ///
 /// # Errors
 ///
@@ -30,12 +37,15 @@ pub(in crate::exec) fn morsel_groups(
     aggs: &[AggCall],
     batches: Batches,
     (runner, first, seed): (&Runner, u64, &Seed),
-    room: usize,
+    (room, apart): (usize, bool),
 ) -> Result<GroupTable> {
     if read.groups.is_empty()
         && let Some(states) = writing(aggs)
     {
         return one_group(read, (aggs, states), batches, (runner, first, seed));
+    }
+    if apart {
+        return rows_apart(read, aggs, batches, (runner, first, seed), room);
     }
     let mut table = GroupTable::with_room(read.groups.len(), aggs, seed, room);
     let (mut hashes, mut scratch, mut memo) = (Vec::new(), Vec::new(), Memo::default());
@@ -52,6 +62,42 @@ pub(in crate::exec) fn morsel_groups(
         let lanes = lanes(&read.taken, &batch, rows);
         table.feed(&batch, (&read.taken, &lanes), (&mut scratch, runner))?;
         number = number.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+    }
+    Ok(table)
+}
+
+/// \[DESIGN\] (RULES.md D1260) The rows of `batches`, one morsel's, each
+/// a group of its own in a table with no slots: its key appended, hashed
+/// of `seed` a vector at a time, its first row its own number from
+/// `first`, and its set functions fed its one row. No group is looked
+/// for, so a key the morsel holds twice is two groups, which the
+/// partition's table merges.
+///
+/// # Errors
+///
+/// As reading the batches, or a set function, fails.
+fn rows_apart(
+    read: &Read,
+    aggs: &[AggCall],
+    batches: Batches,
+    (runner, first, seed): (&Runner, u64, &Seed),
+    room: usize,
+) -> Result<GroupTable> {
+    let mut table = GroupTable::unplaced(read.groups.len(), aggs, seed, room);
+    let (mut hashes, mut scratch, mut number) = (Vec::new(), Vec::new(), first);
+    for kept in batches {
+        let (batch, rows) = kept?;
+        let rows = rows.as_ref().map(Sel::as_slice);
+        hash_rows(&batch, (read.groups.as_slice(), rows), (seed, runner.kernels()), &mut hashes);
+        for (n, &hash) in hashes.iter().enumerate() {
+            let r = nth(rows, n);
+            let own = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+            let g = table.appended(hash, Key::Row(&batch, &read.groups, r), own);
+            table.take(g, (n, r));
+        }
+        let lanes = lanes(&read.taken, &batch, rows);
+        table.feed(&batch, (&read.taken, &lanes), (&mut scratch, runner))?;
+        number = number.saturating_add(u64::try_from(hashes.len()).unwrap_or(u64::MAX));
     }
     Ok(table)
 }
