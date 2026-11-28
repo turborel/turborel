@@ -841,6 +841,7 @@ verification approach DO-178C expects (§8).
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 | D1311 | The matcher that marks does a step's work once a step |
+| D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
 
 ### The project
 
@@ -10774,7 +10775,8 @@ each argument a column or a constant. It gives what the function's call
 gives of each row, or nothing, so the call is made for each row's
 values, borrowed from the vectors. ABS of integers and approximate
 numbers, CHAR_LENGTH, OCTET_LENGTH, UPPER, LOWER and EXTRACT have one
-(`functions/over_vectors.rs`). Strings of a dictionary are folded or
+(`functions/over_vectors.rs`), as has CAST of a datetime to a datetime
+type (D1320). Strings of a dictionary are folded or
 counted once an entry. A function that may warn has its body skipped
 and is called as a row's evaluation calls it.
 
@@ -24746,6 +24748,65 @@ in those than in anything the pattern asked.
 What a search finds is unchanged. The model tests hold the matcher to
 the matcher of threads over the corpus, of texts read by their
 characters and by their octets.
+
+#### D1320. A field or a cast of datetimes is computed over a vector's microseconds
+
+EXTRACT of a field of a time or timestamp without time zone reads the
+value as the session shows it (ISO/IEC 9075:1992 §6.1 GR5). So the
+binder wraps its source in a CAST to its own type that takes the
+session's displacement (`binder/datetime.rs`, `shown`), as it wraps the
+datetime of datetime arithmetic, of AT TIME ZONE and of a difference of
+datetimes. That CAST had no body over vectors (D363). Over a batch each
+timestamp was made a value, cast as a row's is, and made a value again.
+The body EXTRACT had took a vector of datetimes alone, so it too was
+called a row at a time, and it read the calendar for a field of the
+time of day. A grouping by the field then received a vector of values,
+where it hashes and keeps integers a vector at a time.
+
+- CAST of a vector of datetimes to a datetime type has a body
+  (`functions/over_vectors/datetimes.rs`, `cast`). It follows the rule
+  of the two types on each row's microseconds and displacement. That is
+  the day of a date or timestamp as shown (§6.10 GR9), the midnight of
+  a date in the session's displacement (GR11b), the instant of a time
+  or timestamp (GR10, GR11d), or a time of day on the current date
+  (GR11c). It cuts the fraction to the precision and gives a vector of
+  datetimes that carries each value's displacement, a null of a null.
+- A cast whose value would leave the years 0001 to 9999, in UTC or as
+  shown (§6.1 GR6), gives no vector if its row is not null. The batch's
+  rows are then cast one by one, and the first such row raises SQLSTATE
+  22007 after the rows before it (D15). A null's slot is not judged
+  (D1289).
+- A cast to or from a character string, a cast of a constant, and a
+  cast of a date to a time or of a time to a date, which raises, are
+  called a row at a time as before.
+- EXTRACT's body computes each field of the microseconds as shown
+  (`fields`). HOUR, MINUTE and SECOND are arithmetic alone. A day is 24
+  whole hours and an hour 60 whole minutes, so the hour is the local
+  hours modulo 24, the minute the local minutes modulo 60, and the
+  second what is left of the local microseconds after its minutes, cut
+  to the scale of SECOND. YEAR, MONTH and DAY ask the calendar of each
+  row's day. TIMEZONE_HOUR and TIMEZONE_MINUTE are the hours and
+  minutes of each row's displacement, of its sign. The result is a
+  vector of integers, of the scale of SECOND or of 0, null where the
+  datetime is. A field the type has not gives no vector, and its rows
+  are null as before.
+- A column store reads a datetime type WITH TIME ZONE as values
+  (`engine/columns/scan.rs`, `datetime_shape`), so a field of such a
+  column is still called a row at a time. A vector of datetimes that
+  carries displacements, as the row store gathers one and as a cast
+  gives one, takes both bodies.
+
+Each body gives of a row what the function's call gives of that row's
+value, its instant, its displacement, its precision and whether it is
+WITH TIME ZONE. Unit tests hold `fields` to `Datetime::field` and `cast`
+to `cast_at`, of every pair of datetime types in sessions of four
+displacements, over the first instant and the ones before it, the ends
+of a minute, an hour and a day, leap days, the last instant of 9999 and
+the ones past it, the least and greatest words, the least and greatest
+displacements, and a spread of a fixed seed. No datetime holds a leap
+second, so none is among them. An integration test holds queries of
+both engines, in sessions of three displacements, to the rows they give
+a row at a time.
 
 ## 2. Project layout
 

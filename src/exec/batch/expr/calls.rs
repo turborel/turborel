@@ -1,6 +1,7 @@
 //! \[DESIGN\] Calls of scalar functions over vectors (RULES.md D363): a
 //! function with a body over vectors (`ScalarFunction::eval_batch`), as
-//! ABS, CHAR_LENGTH, UPPER, LOWER and EXTRACT have, is called once for
+//! ABS, CHAR_LENGTH, UPPER, LOWER, EXTRACT and CAST of a datetime to a
+//! datetime type have (RULES.md D1320), is called once for
 //! the rows given; any other is called for each row's values, borrowed
 //! from its arguments' vectors (`call_borrowed`), as a row's evaluation
 //! calls it, the tree above it still evaluated a vector at a time. A
