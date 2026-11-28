@@ -7,7 +7,8 @@
 
 use super::super::tests::{calls, exact, fed};
 use super::*;
-use crate::exec::table::{Key, hash_lanes, hash_rows};
+use crate::exec::batch::Taken;
+use crate::exec::table::{Key, Pending, hash_lanes, hash_rows};
 use crate::kernels::Portable;
 use crate::storage::{Column, Ints, Mask};
 use crate::value::Value;
@@ -25,16 +26,22 @@ const BY: [&[usize]; 3] = [WHOLE, LANE, &[1]];
 const NO_CALLS: &[AggCall] = &[];
 
 /// A morsel's batches, three of 400 rows: integers, each key held four
-/// times and a null every eleventh row, and texts with and without a
-/// trailing space; the second batch kept every row but each fifth. With
-/// `nulls`, every integer is null.
+/// times and a null every eleventh row, texts with and without a
+/// trailing space, and the integers the set functions take, none null;
+/// the second batch kept every row but each fifth. With `nulls`, every
+/// integer of the key is null.
 fn held(nulls: bool) -> Vec<(Batch, Option<Sel>)> {
     let batch = |b: i64| {
         let n = |r: i64| b.saturating_mul(400).saturating_add(r);
         let units: Vec<i64> = (0..400).map(|r| n(r).rem_euclid(290)).collect();
         let null: Vec<bool> = (0..400).map(|r| nulls || n(r).rem_euclid(11) == 3).collect();
         let texts = (0..400).map(|r| Value::Char(format!("t{}{}", n(r).rem_euclid(7), if r % 2 == 0 { " " } else { "" }).into()));
-        let columns = vec![Column::Ints(Ints::new(units, 0, Some(Mask::from_bools(&null)))), Column::Values(texts.collect())];
+        let fed: Vec<i64> = (0..400).map(|r| n(r).rem_euclid(97)).collect();
+        let columns = vec![
+            Column::Ints(Ints::new(units, 0, Some(Mask::from_bools(&null)))),
+            Column::Values(texts.collect()),
+            Column::Ints(Ints::new(fed, 0, None)),
+        ];
         let kept = (b == 1).then(|| (0..400_u32).filter(|r| r % 5 != 0).collect::<Sel>());
         (Batch { columns, rows: 400 }, kept)
     };
@@ -64,23 +71,24 @@ fn appended(held: &[(Batch, Option<Sel>)], hashes: &[u64], seed: &Seed) -> Group
     for (batch, rows) in held {
         let rows = rows.as_ref().map(Sel::as_slice);
         for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
-            let number = u64::try_from(table.len()).unwrap().saturating_add(1000);
-            let own = table.appended(*hash.next().unwrap(), Key::Row(batch, &AT, crate::storage::sel::nth(rows, n)), number);
-            fed(&mut table, own, (number, &vec![exact(i128::from(number % 97))]));
+            let (number, r) = (u64::try_from(table.len()).unwrap().saturating_add(1000), crate::storage::sel::nth(rows, n));
+            let own = table.appended(*hash.next().unwrap(), Key::Row(batch, &AT, r), number);
+            fed(&mut table, own, (number, &vec![batch.cell(2, r).to_value()]));
         }
     }
     table
 }
 
 /// The rows kept of `held` written by partition among `parts` by
-/// `lanes`, each fed its row at its place.
+/// `lanes`, each group's states set as its row's: COUNT(*), and SUM, MIN
+/// and MAX of the third column.
 fn written(held: &[(Batch, Option<Sel>)], (parts, lanes): (usize, &[usize]), seed: &Seed) -> GroupTable {
     let (hashes, by) = hashed(held, lanes, seed);
     let by = (!lanes.is_empty()).then_some(by.as_slice());
     let mut table = GroupTable::placed((held, AT.as_slice()), (calls().as_slice(), seed), (hashes.as_slice(), by, 1000), (parts, lanes));
-    let places = table.placed.as_ref().unwrap().places.clone();
-    for (number, &place) in (1000_u64..).zip(&places) {
-        fed(&mut table, place, (number, &vec![exact(i128::from(number % 97))]));
+    let sources = table.placed.as_ref().unwrap().sources.clone();
+    for (states, take) in table.states.iter_mut().zip([Taken::Count, Taken::Column(2), Taken::Column(2), Taken::Column(2)]) {
+        assert_eq!(states.set_apart(&take, held, &sources), Some(false), "set, and no null passed over");
     }
     table
 }
@@ -165,31 +173,50 @@ fn a_table_written_by_other_partitions_is_gathered_again() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D1313 the rows of each batch taken into a
-/// table written by partition are to be fed to the groups at their
-/// places: the rows after those of the batches taken before, each as
-/// given and as read of its batch, a filter's rows where it kept some;
-/// and none is noted of a table that computes no set function, which
-/// counts them all the same.
+/// Verifies: [DESIGN] RULES.md D1313 the rows of each batch that are fed
+/// to a table written by partition go to the groups at their places: a
+/// batch's rows are those after the rows of the batches before it, each
+/// noted as given and as read of its batch, a filter's rows where it
+/// kept some, and what was noted of the batch before is forgotten.
 #[test]
-fn rows_taken_of_a_batch_are_fed_at_their_places() {
+fn rows_fed_of_a_batch_go_to_the_groups_at_their_places() {
     let (held, seed) = (held(false), Seed::fixed(0x5EED));
-    let mut table = written(&held, (8, WHOLE), &seed);
-    let places = table.placed.as_ref().unwrap().places.clone();
-    table.take_placed(None, 400);
-    assert_eq!(table.pending.groups, &places[..400]);
-    table.pending = crate::exec::table::Pending::default();
+    assert_eq!(spans(&held), [(0, 400), (400, 720), (720, 1120)]);
+    let table = written(&held, (8, WHOLE), &seed);
+    let (placed, mut pending) = (table.placed.as_ref().unwrap(), Pending::default());
+    assert_eq!(table.taken, 1120);
+    placed.take(&mut pending, (0, 400), None);
+    assert_eq!(pending.groups, &placed.places[..400]);
     let kept = held.get(1).and_then(|(_, rows)| rows.as_ref()).map(Sel::as_slice).unwrap();
-    table.take_placed(Some(kept), 320);
-    assert_eq!(table.pending.groups, &places[400..720], "the rows after the first batch's");
-    assert_eq!(table.pending.read, kept);
-    assert_eq!(table.pending.given, (0..320).collect::<Vec<u32>>());
-    table.pending = crate::exec::table::Pending::default();
-    table.take_placed(None, 400);
-    assert_eq!((table.pending.groups.as_slice(), table.taken), (&places[720..], 1120));
-    assert_eq!(table.pending.read, (0..400).collect::<Vec<u32>>());
+    placed.take(&mut pending, (400, 720), Some(kept));
+    assert_eq!(pending.groups, &placed.places[400..720], "the rows after the first batch's, alone");
+    assert_eq!(pending.read, kept);
+    assert_eq!(pending.given, (0..320).collect::<Vec<u32>>());
+    placed.take(&mut pending, (720, 1120), None);
+    assert_eq!(pending.groups, &placed.places[720..]);
+    assert_eq!(pending.read, (0..400).collect::<Vec<u32>>());
+}
+
+/// Verifies: [DESIGN] RULES.md D1313 [X3.135-1986 §5.8 GR1] a column of
+/// states set as its rows' takes nothing of a null and says one was
+/// passed over, so the group of a null has the state of no row; and a
+/// column that holds states already, or is asked what it does not set
+/// (the count of a column, a column that is no integer), is left as it
+/// is to be fed.
+#[test]
+fn states_set_as_their_rows_take_nothing_of_a_null() {
+    let (held, seed) = (held(false), Seed::fixed(0x5EED));
     let (hashes, _) = hashed(&held, WHOLE, &seed);
-    let mut keys = GroupTable::placed((held.as_slice(), AT.as_slice()), (NO_CALLS, &seed), (hashes.as_slice(), None, 0), (8, WHOLE));
-    keys.take_placed(None, 400);
-    assert!(keys.pending.groups.is_empty() && keys.taken == 400, "no set function, nothing to feed");
+    let mut table =
+        GroupTable::placed((held.as_slice(), AT.as_slice()), (calls().as_slice(), &seed), (hashes.as_slice(), None, 0), (8, WHOLE));
+    let sources = table.placed.as_ref().unwrap().sources.clone();
+    let [count, sum, least, _] = table.states.as_mut_slice() else { panic!("four set functions") };
+    assert_eq!(count.set_apart(&Taken::Column(0), &held, &sources), None, "COUNT of a column is fed");
+    assert_eq!(least.set_apart(&Taken::Column(1), &held, &sources), None, "no integers");
+    assert_eq!(sum.set_apart(&Taken::Column(0), &held, &sources), Some(true), "nulls passed over");
+    assert_eq!(sum.set_apart(&Taken::Column(0), &held, &sources), None, "states held already");
+    for (place, &(b, r)) in sources.iter().enumerate() {
+        let read = held[index(b)].0.cell(0, index(r)).to_value();
+        assert_eq!(sum.finish(place).unwrap(), read, "the sum of one row is its value, of a null none");
+    }
 }

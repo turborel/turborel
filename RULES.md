@@ -24907,9 +24907,15 @@ value written at its place. The hashes and the first rows' numbers are
 written so. A key lane of integers of one scale is written straight from
 the batches' vectors, and a lane of any other type takes its values one
 at a time in the order of the places, as a table's lane takes them
-(`exec/table/keys/placed.rs`). The states are grown once to the rows'
-count and fed each batch's rows with their places as their groups, by
-the feed every table uses, so every kind of state is fed as it was.
+(`exec/table/keys/placed.rs`). The states are made a set function at a
+time, so one function's states alone are being written. A row that is
+a group of its own gives its group the state of one row, so COUNT(\*)
+and a set function of an integer column are made whole, each group's
+state written once in the order the groups lie, with nothing taken of
+a null (`exec/table/states/typed/apart.rs`). Any other column of states
+is grown once to the rows' count and fed each batch's rows with their
+places as their groups, by the feed every table uses, so every kind of
+state holds what it held.
 
 What is handed over is what the two steps gave. A partition's rows lie
 in the order they came, their places count from zero, and the Made says

@@ -1,8 +1,9 @@
 //! The mutations of a morsel's rows handed on ungrouped and written once
 //! by partition (RULES.md R-TEST-9, D1313): each row's place among its
-//! partition's, the keys and first rows written there, the rows fed to
-//! the groups at their places, the hash of a key's lanes, and a table
-//! handed over as it lies only by the partitions it was written by.
+//! partition's, the keys and first rows written there, the states set as
+//! their rows' and the rows fed to the groups at their places, the hash
+//! of a key's lanes, and a table handed over as it lies only by the
+//! partitions it was written by.
 
 use super::super::{Mutation, Package};
 
@@ -12,6 +13,9 @@ const APART_FILE: &str = "src/exec/table/made/apart.rs";
 /// Where the key lanes are written.
 const KEYS_FILE: &str = "src/exec/table/keys/placed.rs";
 
+/// Where the states of one row a group are set.
+const STATES_FILE: &str = "src/exec/table/states/typed/apart.rs";
+
 /// Rows written by partition are the rows appended and gathered.
 const WRITTEN: &str = "exec::table::made::apart::tests::rows_written_by_partition_are_the_rows_appended_and_gathered";
 
@@ -20,7 +24,7 @@ const GATHERED: &str = "exec::table::made::apart::tests::a_table_written_by_othe
 
 /// Mechanisms whose removal must fail the requirements of rows written
 /// by partition.
-pub const PLACED_ROWS: [Mutation; 9] = [
+pub const PLACED_ROWS: [Mutation; 12] = [
     Mutation {
         name: "placed-rows-one-place-a-partition",
         package: Package::Core,
@@ -66,10 +70,10 @@ pub const PLACED_ROWS: [Mutation; 9] = [
         package: Package::Core,
         breaks: "the rows of every batch are fed to the groups of the morsel's first rows (RULES.md D1313)",
         file: APART_FILE,
-        original: "        placed.fed = from.saturating_add(count);\n",
-        replacement: "        placed.fed = from;\n",
+        original: "        from = to;\n",
+        replacement: "",
         integration: &[],
-        unit: &["exec::table::made::apart::tests::rows_taken_of_a_batch_are_fed_at_their_places"],
+        unit: &["exec::table::made::apart::tests::rows_fed_of_a_batch_go_to_the_groups_at_their_places"],
     },
     Mutation {
         name: "placed-rows-nulls-not-noted",
@@ -95,7 +99,7 @@ pub const PLACED_ROWS: [Mutation; 9] = [
         name: "placed-rows-values-of-the-first-batch",
         package: Package::Core,
         breaks: "a key that is no integer is read of the morsel's first batch whichever batch its row is of (RULES.md D1313)",
-        file: KEYS_FILE,
+        file: APART_FILE,
         original: "                *at = (b, u32::try_from(nth(rows, n)).unwrap_or(u32::MAX));",
         replacement: "                *at = (0, u32::try_from(nth(rows, n)).unwrap_or(u32::MAX));",
         integration: &[],
@@ -110,5 +114,35 @@ pub const PLACED_ROWS: [Mutation; 9] = [
         replacement: "at.get(lane).map(|&c| (0, c))",
         integration: &[],
         unit: &[WRITTEN],
+    },
+    Mutation {
+        name: "placed-rows-counted-none",
+        package: Package::Core,
+        breaks: "COUNT(*) of rows handed on ungrouped is set to no row a group (RULES.md D1313)",
+        file: STATES_FILE,
+        original: "*counts = vec![1; sources.len()];",
+        replacement: "*counts = vec![0; sources.len()];",
+        integration: &[],
+        unit: &[WRITTEN],
+    },
+    Mutation {
+        name: "placed-rows-states-of-no-value",
+        package: Package::Core,
+        breaks: "a set function of an integer column is set to nothing of every row handed on ungrouped (RULES.md D1313)",
+        file: STATES_FILE,
+        original: "units.push(read.map_or(0, |&unit| i128::from(unit)));",
+        replacement: "units.push(0);",
+        integration: &[],
+        unit: &[WRITTEN],
+    },
+    Mutation {
+        name: "placed-rows-a-null-taken",
+        package: Package::Core,
+        breaks: "a null is taken as a value of a state set as its row's, so SUM of a null alone is 0 (RULES.md D1313)",
+        file: STATES_FILE,
+        original: "counts.push(i64::from(read.is_some()));",
+        replacement: "counts.push(1);",
+        integration: &[],
+        unit: &["exec::table::made::apart::tests::states_set_as_their_rows_take_nothing_of_a_null"],
     },
 ];
