@@ -23422,6 +23422,7 @@ numbers, so a set function whose state depends on the order of its
 values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
+
 #### D1267. A column read only for its octet length is given by its scan with its lengths and never decoded
 
 OCTET_LENGTH of a column counted the octets of each value's text
