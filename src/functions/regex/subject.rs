@@ -99,13 +99,11 @@ impl<'v> Subject<'v> {
     }
 
     /// \[DESIGN\] (RULES.md D1188) `text`, a character string of a vector
-    /// of them, counted in `units`: as `new` of its value, no value made.
-    ///
-    /// # Errors
-    ///
-    /// As `new`.
-    pub(super) fn of_text(text: &'v str, units: &Value) -> Result<Subject<'v>> {
-        Ok(Subject { body: body_of(text), octets: octets(units)? })
+    /// of them, counted in octets if `octets`, else in characters: as
+    /// `new` of its value, no value made, and the units read once for the
+    /// vector (`octets`, RULES.md D1311).
+    pub(super) fn of_text(text: &'v str, octets: bool) -> Subject<'v> {
+        Subject { body: body_of(text), octets }
     }
 
     /// The position past its last character.
@@ -206,7 +204,11 @@ fn placed(text: &str, units: usize, octets: bool) -> usize {
 }
 
 /// Whether `units`, a `<char length units>`, are octets.
-fn octets(units: &Value) -> Result<bool> {
+///
+/// # Errors
+///
+/// SQLCODE -910 of units that are neither.
+pub(super) fn octets(units: &Value) -> Result<bool> {
     match text(units)? {
         Some(OCTETS) => Ok(true),
         Some(CHARACTERS) => Ok(false),
