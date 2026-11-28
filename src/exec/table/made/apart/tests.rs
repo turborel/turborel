@@ -5,7 +5,7 @@
 //! keys and by a lane; and a table written by other partitions than it
 //! is handed by is gathered as any table is.
 
-use super::super::tests::{calls, exact, fed};
+use super::super::tests::{calls, fed};
 use super::*;
 use crate::exec::batch::Taken;
 use crate::exec::table::{Key, Pending, hash_lanes, hash_rows};
@@ -71,7 +71,7 @@ fn appended(held: &[(Batch, Option<Sel>)], hashes: &[u64], seed: &Seed) -> Group
     for (batch, rows) in held {
         let rows = rows.as_ref().map(Sel::as_slice);
         for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
-            let (number, r) = (u64::try_from(table.len()).unwrap().saturating_add(1000), crate::storage::sel::nth(rows, n));
+            let (number, r) = (u64::try_from(table.len()).unwrap().saturating_add(1000), nth(rows, n));
             let own = table.appended(*hash.next().unwrap(), Key::Row(batch, &AT, r), number);
             fed(&mut table, own, (number, &vec![batch.cell(2, r).to_value()]));
         }
@@ -217,6 +217,6 @@ fn states_set_as_their_rows_take_nothing_of_a_null() {
     assert_eq!(sum.set_apart(&Taken::Column(0), &held, &sources), None, "states held already");
     for (place, &(b, r)) in sources.iter().enumerate() {
         let read = held[index(b)].0.cell(0, index(r)).to_value();
-        assert_eq!(sum.finish(place).unwrap(), read, "the sum of one row is its value, of a null none");
+        assert_eq!(format!("{:?}", sum.finish(place).unwrap()), format!("{read:?}"), "the sum of one row is its value, of a null none");
     }
 }
