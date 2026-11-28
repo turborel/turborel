@@ -4,7 +4,7 @@
 //! (zone maps), and by the parts' Bloom filters; and the rows of a run, only
 //! the columns asked for decoded, a chunk read once for the rows it holds.
 
-use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
+use super::group::{Group, PART_ROWS, Pages, Part, Seal, Zone};
 use super::prepared::Prepared;
 use super::{Chunk, bloom, imprints, padding};
 use crate::error::Result;
@@ -161,8 +161,37 @@ fn kept_by(group: &Group, condition: &Conjunct) -> Result<Vec<(u32, u32)>> {
 /// chunks, `condition` may match, of `bounds` of the other columns it
 /// reads.
 fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Vec<Option<(Value, Value)>>)) -> Result<Vec<(u32, u32)>> {
-    let column = &column;
-    let Some(zones) = group.zones(*column)? else { return Ok(vec![(0, group.rows)]) };
+    let Some(zones) = group.zones(column)? else { return Ok(vec![(0, group.rows)]) };
+    // A conjunct of this column alone is asked of each part's bounds where
+    // they lie (`Conjunct::may_match_range`), none copied.
+    let alone = condition.columns().len() == 1;
+    Ok(parts_kept(zones, &mut |part, (from, to)| match condition {
+        Conjunct::Null { not: false, .. } => part.nulls > 0,
+        Conjunct::Null { not: true, .. } => part.nulls < to.saturating_sub(from),
+        Conjunct::Condition(_)
+        | Conjunct::In { .. }
+        | Conjunct::NotIn { .. }
+        | Conjunct::Any(_)
+        | Conjunct::Dynamic { .. }
+        | Conjunct::Spans { .. }
+        | Conjunct::Among { .. }
+        | Conjunct::Unpadded { .. }
+        | Conjunct::Like { .. } => {
+            if alone {
+                return condition.may_match_range(part.bounds.as_ref());
+            }
+            if let Some(b) = bounds.get_mut(column) {
+                b.clone_from(&part.bounds);
+            }
+            condition.may_match(&bounds)
+        }
+    }))
+}
+
+/// The runs of positions of the parts of the chunks `zones` that `may`
+/// says may hold a row wanted, each part given with its rows' first
+/// position and the one past its last, parts one after another joined.
+fn parts_kept(zones: &[Zone], may: &mut dyn FnMut(&Part, (u32, u32)) -> bool) -> Vec<(u32, u32)> {
     let mut runs: Vec<(u32, u32)> = Vec::new();
     let parts = zones.iter().flat_map(|zone| {
         let end = zone.run.first.saturating_add(zone.run.rows);
@@ -172,23 +201,7 @@ fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Ve
         })
     });
     for (part, (from, to)) in parts {
-        if let Some(b) = bounds.get_mut(*column) {
-            b.clone_from(&part.bounds);
-        }
-        let may = match condition {
-            Conjunct::Null { not: false, .. } => part.nulls > 0,
-            Conjunct::Null { not: true, .. } => part.nulls < to.saturating_sub(from),
-            Conjunct::Condition(_)
-            | Conjunct::In { .. }
-            | Conjunct::NotIn { .. }
-            | Conjunct::Any(_)
-            | Conjunct::Dynamic { .. }
-            | Conjunct::Spans { .. }
-            | Conjunct::Among { .. }
-            | Conjunct::Unpadded { .. }
-            | Conjunct::Like { .. } => condition.may_match(&bounds),
-        };
-        if !may {
+        if !may(part, (from, to)) {
             continue;
         }
         // A run that goes on from the one before joins it.
@@ -198,7 +211,7 @@ fn kept_of(group: &Group, condition: &Conjunct, (column, mut bounds): (usize, Ve
             runs.push((from, to));
         }
     }
-    Ok(runs)
+    runs
 }
 
 /// The rows at positions `from` to `to` of `group`, its columns of
