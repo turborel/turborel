@@ -1,5 +1,6 @@
 //! Each area's mutations, in the order they run, after the core's.
 
+mod alike_runs;
 mod altered_tables;
 mod analyze;
 mod analyze_more;
@@ -321,9 +322,10 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
-/// window narrowed's, a join built in passes' and a filter passing over
-/// what its scan judged's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 40] {
+/// window narrowed's, a join built in passes', a filter passing over
+/// what its scan judged's and the runs of rows of one key's last, as
+/// `last` holds no more.
+fn closing() -> [&'static [Mutation]; 41] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -365,6 +367,7 @@ fn closing() -> [&'static [Mutation]; 40] {
         &narrowed_windows::NARROWED_WINDOWS,
         &spilled_joins::SPILLED_JOINS,
         &vetted::VETTED,
+        &alike_runs::ALIKE_RUNS,
     ]
 }
 

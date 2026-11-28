@@ -15,7 +15,7 @@
 use super::super::{Batches, Read, fed, lanes};
 use super::coded::{Memo, grouped, hash_of};
 use crate::error::Result;
-use crate::exec::table::{GroupTable, Key, Seed, hash_rows};
+use crate::exec::table::{GroupTable, Key, Seed, hash_rows, narrow};
 use crate::exec::{Runner, broken};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
@@ -155,26 +155,40 @@ fn written_state(state: &dyn Accumulator) -> Option<Vec<u8>> {
 }
 
 /// Groups the rows `rows`, or all, of `batch` by its columns `at` into
-/// `table`, each row's key hashed of `seed` a vector at a time, its group
-/// found or made, its first row numbered from `number`.
+/// `table`, each row's group found or made by its key and hash of
+/// `seed`, its first row numbered from `number`.
+///
+/// \[DESIGN\] (RULES.md D31, D1323) Where rows of one key come one
+/// after another (`run_ends`), a run's first row alone is hashed and
+/// looked up, and the rows after it go to its group. Where no row
+/// repeats the one before it, every row's key is hashed a vector at a
+/// time, as of a batch that tells no run.
 fn hashed(
     table: &mut GroupTable,
     (batch, at, rows): (&Batch, &[usize], Option<&[u32]>),
     (number, seed, runner): (u64, &Seed, &Runner),
     hashes: &mut Vec<u64>,
 ) {
-    hash_rows(batch, (at, rows), (seed, runner.kernels()), hashes);
-    // Of a grouping by one column of runs, a row of the run of the row
-    // before it goes to that row's group, no key compared (`run_ends`).
-    let mut ends = super::run_ends(batch, at, rows).into_iter().flatten();
-    let (mut boundary, mut g) = (0_usize, 0_u32);
-    for (n, &hash) in hashes.iter().enumerate() {
-        let r = nth(rows, n);
-        if n >= boundary {
-            boundary = ends.next().unwrap_or(n.saturating_add(1));
-            let first_row = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
-            g = table.found_or_made(hash, Key::Row(batch, at, r), first_row);
+    let count = rows.map_or(batch.rows, <[u32]>::len);
+    let numbered = |n: usize| number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+    let Some(ends) = super::run_ends(batch, at, rows).filter(|ends| ends.len() < count) else {
+        hash_rows(batch, (at, rows), (seed, runner.kernels()), hashes);
+        for (n, &hash) in hashes.iter().enumerate() {
+            let r = nth(rows, n);
+            let g = table.found_or_made(hash, Key::Row(batch, at, r), numbered(n));
+            table.take(g, (n, r));
         }
-        table.take(g, (n, r));
+        return;
+    };
+    // Each run's first row, as its place among the rows given and in the
+    // batch: the first row given, then the row after each end but the last.
+    let begins: Vec<usize> = std::iter::once(0).chain(ends.iter().copied()).take(ends.len()).collect();
+    let firsts: Vec<u32> = begins.iter().map(|&n| narrow(nth(rows, n))).collect();
+    hash_rows(batch, (at, Some(&firsts)), (seed, runner.kernels()), hashes);
+    for ((&hash, &from), &end) in hashes.iter().zip(&begins).zip(&ends) {
+        let g = table.found_or_made(hash, Key::Row(batch, at, nth(rows, from)), numbered(from));
+        for n in from..end {
+            table.take(g, (n, nth(rows, n)));
+        }
     }
 }
