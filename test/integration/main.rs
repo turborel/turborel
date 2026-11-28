@@ -30,6 +30,7 @@
 )]
 
 mod adjacency_index;
+mod fmk_tpch;
 mod alter_columns;
 mod certified_columns;
 mod collated_indexes;
