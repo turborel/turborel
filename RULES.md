@@ -23558,6 +23558,7 @@ the set and is judged by the filter, as the set is one word.
 The rows a query gives are the same. An analyzed plan shows a scan under
 a filter giving the rows its judging kept, where it showed every row of
 a run given whole.
+
 #### D1267. A column read only for its octet length is given by its scan with its lengths and never decoded
 
 OCTET_LENGTH of a column counted the octets of each value's text
@@ -24699,6 +24700,7 @@ So the rule is the reader's, not a count of groups
 (`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
 which goes wide whatever reads, is what the tests of the gathered table
 ask.
+
 #### D1311. The matcher that marks does a step's work once a step
 
 The matcher of a program with no back-reference over a short text
