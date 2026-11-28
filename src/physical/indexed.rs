@@ -285,12 +285,16 @@ impl PhysicalPlanner<'_> {
             let whole = !reverse && used.len() == ix.columns.len();
             let probed: Vec<usize> = at.iter().filter_map(|&k| ix.columns.get(k).copied()).collect(); // `indexed/fan_out.rs`
             // [DESIGN] (RULES.md D1297) The probed columns' values together,
-            // as the statistics count them, else each column's multiplied, at
-            // most the rows.
+            // as the statistics count them, else each column's multiplied: of
+            // two or more, whose guesses multiply past any table, at most the
+            // rows; one column's guess stands, as a probe may find no row.
             let joint = || {
                 let distinct =
                     |c: &usize| known.stats.and_then(|s| s.distinct(*c)).map_or(1.0_f64 / model.equal_selectivity, |d| d.max(1.0_f64));
-                let product = || probed.iter().map(distinct).product::<f64>().min(rows);
+                let product = || {
+                    let guessed = probed.iter().map(distinct).product::<f64>();
+                    if probed.len() > 1 { guessed.min(rows) } else { guessed }
+                };
                 known.stats.and_then(|s| s.group_distinct(&probed)).unwrap_or_else(product).max(1.0_f64)
             };
             let fan_out = || self.edge_fan_out(table, &probed).unwrap_or_else(|| rows / joint());

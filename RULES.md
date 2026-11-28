@@ -24737,10 +24737,14 @@ so none is enumerated beyond the indexes' keys.
 A probe finds the rows of its key. A key wholly covered is counted by the
 index's distinct keys (D383), one row a probe of a unique key. A prefix
 is counted by the statistics' joint distinct values of its columns where
-they hold them, and else by the product of each column's distinct values,
-at most the table's rows, so a probe finds at least a row. Before, that
-product could pass the rows and price a probe at less than a row. No
-constant is added.
+they hold them, and else by the product of each column's distinct values.
+A product of two or more columns' guesses is at most the table's rows, so
+a probe of several finds at least a row. Before, that product could pass
+the rows and price a probe at less than a row. One column's guess stands
+as it was, since a probe of one value may find none. Capped too, it
+priced a small table's probe at a whole row, and the Expand of a graph
+pattern from a bound vertex (D147) lost to a hash join. No constant is
+added.
 
 The tests plan a join to a key of two columns given by two join columns,
 by one join column and a constant, a prefix of a key of three, and a
