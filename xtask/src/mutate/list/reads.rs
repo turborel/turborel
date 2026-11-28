@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 48] = [
+pub const READS: [Mutation; 49] = [
     Mutation {
         name: "zone-write-visible",
         package: Package::Core,
@@ -113,8 +113,8 @@ pub const READS: [Mutation; 48] = [
         package: Package::Core,
         breaks: "a run's value is not written where the run begins, so a run shorter than a line holds none (RULES.md D1315)",
         file: "src/engine/columns/runs.rs",
-        original: "            *run.first_chunk_mut::<LINE>()? = [value; LINE];",
-        replacement: "            *run.first_chunk_mut::<LINE>()? = [0; LINE];",
+        original: "                out.extend_from_slice(&[value; LINE]);",
+        replacement: "                out.extend_from_slice(&[0; LINE]);",
         integration: &[],
         unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
     },
@@ -123,8 +123,8 @@ pub const READS: [Mutation; 48] = [
         package: Package::Core,
         breaks: "the rows of a run past its first line are not written its value (RULES.md D1315)",
         file: "src/engine/columns/runs.rs",
-        original: "                rest.fill(value);",
-        replacement: "                rest.fill(0);",
+        original: "                out.resize(rows, value);",
+        replacement: "                out.resize(rows, 0);",
         integration: &[],
         unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
     },
@@ -139,14 +139,24 @@ pub const READS: [Mutation; 48] = [
         unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
     },
     Mutation {
-        name: "runs-room-past-the-rows-kept",
+        name: "runs-line-kept-past-the-run",
         package: Package::Core,
-        breaks: "the room a last run's line is given past the rows asked is left in the vector (RULES.md D1315)",
+        breaks: "the line a short run is appended as is not cut back to the run's rows (RULES.md D1315)",
         file: "src/engine/columns/runs.rs",
-        original: "        out.truncate(start.saturating_add(if spread.is_some() { count } else { 0 }));",
-        replacement: "        out.truncate(start.saturating_add(if spread.is_some() { count.saturating_add(LINE) } else { 0 }));",
+        original: "                out.truncate(rows);",
+        replacement: "",
         integration: &[],
         unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
+    },
+    Mutation {
+        name: "runs-failed-reading-kept",
+        package: Package::Core,
+        breaks: "a reading whose runs are not the positions' leaves what it appended (RULES.md D1315)",
+        file: "src/engine/columns/runs.rs",
+        original: "        if spread.is_none() {\n            out.truncate(start);",
+        replacement: "        if spread.is_none() {",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::runs_that_are_not_the_positions_leave_the_rows_as_they_were"],
     },
     Mutation {
         name: "runs-positions-judged-by-their-count",

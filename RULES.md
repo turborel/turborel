@@ -25251,17 +25251,16 @@ The two vectors are now the scan's (`engine/columns/prepared.rs`,
 them back, so the readings of a scan make them once, and a reader with
 no scan makes its own as before.
 
-The rows are made room for once, with a line more past the last
-(`runs::LINE`), and each run's value is written to a whole line where
-the run begins, whatever the run's length (`Runs::spread`). Only a run
-longer than a line has the rest of its rows filled. So a run of a few
-rows costs one test and one write of fixed size. The rows a run's line
-covers past the run's end are written again by the runs after it, and
-the line past the last row is cut off before the vector is given. A
-line is the eight integers of a cache line. The rows of a line are
-written together whichever of them the run holds, as the line is
-written by the runs that follow anyway, and a longer write would touch
-another line for every run.
+Room is made once for the rows and a line more (`runs::LINE`). A run
+of a line or less has its value appended as a whole line, whatever its
+length, and the vector is then cut back to the run's rows
+(`Runs::spread`). So a run of a few rows costs one test and one write
+of fixed size. A run longer than a line is one fill of its rows and
+nothing else, as it was, since a line written first would only be
+written again. A line is the eight integers of a cache line. The rows
+of a line are written together whichever of them the run holds, as the
+line is written by the runs that follow anyway, and a longer write
+would touch another line for every run.
 
 The values, their nulls and the runs' ends are those read before. Runs
 that are not those of the positions asked, an end before the one before

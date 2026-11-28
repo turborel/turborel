@@ -101,12 +101,12 @@ fn runs_that_are_not_the_positions_leave_the_rows_as_they_were() {
     assert_eq!(runs.ints_ends((0, 3), (&mut out, None), &mut unpacked), Some(()), "of the first run alone");
     assert_eq!(out, [5, 6, 1, 1, 1]);
     let spread = |ends: &[i64]| {
-        let mut slots = vec![7_i64; 12 + LINE];
-        (Runs::spread((&[1, 2], ends), (0, 12), &mut slots, None), slots)
+        let mut out = vec![7_i64];
+        (Runs::spread((&[1, 2], ends), (0, 12), &mut out, None), out)
     };
     assert_eq!(spread(&[5, 9]).0, None, "runs that end short of the last position");
-    let (read, slots) = spread(&[5, 30]);
-    assert_eq!((read, &slots[..12]), (Some(()), [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2].as_slice()), "a run past the last position");
+    let (read, out) = spread(&[5, 30]);
+    assert_eq!((read, &out[1..]), (Some(()), [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2].as_slice()), "a run past the last position");
 }
 
 /// Verifies: [DESIGN] RULES.md D1340, D360 the values at positions that

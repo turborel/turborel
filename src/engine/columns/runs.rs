@@ -18,12 +18,14 @@ use crate::error::Result;
 /// The bytes of an integer field.
 const FRAMED: usize = 8;
 
-/// \[DESIGN\] (RULES.md D1315) The integers a run's value is written to
-/// at once where the run begins, and the room a vector of rows is given
-/// past its last for that. It is the eight of a cache line of 64 bytes.
-/// The rows of a line are written together whichever of them a run
-/// holds, as the runs after it write the line's rest anyway, and a
-/// longer write would touch a line more for every run.
+/// \[DESIGN\] (RULES.md D1315) The integers a run's value is appended as
+/// at once, of a run no longer than that, and the room a vector of rows
+/// is given past its last for it. It is the eight of a cache line of 64
+/// bytes. The rows of a line are written together whichever of them a
+/// run holds, as the runs after it write the line's rest anyway, and a
+/// longer write would touch a line more for every run. A run longer than
+/// a line is filled as it is, so the same length says which runs are
+/// short.
 pub(super) const LINE: usize = 8;
 
 /// The values unpacked a run where a span's runs are read whole, its
@@ -165,9 +167,9 @@ impl<'a> Runs<'a> {
     /// two searches, have their values and ends unpacked a block at a time
     /// (`packed/blocks.rs`) into `unpacked`, so no run's value nor end is
     /// read alone and a reading that is given the vectors of the one
-    /// before makes none. The values are then written a line a run
-    /// (`spread`). None, with `out` as it was, if the runs are not those
-    /// of the positions.
+    /// before makes none. The values are then appended a run at a time,
+    /// a short run as a whole line (`spread`). None, with `out` as it
+    /// was, if the runs are not those of the positions.
     pub(super) fn ints_ends(
         &self,
         (from, to): (usize, usize),
@@ -186,12 +188,54 @@ impl<'a> Runs<'a> {
         run_ends.clear();
         unpack_words(self.values, (self.bits, self.least), (first, last), values)?;
         unpack_words(self.ends, (bits_for(u64::try_from(self.count).ok()?), 0), (first, last), run_ends)?;
-        let (start, count) = (out.len(), to.checked_sub(from)?);
-        // The last run's line may pass the last position, by less than a line.
-        out.resize(start.checked_add(count)?.checked_add(LINE)?, 0);
-        let spread = Self::spread((values.as_slice(), run_ends.as_slice()), (from, to), out.get_mut(start..)?, ends);
-        out.truncate(start.saturating_add(if spread.is_some() { count } else { 0 }));
+        // Room for the rows and for the line of a last run shorter than
+        // one, so that no run's write grows the vector.
+        let start = out.len();
+        out.reserve(to.checked_sub(from)?.checked_add(LINE)?);
+        let spread = Self::spread((values.as_slice(), run_ends.as_slice()), (from, to), out, ends);
+        if spread.is_none() {
+            out.truncate(start);
+        }
         spread
+    }
+
+    /// \[DESIGN\] (RULES.md D1315) Appends to `out` the value of each run
+    /// of `values` ending at `run_ends`, cut at `to`, for its rows from
+    /// `from` on, and pushes each end to `ends` past its base. A run of a
+    /// line or less has its value appended as a whole line, whatever its
+    /// length, and the vector is then cut back to the run's rows. So a
+    /// run of a few rows, which is most of a column kept as runs whose
+    /// values change often, takes no loop whose count the processor must
+    /// guess. A run longer than a line is one fill of its rows and
+    /// nothing else, as a line written first would only be written
+    /// again. None if an end lies before the one before it, or the runs
+    /// end short of `to`.
+    fn spread(
+        (values, run_ends): (&[i64], &[i64]),
+        (from, to): (usize, usize),
+        out: &mut Vec<i64>,
+        ends: Option<(&mut Vec<usize>, usize)>,
+    ) -> Option<()> {
+        let mut ends = ends.map(|(ends, base)| {
+            ends.reserve(run_ends.len());
+            (ends, base)
+        });
+        let (start, mut at) = (out.len(), from);
+        for (&value, &end) in values.iter().zip(run_ends) {
+            let end = usize::try_from(end).ok()?.min(to);
+            let rows = start.checked_add(end.checked_sub(from)?)?;
+            if end.checked_sub(at)? > LINE {
+                out.resize(rows, value);
+            } else {
+                out.extend_from_slice(&[value; LINE]);
+                out.truncate(rows);
+            }
+            if let Some((ends, base)) = &mut ends {
+                ends.push(base.checked_add(end.checked_sub(from)?)?);
+            }
+            at = end;
+        }
+        (at == to).then_some(())
     }
 
     /// \[DESIGN\] (RULES.md D1340, D360) The values at `positions`, which
@@ -273,43 +317,6 @@ impl<'a> Runs<'a> {
             out.push(*values.get(r)?);
             Some(())
         })
-    }
-
-    /// \[DESIGN\] (RULES.md D1315) Writes to `slots`, the rows from `from`
-    /// to `to` and a line more, the value of each run of `values` ending
-    /// at `run_ends`, cut at `to`, for its rows among them, and pushes
-    /// each end to `ends` past its base. A run's value is written to a
-    /// whole line where the run begins, whatever its length, and to the
-    /// rest of its rows only if they are more than a line. So a run of a
-    /// few rows, which is most of a column kept as runs whose values
-    /// change often, takes no loop whose count the processor must guess,
-    /// and the rows after the run in its line are written again by the
-    /// runs after it. None if an end lies before the one before it, or
-    /// the runs end short of `to`.
-    fn spread(
-        (values, run_ends): (&[i64], &[i64]),
-        (from, to): (usize, usize),
-        slots: &mut [i64],
-        ends: Option<(&mut Vec<usize>, usize)>,
-    ) -> Option<()> {
-        let mut ends = ends.map(|(ends, base)| {
-            ends.reserve(run_ends.len());
-            (ends, base)
-        });
-        let mut at = from;
-        for (&value, &end) in values.iter().zip(run_ends) {
-            let end = usize::try_from(end).ok()?.min(to);
-            let run = slots.get_mut(at.checked_sub(from)?..)?;
-            *run.first_chunk_mut::<LINE>()? = [value; LINE];
-            if let Some(rest) = run.get_mut(LINE..end.checked_sub(at)?) {
-                rest.fill(value);
-            }
-            if let Some((ends, base)) = &mut ends {
-                ends.push(base.checked_add(end.checked_sub(from)?)?);
-            }
-            at = end;
-        }
-        (at == to).then_some(())
     }
 }
 
