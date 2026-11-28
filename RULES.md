@@ -23983,6 +23983,7 @@ is unchanged (D460).
 Keys past 64 bits one after another still share their nearest `f64`.
 A table of such keys compares more rows a probe, as before, and gives
 the same rows.
+
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
 
 A batch's vector of integers, of approximate numbers or of datetimes
