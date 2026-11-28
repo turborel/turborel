@@ -2,6 +2,8 @@
 //! gives are, of every type a lane holds and across them (RULES.md D356).
 
 use super::*;
+use crate::storage::mask::mask_of;
+use crate::storage::{Column, Ints};
 use crate::value::Decimal;
 
 /// The exact number of `units` at `scale`.
@@ -116,4 +118,46 @@ fn a_lane_truncated_keeps_its_first_groups() {
     held.truncate(1);
     assert!(held.bytes() < before);
     assert!(held.equal(0, Cell::Approx(1.5), &mut scratch));
+}
+
+/// Keys of one lane, a group each of `units` at `scale`, a null of none.
+fn ints_of(units: &[Option<i64>], scale: u32) -> Keys {
+    let mut keys = Keys::new(1);
+    for unit in units {
+        keys.push(Key::Values(&[unit.map_or(Value::Null, |u| exact(i128::from(u), scale))]));
+    }
+    keys
+}
+
+/// Verifies: [DESIGN] (RULES.md D1274, D356) a lane of integers finds a
+/// key equal by its words exactly as by its cells. Every group of a lane
+/// of integers of scale 0 and of scale 2, a null among them, is compared
+/// with every row of a batch's column of integers and every group of
+/// another table's lane, of its scale and of the other, and each compare
+/// agrees with that of the same value given as a value, which gives no
+/// word, and with the keys' bytes. So an integer equals one of another
+/// scale that is the same number, and a null equals a null alone, never
+/// the zero that stands in its place. A lane whose first null is its
+/// last group tells that group's null.
+#[test]
+fn integers_are_found_equal_by_their_words_as_by_their_cells() {
+    let units = [Some(0), None, Some(100), Some(1), Some(10_000), Some(-7)];
+    let mut scratch = Vec::new();
+    for (mine, other) in [(0, 0), (2, 2), (0, 2), (2, 0)] {
+        let (keys, theirs) = (ints_of(&units, mine), ints_of(&units, other));
+        let nulls: Vec<bool> = units.iter().map(Option::is_none).collect();
+        let column = Ints::new(units.iter().map(|u| u.unwrap_or(0)).collect(), other, mask_of(&nulls));
+        let batch = Batch { columns: vec![Column::Ints(column)], rows: units.len() };
+        for (g, r) in (0..units.len()).flat_map(|g| (0..units.len()).map(move |r| (g, r))) {
+            let (held, given) = (keys.values(g), theirs.values(r));
+            let expected = key_of(&held[0]) == key_of(&given[0]);
+            assert_eq!(keys.equal(g, Key::Values(&given), &mut scratch), expected, "{held:?} against the value {given:?}");
+            assert_eq!(keys.equal(g, Key::Row(&batch, &[0], r), &mut scratch), expected, "{held:?} against the row {given:?}");
+            assert_eq!(keys.equal(g, Key::Group(&theirs, r), &mut scratch), expected, "{held:?} against the group {given:?}");
+        }
+    }
+    let last = ints_of(&[Some(5), Some(0), None], 0);
+    let zero = ints_of(&[Some(0), None], 0);
+    assert!(!last.equal(2, Key::Group(&zero, 0), &mut scratch) && last.equal(2, Key::Group(&zero, 1), &mut scratch));
+    assert!(last.equal(1, Key::Group(&zero, 0), &mut scratch) && !last.equal(1, Key::Group(&zero, 1), &mut scratch));
 }

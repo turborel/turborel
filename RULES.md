@@ -819,6 +819,7 @@ verification approach DO-178C expects (§8).
 | D1267 | A column read only for its octet length is given by its scan with its lengths and never decoded |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1274 | A table of groups compares integer keys by their words, and a lane that holds no null reads none |
 | D1275 | A partition merges a morsel's groups in one pass, a new group given its slot as it is met |
 | D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
@@ -23587,6 +23588,32 @@ A split that fails after it took a page now gives back every page it
 took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
+
+#### D1274. A table of groups compares integer keys by their words, and a lane that holds no null reads none
+
+A table of groups finds a key by its hash and then compares it with
+the group whose slot matched (D356). The compare went lane by lane
+through cells. Each side's value was made a cell of its type, the two
+were matched by type, and an integer was widened before it was
+compared. That is right for every type and every pair of types, and it
+is what a key of two integer columns paid for each of its lanes, in the
+morsels' tables and again in the partitions'.
+
+A lane of integers is now compared by its words where the key gives
+words (`exec/table/keys/words.rs`). A key comes as a row of a batch or
+as a group of another table. Where its value of the lane is read from a
+vector of integers of the lane's scale, the two are equal as their
+units are, and nulls are equal to each other alone. No cell is made and
+no bytes are written. Any other pair, an integer of another scale, a
+value, a lane of another type, is compared by cells as before, so the
+keys that are equal are the same keys (D356).
+
+A lane also notes whether any of its groups is null
+(`exec/table/keys.rs`, `nulled`). While none is, it does not read its
+vector of nulls to learn that a group's value is not one. In a table of
+many groups a compare reads the group's place in each vector from
+memory the processor does not hold, so a lane of integers with no null
+now reads one word there where it read two.
 
 #### D1275. A partition merges a morsel's groups in one pass, a new group given its slot as it is met
 

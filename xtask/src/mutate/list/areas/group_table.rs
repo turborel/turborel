@@ -7,8 +7,9 @@
 //! thread, of the column store too, grouped by runs, its exchange weighed
 //! by the optimizer's groups; and EXCEPT and INTERSECT counted in a table
 //! (D358, D359); a grouping's partitions held in the spill past its
-//! grant, written and read back as they were (D1226); and a partition's
-//! groups adopted where they lie (D1300).
+//! grant, written and read back as they were (D1226); a partition's
+//! groups adopted where they lie (D1300); and integers compared by their
+//! words, a null told apart from the zero in its place (D1274).
 
 use super::super::{Mutation, Package};
 
@@ -59,7 +60,7 @@ const WIDE_FIRST: &str = "exec::parallel::grouped::waves::tests::the_first_rows_
 const WIDE_READ: &str = "exec::parallel::grouped::waves::tests::a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 41] = [
+pub const GROUP_TABLE: [Mutation; 44] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -469,5 +470,35 @@ pub const GROUP_TABLE: [Mutation; 41] = [
         replacement: "let past = widen.past;",
         integration: &[],
         unit: &[WIDE_READ],
+    },
+    Mutation {
+        name: "key-words-of-any-scale",
+        package: Package::Core,
+        breaks: "a lane of integers is compared by its words with a column of another scale, so 100 equals 1.00 (RULES.md D1274)",
+        file: "src/exec/table/keys/words.rs",
+        original: "(ints.units.get(r), ints.scale == scale, ints.is_null(r))",
+        replacement: "(ints.units.get(r), true, ints.is_null(r))",
+        integration: &[],
+        unit: &["exec::table::keys::tests::integers_are_found_equal_by_their_words_as_by_their_cells"],
+    },
+    Mutation {
+        name: "key-words-null-as-its-place",
+        package: Package::Core,
+        breaks: "integers compared by their words take a null for the zero in its place (RULES.md D1274)",
+        file: "src/exec/table/keys/words.rs",
+        original: "Some(if mine || null { mine && null } else { units.get(g) == Some(&theirs) })",
+        replacement: "Some(units.get(g) == Some(&theirs) || (mine && null))",
+        integration: &[],
+        unit: &["exec::table::keys::tests::integers_are_found_equal_by_their_words_as_by_their_cells"],
+    },
+    Mutation {
+        name: "lane-null-not-told",
+        package: Package::Core,
+        breaks: "a lane given a null does not note that it holds one, so the group reads as the value in its place (RULES.md D1274)",
+        file: "src/exec/table/keys.rs",
+        original: "            self.nulled = true;\n",
+        replacement: "",
+        integration: &[],
+        unit: &["exec::table::keys::tests::integers_are_found_equal_by_their_words_as_by_their_cells"],
     },
 ];
