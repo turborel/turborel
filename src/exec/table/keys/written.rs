@@ -154,7 +154,8 @@ impl Lane {
             }
             tag => return Err(reader.corrupt(&format!("no lane of keys has tag {tag}"))),
         };
-        let mut lane = Lane { unpadded, data, nulls, heap: 0, room: 0 };
+        let nulled = nulls.contains(&true);
+        let mut lane = Lane { unpadded, data, nulls, nulled, heap: 0, room: 0 };
         lane.heap = lane.held();
         Ok(lane)
     }
