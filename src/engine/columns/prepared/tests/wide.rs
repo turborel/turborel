@@ -14,14 +14,17 @@ use crate::value::{CompOp, Decimal, Spelled, Value};
 
 const IDENT: DataType = DataType::Exact { precision: 19, scale: 0, spelled: Spelled::Numeric };
 const MONEY: DataType = DataType::Exact { precision: 38, scale: 2, spelled: Spelled::Numeric };
-/// An identifier of values far apart, one of three values, one value
-/// throughout, an amount some of whose rows pass 64 bits, and nulls only.
+/// An identifier of values far apart and one of sixty values, a hundred
+/// rows of each past 64 bits; one value throughout; an amount some of
+/// whose rows pass 64 bits; and nulls only.
 const TYPES: [DataType; 5] = [IDENT, IDENT, IDENT, MONEY, IDENT];
 const ROWS: u32 = 5000;
-/// The rows whose amount is past the greatest 64 bits hold, and those
-/// whose amount is below the least.
+/// The rows whose identifiers and amount are past the greatest 64 bits
+/// hold, and those whose amount is below the least.
 const ABOVE: (u32, u32) = (2000, 2100);
 const BELOW: (u32, u32) = (3000, 3050);
+/// A number of 19 digits past the greatest 64 bits hold.
+const PAST: i128 = 9_900_000_000_000_000_000;
 
 /// The amount of row `n`, in units of its scale.
 fn amount(n: u32) -> i128 {
@@ -39,15 +42,18 @@ fn amount(n: u32) -> i128 {
 fn row(n: u32) -> Row {
     let i = |v: i128, scale: u32| Value::Exact(Decimal::new(v, scale));
     let null = |v: Value| if n % 11 == 4 { Value::Null } else { v };
+    let above = (ABOVE.0..ABOVE.1).contains(&n);
     // The greatest and the least 64 bits hold are rows 0 and 1.
     let far = match n % 3 {
         0 => i128::from(i64::MAX).wrapping_sub(i128::from(n)),
         1 => i128::from(i64::MIN).wrapping_add(i128::from(n.wrapping_sub(1))),
         _ => i128::from(n).wrapping_mul(1_000_000_007),
     };
+    let entry = i128::from(n.wrapping_mul(7) % 60).wrapping_mul(1_000_000_000_000_000);
+    let few = if n.is_multiple_of(2) { i128::from(i64::MAX).wrapping_sub(entry) } else { i128::from(i64::MIN).wrapping_add(entry) };
     vec![
-        i(far, 0),
-        null(i([i128::from(i64::MAX), -7, i128::from(i64::MIN)][usize::try_from(n.wrapping_mul(7) % 3).unwrap()], 0)),
+        i(if above { PAST.wrapping_add(i128::from(n)) } else { far }, 0),
+        null(i(if above && n.is_multiple_of(3) { PAST } else { few }, 0)),
         null(i(9_000_000_000_000_000_001, 0)),
         null(i(amount(n), 2)),
         Value::Null,
@@ -83,31 +89,36 @@ fn group(pool: &crate::disk::buffer::BufferPool, file: crate::disk::buffer::File
     (pages, group, all)
 }
 
-/// Whether a chunk of the amounts with a row among `from` to `to` holds a
+/// Whether a chunk of column `c` with a row among `from` to `to` holds a
 /// row past 64 bits.
-fn touches_wide(group: &Group, (from, to): (u32, u32)) -> bool {
-    let zones = group.zones(3).unwrap().unwrap();
-    let wide = |first: u32, end: u32| [ABOVE, BELOW].iter().any(|&(a, b)| first < b && end > a);
+fn touches_wide(group: &Group, c: usize, (from, to): (u32, u32)) -> bool {
+    let past: &[(u32, u32)] = match c {
+        0 | 1 => &[ABOVE],
+        3 => &[ABOVE, BELOW],
+        _ => &[],
+    };
+    let wide = |first: u32, end: u32| past.iter().any(|&(a, b)| first < b && end > a);
+    let zones = group.zones(c).unwrap().unwrap();
     zones
         .iter()
         .map(|z| (z.run.first, z.run.first.saturating_add(z.run.rows)))
         .any(|(first, end)| first < to && end > from && wide(first, end))
 }
 
-/// Asserts the amounts of `run`, whose rows are `these`, read as integers
+/// Asserts column `c` of `run`, whose rows are `these`, reads as integers
 /// unless the run takes of a chunk with a row past 64 bits, and then as
 /// values, equal to the rows either way: whether as integers.
-fn amounts_read(pages: &Pages<'_, Plain>, group: &Group, prepared: &mut Prepared, (run, these): ((u32, u32), &[Row])) -> bool {
-    let amounts = ints(group, (pages, &mut *prepared), (3, &MONEY), run).unwrap();
-    assert_eq!(amounts.is_none(), touches_wide(group, run), "{run:?}");
-    let column = column_of_run(group, (pages, prepared), (3, &MONEY), run).unwrap();
-    let Some(made) = amounts else {
-        let Column::Values(values) = column else { panic!("not values: {run:?}") };
-        assert_eq!(of_values(&values), shown(3, these), "{run:?}");
+fn column_read(pages: &Pages<'_, Plain>, group: &Group, prepared: &mut Prepared, (c, run, these): (usize, (u32, u32), &[Row])) -> bool {
+    let made = ints(group, (pages, &mut *prepared), (c, &TYPES[c]), run).unwrap();
+    assert_eq!(made.is_none(), touches_wide(group, c, run), "column {c}, {run:?}");
+    let column = column_of_run(group, (pages, prepared), (c, &TYPES[c]), run).unwrap();
+    let Some(units) = made else {
+        let Column::Values(values) = column else { panic!("not values: column {c}, {run:?}") };
+        assert_eq!(of_values(&values), shown(c, these), "column {c}, {run:?}");
         return false;
     };
-    assert!(matches!(column, Column::Ints(_)), "{run:?}");
-    assert_eq!((of_values(made.values()), made.scale), (shown(3, these), 2), "{run:?}");
+    assert!(matches!(column, Column::Ints(_)), "column {c}, {run:?}");
+    assert_eq!((of_values(units.values()), units.scale), (shown(c, these), if c == 3 { 2 } else { 0 }), "column {c}, {run:?}");
     true
 }
 
@@ -116,13 +127,13 @@ fn shown(c: usize, rows: &[Row]) -> Vec<String> {
 }
 
 /// Verifies: [DESIGN] RULES.md D1287, a wide exact column read as
-/// integers: each run of a column whose chunks all hold values of 64
-/// bits, of fixed fields with the least and greatest of 64 bits among
-/// them, a dictionary, a constant and nulls only, reads as integers at the
-/// type's scale, equal to its rows; of a column some of whose rows pass 64
-/// bits, a run reads as integers unless it takes of a chunk with such a
-/// row, and then as values, equal to its rows either way, no chunk opened
-/// to refuse it. MC/DC of a
+/// integers: of a column some of whose rows pass 64 bits, so its fields
+/// keep 16 bytes, fixed with the least and greatest of 64 bits among them
+/// or a dictionary's entries, a run reads as integers at the type's scale
+/// unless it takes of a chunk with such a row, and then as values, equal
+/// to its rows either way, no chunk opened to refuse it; and (RULES.md
+/// D1285) a column every value of which 64 bits hold, one value
+/// throughout or nulls only, reads as integers in every run. MC/DC of a
 /// chunk's bounds: both of 64 bits (integers), the greatest past them, the
 /// least below them (values each), and no bounds, every value null
 /// (integers).
@@ -134,28 +145,29 @@ fn a_wide_column_reads_as_integers_where_64_bits_hold_its_values() {
     for c in 0..TYPES.len() {
         assert_eq!(shown(c, &read), shown(c, &all), "column {c} reads back");
     }
-    assert!(group.zones(3).unwrap().unwrap().len() > 20, "the amounts span chunks");
+    let chunks: Vec<usize> = (0..TYPES.len()).map(|c| group.zones(c).unwrap().unwrap().len()).collect();
+    assert!(chunks[0] > 35 && chunks[3] > 35 && chunks[1] > 2, "fields of 16 bytes fill many chunks: {chunks:?}");
     let found: Vec<Vec<u8>> = (0..TYPES.len()).map(|c| kinds(&pages, &group, c)).collect();
-    assert_eq!(found, [vec![FIXED], vec![DICTIONARY], vec![CONSTANT], vec![FIXED], vec![CONSTANT]], "each of 16-byte fields");
+    assert_eq!(found, [vec![FIXED], vec![DICTIONARY], vec![CONSTANT], vec![FIXED], vec![CONSTANT]]);
     let mut prepared = Prepared::default();
     assert!(ints(&group, (&pages, &mut prepared), (3, &MONEY), ABOVE).unwrap().is_none() && prepared.opened == 0, "refused by its bounds");
     assert!(ints_at(&group, (&pages, &mut prepared), (3, &MONEY), &[BELOW.0]).unwrap().is_none() && prepared.opened == 0, "at a position");
-    let mut narrow = 0_u32;
+    let mut narrow = [0_u32; 5];
     for from in (0..ROWS).step_by(100) {
         let (run, these) = ((from, from + 100), &all[usize::try_from(from).unwrap()..usize::try_from(from + 100).unwrap()]);
-        for c in [0, 1, 2, 4] {
-            let made = ints(&group, (&pages, &mut prepared), (c, &TYPES[c]), run).unwrap().unwrap();
-            assert_eq!((of_values(made.values()), made.scale), (shown(c, these), 0), "column {c}, {run:?}");
+        for (c, count) in narrow.iter_mut().enumerate() {
+            *count += u32::from(column_read(&pages, &group, &mut prepared, (c, run, these)));
         }
-        narrow += u32::from(amounts_read(&pages, &group, &mut prepared, (run, these)));
     }
-    let wide = ROWS.checked_div(100).unwrap() - narrow;
-    assert!(narrow > 40 && wide >= 2, "{narrow} runs of integers, {wide} of values");
+    let runs = ROWS.checked_div(100).unwrap();
+    assert!((narrow[2], narrow[4]) == (runs, runs), "{narrow:?}");
+    assert!([0, 1, 3].iter().all(|&c| narrow[c] > 20 && narrow[c] < runs), "integers and values both: {narrow:?}");
 }
 
 /// Verifies: [DESIGN] RULES.md D1287, a wide exact column read at
 /// positions: rows picked across the chunks of fixed fields and of a
-/// dictionary read as integers, equal to their rows; of the amounts,
+/// dictionary that hold no row past 64 bits read as integers, equal to
+/// their rows, and with such a chunk's among them as none; of the amounts,
 /// positions in chunks of values of 64 bits read as integers though a
 /// chunk between them holds a row past 64 bits, and positions one of which
 /// is in such a chunk read as values, equal to their rows.
@@ -166,18 +178,24 @@ fn a_wide_column_reads_as_integers_at_positions() {
     let picked = |positions: &[u32]| -> Vec<Row> { positions.iter().map(|&p| all[usize::try_from(p).unwrap()].clone()).collect() };
     let mut prepared = Prepared::default();
     let sparse: Vec<u32> = (0..ROWS).filter(|n| n % 13 < 3).collect();
-    for c in [0, 1, 2, 4] {
+    for c in [2, 4] {
         let made = ints_at(&group, (&pages, &mut prepared), (c, &TYPES[c]), &sparse).unwrap().unwrap();
         assert_eq!(of_values(made.values()), shown(c, &picked(&sparse)), "column {c}");
     }
-    let around: Vec<u32> = (0..ROWS).filter(|&n| n % 13 < 3 && !touches_wide(&group, (n, n + 1))).collect();
+    for c in [0, 1] {
+        let apart: Vec<u32> = sparse.iter().copied().filter(|&n| !touches_wide(&group, c, (n, n + 1))).collect();
+        let made = ints_at(&group, (&pages, &mut prepared), (c, &TYPES[c]), &apart).unwrap().unwrap();
+        assert_eq!(of_values(made.values()), shown(c, &picked(&apart)), "column {c}");
+        assert!(ints_at(&group, (&pages, &mut prepared), (c, &TYPES[c]), &sparse).unwrap().is_none(), "column {c}, a chunk past 64 bits");
+    }
+    let around: Vec<u32> = (0..ROWS).filter(|&n| n % 13 < 3 && !touches_wide(&group, 3, (n, n + 1))).collect();
     assert!(
         around.iter().any(|&p| p < ABOVE.0) && around.iter().any(|&p| p > ABOVE.1 && p < BELOW.0) && around.iter().any(|&p| p > BELOW.1)
     );
     let made = ints_at(&group, (&pages, &mut prepared), (3, &MONEY), &around).unwrap().unwrap();
     assert_eq!((of_values(made.values()), made.scale), (shown(3, &picked(&around)), 2));
     for one in [ABOVE.0 + 5, BELOW.0 + 5, ABOVE.0 - 1] {
-        assert!(touches_wide(&group, (one, one + 1)), "row {one} is in a chunk with a row past 64 bits");
+        assert!(touches_wide(&group, 3, (one, one + 1)), "row {one} is in a chunk with a row past 64 bits");
         let mut among = around.clone();
         among.insert(among.partition_point(|&p| p < one), one);
         assert!(ints_at(&group, (&pages, &mut prepared), (3, &MONEY), &among).unwrap().is_none(), "row {one}");

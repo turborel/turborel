@@ -1,6 +1,6 @@
 //! A column of an exact numeric type of 19 to 38 digits whose values 64
-//! bits hold, read of the column store's frozen chunks as integers
-//! (RULES.md D1287): filters, sums, groupings, joins, orderings, arithmetic
+//! bits hold, frozen by the column store in 8-byte fields (RULES.md
+//! D1285) and read of its chunks as integers (RULES.md D1287): filters, sums, groupings, joins, orderings, arithmetic
 //! and windows over it give what the same rows of the row store give, a
 //! column some of whose values pass 64 bits too, and sums and overflow are
 //! those of its declared type [ISO/IEC 9075-2:2023 §10.9 GR7g].
@@ -21,16 +21,29 @@ fn ident(k: i128) -> Option<i128> {
     (k % 13 != 5).then(|| MOST.wrapping_sub(k.wrapping_mul(7919).rem_euclid(GROUP).wrapping_mul(1_000_003)))
 }
 
-/// The amount of row `k`, with two digits after the point: past what 64
-/// bits hold of a hundred rows of the second group, above and below, and
-/// near zero of the rest.
-fn amount(k: i128) -> String {
+/// The amount of row `k`, in hundredths: past what 64 bits hold of a
+/// hundred rows of the second group, above and below, and of fifty rows
+/// after it, and near zero of the rest.
+fn amount_units(k: i128) -> i128 {
     let whole = match k {
-        2500..2550 => 10_i128.pow(30).wrapping_add(k),
+        2500..2550 | 5000..5050 => 10_i128.pow(30).wrapping_add(k),
         3500..3550 => 10_i128.pow(30).wrapping_add(k).wrapping_neg(),
         _ => k.wrapping_mul(1_000_003).wrapping_sub(1_000_000_000),
     };
-    format!("{whole}.{:02}", k % 100)
+    let cents = k % 100;
+    whole.wrapping_mul(100).wrapping_add(if whole < 0 { cents.wrapping_neg() } else { cents })
+}
+
+/// `units` hundredths as an exact number of two digits after the point
+/// is written.
+fn hundredths(units: i128) -> String {
+    let (sign, most) = (if units < 0 { "-" } else { "" }, units.unsigned_abs());
+    format!("{sign}{}.{:02}", most.checked_div(100).unwrap_or_default(), most % 100)
+}
+
+/// The amount of row `k`, with two digits after the point.
+fn amount(k: i128) -> String {
+    hundredths(amount_units(k))
 }
 
 /// Rows `first` to `first + GROUP`: I in order, U an identifier, D one of
@@ -107,11 +120,13 @@ const QUERIES: [&str; 30] = [
     "SELECT SUM(W) FROM {t} WHERE I NOT IN (3000, 3001)",
 ];
 
-/// Verifies: [ISO/IEC 9075-2:2023 §10.9 GR7g] [DESIGN] RULES.md D1287, a
-/// wide exact column of the column store read as integers: over frozen
-/// chunks of 16-byte fields, fixed, a dictionary and a constant, of values
-/// 64 bits hold, and over a column whose second group holds rows past 64
-/// bits among chunks that hold none, comparisons with constants of 64 bits
+/// Verifies: [ISO/IEC 9075-2:2023 §10.9 GR7g] [DESIGN] RULES.md D1285,
+/// D1287, a wide exact column of the column store written and read as
+/// integers: a group's column whose values 64 bits hold is frozen as a
+/// narrow column is, a frame of reference, a dictionary or a constant, and
+/// one whose second group holds rows past 64 bits keeps fixed fields of
+/// 16 bytes there, read as integers of the chunks that hold none; the
+/// columns' declared precisions are as written; comparisons with constants of 64 bits
 /// and past them, sums and averages, groupings, joins, orderings,
 /// arithmetic whose results pass 64 bits, casts and windows give what the
 /// row store's same rows give; the sum of the identifiers is the exact
@@ -122,7 +137,10 @@ fn a_wide_column_of_narrow_values_reads_as_the_row_store_gives_it() {
     let (_db, a) = tables();
     let shown = "SELECT COLUMN_NAME, ENCODING FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'FROZEN' \
                  AND COLUMN_NAME IN ('U', 'D', 'C', 'M') GROUP BY COLUMN_NAME, ENCODING ORDER BY COLUMN_NAME";
-    assert_eq!(rows(&a, shown).unwrap(), ["C,CONSTANT", "D,DICTIONARY", "M,FIXED", "U,FIXED"], "each encoding is read");
+    assert_eq!(rows(&a, shown).unwrap(), ["C,CONSTANT", "D,DICTIONARY", "M,FIXED", "M,FRAME", "U,FRAME"], "narrowed where 64 bits hold");
+    let declared = "SELECT COLUMN_NAME, NUMERIC_PRECISION, NUMERIC_SCALE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'FROZEN' \
+                    AND COLUMN_NAME IN ('U', 'C', 'M') ORDER BY COLUMN_NAME";
+    assert_eq!(rows(&a, declared).unwrap(), ["C,20,0", "M,38,2", "U,19,0"], "the types are as declared");
     for query in QUERIES {
         let of = |table: &str| rows(&a, &query.replace("{t}", table)).unwrap();
         let (frozen, plain) = (of("FROZEN"), of("PLAIN"));

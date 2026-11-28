@@ -814,6 +814,7 @@ verification approach DO-178C expects (§8).
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1285 | A group's column of a wide exact type whose values 64 bits hold is written in 8-byte fields |
 | D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
 | D1288 | A join key that is a whole number of 64 bits is hashed by itself, and any other number by its nearest `f64` |
 
@@ -14033,8 +14034,9 @@ store chunk of such a column is of fixed fields, a dictionary or a
 constant, as any other of 16 bytes, and its values are read as values,
 not integers (`types::narrow_scale`), by a scan, a scan's judging and
 the row store's gathering. A column of 18 digits or fewer is kept and
-read as before. A chunk of such a column whose values 64 bits hold is
-read as integers since D1287.
+read as before. A group's column of such a type whose values 64 bits
+hold is written in 8-byte fields since D1285, and a chunk of 16-byte
+fields whose values 64 bits hold is read as integers since D1287.
 
 #### D699. A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128
 
@@ -23231,6 +23233,36 @@ A split that fails after it took a page now gives back every page it
 took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
+
+#### D1285. A group's column of a wide exact type whose values 64 bits hold is written in 8-byte fields
+
+A column of 19 to 38 digits wrote each value's units in 16 bytes (D698),
+whatever its values. The sizer frames fields of 8 bytes alone, so such a
+column was never a frame of reference nor runs. It took fixed fields of
+16 bytes, or a dictionary of 16-byte entries, where a column of 18
+digits holding the same values took a few bits a value.
+
+As a group is written, a column of such a type is tested once
+(`fields::narrowed`). If 64 bits hold every value of it in the group,
+each field is written as the units in 8 bytes, and the sizer gives its
+chunks what it gives a narrow column's. If one value passes 64 bits the
+column keeps its 16-byte fields in that group, none cut, and D1287 reads
+as integers the chunks of it that hold no such value. The fields of a
+group's column are sized as one buffer of one width (D1144), so the
+grain is the group's column.
+
+A chunk's kind and the width of its fields tell a reader what it holds,
+as before, and an exact type's record reads units of 8 bytes or of 16
+(`Exact::decode_record`). So there is no new kind of chunk, the
+format's version stays 1, and code from before this decision reads a
+group written after it. A group frozen before keeps its 16-byte fields
+until it is written again. Zones, Bloom filters, imprints and sketches
+are made of values, so they are the same either way. The row store's
+records and every key keep 16 bytes (D698).
+
+The column's declared type is not changed and nothing reads the width
+to tell a type. A value's digits are judged against the declared
+precision as it is stored, as before.
 
 #### D1287. A chunk of 16-byte fields whose values 64 bits hold is read as integers
 

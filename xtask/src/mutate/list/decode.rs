@@ -7,7 +7,9 @@
 //! not tested in the loop, one field cut to 64 bits, a constant past 64
 //! bits read as 0, the chunks' bounds not tested, the chunks before a run
 //! or of no position tested with its own, and a wide column's conjunct
-//! not the scan's.
+//! not the scan's; and of a wide column's fields narrowed as its group is
+//! written (D1285): a value past 64 bits cut to them, and a column whose
+//! values fit left in 16 bytes.
 
 use super::super::{Mutation, Package};
 
@@ -35,8 +37,11 @@ const WIDE_RUNS: &str = "engine::columns::prepared::tests::wide::a_wide_column_r
 /// The unit test of a wide column's positions.
 const WIDE_PLACES: &str = "engine::columns::prepared::tests::wide::a_wide_column_reads_as_integers_at_positions";
 
+/// A group's column as it is written.
+const FIELDS_FILE: &str = "src/engine/columns/fields.rs";
+
 /// Mechanisms of the decode kernels whose removal must fail their tests.
-pub const DECODE: [Mutation; 13] = [
+pub const DECODE: [Mutation; 15] = [
     Mutation {
         name: "decode-block-spill-shift",
         package: Package::Core,
@@ -166,5 +171,25 @@ pub const DECODE: [Mutation; 13] = [
         replacement: "        DataType::Exact { precision, .. } => *precision < 19,\n        DataType::Approximate { .. }",
         integration: &[],
         unit: &["engine::columns::prepared::tests::wide::a_scan_judges_a_wide_column_where_it_reads_integers"],
+    },
+    Mutation {
+        name: "freeze-wide-field-cut",
+        package: Package::Core,
+        breaks: "a column with a value past 64 bits keeps its fields of 16 bytes, none cut to 8",
+        file: FIELDS_FILE,
+        original: "            Some(f) => bytes.extend_from_slice(&encoded::narrowed(f)?.to_le_bytes()),",
+        replacement: "            Some(f) => bytes.extend_from_slice(f.get(..NARROW)?),",
+        integration: &[],
+        unit: &["engine::columns::tests::wide::a_column_with_a_value_past_64_bits_keeps_its_16_bytes"],
+    },
+    Mutation {
+        name: "freeze-wide-not-narrowed",
+        package: Package::Core,
+        breaks: "a wide exact column whose values 64 bits hold is written in fields of 8 bytes",
+        file: FIELDS_FILE,
+        original: "        if let Some(narrow) = narrowed(t, &records) {",
+        replacement: "        if let Some(narrow) = narrowed(t, &records).filter(Records::is_empty) {",
+        integration: &[],
+        unit: &["engine::columns::tests::wide::a_wide_column_of_values_64_bits_hold_is_written_in_8_bytes"],
     },
 ];

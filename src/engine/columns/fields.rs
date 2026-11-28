@@ -3,7 +3,10 @@
 //! one buffer, where each ends, and which are null, as a load gives a
 //! column (`storage/lanes.rs`), so a column is one allocation, not one a
 //! value, and a load's column is taken as it is. Of them, the chunks a
-//! group's pages hold, each sized once.
+//! group's pages hold, each sized once. A column of an exact numeric type
+//! of more digits than 64 bits always hold, every value of which 64 bits
+//! do hold, is written as a narrow column's is, each field its units in 8
+//! bytes (RULES.md D1285).
 
 use std::borrow::Cow;
 
@@ -11,6 +14,7 @@ use super::encoded::{self, Plan, Sizer};
 use super::{bit_of, corrupt, fsst, nulls_len, padding, too_large, word};
 use crate::error::Result;
 use crate::storage::lanes::Records;
+use crate::value::types::wide_scale;
 use crate::value::{DataType, Value};
 
 /// Of a column's records, those from `from` to `to`, read in place.
@@ -73,8 +77,34 @@ fn width_of(cells: Cells<'_>, t: &DataType) -> Option<usize> {
     cells.iter().flatten().all(|f| f.len() == width).then_some(width)
 }
 
+/// \[DESIGN\] (RULES.md D1285) The bytes of the units of an exact number
+/// that 64 bits hold, as a narrow type's record writes them.
+const NARROW: usize = 8;
+
+/// \[DESIGN\] (RULES.md D1285) The records of a column of type `t`, each
+/// its units in 8 bytes, if `t` is an exact numeric type of more digits
+/// than 64 bits always hold and 64 bits hold every value of `records`.
+/// The chunks of such a column are then sized and written as a narrow
+/// column's are, a frame of reference or runs among them, and read as
+/// integers. None of another type, or if one value passes 64 bits or is
+/// not a record of the type, the column's fields then kept as they are.
+fn narrowed(t: &DataType, records: &Records) -> Option<Records> {
+    wide_scale(t)?;
+    let mut bytes = Vec::with_capacity(records.len().saturating_mul(NARROW));
+    let mut ends = Vec::with_capacity(records.len());
+    for (n, field) in Cells::whole(records).iter().enumerate() {
+        match field {
+            Some(f) => bytes.extend_from_slice(&encoded::narrowed(f)?.to_le_bytes()),
+            None => records.is_null(n).then_some(())?,
+        }
+        ends.push(u32::try_from(bytes.len()).ok()?);
+    }
+    Some(Records { bytes, ends, nulls: records.nulls.clone() })
+}
+
 /// The values of a column, each as its type writes it in a record, none
-/// for a null, end to end (`Records`).
+/// for a null, end to end (`Records`); those of a wide exact column that
+/// 64 bits hold, each in 8 bytes (`narrowed`).
 pub struct Fields<'r> {
     records: Cow<'r, Records>,
     table: std::sync::OnceLock<Option<fsst::Table>>,
@@ -111,7 +141,12 @@ impl Fields<'static> {
 impl<'r> Fields<'r> {
     /// The values `records` holds, of type `t`, taken as they are, none
     /// copied: the width they share found once (RULES.md D1144, D1148).
+    /// Those of a wide exact column that 64 bits hold are copied once, each
+    /// narrowed to 8 bytes (RULES.md D1285).
     pub fn from_records(t: &DataType, records: Cow<'r, Records>) -> Fields<'r> {
+        if let Some(narrow) = narrowed(t, &records) {
+            return Fields { records: Cow::Owned(narrow), table: std::sync::OnceLock::new(), width: Some(NARROW) };
+        }
         let width = width_of(Cells::whole(&records), t);
         Fields { records, table: std::sync::OnceLock::new(), width }
     }

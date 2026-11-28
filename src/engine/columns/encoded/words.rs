@@ -23,7 +23,7 @@ const WIDE: usize = 16;
 /// \[DESIGN\] (RULES.md D1287) The units a field holds, as an integer: of
 /// 8 bytes, as they are; of 16, if 64 bits hold them. None of units past
 /// 64 bits, which must not be cut to them, or of another width.
-fn narrowed(field: &[u8]) -> Option<i64> {
+pub(in crate::engine::columns) fn narrowed(field: &[u8]) -> Option<i64> {
     match <[u8; WIDE]>::try_from(field) {
         Ok(wide) => i64::try_from(i128::from_le_bytes(wide)).ok(),
         Err(_) => integer(field),

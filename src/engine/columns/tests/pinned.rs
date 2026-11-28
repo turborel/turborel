@@ -1,6 +1,8 @@
 //! The chunks of a column pinned, byte for byte, as they were written of
 //! fields of a vector each before a column's fields were made one buffer
-//! (RULES.md D1148); and fields of records given as they are.
+//! (RULES.md D1148); and fields of records given as they are. A wide
+//! exact column whose values 64 bits hold is pinned apart, as its fields
+//! are written in 8 bytes since RULES.md D1285.
 
 use std::borrow::Cow;
 
@@ -42,12 +44,17 @@ fn columns() -> Vec<(DataType, Vec<Value>)> {
     ]
 }
 
-/// The digest of the chunks of every column of `columns`, each cut for
-/// pages of 300 bytes and of 4000, compressed and not, each as made by
-/// `fields` of its type and values.
-fn digest(fields: impl Fn(&DataType, &[Value]) -> Fields<'static>) -> u64 {
+/// Whether `t` is the wide exact type of `columns`.
+fn wide(t: &DataType) -> bool {
+    matches!(t, DataType::Exact { precision: 30, .. })
+}
+
+/// The digest of the chunks of every column of `columns` that is wide if
+/// `of_wide`, or is not, each cut for pages of 300 bytes and of 4000,
+/// compressed and not, each as made by `fields` of its type and values.
+fn digest(fields: impl Fn(&DataType, &[Value]) -> Fields<'static>, of_wide: bool) -> u64 {
     let mut all = Vec::new();
-    for (t, values) in columns() {
+    for (t, values) in columns().into_iter().filter(|(t, _)| wide(t) == of_wide) {
         let made = fields(&t, &values);
         for capacity in [300_usize, 4000] {
             for compress in [true, false] {
@@ -62,17 +69,27 @@ fn digest(fields: impl Fn(&DataType, &[Value]) -> Fields<'static>) -> u64 {
     xxh3_64(&all)
 }
 
-/// The digest `digest` gave of fields of a vector each.
-const PINNED: u64 = 6_117_703_719_257_929_298;
+/// The digest `digest` gave of fields of a vector each, of the columns
+/// but the wide one.
+const PINNED: u64 = 12_195_486_089_837_408_995;
 
 /// Verifies: [DESIGN] RULES.md D31, D1144, D1148: the chunks of columns of
-/// every encoding, of integers narrow and wide, approximate numbers,
-/// texts few and many, CHARACTER strings, truth values and timestamps
-/// with time zone, nulls among them, are the chunks fields of a vector
-/// each wrote, byte for byte.
+/// every encoding, of integers, approximate numbers, texts few and many,
+/// CHARACTER strings, truth values and timestamps with time zone, nulls
+/// among them, are the chunks fields of a vector each wrote, byte for
+/// byte. The wide exact column's chunks, whose fields RULES.md D1285
+/// writes in 8 bytes, are no longer those. Each is, byte for byte, the
+/// chunk a column of 18 digits holding the same values gives.
 #[test]
 fn chunks_are_pinned_byte_for_byte() {
-    assert_eq!(digest(|t, values| Fields::of(t, values.iter()).unwrap()), PINNED);
+    assert_eq!(digest(|t, values| Fields::of(t, values.iter()).unwrap(), false), PINNED);
+    let narrow = DataType::Exact { precision: 18, scale: 2, spelled: Spelled::Numeric };
+    for (t, values) in columns().into_iter().filter(|(t, _)| wide(t)) {
+        let (made, same) = (Fields::of(&t, values.iter()).unwrap(), Fields::of(&narrow, values.iter()).unwrap());
+        for capacity in [300_usize, 4000] {
+            assert_eq!(made.chunks(&t, (capacity, true)).unwrap(), same.chunks(&narrow, (capacity, true)).unwrap(), "{capacity}");
+        }
+    }
 }
 
 /// Verifies: [DESIGN] RULES.md D1148: fields taken as they are of the
@@ -82,7 +99,8 @@ fn chunks_are_pinned_byte_for_byte() {
 #[test]
 fn fields_of_records_are_fields_of_their_values() {
     let of_records = |t: &DataType, values: &[Value]| Fields::from_records(t, Cow::Owned(records(t, values)));
-    assert_eq!(digest(of_records), PINNED);
+    assert_eq!(digest(of_records, false), PINNED);
+    assert_eq!(digest(of_records, true), digest(|t, values| Fields::of(t, values.iter()).unwrap(), true), "the wide column too");
     let ints: Vec<Value> = (0..20).map(int).chain([Value::Null]).collect();
     let fixed = of_records(&INTEGER, &ints).chunk(&INTEGER, 0, (ints.len(), false)).unwrap();
     assert_eq!(fixed.first(), Some(&FIXED), "a width found of the records");

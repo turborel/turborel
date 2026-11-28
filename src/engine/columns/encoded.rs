@@ -31,6 +31,8 @@
 mod dictionary;
 mod words;
 
+pub(super) use words::narrowed;
+
 use super::alp::{Alp, Factors, Trials};
 use super::fields::Cells;
 use super::fsst::{Coded, Symbols, Table};
