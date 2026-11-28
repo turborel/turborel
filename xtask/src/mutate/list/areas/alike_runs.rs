@@ -28,7 +28,7 @@ const PLANS: &str = "alike_runs::groups_of_rows_in_runs_are_the_plans";
 
 /// Mechanisms whose removal must fail the requirements of the runs of
 /// rows of one key.
-pub const ALIKE_RUNS: [Mutation; 11] = [
+pub const ALIKE_RUNS: [Mutation; 12] = [
     Mutation {
         name: "run-of-the-last-column-of-words-alone",
         package: Package::Core,
@@ -138,5 +138,15 @@ pub const ALIKE_RUNS: [Mutation; 11] = [
         replacement: "let runs = run_ends(batch, &how.read.groups, rows);",
         integration: &[PLANS],
         unit: &[],
+    },
+    Mutation {
+        name: "selected-text-compared-as-the-batchs",
+        package: Package::Core,
+        breaks: "the character string given at a place is read at that place of the batch, not where the selection says (RULES.md D1323)",
+        file: ALIKE,
+        original: "let r = nth(rows, n);\n        let from = r.checked_sub(1)",
+        replacement: "let r = n;\n        let from = r.checked_sub(1)",
+        integration: &[],
+        unit: &[SELECTED],
     },
 ];
