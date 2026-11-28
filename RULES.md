@@ -25071,6 +25071,7 @@ nothing. That holds of every conjunct a filter judges of texts.
 
 A null's code is 0 and its row is marked null, as before. A null row
 gathered before the run had codes is the empty entry of its place.
+
 #### D1320. A field or a cast of datetimes is computed over a vector's microseconds
 
 EXTRACT of a field of a time or timestamp without time zone reads the
