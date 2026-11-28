@@ -22,6 +22,7 @@ use super::space::Applied;
 use crate::physical::CostModel;
 use crate::physical::Plan;
 use crate::physical::cardinality::Classes;
+use crate::physical::indexed::KeyProbe;
 
 /// An order of a plan's rows: none, ascending by the columns of a class,
 /// or the order asked of the chain.
@@ -47,9 +48,9 @@ pub(super) struct Rel {
     /// The plan of each of those reads, kept for the realized plan, which
     /// takes the one its order asks rather than building it again.
     pub(super) plans: Vec<(Order, Plan)>,
-    /// Of its columns, by the chain's places, those an index of its table
-    /// answers an equality of, and the cost of each probe.
-    pub(super) probes: Vec<(usize, f64)>,
+    /// The probes an index of its table answers, each by its columns, by
+    /// the chain's places, and its cost (`indexed/keyed.rs`, RULES.md D1297).
+    pub(super) probes: Vec<KeyProbe>,
     /// \[DESIGN\] (RULES.md D652) The rows its read gives a parallel part,
     /// its stream's, 0 if it is none (`enumerate/weighed.rs`).
     pub(super) held: f64,
@@ -304,10 +305,12 @@ impl Model {
         self.kinds.get(op).copied().unwrap_or(Kind::Inner)
     }
 
-    /// The probe cost of an index of relation `rel`'s table for column
-    /// `column`, if one answers an equality of it.
-    pub(super) fn probe(&self, rel: usize, column: usize) -> Option<f64> {
-        self.rels.get(rel)?.probes.iter().filter(|(c, _)| *c == column).map(|(_, cost)| *cost).reduce(f64::min)
+    /// \[DESIGN\] (RULES.md D1297) The probe cost of an index of relation
+    /// `rel`'s table by the columns `by` a join equates: the cheapest of its
+    /// probes whose columns are all among them, if one is.
+    pub(super) fn probe(&self, rel: usize, by: &[usize]) -> Option<f64> {
+        let fits = |(columns, _): &&KeyProbe| columns.iter().all(|c| by.contains(c));
+        self.rels.get(rel)?.probes.iter().filter(fits).map(|(_, cost)| *cost).reduce(f64::min)
     }
 
     /// \[DESIGN\] (RULES.md D1232) The distinct values of `column`, a

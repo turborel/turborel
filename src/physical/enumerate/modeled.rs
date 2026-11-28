@@ -239,8 +239,7 @@ impl PhysicalPlanner<'_> {
         if let Some(keys) = wanted.filter(|k| !k.is_empty()) {
             let _ = read(Order::Want, &keys);
         }
-        let any = |_: usize, _: &DataType| true;
-        rel.probes = keyed.into_iter().filter_map(|(col, at)| self.probing(&leaf.plan, &[(0, at)], &any).map(|p| (col, p.cost))).collect();
+        rel.probes = self.key_probes(&leaf.plan, &keyed);
         self.weigh(&mut rel, (&leaf.plan, leaf.width));
         Some(rel)
     }

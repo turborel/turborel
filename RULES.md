@@ -824,6 +824,7 @@ verification approach DO-178C expects (§8).
 | D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
+| D1297 | An index join is priced as a probe of as much of an index's key as its equalities and the relation's constants cover |
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 
 ### The project
@@ -23779,6 +23780,46 @@ cross chunks, and a header with a chunk missing
 (`judged/proved/tests.rs`). An integration test changes, deletes and
 adds rows in parts whose stored bounds prove a comparison and compares
 every answer with the row store's (`test/integration/proved_bounds.rs`).
+
+#### D1297. An index join is priced as a probe of as much of an index's key as its equalities and the relation's constants cover
+
+The enumeration (D300) and the greedy order (D35) priced an index
+nested-loop join by a probe of one of its key columns, the cheapest of
+each priced alone. A key of several columns was so priced as a probe of
+one of them. A stock level query joins its order lines to their stock by
+the warehouse and the item, the stock's whole primary key, and the
+warehouse holds one value. A probe by the warehouse alone was priced at
+every row of the stock, no probe of one column was priced at less, and
+the join cost more than a hash join's scan of the stock. Planned with its values the procedure's query
+hashed the stock, and planned with slots it probed it, as the realized
+join probes by every equality (`enumerate/realize.rs`). The two plans
+never agreed, so learning (D414) planned it at every call.
+
+A relation's probes are now taken from its table's indexes
+(`indexed/keyed.rs`). Of each index, the columns the joins equate are
+taken in the order of its key, and each first run of two or more of them
+is one probe, priced as the realized join prices a probe of those
+columns, with the constants of the relation's filter beside them as a
+point path takes them (`indexed/expand.rs`). Each column alone is a
+probe too. A join is priced by the cheapest of those whose columns are
+all among the columns it equates (`Model::probe`, `order.rs`). They are
+at most the columns the joins equate and the length of each index's key,
+so none is enumerated beyond the indexes' keys.
+
+A probe finds the rows of its key. A key wholly covered is counted by the
+index's distinct keys (D383), one row a probe of a unique key. A prefix
+is counted by the statistics' joint distinct values of its columns where
+they hold them, and else by the product of each column's distinct values,
+at most the table's rows, so a probe finds at least a row. Before, that
+product could pass the rows and price a probe at less than a row. No
+constant is added.
+
+The tests plan a join to a key of two columns given by two join columns,
+by one join column and a constant, a prefix of a key of three, and a
+table of no index, each enumerated and agreeing with the greedy order
+(`test/integration/join_enumeration.rs`). The stock level query, written
+with the district in its join, probes the stock by its key and learns one
+plan whatever its threshold (`test/integration/tpcc_plans.rs`).
 
 #### D1298. A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened
 

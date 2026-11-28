@@ -22,6 +22,7 @@
 
 use super::PhysicalPlanner;
 use super::cost::HASH_ROW;
+use super::indexed::KeyProbe;
 use crate::logical::{Cond, Expr, LogicalPlan, SortKey, and_all, cond_columns, map_cond_columns, split_and};
 use crate::optimizer::is_guarded;
 use crate::value::CompOp;
@@ -37,10 +38,9 @@ struct Relation<'p> {
     /// Of its columns, by the chain's places, those an equality of the
     /// chain's reads, and their distinct values.
     distinct: Vec<(usize, f64)>,
-    /// Of its columns, by the chain's places, those an index of its table
-    /// answers an equality of, and the cost of each probe
-    /// (`physical/indexed.rs`).
-    probes: Vec<(usize, f64)>,
+    /// The probes an index of its table answers, each by its columns, by
+    /// the chain's places, and its cost (`indexed/keyed.rs`, RULES.md D1297).
+    probes: Vec<KeyProbe>,
 }
 
 impl Relation<'_> {
@@ -120,20 +120,16 @@ impl PhysicalPlanner<'_> {
     /// of `conds` read, and the probes of those an index answers: no other
     /// column is joined by, so no other is probed.
     fn keyed(&self, relations: &mut [Relation<'_>], conds: &[Cond]) {
-        let any = |_: usize, _: &crate::value::DataType| true;
         let mut keys: Vec<usize> = conds.iter().filter_map(equated).flat_map(|(a, b)| [a, b]).collect();
         keys.sort_unstable();
         keys.dedup();
         for r in relations.iter_mut() {
             let (plan, start) = (r.plan, r.start);
-            let own: Vec<usize> = keys.iter().copied().filter(|&c| r.has(c)).collect();
-            for c in own {
-                let at = c.saturating_sub(start);
+            let own: Vec<(usize, usize)> = keys.iter().filter(|&&c| r.has(c)).map(|&c| (c, c.saturating_sub(start))).collect();
+            for &(c, at) in &own {
                 r.distinct.push((c, self.estimating(|e| e.distinct(plan, at))));
-                if let Some(p) = self.probing(plan, &[(0, at)], &any) {
-                    r.probes.push((c, p.cost));
-                }
             }
+            r.probes = self.key_probes(plan, &own);
         }
     }
 }
@@ -193,7 +189,7 @@ fn step(placed: &[usize], next: usize, relations: &[Relation<'_>], conjuncts: &[
     let inner = relations.get(next).map_or(0.0_f64, |r| r.rows);
     let outer = rows(placed) * joined_fraction(placed, relations, conjuncts);
     let mut fraction = 1.0_f64;
-    let (mut hashed, mut probe) = (false, f64::INFINITY);
+    let (mut hashed, mut by) = (false, Vec::new());
     for c in conjuncts.iter().filter(|c| c.uses.contains(&next) && c.uses.iter().all(|u| *u == next || placed.contains(u))) {
         if c.uses.len() < 2 {
             continue;
@@ -201,18 +197,27 @@ fn step(placed: &[usize], next: usize, relations: &[Relation<'_>], conjuncts: &[
         let equality = equality_fraction(&c.cond, relations);
         hashed |= equality.is_some();
         fraction *= equality.unwrap_or(c.guess);
-        probe = probe.min(probe_cost(&c.cond, relations.get(next)));
+        by.extend(probed_column(&c.cond, relations.get(next)));
     }
+    let probe = relations.get(next).map_or(f64::INFINITY, |r| probe_cost(&by, r));
     let yields = outer * inner * fraction;
     let join = if hashed { (inner + HASH_ROW * (outer + inner)).min(outer * probe) } else { outer * inner };
     join + yields
 }
 
-/// The cost of a probe of an index of `next`'s table for a value of the
-/// other column `c` equates one of its with; infinite if none answers it.
-fn probe_cost(c: &Cond, next: Option<&Relation<'_>>) -> f64 {
-    let (Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)), Some(next)) = (c, next) else { return f64::INFINITY };
-    next.probes.iter().filter(|(column, _)| column == a || column == b).map(|(_, cost)| *cost).fold(f64::INFINITY, f64::min)
+/// Of the columns `c` equates, if it is an equality of two, the one of
+/// `next`.
+fn probed_column(c: &Cond, next: Option<&Relation<'_>>) -> Option<usize> {
+    let (Cond::Compare(Expr::Column(a), CompOp::Eq, Expr::Column(b)), Some(next)) = (c, next) else { return None };
+    [*a, *b].into_iter().find(|&column| next.has(column))
+}
+
+/// \[DESIGN\] (RULES.md D1297) The cost of a probe of an index of `next`'s
+/// table by its columns `by` the join equates: the cheapest of its probes
+/// whose columns are all among them; infinite if none is.
+fn probe_cost(by: &[usize], next: &Relation<'_>) -> f64 {
+    let fits = |(columns, _): &&KeyProbe| columns.iter().all(|c| by.contains(c));
+    next.probes.iter().filter(fits).map(|(_, cost)| *cost).fold(f64::INFINITY, f64::min)
 }
 
 /// The fraction of the product of `placed` that its conjuncts keep.

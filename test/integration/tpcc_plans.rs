@@ -432,3 +432,44 @@ fn stock_level_probes_stock_as_orders_grow_past_the_statistics() {
     assert!(plan.contains("IndexNestedLoop TPCC.STOCK"), "{plan}");
     assert!(!plan.contains("HashJoin"), "{plan}");
 }
+
+/// STOCK LEVEL as the newer procedure set writes it, reading the district
+/// within its join.
+const SLEV_JOINED: &str = "CREATE PROCEDURE SLEV_JOINED (IN ST_W_ID INTEGER, IN ST_D_ID INTEGER, IN THRESHOLD INTEGER)
+    READS SQL DATA
+    BEGIN
+    DECLARE STOCK_COUNT INTEGER;
+    SELECT COUNT(DISTINCT S_I_ID) INTO STOCK_COUNT FROM DISTRICT, ORDER_LINE, STOCK
+        WHERE D_W_ID = ST_W_ID AND D_ID = ST_D_ID AND OL_W_ID = D_W_ID AND OL_D_ID = D_ID
+        AND OL_O_ID < D_NEXT_O_ID AND OL_O_ID >= D_NEXT_O_ID - 20
+        AND S_W_ID = OL_W_ID AND S_I_ID = OL_I_ID AND S_QUANTITY < THRESHOLD;
+    END";
+
+/// Verifies: [DESIGN] RULES.md D1297, D414: STOCK LEVEL's join of the
+/// district, its order lines and their stock, as the newer procedure set
+/// writes it, probes STOCK by its whole key, planned with its values and
+/// with its slots alike, so it learns one plan and plans nothing once it
+/// has, whatever its threshold.
+///
+/// Regression test (R-TEST-7): a probe of STOCK was priced as a probe of
+/// its warehouse alone, a column of one value, so of every row of STOCK.
+/// The plan made with its values hashed a scan of STOCK and the one with
+/// its slots probed it, and the two never agreed, so it was planned at
+/// every CALL.
+#[test]
+fn stock_level_joined_learns_one_plan_whatever_its_threshold() {
+    let (_db, s) = loaded();
+    s.run(SLEV_JOINED).unwrap();
+    s.commit().unwrap();
+    let call = s.prepare("CALL SLEV_JOINED(?,?,?)").unwrap();
+    let mut r = Sequence(5);
+    let mut run = |n: u32| (0..n).map(|_| planned(&s, &call, &[int(1), int(r.between(1, 10)), int(r.between(10, 20))])).sum::<u64>();
+    let _ = run(30);
+    assert_eq!(run(20), 0, "bindings and plannings once learned");
+    let sql = "SELECT COUNT(DISTINCT S_I_ID) FROM DISTRICT, ORDER_LINE, STOCK WHERE D_W_ID = 1 AND D_ID = 3 \
+        AND OL_W_ID = D_W_ID AND OL_D_ID = D_ID AND OL_O_ID < D_NEXT_O_ID AND OL_O_ID >= D_NEXT_O_ID - 20 \
+        AND S_W_ID = OL_W_ID AND S_I_ID = OL_I_ID AND S_QUANTITY < 15";
+    let plan = s.explain(sql, &Params::new()).unwrap();
+    let physical = plan.split("-- physical:").nth(1).unwrap_or_default();
+    assert!(physical.contains("IndexNestedLoop TPCC.STOCK") && !physical.contains("HashJoin"), "{physical}");
+}

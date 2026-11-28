@@ -245,3 +245,66 @@ fn a_merge_join_by_a_key_of_one_value_is_priced_as_its_product() {
     assert!(!plan.contains("MergeJoin"), "{plan}");
     assert_eq!(agree(&s, sql).len(), 1);
 }
+
+/// Schema K: ten customers; fifty orders, each a customer's naming a part
+/// by its maker and number; the parts, keyed by maker and number, all of
+/// one maker; the bins, keyed by maker, number and bin, two of each part;
+/// and the prices, of no index. Every table counted by the statistics pass.
+fn keyed_parts() -> Database {
+    let db = Database::new();
+    db.schema(
+        "CREATE SCHEMA AUTHORIZATION K
+           CREATE TABLE CUSTOMER (C_ID INTEGER NOT NULL PRIMARY KEY, C_NAME INTEGER)
+           CREATE TABLE ORDERS (O_ID INTEGER NOT NULL PRIMARY KEY, O_C INTEGER, O_MAKER INTEGER, O_PART INTEGER)
+           CREATE TABLE PART (P_MAKER INTEGER NOT NULL, P_NO INTEGER NOT NULL, P_QTY INTEGER, PRIMARY KEY (P_MAKER, P_NO))
+           CREATE TABLE BIN (B_MAKER INTEGER NOT NULL, B_NO INTEGER NOT NULL, B_BIN INTEGER NOT NULL, B_QTY INTEGER,
+             PRIMARY KEY (B_MAKER, B_NO, B_BIN))
+           CREATE TABLE PRICE (R_MAKER INTEGER, R_NO INTEGER, R_COST INTEGER)",
+    )
+    .unwrap();
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    let s = db.session("K");
+    let n = |v: i64| Value::Exact(Decimal::new(i128::from(v), 0));
+    let load = |sql: &str, rows: Vec<Vec<Value>>| s.execute_prepared_rows(&s.prepare(sql).unwrap(), &rows, Load::Ending).unwrap();
+    load("INSERT INTO CUSTOMER VALUES (?, ?)", (1..=10).map(|c| vec![n(c), n(c * 7)]).collect());
+    load("INSERT INTO ORDERS VALUES (?, ?, ?, ?)", (1..=50).map(|o| vec![n(o), n(1 + o % 10), n(1), n(1 + o * 977 % 60_000)]).collect());
+    load("INSERT INTO PART VALUES (?, ?, ?)", (1..=60_000).map(|p| vec![n(1), n(p), n(p % 91)]).collect());
+    load("INSERT INTO BIN VALUES (?, ?, ?, ?)", (1..=120_000).map(|b| vec![n(1), n(1 + b / 2), n(b % 2), n(b % 13)]).collect());
+    load("INSERT INTO PRICE VALUES (?, ?, ?)", (1..=60_000).map(|p| vec![n(1), n(p), n(p % 97)]).collect());
+    s.commit().unwrap();
+    for table in ["CUSTOMER", "ORDERS", "PART", "BIN", "PRICE"] {
+        db.analyze(&format!("K.{table}")).unwrap();
+    }
+    db
+}
+
+/// Verifies: [DESIGN] RULES.md D1297: an index join is priced as a probe
+/// of as much of an index's key as the join's equalities and the
+/// relation's constants cover. The parts, all of one maker, are probed by
+/// their whole key, given by two join columns or by one and a constant,
+/// and the bins by a prefix of theirs, each probe finding a row or two,
+/// not every row of the maker; the prices, of no index, are hashed. The
+/// joins are of three relations, so enumerated, and their rows are the
+/// greedy order's.
+///
+/// Regression test (R-TEST-7): a probe of a key of two columns was priced
+/// as a probe of its first alone, a column of one value, so of every row
+/// of the table, and each of these joins hashed a scan of it.
+#[test]
+fn an_index_join_is_priced_by_as_much_of_the_key_as_it_covers() {
+    let db = keyed_parts();
+    let s = db.session("K");
+    let shapes = [
+        ("PART", "P_QTY", "P_MAKER = O_MAKER AND P_NO = O_PART", true),
+        ("PART", "P_QTY", "P_MAKER = 1 AND P_NO = O_PART", true),
+        ("BIN", "B_QTY", "B_MAKER = O_MAKER AND B_NO = O_PART", true),
+        ("PRICE", "R_COST", "R_MAKER = O_MAKER AND R_NO = O_PART", false),
+    ];
+    for (table, column, joined, probed) in shapes {
+        let sql = format!("SELECT SUM({column}) FROM CUSTOMER, ORDERS, {table} WHERE C_ID < 3 AND O_C = C_ID AND {joined}");
+        let explained = s.explain(&sql, &Params::new()).unwrap();
+        let physical = explained.split("-- physical:").nth(1).unwrap_or_default();
+        assert_eq!(physical.contains(&format!("IndexNestedLoop K.{table}")), probed, "{sql}\n{physical}");
+        assert_eq!(agree(&s, &sql).len(), 1, "{sql}");
+    }
+}

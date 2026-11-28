@@ -116,15 +116,16 @@ impl Space<'_> {
             .collect()
     }
 
-    /// The cost of a probe of an index of `r`'s table by one of `keys`, if
-    /// the join is inner, LEFT, a semi join or an antijoin and `r` is one
-    /// relation one answers.
+    /// The cost of a probe of an index of `r`'s table by `keys`, as many of
+    /// them as one index's key holds (RULES.md D1297), if the join is inner,
+    /// LEFT, a semi join or an antijoin and `r` is one relation one answers.
     fn probe_cost(&self, kind: Kind, keys: &[(usize, usize)], r: Set) -> Option<f64> {
         if !matches!(kind, Kind::Inner | Kind::Left | Kind::Semi | Kind::Anti) {
             return None;
         }
         let rel = Space::single(r)?;
-        keys.iter().filter_map(|&(_, b)| self.model.probe(rel, b)).reduce(f64::min)
+        let by: Vec<usize> = keys.iter().map(|&(_, b)| b).collect();
+        self.model.probe(rel, &by)
     }
 
     /// The merge joins of `sides` on each of `keys` whose columns a merge

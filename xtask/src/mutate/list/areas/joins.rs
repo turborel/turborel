@@ -4,8 +4,9 @@
 //! the gain ignored, a merge join offered with both operands sorted, its
 //! runs read again for each left row, its unmatched LEFT rows lost, a
 //! conjunct over an outer join's nulls placed below it, an OR's repeated
-//! equality left in it, the OR implied of a table not added, and an
-//! index prefix counted past the limit guessed below the count.
+//! equality left in it, the OR implied of a table not added, an index
+//! prefix counted past the limit guessed below the count, and an index
+//! join priced as a probe of one column of a key of several.
 
 use super::super::{Mutation, Package};
 
@@ -27,7 +28,7 @@ const SHAPED_OR: &str = "benchmark_shapes::an_equality_each_disjunct_repeats_joi
 const MERGED: &str = "join_enumeration::merge_joins_pair_runs_of_equal_keys";
 
 /// Mechanisms of join enumeration whose removal must fail its tests.
-pub const JOINS: [Mutation; 14] = [
+pub const JOINS: [Mutation; 15] = [
     Mutation {
         name: "joins-conflict-rule",
         package: Package::Core,
@@ -166,6 +167,19 @@ pub const JOINS: [Mutation; 14] = [
         original: "let cost = left.0 + right.0 + compared + self.merge_pairs(sides, (a, b)).max(rows);",
         replacement: "let cost = left.0 + right.0 + compared + rows;",
         integration: &["join_enumeration::a_merge_join_by_a_key_of_one_value_is_priced_as_its_product"],
+        unit: &[],
+    },
+    Mutation {
+        name: "joins-probe-priced-by-its-key",
+        package: Package::Core,
+        breaks: "an index join is priced as a probe of one of its columns, not of as much of an index's key as it covers",
+        file: "src/physical/indexed/keyed.rs",
+        original: "probes.extend((2..=run.len())",
+        replacement: "probes.extend((2..2)",
+        integration: &[
+            "join_enumeration::an_index_join_is_priced_by_as_much_of_the_key_as_it_covers",
+            "tpcc_plans::stock_level_joined_learns_one_plan_whatever_its_threshold",
+        ],
         unit: &[],
     },
 ];

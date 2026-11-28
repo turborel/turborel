@@ -36,6 +36,8 @@ mod expand;
 mod fan_out;
 mod fixed;
 pub(super) use fixed::Fixed;
+mod keyed;
+pub(super) use keyed::KeyProbe;
 mod probed;
 mod ranged;
 mod routed;
@@ -281,13 +283,17 @@ impl PhysicalPlanner<'_> {
             let Some(kind) = self.db.methods.get(&ix.method) else { continue };
             let Some(((used, at, types), reverse)) = expand::probed(ix, &columns, (&keys, of_kind), &**kind) else { continue };
             let whole = !reverse && used.len() == ix.columns.len();
-            let by_columns = || {
-                let distinct =
-                    |c: usize| known.stats.and_then(|s| s.distinct(c)).map_or(1.0_f64 / model.equal_selectivity, |d| d.max(1.0_f64));
-                at.iter().filter_map(|&k| ix.columns.get(k)).map(|&c| 1.0_f64 / distinct(c)).product::<f64>()
-            };
             let probed: Vec<usize> = at.iter().filter_map(|&k| ix.columns.get(k).copied()).collect(); // `indexed/fan_out.rs`
-            let fan_out = || self.edge_fan_out(table, &probed).unwrap_or_else(|| rows * by_columns());
+            // [DESIGN] (RULES.md D1297) The probed columns' values together,
+            // as the statistics count them, else each column's multiplied, at
+            // most the rows.
+            let joint = || {
+                let distinct =
+                    |c: &usize| known.stats.and_then(|s| s.distinct(*c)).map_or(1.0_f64 / model.equal_selectivity, |d| d.max(1.0_f64));
+                let product = || probed.iter().map(distinct).product::<f64>().min(rows);
+                known.stats.and_then(|s| s.group_distinct(&probed)).unwrap_or_else(product).max(1.0_f64)
+            };
+            let fan_out = || self.edge_fan_out(table, &probed).unwrap_or_else(|| rows / joint());
             let keys_counted = (whole && routing.is_none()).then(|| self.index_keys(&ix.name, &**found)).flatten();
             let each = keys_counted.map_or_else(fan_out, |d| rows / d.max(1.0_f64));
             let pages = Candidate::pages(&**found, (&types, used.len()), reverse, rows);
