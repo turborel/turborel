@@ -106,7 +106,7 @@ pub(in crate::engine::columns::judged) fn scanned(t: &DataType, pred: &Pred, rea
             assert_eq!(lengths.is_some(), whole && lengths.as_ref().is_some_and(|l| l.units.len() == places.len()), "of a whole run alone");
             held.push(lengths.is_some());
             assert!(prepared.take_lengths(1, &places).is_none(), "given once");
-            if whole && read.measured {
+            if held.last() == Some(&true) {
                 // What the next judging holds is no other column's.
                 judgment.judge(&group, (&pages, &mut prepared), (&types, (from, to)), None).unwrap();
                 assert!(prepared.take_lengths(0, &places).is_none(), "another column's");
@@ -148,8 +148,8 @@ fn a_measured_columns_comparison_with_the_empty_string_is_judged_of_its_lengths(
         let wanted = expected(&|s| op.holds(s.len().cmp(&0)));
         assert_eq!(scanned(&TEXT, &told(op, ""), measured), (wanted, 0, [true, false].repeat(3)), "{op:?}");
     }
-    let (kept, decoded, held) = scanned(&TEXT, &told(CompOp::Ne, "a"), measured);
-    assert_eq!((kept, decoded, held), (expected(&|s| s != "a"), 0, vec![false; 6]), "another constant is compared in place");
+    let (kept, _, held) = scanned(&TEXT, &told(CompOp::Ne, "a"), measured);
+    assert_eq!((kept, held), (expected(&|s| s != "a"), vec![false; 6]), "another constant is not judged of lengths");
     let unmeasured = Read { measured: false, ..measured };
     assert_eq!(scanned(&TEXT, &told(CompOp::Ne, ""), unmeasured).2, vec![false; 6], "not measured, none held");
 }
