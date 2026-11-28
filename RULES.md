@@ -821,7 +821,11 @@ verification approach DO-178C expects (§8).
 | D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
+| D1281 | A sort's first rows over a pair of groupings are taken from the second's table of each partition |
+| D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
+| D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
+| D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 
 ### The project
 
@@ -14040,7 +14044,8 @@ store chunk of such a column is of fixed fields, a dictionary or a
 constant, as any other of 16 bytes, and its values are read as values,
 not integers (`types::narrow_scale`), by a scan, a scan's judging and
 the row store's gathering. A column of 18 digits or fewer is kept and
-read as before.
+read as before. A chunk of such a column whose values 64 bits hold is
+read as integers since D1287.
 
 #### D699. A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128
 
@@ -19799,8 +19804,9 @@ It does so of a grouping by hash, alone at the top of its part, whose
 groups are made by batch, under a projection of its columns and of
 constants alone, or none. A sort that asks the peers of its last row (WITH TIES) is not
 taken so, as the number would part groups that are peers. Neither is one
-over a HAVING condition, a projection that computes a value, DISTINCT or
-a pair of groupings (D1113); the sort reads those groups as before. A
+over a HAVING condition, a projection that computes a value or DISTINCT;
+the sort reads those groups as before. A pair of groupings (D1113) gives
+them from the second's tables (D1281). A
 grouping whose groups are made of rows gives its groups in order, which
 are projected and sorted. A part that gives way is grouped alone and its
 rows projected and sorted, the part not tried again.
@@ -23619,6 +23625,103 @@ grouping is fed it. A sum past the digits an exact number holds raises
 what the partitions' merge raises of it. EXPLAIN shows the plan it
 showed.
 
+#### D1281. A sort's first rows over a pair of groupings are taken from the second's table of each partition
+
+A sort that asks for its first rows over a grouping run in parallel
+takes them from each partition's table (D1124), and where its keys are
+set functions it picks them before any row is made (D1256). A pair of
+groupings run as one part (D1113), as a DISTINCT set function makes
+them (D340), was left out. Each partition's thread made the second's
+groups in a table (D1123) and then a row of every one of them. The
+statement's thread merged the partitions' rows in the order of their
+first rows and projected each, and the sort kept its few. Of a second
+grouping of very many groups that was a row allocated, moved, compared
+and freed a group, most of it on one thread after the partitions were
+done.
+
+A partition's thread now takes the first rows from the second's table
+(`exec/parallel/grouped/top.rs`, `of_part`). The table is made of the
+partition's groups of the first as before (`regrouped.rs`,
+`second_table`) and given to the code that takes the first rows from
+the table of a grouping alone. The sort stands over the second grouping,
+so its keys and the projection under it already name the columns of the
+second's row. No row is made of a group the partition does not keep,
+and the statement's thread sorts the partitions' few rows alone.
+
+The rows given and their order are the plan's, by the argument of
+D1124. The plan run alone gives the second's groups in the order each
+is first met among the first's groups, and those come in the order of
+their first rows. The sort is stable, so of two groups of equal keys it
+gives the one met earlier. A group of the second is numbered by its
+first group of the first (D1113), which is the number of the first row
+that falls in it. No row falls in two groups, so no two groups share a
+number, and the number as the last key orders any two groups of equal
+keys as the plan does. The partitions are split by the second's
+grouping columns alone, so a group of the second lies whole in one
+partition, and that partition's table holds its one row, with its
+number and its results as the plan computes them. A row among the first
+of all is then among the first of its partition under the same keys, so
+the statement's thread, sorting the partitions' rows by the keys and
+then the number, gives the plan's rows in the plan's order.
+
+It does so where each partition makes the second in a table and the
+second crosses no partition (`Outer::in_tables`). A second that crosses
+the partitions (D1133, D1219) has a group in several of them, a part of
+its count in each, so no partition's table holds its row. A second that
+no grouping by batch reads, as one with a filtered set function, is
+made of rows (D1123). Both are read as before, every group given to the
+sort. So is a pair under a HAVING condition, and a sort that asks the
+peers of its last row.
+
+Whether the first's groups lie in the order of their first rows is
+known of each partition's table only as it is finished (D1123). A
+partition where they do not makes the second's groups of rows put in
+order, as before, and keeps the first of them under the same keys and
+numbers (`of_groups`). Its rows are those its table would have given,
+so the statement's thread reads them alike. A partition read back from
+the spill (D1226) is finished by the same code and gives its first rows
+the same way.
+
+An analyzed plan counts the second grouping the groups its tables made,
+and the projection the rows the partitions kept (D1254).
+
+#### D1287. A chunk of 16-byte fields whose values 64 bits hold is read as integers
+
+A column of an exact numeric type of 19 to 38 digits is kept in 16-byte
+fields (D698) and was read a value at a time into a batch's values,
+whatever it held. An identifier is often declared with 19 or 20 digits
+while every value of it fits 64 bits. Such a column was tested by the
+filter above the scan, hashed in 128 bits and summed a value at a time,
+where a column of 18 digits is judged by the scan and computed by the
+kernels (D360, D362).
+
+A scan now reads a run of such a column as integers (`storage::Ints`),
+at the type's scale, if the least and the greatest value of each chunk
+the run reads fit 64 bits (`scan::ints_scale`). A chunk's zone holds
+both, so every value of the chunk fits. Fixed fields are narrowed in one
+loop that keeps each field's low half and tests at its end that every
+high half was its sign alone. A dictionary's entries are narrowed once a
+chunk (`prepared.rs`), and a constant once. A field 64 bits do not hold
+is never cut to them. The reading gives none, and the run is read as
+values, as before (`encoded/words.rs`). A constant of 16 bytes past 64
+bits would otherwise have read as 0. The bounds are tested first, so a
+column whose values do pass 64 bits pays that test alone and opens no
+chunk for it. The scan judges a conjunct on such a column wherever the
+run reads as integers, and leaves it to the filter where it does not
+(`judged.rs`).
+
+No operator reads a column's declared precision. Each reads the kind of
+a batch's column and its values (D696, D699). So a column's type, the
+types of its results, their values and the overflow of its sums are as
+they were. A sum of integers is added in 128 bits and judged against
+its result's precision at its end, as a sum of values is. One column may
+reach an operator as integers in one batch and as values in the next.
+Both hash alike and compare by value.
+
+Nothing stored changes, so data frozen before is read so with no
+reload. The grain is the chunk, so the chunks of a group that hold no
+value past 64 bits are integers though another chunk of it holds one.
+
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
 
 A batch's vector of integers, of approximate numbers or of datetimes
@@ -23651,6 +23754,90 @@ order, gave the row store's results too
 (`test/integration/window_nulls.rs`, which stays as the requirement's
 test). Which step kept the store's numbers from the lane there was not
 found. The lane's own test shows the place it now clears.
+
+#### D1293. A column store's scan does not judge a comparison that the bounds of every part of a run prove
+
+A chunk of a frozen group is written with the least and the greatest of
+its values and the count of its nulls, and with the same of each part of
+1,024 of its rows (`engine/columns/group/zones.rs`). A scan read them one
+way only. A part whose bounds a told conjunct cannot match is passed
+over (`columns/scan.rs`). A part it may match was decoded and judged a
+row at a time (D360), also where the bounds say it matches every row.
+
+That case is common. A hash join tells its probing side's scan the
+least and the greatest of its built keys (D369), and where the built
+rows span the table's keys nearly every part lies inside that range. A
+profile showed the two bounds of such a range judged of every row of the
+probing table in most joins of the reference queries, by runs of a
+column kept as runs, and it was the largest single cost of a semi join
+over that table. A range of a column a table is written in the order of,
+a day of a log, holds every part between its two ends.
+
+So a run now asks its parts first (`columns/judged/proved.rs`). Of a
+comparison of a column with a constant, the run is proved if every part
+it lies in holds no null and has bounds that satisfy the comparison at
+the end that decides it. `>=` is decided by the least value and `>` by
+the least being above the constant. `<=` and `<` are decided by the
+greatest in the same way. `=` needs both ends equal to the constant, and
+`<>` needs the constant below the least or above the greatest. A
+comparison proved keeps every row, so the scan does not decode its
+column to judge it and tests no row. A null proves nothing, as no
+comparison is true of one [X3.135-1986 §5.11 GR2]. A run must lie
+wholly in chunks whose parts prove it, so a header that lacks a chunk
+proves nothing of the rows it held. The bound of a sort's first rows is
+proved as the comparison it is at that moment (D1241).
+
+The bounds are those of every row frozen in a part. A run gives those
+rows or fewer. A row changed or deleted since the freeze has an entry in
+the tree, its frozen row is left out of the run, and what the tree holds
+of it is given apart and judged by the filter alone
+(`rows/frozen/batches.rs`). So the bounds cover every row a run gives,
+whatever was written since, and no row is given that the scan would
+have left out. The filter judges every row given as before (D15).
+
+Only columns of exact numbers and of datetimes of no time zone are
+proved so. Their bounds are their values whole, and a bound compares
+with the constant as each value does (`value::compare`), at any scale. A
+part whose bounds do not compare with the constant proves nothing. Texts
+are left out, as are approximate numbers. A run asks two comparisons of
+values a part and a conjunct, against a decode and a test of each of up
+to 2,048 rows.
+
+The tests ask each comparison at the bound its parts reach and one unit
+past it, a part with a null, runs that are not whole parts and that
+cross chunks, and a header with a chunk missing
+(`judged/proved/tests.rs`). An integration test changes, deletes and
+adds rows in parts whose stored bounds prove a comparison and compares
+every answer with the row store's (`test/integration/proved_bounds.rs`).
+
+#### D1298. A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened
+
+A scan opens each chunk it reads once for all the runs that read it
+(D352). Opening a dictionary chunk of a character string column made
+its entries text at once. The octets of every entry were judged UTF-8
+and copied, and the text was kept for the runs that give the chunk's
+rows as codes of those entries. Many readers of such a chunk ask for no
+text. A conjunct
+judged of the chunk where its octets lie (D360, D512, D1251, D1253), a
+value read alone, and a row group passed over after its first chunks
+all open the chunk and read its codes or its octets as written. Each
+still paid for the check and the copy of entries nobody read.
+
+The entries are now made text the first time a run asks for the chunk's
+rows as text (`engine/columns/prepared.rs`, `Made::texts_of`), and kept
+from then for the chunk's other runs as before. A chunk never asked for
+text makes none.
+
+Nothing a reader of the text is given changes. The text is made of the
+same octets by the same function, and those octets are judged UTF-8 as
+the text is made, before any of it is given, so a chunk with an entry
+that is no text still gives none and its rows are read the way that
+raises what is malformed. The text is held in a cell that is set once.
+Two runs that ask for the text of one opened chunk make it once, and a
+chunk whose entries were judged not to be text is not judged again. The
+chunks opened belong to the one scan that reads them, or to one decoding
+of a late column at a time (D361), so no two threads ask one cell at
+once, and the cell would still make the text once if they did.
 
 ## 2. Project layout
 

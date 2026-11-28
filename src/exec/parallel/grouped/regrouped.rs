@@ -30,6 +30,11 @@
 //! thread merges the counts, one group even of no rows. With no
 //! projection between the two, a partition's groups of the first are
 //! read as a batch from their table (`second.rs`), no row made of one.
+//!
+//! \[DESIGN\] (RULES.md D1281) A sort that asks for its first rows over
+//! a pair takes them from the second's table of each partition
+//! (`second_table`, `top.rs`), where the second is made in one and
+//! crosses no partition (`in_tables`).
 
 mod crossing;
 
@@ -166,6 +171,31 @@ impl Outer {
         self.read.is_some() && first.in_order()
     }
 
+    /// \[DESIGN\] (RULES.md D1281) Whether a sort's first rows are taken
+    /// from its tables. Each partition then makes its groups whole in a
+    /// table of its own, so it reads the first's groups as a batch and
+    /// crosses no partition. A group of one that crosses lies in several
+    /// partitions, and no partition's table holds its row.
+    pub(super) fn in_tables(&self) -> bool {
+        self.read.is_some() && self.crossing.is_none()
+    }
+
+    /// [X3.135-1986 §5.22 GR2] The table of the groups of `first`, a
+    /// partition's groups of the first grouping it groups in a table
+    /// (`tabled`), each numbered by its first group of the first and none
+    /// finished; none of one it does not read so.
+    ///
+    /// # Errors
+    ///
+    /// As a set function fails.
+    pub(super) fn second_table(&self, first: GroupTable, (runner, seed): (&Runner, &Seed)) -> Result<Option<GroupTable>> {
+        let Some(read) = &self.read else { return Ok(None) };
+        self.counted(first.len());
+        // Its keys are hashed and compared as its own columns are grouped,
+        // each by its place in its key (RULES.md D1184).
+        super::second::regrouped(first, (read, &self.spec.aggs), (runner, &seed.unpadded(&read.unpadded))).map(Some)
+    }
+
     /// [X3.135-1986 §5.22 GR2] The groups of `first`, a partition's
     /// groups of the first grouping it groups in a table (`tabled`), as
     /// `regrouped` gives them of the same groups, those of one that
@@ -175,12 +205,8 @@ impl Outer {
     /// # Errors
     ///
     /// As a set function fails.
-    pub(super) fn regrouped_table(&self, first: GroupTable, (runner, seed): (&Runner, &Seed)) -> Result<Vec<(u64, Row)>> {
-        let Some(read) = &self.read else { return Ok(Vec::new()) };
-        self.counted(first.len());
-        // Its keys are hashed and compared as its own columns are grouped,
-        // each by its place in its key (RULES.md D1184).
-        let table = super::second::regrouped(first, (read, &self.spec.aggs), (runner, &seed.unpadded(&read.unpadded)))?;
+    pub(super) fn regrouped_table(&self, first: GroupTable, run: (&Runner, &Seed)) -> Result<Vec<(u64, Row)>> {
+        let Some(table) = self.second_table(first, run)? else { return Ok(Vec::new()) };
         let Some(crossing) = &self.crossing else { return table.finished() };
         // Of one that crosses the partitions, each group's states written
         // for the statement's thread to merge (RULES.md D1219).
@@ -192,7 +218,7 @@ impl Outer {
             });
             (table.first(g), table.values(g), states.collect())
         });
-        crossing.add(&self.spec, written.collect(), runner)?;
+        crossing.add(&self.spec, written.collect(), run.0)?;
         Ok(Vec::new())
     }
 
