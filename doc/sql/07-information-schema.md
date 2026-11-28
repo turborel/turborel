@@ -655,6 +655,7 @@ OK
 | TABLE_STATISTICS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ENGINE_NAME, ROW_COUNT, BYTES, BYTES_ESTIMATED, LAST_CHANGED, LAST_COMPACTED | base table: its engine, its rows, the bytes it takes or NULL if its engine does not know them, YES if some are estimated, when a transaction that wrote it last committed and when its engine's maintenance last did some work on it, each NULL if never since the database was opened; every table to the owner and a holder of MONITOR, else those the user holds a privilege on ([Monitoring](../operator/11-monitoring.md)) |
 | INDEX_STATISTICS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, INDEX_NAME, METHOD_NAME, SEARCHES, ENTRIES_READ, ENTRY_COUNT, HEIGHT, BYTES, DISTINCT_KEYS | index: its method, the searches made of it and the entries they gave since the database was opened or the index made, its entries, its tree's levels and its bytes, and the distinct keys it counts for the planner, each NULL if its method does not know it; shown as TABLE_STATISTICS shows its table ([Monitoring](../operator/11-monitoring.md)) |
 | COLUMN_STATISTICS | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, ROW_COUNT, GATHERED, NULL_FRACTION, DISTINCT_VALUES, AVERAGE_WIDTH, MIN_VALUE, MAX_VALUE, MOST_COMMON_VALUES, MOST_COMMON_FREQUENCIES, HISTOGRAM_BOUNDS | column of a base table: what the planner's statistics hold of it, each NULL until they are gathered; every column to the owner and a holder of MONITOR, else those the user holds a privilege on ([Column statistics](#column-statistics)) |
+| COLUMN_STORAGE | TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, ENCODING, CHUNKS, ROW_COUNT, BYTES, PAGE_BYTES | column of a base table and one way its values are kept: the chunks of one encoding of a column store's frozen rows, its lengths lane, or its rows in the tree, with what they take ([Column storage](#column-storage)) |
 | CONNECTION_ATTRIBUTES | CONNECTION_ID, ATTRIBUTE_NAME, ATTRIBUTE_VALUE | attribute a connection's client gave as it opened, by the connection's ID *(extension)* ([The Native Protocol](../client/05-protocol.md)) |
 | SERVER | WORKERS_BUSY, STATEMENTS_WAITING, CONNECTIONS, REFUSED, CLOSED_UNTOLD, COMMITTED, ROLLED_BACK | one row: the workers running a statement, the statements waiting for one, the connections, those refused past SERVER.MAX_CONNECTIONS, told why or closed at once, and the database's transactions committed and rolled back since it was opened, of every session, served or embedded |
 | REPLICAS | MEMBER, ADDRESS, IS_SELF, ROLE, EPOCH, VIEW_NUMBER, IS_CONNECTED, LAST_HEARD_MS | member of the database's replica group ([Replication](../operator/09-replication.md)), in the epoch this node is in, to the owner: its number and address; whether it is this node; PRIMARY, BACKUP or UNKNOWN in the view this node knows; the epoch, and that view, or NULL; whether this node's link to it is up; the milliseconds since a frame from it arrived, or NULL |
@@ -799,6 +800,72 @@ show.
 The standard: an implementation may add views to INFORMATION_SCHEMA
 [ISO/IEC 9075:1992 §21.1]; one showing the planner's statistics is an
 extension, and so is the column DISTINCT_KEYS of INDEX_STATISTICS.
+
+## Column storage
+
+COLUMN_STORAGE *(extension)* shows what each column of a base table
+takes, by the way its values are kept. A row is of a column and an
+encoding. Reading the view reads every chunk of the table's frozen
+groups, so it is a view for looking, not for a monitor's every tick.
+
+| Column | |
+|---|---|
+| ENCODING | of a column store's frozen rows, the encoding of the chunks the row counts: FIXED, VARYING, CONSTANT, FRAME, DICTIONARY, RUNS, ALP or FSST; LENGTHS for the column's lengths lane; ROW for rows still in the table's tree, and for every row of a row store |
+| CHUNKS | the chunks of that encoding, NULL of ROW |
+| ROW_COUNT | the rows those chunks hold |
+| BYTES | their bytes as encoded; of ROW, the rows times the column's mean width as the table's statistics last measured it, NULL if they never did |
+| PAGE_BYTES | the bytes of the pages the chunks take, NULL of ROW |
+
+A column of the column store is cut into chunks, and each chunk is
+written in the encoding that takes the fewest bytes, so one column may
+show several encodings. A CHARACTER VARYING column has one row more,
+LENGTHS. Beside the column's values a frozen group keeps each value's
+length in octets as a small integer, which is what OCTET_LENGTH and a
+comparison with the empty string read, with no text read. Those rows
+count the column's rows a second time. So a sum of ROW_COUNT by column
+leaves LENGTHS out, and a sum of PAGE_BYTES that takes it in is what
+the column takes with its lengths.
+
+The owner and a holder of MONITOR see every column. Any other user sees
+the columns on which it holds a privilege, as COLUMN_STATISTICS shows
+them.
+
+```sql
+CREATE TABLE PAGE (ID INTEGER, ADDRESS VARCHAR(40), KIND VARCHAR(10))
+    USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048);
+```
+
+Once 4,096 rows are inserted and committed, and the maintenance has
+frozen them:
+
+```sql
+SELECT COLUMN_NAME, ENCODING, CHUNKS, ROW_COUNT, BYTES, PAGE_BYTES
+  FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'PAGE' ORDER BY ORDINAL_POSITION, ENCODING;
+SELECT COLUMN_NAME, SUM(ROW_COUNT) AS ROW_COUNT, SUM(PAGE_BYTES) AS PAGE_BYTES
+  FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'PAGE' AND ENCODING <> 'LENGTHS'
+  GROUP BY COLUMN_NAME ORDER BY COLUMN_NAME;
+```
+
+```
+ COLUMN_NAME                                                  | ENCODING                                                     |               CHUNKS |            ROW_COUNT |                BYTES |           PAGE_BYTES
+--------------------------------------------------------------+--------------------------------------------------------------+----------------------+----------------------+----------------------+----------------------
+ ID                                                           | FRAME                                                        |                    2 |                 4096 |                 6172 |                16384
+ ADDRESS                                                      | FSST                                                         |                    6 |                 4096 |                34159 |                49152
+ ADDRESS                                                      | LENGTHS                                                      |                    2 |                 4096 |                  583 |                16384
+ KIND                                                         | DICTIONARY                                                   |                    2 |                 4096 |                 1076 |                16384
+ KIND                                                         | LENGTHS                                                      |                    2 |                 4096 |                 1100 |                16384
+(5 rows)
+ COLUMN_NAME                                                  |                                ROW_COUNT |                               PAGE_BYTES
+--------------------------------------------------------------+------------------------------------------+------------------------------------------
+ ADDRESS                                                      |                                     4096 |                                    49152
+ ID                                                           |                                     4096 |                                    16384
+ KIND                                                         |                                     4096 |                                    16384
+(3 rows)
+```
+
+ADDRESS is long and varied, so its values take six pages and its
+lengths two. The second query leaves the lanes out, so each column
+shows the table's 4,096 rows once.
 
 ## Graph statistics
 
