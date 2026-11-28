@@ -1,8 +1,8 @@
 //! \[DESIGN\] (RULES.md D1300, D1256) A sort's first rows picked of a wide
 //! partition where its groups lie (`table/made/wide.rs`). Of a sort whose
 //! every key names a set function, the groups of several rows are read
-//! of the partition's own table as a table's are, and those of one row
-//! where they lie, in the Mades the partition adopted. A Made holds few
+//! of the tables of its sub-parts' own as a table's are, and those of one
+//! row where they lie, in the Mades the partition adopted. A Made holds few
 //! of a partition's groups, so a batch is read of several Mades one
 //! after another, until it holds the rows a scan's batch holds, and the
 //! sort keys' results of all of them are made in one column. One top-N
@@ -79,6 +79,20 @@ fn lying_batch(lying: &[Lying], span: Span, (sorted_by, aggs): (&[usize], &[AggC
     Ok((Batch { columns, rows }, None))
 }
 
+/// The batch a sort by the set functions at `sorted_by` reads of `own`,
+/// a sub-part's table of its own: those functions' results, each group's
+/// first row's number, and its number among the partition's groups read
+/// so, from `base` on. Every other set function is finished of each
+/// group for the error it may raise, no value kept.
+fn own_batch(own: &GroupTable, sorted_by: &[usize], base: usize) -> Result<Kept> {
+    let mut columns = sorted_by.iter().map(|&agg| own.results_of(agg)).collect::<Result<Vec<Column>>>()?;
+    own.checked_but(sorted_by)?;
+    let firsts = own.firsts().iter().map(|&first| i64::try_from(first).unwrap_or(i64::MAX)).collect();
+    columns.push(Column::Ints(Ints::new(firsts, 0, None)));
+    columns.push(numbers(base, own.len()));
+    Ok((Batch { columns, rows: own.len() }, None))
+}
+
 impl Top {
     /// \[DESIGN\] (RULES.md D1300) [X3.135-1986 §8.3 GR3b] The first rows
     /// of the groups of `wide`, a partition's adopted where they lie, of
@@ -103,44 +117,45 @@ impl Top {
     }
 
     /// The first rows of `wide`'s groups under the sort's keys, set
-    /// functions all, at `sorted_by` among `aggs`: one top-N over the batch
-    /// of the partition's own table and the batches of the groups of one
+    /// functions all, at `sorted_by` among `aggs`: one top-N over a batch
+    /// of each sub-part's own table and the batches of the groups of one
     /// row, so as many rows are kept as of a table.
     fn picked_of_wide(&self, wide: &Wide, (sorted_by, aggs): (&[usize], &[AggCall])) -> Result<Vec<Row>> {
-        let (held, lying): (&GroupTable, Arc<Vec<Lying>>) = (wide.own(), Arc::new(wide.lying()));
-        let mut columns = sorted_by.iter().map(|&agg| held.results_of(agg)).collect::<Result<Vec<Column>>>()?;
-        held.checked_but(sorted_by)?;
-        let firsts = held.firsts().iter().map(|&first| i64::try_from(first).unwrap_or(i64::MAX)).collect();
-        columns.push(Column::Ints(Ints::new(firsts, 0, None)));
-        columns.push(numbers(0, held.len()));
-        let (bases, spans) = spans(&lying, held.len(), self.filled);
+        let (owns, lying): (Vec<&GroupTable>, Arc<Vec<Lying>>) = (wide.owns(), Arc::new(wide.lying()));
+        let (mut held, mut bases, mut base) = (Vec::with_capacity(owns.len()), Vec::with_capacity(owns.len()), 0_usize);
+        for own in &owns {
+            held.push(own_batch(own, sorted_by, base)?);
+            bases.push(base);
+            base = base.saturating_add(own.len());
+        }
+        let (lain, spans) = spans(&lying, base, self.filled);
+        bases.extend(lain);
         let (from, by, calls) = (Arc::clone(&lying), sorted_by.to_vec(), aggs.to_vec());
         let rest = spans.into_iter().map(move |span| lying_batch(&from, span, (&by, &calls)));
-        // A batch of no row is not given, as the sort takes one for a morsel
-        // it cannot hold and sorts every row.
-        let own_batch = (held.len() > 0).then(|| Ok((Batch { columns, rows: held.len() }, None)));
-        let batches = own_batch.into_iter().chain(rest);
+        // No batch is of no row, which the sort takes for a morsel it
+        // cannot hold and sorts every row of.
+        let batches = held.into_iter().map(Ok).chain(rest);
         let mut keys: Vec<SortKey> = self.own().iter().enumerate().map(|(at, key)| SortKey { column: at, ..*key }).collect();
         // The first rows' numbers, the column after the sort's own.
         keys.push(SortKey::ascending(keys.len()));
         let first = first_of_morsel(&keys, Box::new(batches), (self.most, None), (&self.run.0, self.run.1))?;
         add(&self.counts.given, first.len());
-        first.into_iter().map(|picked| self.made_of_wide(wide, (&lying, &bases), aggs, picked)).collect()
+        first.into_iter().map(|picked| self.made_of_wide((&owns, &lying), &bases, aggs, picked)).collect()
     }
 
     /// The projection's row of the group `picked` names last, a row of
-    /// `picked_of_wide`'s batches, made of the partition's own table or
-    /// of the Made of `lying` its number falls in, by `bases`, with the
-    /// group's first row's number after it.
-    fn made_of_wide(&self, wide: &Wide, (lying, bases): (&[Lying], &[usize]), aggs: &[AggCall], mut picked: Row) -> Result<Row> {
+    /// `picked_of_wide`'s batches, made of the table of `owns` or of the
+    /// Made of `lying` its number falls in, by `bases`, with the group's
+    /// first row's number after it.
+    fn made_of_wide(&self, (owns, lying): (&[&GroupTable], &[Lying]), bases: &[usize], aggs: &[AggCall], mut picked: Row) -> Result<Row> {
         let group = picked.pop().as_ref().and_then(number_of).ok_or_else(|| broken("a picked group has no number"))?;
         let first = picked.pop().ok_or_else(|| broken("a picked group has no first row"))?;
-        let whole = if group < wide.own().len() {
-            wide.own().row(group)?
+        let k = bases.partition_point(|&base| base <= group).saturating_sub(1);
+        let within = group.saturating_sub(bases.get(k).copied().unwrap_or(0));
+        let whole = if let Some(own) = owns.get(k) {
+            own.row(within)?
         } else {
-            let k = bases.partition_point(|&base| base <= group).saturating_sub(1);
-            let within = group.saturating_sub(bases.get(k).copied().unwrap_or(0));
-            let lies = lying.get(k).and_then(|(made, places)| places.get(within).map(|&place| (made, place)));
+            let lies = lying.get(k.saturating_sub(owns.len())).and_then(|(made, places)| places.get(within).map(|&place| (made, place)));
             let (made, place) = lies.ok_or_else(|| broken("a picked group lies in no Made"))?;
             made.row_at(place, aggs)?
         };

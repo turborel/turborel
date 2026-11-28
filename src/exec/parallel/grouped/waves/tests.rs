@@ -403,7 +403,7 @@ fn the_groups_are_the_same_whether_partitions_go_wide() {
             assert_eq!(never.widen.merged.load(Ordering::Relaxed), 0, "no partition wide");
             let ways: [(usize, Forced); 4] = [(0, NONE), (5, NONE), (5, None), (40, Some(|m| m.is_multiple_of(2)))];
             for (past, forced) in ways {
-                let how = How { forced, widen: Widen::past(past), ..How::default() };
+                let how = How { forced, widen: Widen::past(past).parted(8), ..How::default() };
                 let made = waved(&a, &sql, &how, 3);
                 assert_eq!(differing(&made, &expected), None, "wide past {past} groups, grant {grant}: {sql}");
                 let wide = how.widen.merged.load(Ordering::Relaxed);
@@ -494,7 +494,7 @@ fn the_first_rows_by_a_set_function_are_the_same_of_wide_partitions() {
         let expected = first_rows(&a, &sql, &never, (by, 7));
         assert!(expected.len() > 30 && expected.len() <= PARTS.saturating_mul(7), "{} rows: {sql}", expected.len());
         for past in [0_usize, 5] {
-            let how = How { forced: NONE, widen: Widen::past(past), ..How::default() };
+            let how = How { forced: NONE, widen: Widen::past(past).parted(8), ..How::default() };
             assert_eq!(first_rows(&a, &sql, &how, (by, 7)), expected, "wide past {past} groups, by {by}: {sql}");
             let wide = how.widen.merged.load(Ordering::Relaxed);
             assert!(past > 0 || wide > 0, "no partition went wide: {sql}");

@@ -81,31 +81,27 @@ impl Made {
 impl Wide {
     /// How many columns its keys have.
     pub(in crate::exec) fn width(&self) -> usize {
-        self.own.keys.width()
+        self.width
     }
 
-    /// The table of its own, of the groups that took more than one row.
-    pub(in crate::exec) fn own(&self) -> &GroupTable {
-        &self.own
+    /// The tables of its sub-parts' own that hold a group, of the groups
+    /// that took more than one row, in the sub-parts' order.
+    pub(in crate::exec) fn owns(&self) -> Vec<&GroupTable> {
+        self.parts.iter().map(|part| &part.own).filter(|own| own.len() > 0).collect()
     }
 
     /// Its groups of one row, where they lie: each Made that holds any,
-    /// in the order handed, with the places of those groups in it, in the
-    /// order of their first rows.
+    /// in the order handed, with the places of those groups in it, a
+    /// sub-part's after another's.
     pub(in crate::exec) fn lying(&self) -> Vec<Lying> {
-        let mut lying: Vec<Lying> = Vec::new();
-        let mut among: Vec<Option<usize>> = vec![None; self.segments.len()];
-        for &(segment, place) in &self.lies {
-            let (Some(at), Some(held)) = (among.get_mut(index(segment)), self.segments.get(index(segment))) else { continue };
-            let Some(made) = &held.made else { continue };
-            let k = *at.get_or_insert_with(|| {
-                lying.push((Arc::clone(made), Vec::with_capacity(held.lying)));
-                lying.len().saturating_sub(1)
-            });
-            if let Some((_, places)) = lying.get_mut(k) {
-                places.push(place);
+        let mut places: Vec<Vec<u32>> = self.lying.iter().map(|&lying| Vec::with_capacity(lying)).collect();
+        for &(segment, place) in self.parts.iter().flat_map(|part| &part.lies) {
+            // A group in a table of its own names no segment.
+            if let Some(run) = places.get_mut(index(segment)) {
+                run.push(place);
             }
         }
-        lying
+        let held = self.segments.iter().zip(places).filter(|(_, run)| !run.is_empty());
+        held.filter_map(|(segment, run)| segment.made.as_ref().map(|made| (Arc::clone(made), run))).collect()
     }
 }

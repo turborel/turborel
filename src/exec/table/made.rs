@@ -19,7 +19,7 @@ mod apart;
 mod wide;
 mod written;
 pub(super) use apart::Placed;
-pub(in crate::exec) use wide::{Adopted, Lying, Wide};
+pub(in crate::exec) use wide::{Adopted, Lying, Run, Wide};
 pub(in crate::exec) use written::PIECE;
 
 /// \[DESIGN\] The bits of a hash below those a partition is found by, as
