@@ -181,9 +181,9 @@ fn a_run_of_more_entries_than_rows_given_is_not_hashed_whole() {
     let entries = dictionary(&["p", "q", "r", "s"]);
     let codes = [Some(3), Some(0), Some(1), Some(2), Some(3)];
     let batch = Batch { columns: vec![coded_column(&entries, &codes)], rows: codes.len() };
-    let kept = |batch: &Batch, rows: Option<&[u32]>| {
+    let kept = |of: &Batch, rows: Option<&[u32]>| {
         let mut memo = Memo::default();
-        assert!(memo.ready(batch, &[0], rows, (&seed, &Portable)), "coded");
+        assert!(memo.ready(of, &[0], rows, (&seed, &Portable)), "coded");
         memo.hash(memo.found(0).0, &seed)
     };
     let alone = |r: usize| Some(hash_of(&batch, (&[0], r), (&seed, &Portable), &mut Vec::new()));
@@ -193,9 +193,9 @@ fn a_run_of_more_entries_than_rows_given_is_not_hashed_whole() {
     let nested = Arc::new(Texts::coded(Coded { codes: vec![1, 0], entries: dictionary(&["x", "y"]) }, None));
     let of_codes = Batch { columns: vec![coded_column(&nested, &[Some(0), Some(1), Some(0)])], rows: 3 };
     assert_eq!(kept(&of_codes, None), None, "two entries, three rows, the entries codes themselves");
-    let groups = |batch: &Batch, rows: Option<&[u32]>| {
+    let groups = |of: &Batch, rows: Option<&[u32]>| {
         let mut table = GroupTable::new(1, &[], &seed, usize::MAX);
-        assert!(grouped((&mut table, &mut Memo::default()), (batch, &[0], rows), (0, &seed, &Portable), &mut Vec::new()), "coded");
+        assert!(grouped((&mut table, &mut Memo::default()), (of, &[0], rows), (0, &seed, &Portable), &mut Vec::new()), "coded");
         format!("{:?}", table.finished().unwrap())
     };
     assert_eq!(groups(&batch, Some(&[4, 2, 0])), groups(&batch, Some(&[4, 2, 0, 0])), "hashed alone or read, the groups of s, q and r");
