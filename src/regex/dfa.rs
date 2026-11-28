@@ -114,6 +114,12 @@ pub(super) struct Dfa {
 }
 
 impl Dfa {
+    /// The octets its states take.
+    #[cfg(test)]
+    pub(super) fn held(&self) -> usize {
+        self.held
+    }
+
     /// The end of the match of `program` (`fits`) in `text` beginning at
     /// `from` or after, as `pike::search` finds it; of `first`, the first
     /// position a match is known at, enough to say there is one.

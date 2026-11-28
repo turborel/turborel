@@ -26,7 +26,7 @@
 //! * what has no count, the defaults of `cardinality.rs`.
 
 use super::joins::{columns_of, is_chain};
-use super::lineage::{Over, computed_of, one_table, origin};
+use super::lineage::{Computed, Over, computed_of, one_table, origin};
 use super::{Card, Estimates, FUNCTION_ROWS, MAX_ESTIMATE_DEPTH, RECURSIVE_ROWS, UNKNOWN_ROWS, UNNEST_FANOUT, at_least_one};
 use crate::functions::{ARRAY, MULTISET};
 use crate::logical::{Cond, Expr, Limit, LogicalPlan, OuterJoin, SetOp, map_cond_columns, split_and};
@@ -136,16 +136,26 @@ impl Estimates<'_> {
         counted.or_else(|| self.table_rows(found.table)).unwrap_or(UNKNOWN_ROWS)
     }
 
-    /// \[DESIGN\] (RULES.md D1082) The distinct values a grouping counts of
-    /// `plan`'s column `column`: as `distinct` gives them, but of a
-    /// deterministic expression no more than the combinations of the
-    /// columns it is computed of, `depth` expressions deep; past
-    /// `MAX_ESTIMATE_DEPTH`, `plan`'s rows.
+    /// \[DESIGN\] (RULES.md D1082, D1279) The distinct values a grouping
+    /// counts of `plan`'s column `column`. They are as `distinct` gives
+    /// them, but of a deterministic expression no more than the
+    /// combinations of the columns it is computed of (`read_distinct`),
+    /// nor than its table's sample shows of it, where it shows any
+    /// (`cardinality/shown.rs`), `depth` expressions deep. Past
+    /// `MAX_ESTIMATE_DEPTH` they are `plan`'s rows.
     pub(super) fn grouped_distinct(&self, plan: &LogicalPlan, column: usize, depth: usize) -> f64 {
         let whole = self.distinct(plan, column);
-        let Some((input, read)) = computed_of(plan, column).filter(|_| depth < MAX_ESTIMATE_DEPTH) else { return whole };
-        let of = |&c: &usize| self.grouped_distinct(input, c, depth.saturating_add(1)).max(1.0_f64);
-        read.iter().map(of).product::<f64>().min(whole)
+        let Some(computed) = computed_of(plan, column).filter(|_| depth < MAX_ESTIMATE_DEPTH) else { return whole };
+        let read = self.read_distinct(&computed, whole, depth);
+        self.shown_distinct(&computed, whole).map_or(read, |shown| read.min(shown))
+    }
+
+    /// \[DESIGN\] (RULES.md D1082) The combinations of the columns
+    /// `computed` reads, each counted as a grouping counts it, one level
+    /// below `depth`, at most `whole`, its plan's rows.
+    pub(super) fn read_distinct(&self, computed: &Computed<'_>, whole: f64, depth: usize) -> f64 {
+        let of = |&c: &usize| self.grouped_distinct(computed.input, c, depth.saturating_add(1)).max(1.0_f64);
+        computed.read.iter().map(of).product::<f64>().min(whole)
     }
 
     /// The card of an outer join of `kind` on `cond` of `left` and `right`.
