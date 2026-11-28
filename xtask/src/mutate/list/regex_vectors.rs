@@ -1,7 +1,8 @@
 //! The mutations of regular expression functions over vectors (RULES.md
 //! R-TEST-9): the entries of a dictionary a function over its codes runs
-//! (D1291), what a searcher leaves for the next (D1292), and the steps of
-//! the matcher that marks (D1311).
+//! (D1291), what a searcher leaves for the next (D1292), the steps of the
+//! matcher that marks (D1311), and where a search stops or keeps no mark
+//! (D1312).
 
 use super::{Mutation, Package};
 
@@ -27,8 +28,15 @@ const BY_WORDS: &str = "regex::bounded::tests::marks_set_a_word_at_a_time_are_th
 /// The unit test of a text read by its octets against its characters.
 const BY_OCTETS: &str = "regex::bounded::tests::a_text_read_by_its_octets_is_matched_as_its_characters_are";
 
+/// The file of the automaton of where matches end.
+const DFA: &str = "src/regex/dfa.rs";
+/// The unit test of a scan that stops where nothing can match.
+const STOPS: &str = "regex::dfa::tests::a_scan_that_can_match_nothing_more_stops";
+/// The unit test of a program of few ways.
+const FEW_WAYS: &str = "regex::bounded::tests::a_program_of_few_ways_keeps_no_mark_and_finds_the_same";
+
 /// The mutations of regular expression functions over vectors, in the order they run.
-pub const REGEX_VECTORS: [Mutation; 18] = [
+pub const REGEX_VECTORS: [Mutation; 25] = [
     Mutation {
         name: "regex-entries-translated-unread",
         package: Package::Core,
@@ -208,5 +216,75 @@ pub const REGEX_VECTORS: [Mutation; 18] = [
         replacement: "(Some(_), Some(_)) => Ok(true),",
         integration: &[],
         unit: &[BY_OCTETS],
+    },
+    Mutation {
+        name: "regex-scan-reads-on-with-nothing-left",
+        package: Package::Core,
+        breaks: "the automaton reads a text to its end though no thread is left and its end matches nothing (D1312)",
+        file: DFA,
+        original: "Some(if barren { DEAD } else { at })",
+        replacement: "Some(at)",
+        integration: &[],
+        unit: &[STOPS],
+    },
+    Mutation {
+        name: "regex-scan-stops-though-the-end-matches",
+        package: Package::Core,
+        breaks: "the automaton gives a text up where no thread is left though the text's end matches (D1312)",
+        file: DFA,
+        original: "let barren = threads.is_empty() && !self.closed(program, (&key.0, key.1), (key.2, true)).1;",
+        replacement: "let barren = threads.is_empty();",
+        integration: &[],
+        unit: &[STOPS],
+    },
+    Mutation {
+        name: "regex-straight-run-takes-any-octets",
+        package: Package::Core,
+        breaks: "a straight run compared at once takes whatever octets the text holds (D1312)",
+        file: BOUNDED,
+        original: "(within && wanted.is_some() && held == wanted)",
+        replacement: "(within && wanted.is_some())",
+        integration: &[],
+        unit: &[FEW_WAYS],
+    },
+    Mutation {
+        name: "regex-straight-run-past-a-meeting",
+        package: Package::Core,
+        breaks: "a straight run goes on past an instruction two ways can meet at (D1312)",
+        file: STEPS,
+        original: ".filter(|after| meets.get(*after) == Some(&false))",
+        replacement: ".filter(|_| true)",
+        integration: &[],
+        unit: &["regex::compile::steps::tests::a_straight_run_ends_where_two_ways_can_meet"],
+    },
+    Mutation {
+        name: "regex-few-ways-begun-anywhere",
+        package: Package::Core,
+        breaks: "a program whose match may begin anywhere is taken for one of few ways and keeps no mark (D1312)",
+        file: STEPS,
+        original: "anchored && ways.is_some_and(|ways| ways <= insts.len())",
+        replacement: "ways.is_some_and(|ways| ways <= insts.len())",
+        integration: &[],
+        unit: &[FEW_WAYS],
+    },
+    Mutation {
+        name: "regex-few-ways-of-any-forks",
+        package: Package::Core,
+        breaks: "a program's forks are not counted, so one of many ways keeps no mark (D1312)",
+        file: STEPS,
+        original: "Inst::Split(..) => forks = forks.saturating_add(1),",
+        replacement: "Inst::Split(..) => {}",
+        integration: &[],
+        unit: &[FEW_WAYS],
+    },
+    Mutation {
+        name: "regex-few-ways-with-a-loop",
+        package: Package::Core,
+        breaks: "a program with a loop it does not run through is taken for one of few ways (D1312)",
+        file: STEPS,
+        original: "                if *to <= pc {\n                    return false;\n                }",
+        replacement: "",
+        integration: &[],
+        unit: &[FEW_WAYS],
     },
 ];

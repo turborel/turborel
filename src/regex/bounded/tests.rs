@@ -226,7 +226,8 @@ fn a_loop_of_a_class_before_a_character_outside_it_is_run_through() {
     for (pattern, flag) in none {
         assert_eq!(runs(pattern, flag), 0, "{pattern:?} {flag:?}");
     }
-    let regex = Regex::new("^(x|xa)[^c]+c", "").unwrap();
+    // Not anchored at the string's start, so it keeps its marks (RULES.md D1312).
+    let regex = Regex::new("(x|xa)[^c]+c", "").unwrap();
     let mut kept = Scratch::default();
     for (end, what) in [("", "no match"), ("c", "a match")] {
         let text: Vec<char> = format!("x{}{end}", "a".repeat(2000)).chars().collect();
@@ -282,7 +283,8 @@ fn marks_set_a_word_at_a_time_are_those_set_one_by_one() {
 /// can meet, the matcher that marks still follows each instruction at
 /// each position once at most: over the corpus, a search from every
 /// start follows no more instructions than the program has times the
-/// positions it reads; and of a pattern whose ways double at every
+/// program and the positions it reads together, the bound of a program
+/// of few ways too (RULES.md D1312); and of a pattern whose ways double at every
 /// character, of a text with no match, it follows a number within that
 /// product where the ways number a power of the text's length.
 #[test]
@@ -298,7 +300,8 @@ fn marked_where_ways_meet_it_follows_each_instruction_at_a_position_once() {
             let chars: Vec<char> = text.chars().collect();
             let (mut kept, reads) = (Scratch::default(), positions(&regex.program, chars.len(), 0).unwrap());
             search(&regex.program, chars.as_slice(), (0, reads), true, &mut kept).unwrap();
-            assert!(kept.steps <= regex.program.insts.len() * reads, "{pattern:?} in {text:?}: {} steps", kept.steps);
+            let bound = regex.program.insts.len() * (regex.program.insts.len() + reads);
+            assert!(kept.steps <= bound, "{pattern:?} in {text:?}: {} steps", kept.steps);
         }
     }
 }
@@ -346,5 +349,57 @@ fn a_text_read_by_its_octets_is_matched_as_its_characters_are() {
                 assert_eq!(of_ascii, wanted, "{pattern:?} in {string:?} of ASCII from {from}, cut {cut}");
             }
         }
+    }
+}
+
+/// Verifies: [DESIGN] (RULES.md D1312) a program has few ways if every
+/// match of it begins at the string's start, its loops are all run
+/// through or skipped as the rest of the text, and two to the power of
+/// its forks, times its loops and one, is within its instructions; not
+/// one that may begin anywhere, has a loop of another kind, or forks too
+/// often. Of such a program the matcher keeps no mark and finds what the
+/// matcher of threads finds, from every position, where a second way
+/// meets the first in a loop too (`wwwx`), read by its characters and by
+/// its octets, its straight runs compared at once.
+#[test]
+fn a_program_of_few_ways_keeps_no_mark_and_finds_the_same() {
+    let few = [("^https?://(www\\.)?([^/]+)/.*$", "s"), ("^(a|ab)(b|bc)[^/]+/", ""), ("^(x|xa)[^c]+c(d)?", ""), ("^abc", "")];
+    let texts = [
+        "http://wwwx.test/a",
+        "http://www.a.test/b",
+        "https://www./",
+        "http://www",
+        "http:/a/",
+        "abbc/",
+        "abc//",
+        "ab",
+        "xaac",
+        "xaaacd",
+        "",
+    ];
+    let mut kept = Scratch::default();
+    for (pattern, flag) in few {
+        let regex = Regex::new(pattern, flag).unwrap();
+        assert!(regex.program.passed.few_ways, "{pattern:?}");
+        for text in texts {
+            let chars: Vec<char> = text.chars().collect();
+            for from in 0..=chars.len() {
+                let reads = positions(&regex.program, chars.len(), from).unwrap();
+                let ours = found(&regex.program, chars.as_slice(), (from, reads), true, &mut kept).unwrap();
+                assert_eq!(
+                    ours,
+                    pike::search(&regex.program, chars.as_slice(), from, true).unwrap(),
+                    "{pattern:?} in {text:?} from {from}"
+                );
+                let lying = super::super::Utf8::of(text);
+                let of_octets = search(&regex.program, &lying, (from, reads), true, &mut kept).unwrap().then(|| kept.slots().to_vec());
+                assert_eq!(of_octets, ours, "{pattern:?} in {text:?} from {from}, by its octets");
+                assert!(kept.marks.is_empty(), "{pattern:?}: no mark kept");
+            }
+        }
+    }
+    for (pattern, flag) in [("https?://x", ""), ("^(a*)*b", ""), ("^a+a", ""), ("^a.*$", ""), ("^(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)c", "")]
+    {
+        assert!(!Regex::new(pattern, flag).unwrap().program.passed.few_ways, "{pattern:?}");
     }
 }

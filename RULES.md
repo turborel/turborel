@@ -834,6 +834,7 @@ verification approach DO-178C expects (§8).
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1311 | The matcher that marks does a step's work once a step |
+| D1312 | A search stops where nothing can match, compares a straight run at once, and keeps no mark of a program of few ways |
 
 ### The project
 
@@ -24280,6 +24281,42 @@ in those than in anything the pattern asked.
 What a search finds is unchanged. The model tests hold the matcher to
 the matcher of threads over the corpus, of texts read by their
 characters and by their octets.
+
+#### D1312. A search stops where nothing can match, compares a straight run at once, and keeps no mark of a program of few ways
+
+Three things a search still did that its pattern did not ask for.
+
+- The automaton of where matches end (D1188) read a text to its end
+  though nothing could match any more. A state no thread waits at
+  leads, at every character, to one no thread waits at, as the new start
+  tried at each led to none, so only the text's end could still match
+  from it. If the end cannot either, the state is as dead as one after a
+  match with no thread left, and the scan stops there (`State::barren`,
+  `Dfa::live`). A program anchored at the string's start is so given up
+  at the first character no thread reads. It was asked first exactly
+  where most texts have no match (D1188), and read each of them whole.
+- Instructions one after another that each match one given character of
+  ASCII, with no way in but at the first, are a straight run
+  (`compile/steps.rs`, `Passed::straight`). Of a text read by its octets
+  the matcher that marks compares the run's octets with the text's at
+  once and goes on past it, or fails where it would have failed at one
+  of them.
+- A program whose every match begins at the string's start, and whose
+  loops are all run through (D1190) or skipped as the rest of the text
+  (D1188), forks into two ways at each fork left and into no more, each
+  a straight walk. While two to the power of its forks, times its loops
+  and one, is within its instructions, all its ways together follow
+  fewer instructions than the program has times the program and the
+  text together. That is the bound the marks kept, with the program's
+  length added once, so such a program keeps no mark
+  (`Passed::few_ways`): none is cleared before a search and none set.
+  A program that may begin anywhere keeps its marks, as each start
+  would walk its loops again.
+
+What a search finds is unchanged, held to the matcher of threads over
+the corpus as before. TRANSLATE_REGEX already searches a subject once
+where its match ends at the subject's end, so nothing was to be gained
+there for a program anchored at the start.
 
 ## 2. Project layout
 

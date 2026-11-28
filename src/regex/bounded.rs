@@ -147,7 +147,9 @@ pub(super) fn search<T: Text + ?Sized>(
 ) -> Result<bool> {
     let first_alone = anchored(program);
     kept.marks.clear();
-    kept.marks.resize(program.insts.len().saturating_mul(positions).div_ceil(WORD), 0);
+    // A program of few ways keeps no mark (RULES.md D1312).
+    let marks = if program.passed.few_ways { 0 } else { program.insts.len().saturating_mul(positions).div_ceil(WORD) };
+    kept.marks.resize(marks, 0);
     kept.slots.clear();
     kept.slots.resize(if capture { program.slots } else { 0 }, None);
     kept.stack.clear();
@@ -230,7 +232,8 @@ impl<T: Text + ?Sized> Search<'_, T> {
         let Some(taken) = self.program.insts.get(taken_at) else { return Ok(Some(met)) };
         let mut at = self.passed(pc, met);
         let (first, end) = (self.bit(pc, self.text.after(met)), self.bit(pc, at).saturating_add(1));
-        if at > met && !marked(&mut self.kept.marks, first, end) {
+        let kept = !self.program.passed.few_ways;
+        if kept && at > met && !marked(&mut self.kept.marks, first, end) {
             return Ok(None);
         }
         loop {
@@ -239,7 +242,7 @@ impl<T: Text + ?Sized> Search<'_, T> {
                 return Ok(Some(at));
             }
             at = self.text.after(at);
-            if !self.mark(pc, at) {
+            if kept && !self.mark(pc, at) {
                 return Ok(None);
             }
         }
@@ -269,6 +272,28 @@ impl<T: Text + ?Sized> Search<'_, T> {
         pc.saturating_mul(self.positions).saturating_add(at.saturating_sub(self.from))
     }
 
+    /// Where the way goes on after `inst`, the instruction at `pc`, one
+    /// that matches a character, met at `at`: past the character it
+    /// matches there; none if it matches none, or the search reads no
+    /// further. \[DESIGN\] (RULES.md D1312) Of a text read by its octets
+    /// a straight run from `pc` (`compile/steps.rs`) is compared with the
+    /// octets there at once, and the way goes on past the run.
+    fn taken(&self, (pc, inst): (usize, &Inst), at: usize) -> Result<Option<(usize, usize)>> {
+        let run = usize::from(self.program.passed.straight.get(pc).copied().unwrap_or(0));
+        if let (true, Some(octets)) = (run > 1, self.octets) {
+            let (after, to) = (pc.saturating_add(run), at.saturating_add(run));
+            // Each character of the run is read before the last position the search reads to.
+            let within = to.saturating_sub(self.from) < self.positions;
+            let (wanted, held) = (self.program.passed.octets.get(pc..after), octets.get(at..to));
+            return Ok((within && wanted.is_some() && held == wanted).then_some((after, to)));
+        }
+        let within = at.saturating_sub(self.from).saturating_add(1) < self.positions;
+        if !within || !self.takes((pc, inst), at)? {
+            return Ok(None);
+        }
+        Ok(Some((pc.saturating_add(1), self.text.after(at))))
+    }
+
     /// \[DESIGN\] (RULES.md D1311) Whether `inst`, the instruction at
     /// `pc`, one that matches a character, matches the one at `at`: of a
     /// text read by its octets, a character of ASCII by the instruction's
@@ -289,7 +314,7 @@ impl<T: Text + ?Sized> Search<'_, T> {
     /// before, which the mark says. An instruction no two ways meet at is
     /// not marked.
     fn arrives(&mut self, pc: usize, at: usize) -> bool {
-        let meets = self.program.passed.meets.get(pc).copied().unwrap_or(true);
+        let meets = !self.program.passed.few_ways && self.program.passed.meets.get(pc).copied().unwrap_or(true);
         let goes_on = !meets || self.mark(pc, at);
         #[cfg(test)]
         {
@@ -344,13 +369,10 @@ impl<T: Text + ?Sized> Search<'_, T> {
                     }
                     pc = after;
                 }
-                Inst::Char(_) | Inst::Set(_) | Inst::AnyButCrlf => {
-                    let within = at.saturating_sub(self.from).saturating_add(1) < self.positions;
-                    if !within || !self.takes((pc, inst), at)? {
-                        return Ok(false);
-                    }
-                    (pc, at) = (after, self.text.after(at));
-                }
+                Inst::Char(_) | Inst::Set(_) | Inst::AnyButCrlf => match self.taken((pc, inst), at)? {
+                    Some(next) => (pc, at) = next,
+                    None => return Ok(false),
+                },
                 // No program with one runs here (`Regex::matcher`).
                 Inst::BackRef(_) => return Ok(false),
             }

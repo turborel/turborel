@@ -88,3 +88,32 @@ fn a_loop_of_every_character_but_one_of_ascii_is_ended_by_its_octet() {
     }
     assert_eq!(ends(&[Inst::Match], &[true], LOOP_TAKES), [None], "a fork with no instruction after it");
 }
+
+/// Verifies: [DESIGN] (RULES.md D1312) a straight run is of instructions
+/// one after another that each match one given character of ASCII, and
+/// ends before one two ways can meet at, which begins a run of its own;
+/// a class, a character not of ASCII and an instruction that reads none
+/// are of no run. Of `ab(c|cd)é` the first two are a run of two and each
+/// branch's characters a run of their own.
+#[test]
+fn a_straight_run_ends_where_two_ways_can_meet() {
+    let insts = [
+        Inst::Save(0),
+        Inst::Char('a'),
+        Inst::Char('b'),
+        Inst::Split(4, 6),
+        Inst::Char('c'),
+        Inst::Jump(8),
+        Inst::Char('c'),
+        Inst::Char('d'),
+        Inst::Char('é'),
+        Inst::Set(CharSet::single('x')),
+        Inst::Char('y'),
+        Inst::Match,
+    ];
+    let (octets, runs) = straight(&insts, &meets(&insts, None));
+    assert_eq!(octets, [0, b'a', b'b', 0, b'c', 0, b'c', b'd', 0, 0, b'y', 0]);
+    assert_eq!(runs, [0, 2, 1, 0, 1, 0, 2, 1, 0, 0, 1, 0]);
+    let joined = [Inst::Char('a'), Inst::Char('b'), Inst::Char('c'), Inst::Jump(1)];
+    assert_eq!(straight(&joined, &meets(&joined, None)).1, [1, 2, 1, 0], "a jump leads to the second, so the first ends before it");
+}

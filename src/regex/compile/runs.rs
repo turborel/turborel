@@ -24,7 +24,7 @@ use crate::regex::class::CharSet;
 /// The instructions of a loop of one instruction, from its fork to its
 /// jump back. They are the fork, the position kept, the instruction, the
 /// check and the jump.
-const LOOP: usize = 5;
+pub(super) const LOOP: usize = 5;
 
 /// Where, after its fork, a loop of one instruction has that instruction:
 /// past the position it keeps.
