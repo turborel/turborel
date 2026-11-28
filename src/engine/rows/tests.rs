@@ -88,7 +88,7 @@ fn an_undone_change_keeps_its_older_version_for_open_readers() {
     assert_eq!(files.undo().pinned(), 0, "released once the reader ended");
 }
 
-/// Verifies: [DESIGN] RULES.md D1312, an older version lost: a reader
+/// Verifies: [DESIGN] RULES.md D1321, an older version lost: a reader
 /// going back to a version the undo store no longer holds is refused with
 /// SQLCODE -916. The message tells who read, each version walked with its
 /// maker as written and as read, the position not found, the oldest

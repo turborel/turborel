@@ -841,7 +841,7 @@ verification approach DO-178C expects (§8).
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 | D1311 | The matcher that marks does a step's work once a step |
-| D1312 | An older row version the undo store cannot give back is reported with what the store knew of it |
+| D1321 | An older row version the undo store cannot give back is reported with what the store knew of it |
 
 ### The project
 
@@ -24748,7 +24748,7 @@ What a search finds is unchanged. The model tests hold the matcher to
 the matcher of threads over the corpus, of texts read by their
 characters and by their octets.
 
-#### D1312. An older row version lost is told with what the store knew
+#### D1321. An older row version lost is told with what the store knew
 
 The undo store's error for an older row version it does not hold
 (SQLCODE -916) gave the position alone. When it is seen once in a

@@ -1,4 +1,4 @@
-//! \[DESIGN\] (RULES.md D1312) An older row version the undo store could
+//! \[DESIGN\] (RULES.md D1321) An older row version the undo store could
 //! not give back, told with what the store knew, so that one failure is
 //! enough to read. The message names who went back and from where, then
 //! lists the versions walked. Each version shows its maker as written and

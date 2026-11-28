@@ -4,7 +4,7 @@
 //! truncation forgetting what memory holds, and a refused writer told the
 //! row's writer with no older version read (D747); and batches gathered by
 //! stripe, their pins counted by batch (D873); and a version lost reported
-//! with what the store knew (D1312).
+//! with what the store knew (D1321).
 
 use super::super::{Mutation, Package};
 
@@ -111,7 +111,7 @@ pub const UNDO_MEMORY: [Mutation; 10] = [
     Mutation {
         name: "undo-lost-maker-as-written",
         package: Package::Core,
-        breaks: "a version lost is reported with each maker as written alone, not as its status reads it (D1312)",
+        breaks: "a version lost is reported with each maker as written alone, not as its status reads it (D1321)",
         file: "src/engine/rows/mvcc/gone.rs",
         original: "shown(self.maker(&version))",
         replacement: "shown(version.maker)",

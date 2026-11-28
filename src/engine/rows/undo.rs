@@ -403,7 +403,7 @@ impl UndoStore {
         (oldest, gone)
     }
 
-    /// \[DESIGN\] (RULES.md D1312) The oldest position still pinned, if any
+    /// \[DESIGN\] (RULES.md D1321) The oldest position still pinned, if any
     /// is, a batch's first of a store of batches, and the position its last
     /// truncation kept the log from: for an error that tells what the store
     /// held.
