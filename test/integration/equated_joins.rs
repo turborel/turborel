@@ -95,13 +95,14 @@ fn a_column_equal_to_a_parameter_gives_its_equal_the_comparison() {
     let runs: Vec<u64> = (0..30_i64)
         .map(|k| {
             let before = plannings();
-            a.execute_prepared(&p, &[number(1), number(1 + k % 10), number(10 + k % 10)]).unwrap();
+            let counted = a.open_prepared(&p, &[number(1), number(1 + k % 10), number(10 + k % 10)]).unwrap().fetch().unwrap();
+            assert!(counted.is_some());
             plannings().wrapping_sub(before)
         })
         .collect();
     let learning = runs.iter().take_while(|&&n| n > 0).count();
     assert_eq!((learning, &runs[..learning]), (5, &[2; 5][..]), "{runs:?}");
     assert!(runs[learning..].iter().all(|&n| n == 0), "{runs:?}");
-    let given = level.replace("L.W = ?", "L.W = 1").replace("L.D = ?", "L.D = 3").replace("S.Q < ?", "S.Q < 15");
-    assert_eq!(sorted(&a, &given), sorted(&a, LEVEL));
+    let mut opened = a.open_prepared(&p, &[number(1), number(3), number(15)]).unwrap();
+    assert_eq!(opened.fetch().unwrap().map(|r| vec![r[0].to_string()]), Some(sorted(&a, LEVEL)));
 }
