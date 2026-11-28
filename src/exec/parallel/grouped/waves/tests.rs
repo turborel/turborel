@@ -322,6 +322,31 @@ fn morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing() {
     assert!((0..40).all(|m| !reduction.apart(m)), "rows that reduce are grouped in their morsel");
 }
 
+/// Verifies: [DESIGN] RULES.md D1282, D38 the runs that merge a wave and
+/// finish the partitions lead their reader by every partition as a
+/// statement runs them, and that lead decides nothing of the grant. Of a
+/// grant that holds the groups only in waves, and of one they pass, such
+/// a grouping merges as many waves, writes its partitions to the spill as
+/// many times and gives the same groups in the same order as one whose
+/// runs keep to two partitions a thread.
+///
+/// Decision: the grant holds the groups, or not; the partitions' runs
+/// lead by two a thread, or by every partition.
+#[test]
+fn partitions_led_by_every_one_merge_and_spill_as_those_led_by_two() {
+    assert_eq!(How::default().parts, PARTS, "a statement's runs lead by every partition");
+    let (db, a) = table();
+    let sql = "SELECT G, COUNT(*), SUM(V), MIN(V), MAX(K) FROM (SELECT MOD(K, 6000) AS G, K, V FROM T) AS Q GROUP BY G";
+    for (grant, spilled) in [(1_048_576_i128, false), (131_072_i128, true)] {
+        set(&db, "MEMORY.WORK_BYTES", grant);
+        let narrow = waved(&a, sql, &How { parts: 2, ..How::default() }, 3);
+        assert_eq!(narrow.rows.len(), 6000);
+        assert!(narrow.waves > 0, "{} waves of a grant of {grant}", narrow.waves);
+        assert_eq!(narrow.spills > 0, spilled, "{} spills of a grant of {grant}", narrow.spills);
+        assert_eq!(waved(&a, sql, &How::default(), 3), narrow, "led by every partition, a grant of {grant}");
+    }
+}
+
 /// A grant under which the groupings of T of 6,000 groups merge several
 /// waves and hold their partitions in memory.
 const WAVED: i128 = 4_194_304;
@@ -393,6 +418,24 @@ fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> 
     let mut rows: Vec<String> = Ordered::of(runs, given).unwrap().map(|row| format!("{:?}", row.unwrap())).collect();
     rows.sort();
     rows
+}
+
+/// Verifies: [DESIGN] RULES.md D1300 a statement's partitions go wide
+/// only of a grouping whose reader reads the groups where they lie. A
+/// grouping every group of which is read merges each wave into tables
+/// however many groups a partition holds, and gives the groups it gives
+/// with no partition wide. The same grouping asked the first rows of a
+/// sort merges its waves into wide partitions, and gives the same rows.
+#[test]
+fn a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie() {
+    let (_db, a) = table();
+    let sql = "SELECT G, COUNT(*), SUM(V), MAX(K) FROM (SELECT K AS G, K, V FROM T) AS Q GROUP BY G";
+    let never = How { forced: NONE, widen: Widen::past(usize::MAX), ..How::default() };
+    let how = How { forced: NONE, widen: Widen::read_as_they_lie(5), ..How::default() };
+    assert_eq!(differing(&waved(&a, sql, &how, 3), &waved(&a, sql, &never, 3)), None);
+    assert_eq!(how.widen.merged.load(Ordering::Relaxed), 0, "every group is read, and a partition went wide");
+    assert_eq!(first_rows(&a, sql, &how, (1, 7)), first_rows(&a, sql, &never, (1, 7)));
+    assert!(how.widen.merged.load(Ordering::Relaxed) > 0, "the first rows of a sort, and no partition went wide");
 }
 
 /// Verifies: [DESIGN] RULES.md D1300, D1256 the first rows a partition

@@ -132,7 +132,8 @@ impl States {
         if let Some(typed) = parts::column_of(agg) {
             return States::Part(typed);
         }
-        Typed::of(kind, &agg.result).map_or_else(|| States::Boxed(Boxed::of(agg)), States::Typed)
+        let typed = Typed::of(kind, &agg.result).or_else(|| Typed::best(agg));
+        typed.map_or_else(|| States::Boxed(Boxed::of(agg)), States::Typed)
     }
 
     /// Adds a group's, fed nothing.

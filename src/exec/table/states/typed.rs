@@ -1,9 +1,11 @@
 //! \[DESIGN\] (RULES.md D356) Columns of states of the built-in set
 //! functions: COUNT's counts; SUM's, AVG's, MAX's and MIN's of integers of
 //! one scale, a 128-bit total or best value and a count a group; SUM's and
-//! AVG's of approximate numbers, a `Wide` sum and a count a group. Each is
-//! fed only the vectors it holds; any other turns it into accumulators
-//! (`states.rs`). A sum past 128 bits raises as SUM's accumulator does.
+//! AVG's of approximate numbers, a `Wide` sum and a count a group; MAX's
+//! and MIN's of character strings, a string a group (`typed/best.rs`,
+//! RULES.md D1290). Each is fed only the vectors it holds; any other turns
+//! it into accumulators (`states.rs`). A sum past 128 bits raises as SUM's
+//! accumulator does.
 
 use crate::bytes::Reader;
 use crate::error::{Code, Result, fail};
@@ -18,13 +20,16 @@ use crate::storage::{Batch, Column, Ints, Mask};
 use crate::value::codec::value;
 use crate::value::{DataType, Decimal, Value};
 
+mod best;
 mod few;
 mod merged;
+mod quiet;
 mod stated;
 mod written;
 
 use super::super::Pending;
 use super::{Boxed, columns_of};
+pub(in crate::exec) use best::Best;
 
 /// Exact states: of which function, each group's total (of SUM and AVG)
 /// or best value (of MAX and MIN), how many values it took, the scale of
@@ -51,6 +56,8 @@ pub(in crate::exec) enum Typed {
     Count(Vec<i64>),
     Exact(Exact),
     Approx(Approx),
+    /// MAX's or MIN's of character strings (RULES.md D1290).
+    Best(Best),
 }
 
 /// SQLCODE -900, as SUM raises of a sum on the way past 128 bits.
@@ -116,6 +123,7 @@ impl Typed {
                 approx.sums.push(NO_FLOATS);
                 approx.counts.push(0);
             }
+            Typed::Best(best) => best.grow_by(1),
         }
     }
 
@@ -135,6 +143,7 @@ impl Typed {
                 exact.feed(pending, source, runner)
             }
             Typed::Approx(approx) => Ok(approx.feed(pending, (batch, take), runner)),
+            Typed::Best(best) => Ok(best.feed(pending, (batch, take, lane), runner)),
         }
     }
 
@@ -147,7 +156,8 @@ impl Typed {
                 Ok(true)
             }
             (Typed::Exact(exact), Typed::Exact(theirs)) => exact.merge_from(g, theirs, i),
-            (Typed::Count(_) | Typed::Exact(_) | Typed::Approx(_), _) => Ok(false),
+            (Typed::Best(best), Typed::Best(theirs)) => Ok(best.merge_from(g, theirs, i)),
+            (Typed::Count(_) | Typed::Exact(_) | Typed::Approx(_) | Typed::Best(_), _) => Ok(false),
         }
     }
 
@@ -163,6 +173,7 @@ impl Typed {
             }
             Typed::Exact(exact) => exact.merge_written(g, state),
             Typed::Approx(_) => Ok(false),
+            Typed::Best(best) => best.merge_written(g, state),
         }
     }
 
@@ -173,6 +184,7 @@ impl Typed {
             Typed::Count(counts) => count_acc(i128::from(counts.get(g).copied().unwrap_or(0))),
             Typed::Exact(exact) => exact.boxed_of(g),
             Typed::Approx(approx) => approx.boxed_of(g),
+            Typed::Best(best) => best.boxed_of(g),
         }
     }
 
@@ -194,6 +206,7 @@ impl Typed {
             Typed::Count(counts) => counts.len(),
             Typed::Exact(exact) => exact.counts.len(),
             Typed::Approx(approx) => approx.counts.len(),
+            Typed::Best(best) => best.len(),
         }
     }
 
@@ -207,6 +220,7 @@ impl Typed {
             Typed::Count(counts) => count_finished(i128::from(counts.get(g).copied().unwrap_or(0))),
             Typed::Exact(exact) => exact.finish(g),
             Typed::Approx(approx) => approx.finish(g),
+            Typed::Best(best) => Ok(best.finish(g)),
         }
     }
 
@@ -229,6 +243,7 @@ impl Typed {
                 approx.counts.truncate(len);
                 approx.counts.shrink_to_fit();
             }
+            Typed::Best(best) => best.truncate(len),
         }
     }
 
@@ -239,6 +254,7 @@ impl Typed {
             Typed::Count(counts) => counts.capacity().saturating_mul(count),
             Typed::Exact(exact) => exact.units.capacity().saturating_mul(size_of::<i128>().saturating_add(count)),
             Typed::Approx(approx) => approx.sums.capacity().saturating_mul(size_of::<Wide>().saturating_add(count)),
+            Typed::Best(best) => best.bytes(),
         }
     }
 }

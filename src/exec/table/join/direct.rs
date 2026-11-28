@@ -8,11 +8,12 @@
 //! The rows are put by a counting sort of their keys, which keeps the
 //! rows of each key in the order they were built.
 //!
-//! A key is given as its number's nearest `f64`, as a join's keys are
-//! compared by it (`keys.rs`), the bits of it with -0 as 0. A whole
-//! number below 2^51 in magnitude is its `f64` exactly, so the place of a
-//! key is exact, and a probe's number of a fraction, or out of the span,
-//! finds no row. The rows a probe finds are those of its key's number,
+//! A key is given as its number's word, as a join's keys are hashed by it
+//! (`keys.rs`, RULES.md D1288): of a whole number below 2^51 in magnitude
+//! the bits of its `f64`, which is the number exactly, so the place of a
+//! key is exact; of any other number bits that are no such number's but
+//! by chance, so a probe's number of a fraction, or out of the span, finds
+//! no row. The rows a probe finds are those of its key's number,
 //! their keys compared then, as a hashed table's candidates are.
 //!
 //! On a key whose nulls match, as a join a subquery is unnested into

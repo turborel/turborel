@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 36] = [
+pub const GROUPED_PARTS: [Mutation; 37] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -373,5 +373,15 @@ pub const GROUPED_PARTS: [Mutation; 36] = [
         replacement: "if !self.waved && self.wave.is_empty() {",
         integration: &["spilled_groups::a_table_of_few_groups_past_the_grant_gives_every_group"],
         unit: &["exec::parallel::grouped::waves::tests::a_table_of_the_statements_thread_past_the_grant_loses_no_group"],
+    },
+    Mutation {
+        name: "top-groups-totals-all-quiet",
+        package: Package::Core,
+        breaks: "every exact total is taken for too small to raise, so a sum or mean past its precision in a group not picked is lost (RULES.md D1256)",
+        file: "src/exec/table/states/typed/quiet.rs",
+        original: "digits.and_then(|d| TEN.checked_pow(d)).unwrap_or(0)",
+        replacement: "digits.map_or(u128::MAX, |_| u128::MAX)",
+        integration: &["grouped_parts::the_first_rows_by_set_functions_are_picked_before_they_are_made"],
+        unit: &[],
     },
 ];

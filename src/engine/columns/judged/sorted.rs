@@ -119,7 +119,7 @@ pub(super) fn constants_of<'c>(conjunct: &'c Conjunct, out: &mut Vec<&'c str>) -
         Conjunct::In { values, .. } | Conjunct::NotIn { values, .. } => strings(values, out),
         Conjunct::Any(each) => return each.iter().try_for_each(|c| constants_of(c, out)),
         Conjunct::Condition(_) | Conjunct::Null { .. } | Conjunct::Spans { .. } => {}
-        Conjunct::Dynamic { .. } | Conjunct::Unpadded { .. } | Conjunct::Like { .. } => return None,
+        Conjunct::Dynamic { .. } | Conjunct::Among { .. } | Conjunct::Unpadded { .. } | Conjunct::Like { .. } => return None,
     }
     Some(())
 }

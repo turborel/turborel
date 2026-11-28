@@ -5,7 +5,9 @@
 //! frame of reference, a comparison true of every value leaving out the
 //! nulls, a late column's places composed through a join, and a judged
 //! column's values held of the rows kept with their nulls, from the
-//! batch's first run, and a morsel's columns told late given late (D366).
+//! batch's first run, a morsel's columns told late given late (D366), and
+//! a join's keys asked by a scan before its other columns are decoded
+//! (D1294).
 
 use super::super::{Mutation, Package};
 
@@ -18,8 +20,17 @@ const HELD: &str = "engine::rows::frozen::batches::pending::tests::judged_column
 /// Every query of the tables read late and not.
 const ROWS: &str = "late_columns::late_columns_answer_as_rows";
 
+/// A join's keys asked by a scan: the keys alone, the scan's runs, the
+/// filter that tells them, and a join's scans counted.
+const KEYS_HOLD: &str = "storage::condition::members::tests::each_form_holds_its_keys";
+const KEYS_STOP: &str = "storage::condition::members::tests::a_scan_stops_asking_once_its_first_runs_kept_too_many";
+const KEYS_ROWS: &str = "engine::columns::judged::among::tests::a_joins_keys_keep_the_rows_whose_key_they_hold";
+const KEYS_LEFT: &str = "engine::columns::judged::among::tests::a_scan_stops_asking_keys_that_keep_most_rows";
+const KEYS_TOLD: &str = "exec::table::runtime::tests::the_keys_told_a_scan_hold_what_the_filter_keeps";
+const KEYS_SCANNED: &str = "scan_keys::a_scan_told_few_keys_gives_their_rows_alone";
+
 /// Mechanisms whose removal must fail late materialization's requirements.
-pub const LATE: [Mutation; 8] = [
+pub const LATE: [Mutation; 15] = [
     Mutation {
         name: "late-shadowed-rows-judged",
         package: Package::Core,
@@ -95,9 +106,79 @@ pub const LATE: [Mutation; 8] = [
         package: Package::Core,
         breaks: "a morsel of a column store gives the columns it is told late as their places",
         file: "src/engine/rows/split.rs",
-        original: "what, self.zones_within(range)).with_late(late)))",
+        original: "what, self.zones_within(range)).asked(given)))",
         replacement: "what, self.zones_within(range))))",
         integration: &[],
         unit: &["engine::rows::frozen::tests::morsels::morsels_give_late_columns_as_their_places"],
+    },
+    Mutation {
+        name: "scan-keys-of-another-scale-asked",
+        package: Package::Core,
+        breaks: "an integer of another scale than the keys' is looked for among them as it is",
+        file: "src/storage/condition/members.rs",
+        original: "        if scale != self.scale {\n            return true;\n        }\n",
+        replacement: "",
+        integration: &[],
+        unit: &[KEYS_HOLD],
+    },
+    Mutation {
+        name: "scan-keys-asked-at-their-share",
+        package: Package::Core,
+        breaks: "a scan goes on asking keys that kept exactly the share of rows a run is given whole at",
+        file: "src/storage/condition/members.rs",
+        original: "self.kept.load(Ordering::Relaxed).saturating_mul(share) < self.asked.load(Ordering::Relaxed)",
+        replacement: "self.kept.load(Ordering::Relaxed).saturating_mul(share) <= self.asked.load(Ordering::Relaxed)",
+        integration: &[],
+        unit: &[KEYS_STOP, KEYS_LEFT],
+    },
+    Mutation {
+        name: "scan-keys-never-left",
+        package: Package::Core,
+        breaks: "a scan asks a join's keys of every run, whatever its first runs kept",
+        file: "src/engine/columns/judged/proved.rs",
+        original: "self.among().is_some_and(|members| !members.asking(KEPT_SHARE))",
+        replacement: "self.among().is_some_and(|members| !members.asking(0))",
+        integration: &[],
+        unit: &[KEYS_LEFT],
+    },
+    Mutation {
+        name: "scan-keys-runs-not-counted",
+        package: Package::Core,
+        breaks: "the rows a join's keys kept of a scan's first runs are not counted, so it stops asking keys that keep few",
+        file: "src/engine/columns/judged.rs",
+        original: "                pred.counted(asked, rows.len());",
+        replacement: "                pred.counted(asked, asked);",
+        integration: &[],
+        unit: &[KEYS_LEFT],
+    },
+    Mutation {
+        name: "scan-keys-keep-a-null",
+        package: Package::Core,
+        breaks: "a row whose key is null is kept by the unit at its place",
+        file: "src/engine/columns/judged/among.rs",
+        original: "ints.units.get(index(r)).copied().filter(|_| !ints.is_null(index(r)));",
+        replacement: "ints.units.get(index(r)).copied();",
+        integration: &[],
+        unit: &[KEYS_ROWS],
+    },
+    Mutation {
+        name: "scan-keys-bloom-of-any-scale",
+        package: Package::Core,
+        breaks: "a Bloom filter of keys not whole numbers is asked a hash the join did not make of them",
+        file: "src/storage/condition/members.rs",
+        original: "                if scale != 0 || u.unsigned_abs() >= MAGIC_UNITS {",
+        replacement: "                if u.unsigned_abs() >= MAGIC_UNITS {",
+        integration: &[],
+        unit: &[KEYS_HOLD],
+    },
+    Mutation {
+        name: "scan-keys-not-told",
+        package: Package::Core,
+        breaks: "a scan is told a filter's range and spans without its keys, and gives every row of each part they reach",
+        file: "src/exec/table/runtime.rs",
+        original: "            told.push(Conjunct::Among { column, members: Arc::clone(members) });",
+        replacement: "",
+        integration: &[KEYS_SCANNED],
+        unit: &[KEYS_TOLD],
     },
 ];

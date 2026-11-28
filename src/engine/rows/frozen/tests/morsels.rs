@@ -114,3 +114,47 @@ fn a_split_judges_its_zones_once_for_every_morsel() {
     assert!(morsels > 9, "{morsels} morsels");
     assert_eq!(given, 9000 - 7 * 1024, "the same rows by many morsels");
 }
+
+/// Verifies: [DESIGN] RULES.md D1267 a morsel of a column store asked for
+/// a VARCHAR column measured gives it late with the octet length of each
+/// row's value, of a run given whole and of rows gathered at their
+/// places under a condition; `Batch::resolve` leaves it late; its values,
+/// read after all, are the texts the scan would have decoded, each of the
+/// length held. A column of integers asked for measured is given
+/// decoded, as it has no octet length to take. MC/DC of the column
+/// given: one that can be measured (late, lengths) against one that
+/// cannot (decoded).
+#[test]
+fn a_morsel_gives_a_column_asked_measured_late_with_its_lengths() {
+    let (_, files) = files();
+    let (table, _) = table(&files, 0, 5000);
+    ended(&table, 1);
+    let below = Conjunction::of(Condition {
+        columns: vec![0],
+        probe: Probe::Compare { op: CompOp::Lt, value: Value::Exact(Decimal::new(100, 0)) },
+    });
+    for condition in [None, Some(&below)] {
+        let split = Arc::clone(&table).split(NO_TRANSACTION, &[0, 1], condition, 5000).unwrap();
+        let (mut rows, mut measured) = (0_usize, 0_usize);
+        for batch in (0..split.morsels()).flat_map(|n| split.morsel_measured(n, (&[], &[0, 1])).unwrap()) {
+            let mut batch: Batch = batch.unwrap();
+            rows = rows.saturating_add(batch.rows);
+            assert!(!matches!(batch.columns.first(), Some(Column::Late(_))), "integers are given decoded");
+            let Some(Column::Late(late)) = batch.columns.get(1).cloned() else { continue };
+            let lengths = late.lengths().expect("a late column asked measured holds its lengths");
+            batch.resolve(None, &crate::kernels::Portable).unwrap();
+            assert!(matches!(batch.columns.get(1), Some(Column::Late(_))), "left late by resolve");
+            for r in 0..batch.rows {
+                let value = batch.cell(1, r).to_value();
+                if let Value::Char(text) = &value {
+                    assert_eq!((lengths.units[r], lengths.is_null(r)), (i64::try_from(text.len()).unwrap(), false), "{value}");
+                } else {
+                    assert!(value.is_null() && lengths.is_null(r), "{value}");
+                }
+            }
+            measured = measured.saturating_add(batch.rows);
+        }
+        assert!(measured >= 100 && measured <= rows, "frozen rows are given measured: {measured} of {rows}");
+        assert_eq!(condition.is_none(), rows == 5000);
+    }
+}
