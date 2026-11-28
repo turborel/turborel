@@ -24396,6 +24396,7 @@ among them, one the scale cannot hold, one past 64 bits, spans of 63, 64
 and 65 units, the ends of an integer, and integers kept as runs
 (`storage/batch/listed/tests.rs`, `columns/judged/tests.rs`,
 `batch/judge/tests.rs`).
+
 #### D1298. A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened
 
 A scan opens each chunk it reads once for all the runs that read it
