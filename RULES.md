@@ -840,6 +840,7 @@ verification approach DO-178C expects (§8).
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
+| D1311 | The matcher that marks does a step's work once a step |
 
 ### The project
 
@@ -24698,6 +24699,47 @@ So the rule is the reader's, not a count of groups
 (`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
 which goes wide whatever reads, is what the tests of the gathered table
 ask.
+#### D1311. The matcher that marks does a step's work once a step
+
+The matcher of a program with no back-reference over a short text
+(D1188) marked every instruction it followed at every position, asked
+at every step whether the instruction began the loop that takes the
+rest, tested a character against a class by a binary search of the
+class's ranges, and passed a loop it runs through (D1190) a character
+at a time with a mark each. Over a column of addresses it spent more
+in those than in anything the pattern asked.
+
+- Only an instruction two ways can meet at is marked
+  (`compile/steps.rs`, `Passed::meets`). A way reaches an instruction
+  from the one before it, at one position, unless a fork or a jump
+  leads to it. So an instruction and a position are reached twice only
+  if an instruction a fork or a jump leads to was reached twice at one
+  position before them on that straight run, and the second way is
+  given up there. The first instruction, which every start begins at,
+  and the one after the loop that takes the rest of a text, which every
+  position leads to, are marked too. Each instruction is still followed
+  at each position once at most, which a test counts.
+- Of a text read by its octets (`Text::octets`, a string of ASCII or of
+  any characters read where it lies), a character of ASCII is tested by
+  the instruction's table of the 128 of them, built with the program.
+- A loop the program runs through finds its end in one pass over the
+  octets. Where its class is every character but one of ASCII, as
+  `[^/]+`, the end is the first such octet, found a word at a time by
+  the portable search of octets (D1118), since no octet of a longer
+  character is one of ASCII. Of any other class it is the first octet
+  that is no character of ASCII the class holds, and characters of
+  several octets go on one at a time from there.
+- The positions passed are marked a word at a time (`bounded::marked`).
+  A position marked before stops the walk as it did, with the positions
+  before it marked. The walk that marked it went on to the same end and
+  marked the rest, so nothing after it is left unmarked.
+- TRANSLATE_REGEX over a vector reads its units and which matches it is
+  asked for once, at the first string, where it read them of every
+  string.
+
+What a search finds is unchanged. The model tests hold the matcher to
+the matcher of threads over the corpus, of texts read by their
+characters and by their octets.
 
 ## 2. Project layout
 
