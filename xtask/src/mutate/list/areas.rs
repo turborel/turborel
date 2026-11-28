@@ -16,6 +16,7 @@ mod explain_unrun;
 mod io_path;
 // The count's, kept beside the other areas' files.
 mod client_sync;
+mod coded_hashes;
 mod commit_path;
 mod commit_stamps;
 mod compiled;
@@ -329,9 +330,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
 /// window narrowed's, a join built in passes', a filter passing over what
 /// its scan judged's, text key lanes', the rows placed by partition's,
-/// exact totals held in 64 bits' and the runs of rows of one key's last, as
-/// `last` holds no more.
-fn closing() -> [&'static [Mutation]; 44] {
+/// exact totals held in 64 bits', the runs of rows of one key's and the
+/// hashes a memo of codes reads' last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 45] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -377,6 +378,7 @@ fn closing() -> [&'static [Mutation]; 44] {
         &vetted::VETTED,
         &narrow_totals::NARROW_TOTALS,
         &alike_runs::ALIKE_RUNS,
+        &coded_hashes::CODED_HASHES,
     ]
 }
 

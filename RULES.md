@@ -854,6 +854,7 @@ verification approach DO-178C expects (§8).
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
 | D1323 | A grouping looks up the first row alone of rows of one key that come one after another |
+| D1330 | A memo of codes made anew hashes its run's entries in one pass, where they are no more than the rows given |
 
 ### The project
 
@@ -25490,6 +25491,64 @@ a count of distinct values among them, under WHERE and HAVING, of both
 stores, and counts the rows each group took. One of them groups by a
 text the column store gives as codes, in runs, on one thread, which
 fails where runs are followed of rows taken by their codes.
+
+#### D1330. A memo of codes made anew hashes its run's entries in one pass, where they are no more than the rows given
+
+A grouping whose key's columns are all codes of dictionaries takes a
+row by its codes' place in a memo (D1161), and the first row of a place
+is hashed and looked up as any row is. A column store's run of texts
+brings entries of its own (D1316), so the memo is made anew a run and
+nearly every entry of the run is once the first of its place. Each was
+hashed by the path that hashes a batch's rows, called for one row. A
+selection of one row was made, the key's columns walked, the column's
+kind told and the entry found by its code, and the hash itself was the
+lesser part of the call.
+
+- As the memo is made anew it hashes each dictionary's entries in one
+  pass of the kernel that hashes a vector of texts (`hash_entries` in
+  `exec/table/hash.rs`), each column's as the column of the key it is,
+  whole where the column is grouped unpadded (D1183). It keeps them
+  beside its groups, a null's hash after each column's, where a null's
+  place lies. The first row of a place reads its hash there
+  (`Memo::hash` in `exec/batch/groups/coded.rs`). A key of several
+  columns joins its columns' hashes in the key's order as a row's are
+  joined (D573), each column's code the digit of the place at the
+  column's stride.
+- The hash read is the hash the row is given by every other path, bit
+  for bit, since the tables of a grouping must agree on a key's
+  partition and on its slot (D356, D357). The pass and a row hashed
+  alone hash the same octets by the same seed and the same function.
+- A run is hashed whole only where its entries, of all the key's
+  columns together, are no more than the rows given. The bound is
+  derived from the two costs and has no constant. Every place a batch
+  meets is hashed once by either path, and the rows given meet at most
+  a place each. The kernel hashes a text at a time, so an entry costs
+  the pass what its text's hash costs, and costs a row hashed alone
+  that and the call besides, at every length measured. So hashing whole
+  is never more work than hashing alone would be of rows each of a
+  place of its own. Rows a condition keeps few of meet few of a run's
+  entries. They are below the bound, and their entries are hashed alone
+  as before.
+- Where the rows given repeat entries, the pass hashes entries that no
+  row of the batch is the first of, never more than the rows given. A
+  run of a store holds an entry no row of it uses only of a dictionary
+  given whole (D1316).
+- The bound is asked once, as the memo is made anew, of the rows of the
+  batch that brought the dictionaries. A memo that holds over later
+  batches of the same dictionaries keeps what it made.
+- A dictionary whose entries are themselves codes holds no text of its
+  own for the pass, and its rows are hashed alone. A store's runs give
+  none such.
+- A morsel's grouping (`morsel.rs`) and the grouping by batch
+  (`groups.rs`) both read the memo's hashes.
+
+Unit tests compare the hash read for every place with the hash its row
+is given alone and with the hash its text is given in a vector of
+texts, of one column and two, in either order, of selected rows, a
+null, an empty text, texts that differ by trailing spaces, a long text,
+padded and unpadded. Another shows the bound by the rows given, not the
+batch's, and a dictionary of codes kept to the old path, the groups the
+same either way.
 
 ## 2. Project layout
 

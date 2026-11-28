@@ -29,7 +29,7 @@ mod slots;
 mod states;
 
 pub(crate) use hash::Seed;
-pub(in crate::exec) use hash::{hash_lanes, hash_rows, hash_values};
+pub(in crate::exec) use hash::{hash_entries, hash_lanes, hash_rows, hash_values};
 pub(in crate::exec) use join::{BUILD_PARTS, BuiltPart, Parted, Parting, Span};
 pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, keys_equal, numbers_hashed, values_hash};
 pub(in crate::exec) use keys::{Key, Keys};

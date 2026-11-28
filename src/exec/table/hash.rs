@@ -147,7 +147,7 @@ impl Seed {
     /// A key's hash `so_far` with the next column's, `next`, joined: XXH3-64
     /// of their 16 bytes, little-endian, the hash so far first, so (a, b)
     /// and (b, a) hash apart.
-    pub(super) fn joined(&self, so_far: u64, next: u64) -> u64 {
+    pub(in crate::exec) fn joined(&self, so_far: u64, next: u64) -> u64 {
         self.seeded.words().pair(so_far, next)
     }
 
@@ -294,18 +294,33 @@ fn hash_column((batch, c, rows): (&Batch, usize, Option<&[u32]>), (seed, kernels
     out.extend(places().map(|r| seed.cell(batch.cell(c, r))));
 }
 
+/// Appends to `into` the hash of each text at `sel`, or of all, of the
+/// texts `given`, their octets and where each ends, by the kernel: whole
+/// of a column grouped unpadded, else less its trailing spaces.
+fn texts_by_kernel(given: (&[u8], &[usize]), sel: Option<&[u32]>, (seed, kernels, unpadded): How<'_>, into: &mut Vec<u64>) {
+    if unpadded {
+        kernels.hash_texts_unpadded(given, &seed.seeded, sel, into);
+    } else {
+        kernels.hash_texts(given, &seed.seeded, sel, into);
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1330) Appends to `out` the hash of each entry
+/// of `entries`, a dictionary's texts held as their own, as the `place`th
+/// column of a key hashes one, by the kernel in one pass, and a null's
+/// after them, as a memo of codes places a null past its dictionary's
+/// codes (`batch/groups/coded.rs`).
+pub(in crate::exec) fn hash_entries(entries: &Texts, place: usize, (seed, kernels): (&Seed, &dyn Kernels), out: &mut Vec<u64>) {
+    texts_by_kernel((entries.text.as_bytes(), &entries.ends), None, (seed, kernels, seed.is_unpadded(place)), out);
+    out.push(seed.null());
+}
+
 /// Writes to `out` the hash of each text given of `texts`, `rows` or all,
 /// as `Seed::text` hashes one, by the kernel: of texts coded by a store's
 /// dictionaries, each entry hashed once and each row's taken by its code;
 /// a null's the null's hash.
-fn hash_texts((texts, rows): (&Texts, Option<&[u32]>), (seed, kernels, unpadded): How<'_>, out: &mut Vec<u64>) {
-    let by_kernel = |given: (&[u8], &[usize]), sel: Option<&[u32]>, into: &mut Vec<u64>| {
-        if unpadded {
-            kernels.hash_texts_unpadded(given, &seed.seeded, sel, into);
-        } else {
-            kernels.hash_texts(given, &seed.seeded, sel, into);
-        }
-    };
+fn hash_texts((texts, rows): (&Texts, Option<&[u32]>), how: How<'_>, out: &mut Vec<u64>) {
+    let (seed, _, unpadded) = how;
     let one = |text: &str| if unpadded { seed.bytes(text.as_bytes()) } else { seed.text(text) };
     let given = rows.map_or(texts.len(), <[u32]>::len);
     let places = || (0..given).map(|n| crate::storage::sel::nth(rows, n));
@@ -316,13 +331,13 @@ fn hash_texts((texts, rows): (&Texts, Option<&[u32]>), (seed, kernels, unpadded)
             let entry = |r: usize| coded.codes.get(r).and_then(|&e| usize::try_from(e).ok());
             if coded.entries.len() <= given {
                 let mut entries = Vec::new();
-                by_kernel((coded.entries.text.as_bytes(), &coded.entries.ends), None, &mut entries);
+                texts_by_kernel((coded.entries.text.as_bytes(), &coded.entries.ends), None, how, &mut entries);
                 out.extend(places().map(|r| entry(r).and_then(|e| entries.get(e)).copied().unwrap_or(0)));
             } else {
                 out.extend(places().map(|r| one(entry(r).and_then(|e| coded.entries.get(e)).unwrap_or(""))));
             }
         }
-        None => by_kernel((texts.text.as_bytes(), &texts.ends), rows, out),
+        None => texts_by_kernel((texts.text.as_bytes(), &texts.ends), rows, how, out),
     }
     if let Some(nulls) = &texts.nulls {
         out.iter_mut().zip(places()).filter(|&(_, r)| nulls.get(r)).for_each(|(h, _)| *h = seed.null());

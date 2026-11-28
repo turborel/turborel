@@ -11,10 +11,16 @@
 //! the batches come of the same dictionaries, and is made anew when one
 //! differs. A grouping by a column that is not coded, or of more places
 //! than `MOST_PLACES`, is grouped as before.
+//!
+//! \[DESIGN\] (RULES.md D1330) A memo made anew hashes its dictionaries'
+//! entries in one pass of the kernel, where they are no more than the
+//! rows given, and the first row of a place reads its key's hash there,
+//! the hash its row would be given. Of more entries than rows, each such
+//! row is hashed alone, as before.
 
 use std::sync::Arc;
 
-use crate::exec::table::{GroupTable, Key, Seed, hash_rows};
+use crate::exec::table::{GroupTable, Key, Seed, hash_entries, hash_rows};
 use crate::kernels::Kernels;
 use crate::storage::sel::nth;
 use crate::storage::{Batch, Column, Texts};
@@ -37,6 +43,10 @@ pub(super) struct Memo {
     entries: Vec<Arc<Texts>>,
     strides: Vec<usize>,
     groups: Vec<u32>,
+    /// \[DESIGN\] (RULES.md D1330) Of each column, its entries' hashes
+    /// and a null's after them, where the entries were hashed in one pass
+    /// as the memo was made anew; else none.
+    hashes: Vec<Vec<u64>>,
     /// Of the batch being grouped, each row's place, made a column at a
     /// time (RULES.md D1120).
     places: Vec<usize>,
@@ -54,9 +64,10 @@ fn coded(column: Option<&Column>) -> Option<&Texts> {
 impl Memo {
     /// Readies it for the rows `rows`, or all, of `batch`, grouped by its
     /// columns `at`, each row placed: whether every column is coded and
-    /// their places are few enough.
-    pub(super) fn ready(&mut self, batch: &Batch, at: &[usize], rows: Option<&[u32]>) -> bool {
-        let ready = self.holds(batch, at);
+    /// their places are few enough. Made anew, its entries are hashed as
+    /// `how` says, if they are few enough for the rows (`hashed`).
+    pub(super) fn ready(&mut self, batch: &Batch, at: &[usize], rows: Option<&[u32]>, how: How<'_>) -> bool {
+        let ready = self.holds(batch, at, (rows.map_or(batch.rows, <[u32]>::len), how));
         if ready {
             self.placed(batch, at, rows);
         }
@@ -64,8 +75,10 @@ impl Memo {
     }
 
     /// Whether every column of `batch` at `at` is coded and their places
-    /// are few enough. Of dictionaries other than its own, it is made anew.
-    fn holds(&mut self, batch: &Batch, at: &[usize]) -> bool {
+    /// are few enough. Of dictionaries other than its own, it is made
+    /// anew, for a batch of `given` rows, its entries hashed as `how` says
+    /// if they are few enough for those rows (`hashed`).
+    fn holds(&mut self, batch: &Batch, at: &[usize], (given, how): (usize, How<'_>)) -> bool {
         let mut texts = Vec::with_capacity(at.len());
         for &c in at {
             let Some(t) = coded(batch.columns.get(c)) else { return false };
@@ -90,7 +103,32 @@ impl Memo {
         self.strides = strides;
         self.groups.clear();
         self.groups.resize(places, NONE);
+        self.hashed(given, how);
         true
+    }
+
+    /// \[DESIGN\] (RULES.md D1330) Hashes each dictionary's entries in
+    /// one pass of the kernel, made anew for a batch of `given` rows, if
+    /// the entries are no more than those rows and each dictionary holds
+    /// its texts as its own; else keeps no hash, and each first row of a
+    /// place is hashed alone. The bound is derived, no constant. Every
+    /// place the batch meets is hashed once by either path, at most a
+    /// place a row, and a text's hash costs the kernel no more than it
+    /// costs a row hashed alone, which pays the call besides. So the pass
+    /// is no more work than rows each of a place of its own would be, and
+    /// of rows given by a condition that keeps few of a run's, the few
+    /// entries they meet are hashed alone.
+    fn hashed(&mut self, given: usize, how: How<'_>) {
+        self.hashes.resize_with(self.entries.len(), Vec::new);
+        self.hashes.iter_mut().for_each(Vec::clear);
+        let entries = self.entries.iter().fold(0_usize, |sum, e| sum.saturating_add(e.len()));
+        let plain = self.entries.iter().all(|e| e.coded.is_none());
+        if entries > given || !plain {
+            return;
+        }
+        for (place, (e, made)) in self.entries.iter().zip(&mut self.hashes).enumerate() {
+            hash_entries(e, place, how, made);
+        }
     }
 
     /// \[DESIGN\] (RULES.md D1120) Makes the place of each row of `rows`,
@@ -127,6 +165,27 @@ impl Memo {
         (place, place.and_then(|p| self.groups.get(p)).copied().filter(|&g| g != NONE))
     }
 
+    /// \[DESIGN\] (RULES.md D1330) The hash of the key whose codes are
+    /// `place`, of `seed`, read of its columns' entries' hashes and
+    /// joined in the key's order, as `hash_rows` joins a row's: none of
+    /// no place, or where the entries were not hashed, for `hash_of` to
+    /// make of the row.
+    pub(super) fn hash(&self, place: Option<usize>, seed: &Seed) -> Option<u64> {
+        let place = place?;
+        if let [only] = self.hashes.as_slice() {
+            return only.get(place).copied();
+        }
+        let mut joined = None;
+        for (hashes, &stride) in self.hashes.iter().zip(&self.strides) {
+            // A column's code is the place's digit of its stride, one of
+            // its entries or the null's after them.
+            let code = place.checked_div(stride)?.checked_rem(hashes.len())?;
+            let hash = *hashes.get(code)?;
+            joined = Some(joined.map_or(hash, |so_far| seed.joined(so_far, hash)));
+        }
+        joined
+    }
+
     /// Notes that the codes of `place` go to group `g`.
     pub(super) fn note(&mut self, place: Option<usize>, g: u32) {
         if let Some(slot) = place.and_then(|p| self.groups.get_mut(p)) {
@@ -140,9 +199,12 @@ impl Memo {
     }
 }
 
+/// How a key is hashed: by a grouping's seed and the kernels.
+type How<'a> = (&'a Seed, &'a dyn Kernels);
+
 /// The hash of the key of row `r` of `batch`'s columns `at`, of `seed`,
 /// made in `hashes`.
-pub(super) fn hash_of(batch: &Batch, (at, r): (&[usize], usize), (seed, kernels): (&Seed, &dyn Kernels), hashes: &mut Vec<u64>) -> u64 {
+pub(super) fn hash_of(batch: &Batch, (at, r): (&[usize], usize), (seed, kernels): How<'_>, hashes: &mut Vec<u64>) -> u64 {
     let one = [u32::try_from(r).unwrap_or(u32::MAX)];
     hash_rows(batch, (at, Some(&one)), (seed, kernels), hashes);
     hashes.first().copied().unwrap_or(0)
@@ -150,22 +212,24 @@ pub(super) fn hash_of(batch: &Batch, (at, r): (&[usize], usize), (seed, kernels)
 
 /// Groups the rows `rows`, or all, of `batch` by its columns `at` into
 /// `table` by their codes, as `Memo` says, each its first row numbered
-/// from `first`, hashed of `seed`: false, nothing done, if they are not
-/// all coded or their places are too many.
+/// from `first`, hashed of `seed`, a key's hash read of its run's entries'
+/// where the memo made them (RULES.md D1330): false, nothing done, if
+/// they are not all coded or their places are too many.
 pub(super) fn grouped(
     (table, memo): (&mut GroupTable, &mut Memo),
     (batch, at, rows): (&Batch, &[usize], Option<&[u32]>),
     (first, seed, kernels): (u64, &Seed, &dyn Kernels),
     hashes: &mut Vec<u64>,
 ) -> bool {
-    if !memo.ready(batch, at, rows) {
+    if !memo.ready(batch, at, rows, (seed, kernels)) {
         return false;
     }
     for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
         let r = nth(rows, n);
         let (place, known) = memo.found(n);
         let g = known.unwrap_or_else(|| {
-            let hash = hash_of(batch, (at, r), (seed, kernels), hashes);
+            // Read of the run's entries' hashes, where they were made.
+            let hash = memo.hash(place, seed).unwrap_or_else(|| hash_of(batch, (at, r), (seed, kernels), hashes));
             let g = table.found_or_made(hash, Key::Row(batch, at, r), first.saturating_add(u64::try_from(n).unwrap_or(u64::MAX)));
             memo.note(place, g);
             g

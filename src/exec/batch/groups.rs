@@ -242,7 +242,7 @@ impl Groups {
         let lanes = lanes(&how.read.taken, batch, rows);
         // Of keys all codes of dictionaries, a row whose codes went to a
         // group held goes to it, and only the others are hashed (`coded.rs`).
-        let coded = self.memo.ready(batch, &how.read.groups, rows);
+        let coded = self.memo.ready(batch, &how.read.groups, rows, (how.seed, how.runner.kernels()));
         if !coded {
             hash_rows(batch, (&how.read.groups, rows), (how.seed, how.runner.kernels()), &mut self.hashes);
         }
@@ -285,7 +285,8 @@ impl Groups {
 
     /// Of the `n`th row given, at `r` of `batch`: if `coded`, its place in
     /// the memo, and it taken into the group held its codes went to, no
-    /// hash given; else its hash, of the batch's or made now.
+    /// hash given; else its hash, of the batch's, read of the memo's or
+    /// made now.
     fn coded_row(&mut self, batch: &Batch, (n, r): (usize, usize), coded: bool, how: Grouping<'_>) -> (Option<usize>, Option<u64>) {
         if !coded {
             return (None, Some(self.hashes.get(n).copied().unwrap_or(0)));
@@ -295,7 +296,10 @@ impl Groups {
             self.held.take(g, (n, r));
             return (place, None);
         }
-        (place, Some(hash_of(batch, (&how.read.groups, r), (how.seed, how.runner.kernels()), &mut self.hashes)))
+        // Read of the run's entries' hashes, where the memo made them
+        // (RULES.md D1330).
+        let read = self.memo.hash(place, how.seed);
+        (place, Some(read.unwrap_or_else(|| hash_of(batch, (&how.read.groups, r), (how.seed, how.runner.kernels()), &mut self.hashes))))
     }
 
     /// Takes the `n`th row given, at `r` of its batch, into group `target`.
