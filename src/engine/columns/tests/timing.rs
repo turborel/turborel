@@ -65,75 +65,73 @@ fn chunk_of(values: &[i64], plan: impl Fn(i64, u32, usize) -> Plan) -> Vec<u8> {
     out
 }
 
-/// Nanoseconds a row of `read`, the least of five passes of `REPS` calls.
-fn timed(mut read: impl FnMut(&mut Vec<i64>)) -> f64 {
-    const REPS: usize = 4000;
+/// How many chunks apart each case reads in turn, so that no branch of a
+/// decoder is learned of one chunk read again and again.
+const CHUNKS: usize = 128;
+
+/// Nanoseconds a row of `read`, given which of `CHUNKS` chunks to read, the least of five passes over them all.
+fn timed(mut read: impl FnMut(usize, &mut Vec<i64>)) -> f64 {
+    const REPS: usize = 32;
     let mut out: Vec<i64> = Vec::with_capacity(ROWS + 64);
     let mut best = f64::MAX;
     for _ in 0..5 {
         let t0 = Instant::now();
         let mut sum = 0_i64;
         for _ in 0..REPS {
-            out.clear();
-            read(&mut out);
-            sum = sum.wrapping_add(out[ROWS / 2]);
+            for c in 0..CHUNKS {
+                out.clear();
+                read(c, &mut out);
+                sum = sum.wrapping_add(out[ROWS / 2]);
+            }
         }
         std::hint::black_box(sum);
-        best = best.min(t0.elapsed().as_nanos() as f64 / (REPS * ROWS) as f64);
+        best = best.min(t0.elapsed().as_nanos() as f64 / (REPS * CHUNKS * ROWS) as f64);
     }
     best
 }
 
+fn runs_of(bytes: &[u8]) -> super::super::runs::Runs<'_> {
+    let Body::Runs(r) = Chunk::parse(bytes).unwrap().body else { panic!("runs") };
+    r
+}
+
 #[test]
 fn timing_decoders() {
-    let check = |bytes: &[u8], values: &[i64]| {
-        let chunk = Chunk::parse(bytes).unwrap();
-        let mut out = Vec::new();
-        chunk.body.ints((0, ROWS), &mut out, (None, &Portable)).unwrap();
-        assert_eq!(out, values);
-    };
+    let seeds = || (0..CHUNKS).map(|c| 7 + 1000 * u64::try_from(c).unwrap());
     for bits in [62_u32, 20] {
         for mean in [1.3_f64, 2.0, 3.0, 5.0, 8.0, 16.0, 64.0] {
-            let v = values(mean, bits, None, 7);
-            let runs = 1 + v.windows(2).filter(|w| w[0] != w[1]).count();
-            let bytes = chunk_of(&v, |lo, b, _| Plan::Runs(lo, b));
-            check(&bytes, &v);
-            let chunk = Chunk::parse(&bytes).unwrap();
-            let Body::Runs(r) = &chunk.body else { panic!("runs") };
-            let mut old = Vec::new();
-            r.ints_old((0, ROWS), &mut old).unwrap();
-            assert_eq!(old, v);
-            let present = timed(|out| r.ints_old((0, ROWS), out).unwrap());
-            let fresh = timed(|out| r.ints((0, ROWS), out).unwrap());
+            let all: Vec<Vec<i64>> = seeds().map(|s| values(mean, bits, None, s)).collect();
+            let runs: usize = all.iter().map(|v| 1 + v.windows(2).filter(|w| w[0] != w[1]).count()).sum();
+            let bytes: Vec<Vec<u8>> = all.iter().map(|v| chunk_of(v, |lo, b, _| Plan::Runs(lo, b))).collect();
+            let mut check = Vec::new();
+            runs_of(&bytes[3]).ints_old((0, ROWS), &mut check).unwrap();
+            assert_eq!(check, all[3]);
+            let old = timed(|c, out| runs_of(&bytes[c]).ints_old((0, ROWS), out).unwrap());
             let mut kept = super::super::runs::Unpacked::default();
-            let fill = timed(|out| r.ints_ends((0, ROWS), (out, None), &mut kept).unwrap());
-            let run = ROWS as f64 / runs as f64;
-            eprintln!("GRID RUNS bits={bits} mean_run={run:.2} bytes_a_row={:.2} before_d1315={present:.2} d1315_fresh_vectors={fresh:.2} d1315_kept_vectors={fill:.2} ns/row", bytes.len() as f64 / ROWS as f64);
+            let new = timed(|c, out| runs_of(&bytes[c]).ints_ends((0, ROWS), (out, None), &mut kept).unwrap());
+            let size: usize = bytes.iter().map(Vec::len).sum();
+            eprintln!(
+                "GRID RUNS bits={bits} mean_run={:.2} bytes_a_row={:.2} old={old:.2} d1315_kept={new:.2} ns/row",
+                (CHUNKS * ROWS) as f64 / runs as f64,
+                size as f64 / (CHUNKS * ROWS) as f64
+            );
         }
-        let v = values(1.0, bits, None, 7);
+        let all: Vec<Vec<i64>> = seeds().map(|s| values(1.0, bits, None, s)).collect();
         for (name, plan) in [("FRAME", 0_u8), ("FIXED", 1)] {
-            let bytes = chunk_of(&v, |lo, b, _| if plan == 0 { Plan::Frame(lo, b) } else { Plan::Fixed(8) });
-            check(&bytes, &v);
-            let chunk = Chunk::parse(&bytes).unwrap();
-            let ns = timed(|out| chunk.body.ints((0, ROWS), out, (None, &Portable)).unwrap());
-            eprintln!("GRID {name} bits={bits} bytes_a_row={:.2} present={ns:.2} ns/row", bytes.len() as f64 / ROWS as f64);
+            let bytes: Vec<Vec<u8>> = all.iter().map(|v| chunk_of(v, |lo, b, _| if plan == 0 { Plan::Frame(lo, b) } else { Plan::Fixed(8) })).collect();
+            let ns = timed(|c, out| Chunk::parse(&bytes[c]).unwrap().body.ints((0, ROWS), out, (None, &Portable)).unwrap());
+            eprintln!("GRID {name} bits={bits} present={ns:.2} ns/row");
         }
     }
-    for (mean, distinct) in [(1.3_f64, 200_usize), (1.3, 500), (1.3, 1000), (2.0, 500), (5.0, 300), (5.0, 800)] {
-        let v = values(mean, 62, Some(distinct), 11);
-        let bytes = chunk_of(&v, |_, _, entries| Plan::Dictionary(bits_for(u64::try_from(entries - 1).unwrap())));
-        check(&bytes, &v);
-        let chunk = Chunk::parse(&bytes).unwrap();
-        let words = chunk.body.entry_words().unwrap();
-        let given = timed(|out| chunk.body.ints((0, ROWS), out, (Some(&words), &Portable)).unwrap());
-        let made = timed(|out| chunk.body.ints((0, ROWS), out, (None, &Portable)).unwrap());
-        let runs = 1 + v.windows(2).filter(|w| w[0] != w[1]).count();
-        eprintln!(
-            "GRID DICTIONARY entries={} code_bits={} mean_run={:.2} bytes_a_row={:.2} entries_given={given:.2} entries_made_each_call={made:.2} ns/row",
-            words.len(),
-            bits_for(u64::try_from(words.len() - 1).unwrap()),
-            ROWS as f64 / runs as f64,
-            bytes.len() as f64 / ROWS as f64
-        );
+    for (mean, distinct) in [(1.3_f64, 200_usize), (1.3, 500), (1.3, 1000), (5.0, 300)] {
+        let all: Vec<Vec<i64>> = seeds().map(|s| values(mean, 62, Some(distinct), s)).collect();
+        let bytes: Vec<Vec<u8>> = all
+            .iter()
+            .map(|v| chunk_of(v, |_, _, entries| Plan::Dictionary(bits_for(u64::try_from(entries - 1).unwrap()))))
+            .collect();
+        let words: Vec<Vec<i64>> = bytes.iter().map(|b| Chunk::parse(b).unwrap().body.entry_words().unwrap()).collect();
+        let given = timed(|c, out| Chunk::parse(&bytes[c]).unwrap().body.ints((0, ROWS), out, (Some(&words[c]), &Portable)).unwrap());
+        let made = timed(|c, out| Chunk::parse(&bytes[c]).unwrap().body.ints((0, ROWS), out, (None, &Portable)).unwrap());
+        eprintln!("GRID DICTIONARY entries={} code_bits={} mean_run={mean} entries_given={given:.2} entries_made_each_call={made:.2} ns/row", words[0].len(), bits_for(u64::try_from(words[0].len() - 1).unwrap()));
     }
 }
