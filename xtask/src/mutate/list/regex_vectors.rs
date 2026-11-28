@@ -36,7 +36,7 @@ const STOPS: &str = "regex::dfa::tests::a_scan_that_can_match_nothing_more_stops
 const FEW_WAYS: &str = "regex::bounded::tests::a_program_of_few_ways_keeps_no_mark_and_finds_the_same";
 
 /// The mutations of regular expression functions over vectors, in the order they run.
-pub const REGEX_VECTORS: [Mutation; 25] = [
+pub const REGEX_VECTORS: [Mutation; 26] = [
     Mutation {
         name: "regex-entries-translated-unread",
         package: Package::Core,
@@ -286,5 +286,15 @@ pub const REGEX_VECTORS: [Mutation; 25] = [
         replacement: "",
         integration: &[],
         unit: &[FEW_WAYS],
+    },
+    Mutation {
+        name: "regex-straight-run-past-the-end",
+        package: Package::Core,
+        breaks: "a straight run compared at once reads octets past the last position the search reads to (D1312)",
+        file: BOUNDED,
+        original: "(within && wanted.is_some() && held == wanted)",
+        replacement: "(wanted.is_some() && held == wanted)",
+        integration: &[],
+        unit: &["regex::bounded::tests::a_search_reads_no_character_past_its_last_position"],
     },
 ];

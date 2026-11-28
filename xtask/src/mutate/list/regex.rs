@@ -325,7 +325,7 @@ pub const REGEX: [Mutation; 55] = [
         original: "        if !within || !self.takes((pc, inst), at)? {",
         replacement: "        if !self.takes((pc, inst), at)? {",
         integration: &[],
-        unit: &["regex::bounded::tests::it_finds_what_the_matcher_of_threads_finds"],
+        unit: &["regex::bounded::tests::a_search_reads_no_character_past_its_last_position"],
     },
     Mutation {
         name: "regex-back-reference-marked",

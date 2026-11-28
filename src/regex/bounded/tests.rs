@@ -403,3 +403,23 @@ fn a_program_of_few_ways_keeps_no_mark_and_finds_the_same() {
         assert!(!Regex::new(pattern, flag).unwrap().program.passed.few_ways, "{pattern:?}");
     }
 }
+
+/// Verifies: [DESIGN] (RULES.md D1188, D1312) a search reads no character
+/// at or past the last position it is given, so a match that needs one
+/// is not found: of `ab` in the text `ab` cut before its `b` there is
+/// none, of the text whole there is; the same of a class after a
+/// character, and of a text read by its octets, whose straight run is
+/// compared at once and whose single characters go by their tables.
+#[test]
+fn a_search_reads_no_character_past_its_last_position() {
+    let mut kept = Scratch::default();
+    for pattern in ["ab", "a[bc]", "^ab", "a(b)"] {
+        let (program, chars) = (Regex::new(pattern, "").unwrap().program, ['a', 'b']);
+        for (reads, there) in [(1, false), (2, false), (3, true)] {
+            let of_chars = search(&program, chars.as_slice(), (0, reads), true, &mut kept).unwrap();
+            assert_eq!(of_chars, there, "{pattern:?} of characters, {reads} positions");
+            let of_octets = search(&program, &super::super::Utf8::of("ab"), (0, reads), true, &mut kept).unwrap();
+            assert_eq!(of_octets, there, "{pattern:?} of octets, {reads} positions");
+        }
+    }
+}
