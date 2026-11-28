@@ -811,6 +811,7 @@ verification approach DO-178C expects (§8).
 | D1251 | A column store's scan judges a LIKE of a constant pattern of each chunk's texts where they lie, those coded by symbols by the pattern's machine stepped a code at a time |
 | D1253 | A LIKE judged of a dictionary's chunk matches each entry once, the entries searched as one arena, and each row by its code |
 | D1254 | The first rows of a sort are taken from a grouping's tables under an analyzed plan's counts as under none |
+| D1255 | A table's text keys lie in chunks that never move, and a morsel's groups are put in their partitions' order with their texts where they are |
 | D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
@@ -23196,6 +23197,96 @@ the projection over the part takes the rows the partitions kept for the
 sort, as those are the rows that leave the part. Both take the time of
 the part's run and of each row pulled. A part that gives way, and a sort
 whose rows are not taken from the tables, count every group in both.
+
+#### D1255. A table's text keys lie in chunks that never move, and a morsel's groups are put in their partitions' order with their texts where they are
+
+A lane of a table's keys held its character strings one after another in
+one buffer (D356). A lane that grew took a larger buffer and copied every
+text it held into it, again at each doubling. A morsel's groups put in
+the order of their partitions (D1110) were copied, text by text, into a
+second such buffer that grew the same way, and a partition's table that
+took a new group copied its text into a third. Of a grouping by a long
+text key, growing the buffers and copying between them was a large part
+of what the grouping did, and the memory it touched for the first time
+most of its page faults.
+
+A lane of texts now holds them in chunks (`exec/table/keys/texts.rs`). A
+chunk is a buffer made once with its room and filled no further, so a
+text stays where it was written and a lane that grows copies nothing it
+holds. A group's text is told by its chunk and where it lies there,
+twelve bytes a group. A new chunk is made with room for as much text as
+the lane holds, at least 1 KiB and at most 1 MiB. So a lane of few short
+texts holds little, a lane of many makes a chunk for every mebibyte, and
+no lane holds more room unfilled than its texts fill or than one chunk.
+A text longer than 1 MiB has a chunk of its own, of its length, and the
+chunk open before it stays open. A text of four gibibytes or more is not
+told by a place of 32 bits, and turns the lane into values as a value of
+another type does (D356). Nothing is sized by an estimate of the groups.
+
+Both bounds were measured. On the lanes alone, in the shape of a grouping
+of tens of millions of text keys of 7 to 7,770 octets made by eight
+threads and merged into 64 partitions, the lanes cost the same with at
+most 32 KiB to 16 MiB a chunk, and with 16 KiB their merge cost more. A
+first chunk of 64 bytes to 4 KiB cost the same on lanes of four short
+texts, so it is a kibibyte, the least of what a partition holds of a
+text column while its keys are few.
+
+What chooses the most is the statement that runs next. A grouping's
+chunks are freed when it ends, and the system's allocator, which the
+server runs on (D765), keeps freed memory and hands the next statement
+only the blocks its requests fit. Measured in the server, a grouping by
+integers run after groupings by long texts took more fresh memory, held
+more at its peak and ran longer after chunks of 64 KiB than after chunks
+of 1 MiB or 16 MiB, which read alike, as a morsel's lane seldom holds
+more than a few mebibytes. Run first in a server it cost the same after
+any. So the most is 1 MiB, the least measured that leaves the next
+statement room it can use. A lane holds one chunk part filled, so a
+grouping's partitions hold at most a mebibyte a text column each
+unfilled, and only once each holds that much text.
+
+A morsel's groups are put in their partitions' order with their texts
+left where they are (`Keys::gathered`, `exec/table/made.rs`). Only what
+tells where each lies is put in that order, so no text is copied there.
+A partition's table that takes a new group copies its text once, into a
+chunk that is not grown. A wide partition (D1300) copies none, and reads
+a key where its morsel wrote it. So a text key is written once by its
+morsel, and once more only by a partition that holds its groups in a
+table of its own. Measured the same way, leaving the texts where they
+are cost the same as copying them in order where the partition copies
+each new key again, and less where the partition is wide.
+
+The room of every chunk is counted in what the lane holds as the chunk
+is made, before a text fills it, so a table or a morsel's groups charge
+their grant with it at once (`Chunks::bytes`). A table frozen gives back
+the room its open chunk has not filled.
+
+A lane given as a column of a batch (D1123) is one buffer. Texts that lie
+in one chunk in their groups' order are that chunk as it is. Any others
+are copied once into a buffer made with their whole length.
+
+A lane written to a spill (D1226) writes its texts' whole length, each
+one's length, and their octets in one run. It is read back into one
+chunk of that length, each text copied once and none into a buffer that
+grows, and bytes whose lengths do not make that whole, or that are not
+UTF-8, are refused as a record that is not one (SQLCODE -916). The
+record's form changed within its version, as nothing spilled outlives
+its statement.
+
+The groups, their order, their values and their results are unchanged:
+a key is equal to what it was equal to, with and without its trailing
+spaces as its collation says (D1183), and is given as its first row gave
+it.
+
+The chunks' tests are in `exec/table/keys/texts/tests.rs`. They show
+that a text never moves, the room of each chunk and that it is counted,
+a text longer than a chunk, groups gathered, texts joined and a lane
+shortened. One takes text keys, a null, the empty text, texts that
+differ by a trailing space and a text longer than a chunk among them,
+through two morsels merged whole, split among partitions, written to a
+spill, read back and given as columns, padded and unpadded, and expects
+the same groups each way. Another refuses the records that are no lane
+of texts. The eight mutations are in
+`xtask/src/mutate/list/areas/text_lanes.rs`.
 
 #### D1256. A sort by set functions alone picks its first groups of a partition before their rows are made
 

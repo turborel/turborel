@@ -76,6 +76,7 @@ mod skipping;
 mod sorts;
 mod statistics;
 mod subquery_plans;
+mod text_lanes;
 mod tpcc;
 mod tpcc_allocs;
 mod transfer;
@@ -317,15 +318,15 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// A procedure's parameter defaults', a prepared CALL's parameter modes', an export's large objects', the
 /// transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
-/// materialization's, the table of groups', the join table's, XXH3's,
+/// materialization's, the table of groups', its text lanes', the join table's, XXH3's,
 /// semi joins', a LIKE judged on codes', a LIKE judged of a dictionary's
 /// entries', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
-/// window narrowed's, a join built in passes' and a filter passing over
-/// what its scan judged's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 40] {
+/// window narrowed's, a join built in passes', a filter passing over what
+/// its scan judged's and text key lanes' last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 41] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -339,6 +340,7 @@ fn closing() -> [&'static [Mutation]; 40] {
         &batches::BATCHES,
         &late::LATE,
         &group_table::GROUP_TABLE,
+        &text_lanes::TEXT_LANES,
         &join_table::JOIN_TABLE,
         &join_build::JOIN_BUILD,
         &xxhash::XXHASH,
