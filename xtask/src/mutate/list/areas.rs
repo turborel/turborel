@@ -106,7 +106,7 @@ mod xxhash;
 use super::Mutation;
 
 /// The core's mutations, then those of the mechanisms beside it.
-pub fn core() -> [&'static [Mutation]; 35] {
+pub fn core() -> [&'static [Mutation]; 36] {
     [
         &super::MUTATIONS,
         &super::assertions::ASSERTIONS,
@@ -119,6 +119,7 @@ pub fn core() -> [&'static [Mutation]; 35] {
         &super::TAILORINGS,
         &super::sql2023::SQL2023,
         &super::regex::REGEX,
+        &super::regex_vectors::REGEX_VECTORS,
         &super::SHADOW,
         &super::backup::BACKUP,
         &oltp::OLTP,

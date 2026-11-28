@@ -75,6 +75,7 @@ mod ptf;
 mod readers;
 mod reads;
 mod regex;
+mod regex_vectors;
 mod rekey;
 mod rename;
 mod roles;

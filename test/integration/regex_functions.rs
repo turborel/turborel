@@ -5,7 +5,7 @@
 use turborel::error::Code;
 use turborel::value::{Decimal, Value};
 
-use crate::common::{code, exec, expected, rows, setup};
+use crate::common::{both_ways, code, exec, expected, rows, setup};
 
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.31 SR3, GR18; §9.28 GR11]
 /// OCCURRENCES_REGEX counts the matches from the start position, 1 if
@@ -214,4 +214,83 @@ fn collations_6_33() {
     exec(&s, "INSERT INTO PATS VALUES ('\\w+')").unwrap();
     let q = "SELECT SUBSTRING_REGEX(P IN N) = 'BOB', TRANSLATE_REGEX(P IN N WITH 'x') = 'X X' FROM PEOPLE, PATS";
     assert_eq!(rows(&s, q), expected(&["TRUE,TRUE"]));
+}
+
+/// Tables R, of the row store, and C, of the column store, alike and
+/// frozen: K, a key, and U, one of five strings by K, which the column
+/// store keeps as a dictionary's codes, but row 7's, a hundred of `a`.
+fn dictionary_tables() -> (turborel::db::Database, turborel::db::Session) {
+    let db = turborel::db::Database::new();
+    db.set_job_policy(turborel::threads::JobPolicy::Manual).unwrap();
+    let columns = "(K INTEGER PRIMARY KEY, U VARCHAR(200))";
+    db.schema(&format!(
+        "CREATE SCHEMA AUTHORIZATION APP
+           CREATE TABLE R {columns}
+           CREATE TABLE C {columns} USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)"
+    ))
+    .unwrap();
+    let s = db.session("APP");
+    let strings = ["http://www.a.test/x", "https://b.test/y", "ab", "", "aéb"];
+    let u_of = |k: usize| if k == 7 { "a".repeat(100) } else { strings[k % 5].to_owned() };
+    for table in ["R", "C"] {
+        for first in (0..6000).step_by(500) {
+            let values: Vec<String> = (first..first + 500).map(|k| format!("({k}, '{}')", u_of(k))).collect();
+            s.run(&format!("INSERT INTO {table} VALUES {}", values.join(", "))).unwrap();
+        }
+        s.commit().unwrap();
+    }
+    db.maintain().unwrap();
+    (db, s)
+}
+
+/// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §6.33 GR9, SR12f i 2; §8.7
+/// GR1] [DESIGN] (RULES.md D1291) TRANSLATE_REGEX and LIKE_REGEX of a
+/// column a column store keeps as a dictionary's codes give what they
+/// give of the row store's column, by batches and a row at a time,
+/// grouped by too, the empty string's a null, as its start position is
+/// not of it [§6.33 GR9b ii]. A row whose result would be longer than the longest
+/// string, taken out by the query's filter, raises nothing though its
+/// string stays in the dictionary. Read by the query it raises SQLSTATE
+/// 22001, of either store.
+#[test]
+fn a_dictionary_column_is_translated_as_its_rows_are_6_33() {
+    let (_db, s) = dictionary_tables();
+    let all = format!("TRANSLATE_REGEX('a' IN U WITH '{}')", "x".repeat(400));
+    let hosts = "TRANSLATE_REGEX('^https?://(www\\.)?([^/]+)/.*$' FLAG 's' IN U WITH '$2')";
+    let of_both = |sql: &str| {
+        let of = |table: &str| {
+            let (batched, by_rows) = both_ways(&s, &sql.replace("{t}", table));
+            assert_eq!(batched, by_rows, "{table}: by batch and row by row: {sql}");
+            batched
+        };
+        let (row_store, column_store) = (of("R"), of("C"));
+        assert_eq!(row_store, column_store, "of both stores: {sql}");
+        column_store
+    };
+    let count = |n: usize| (0..6000).filter(|&k| k != 7 && k % 5 == n).count();
+    let grouped = of_both(&format!("SELECT G, COUNT(*) FROM (SELECT {hosts} AS G FROM {{t}} WHERE K <> 7) AS Q GROUP BY G"));
+    let mut wanted = vec![
+        format!("NULL,{}", count(3)),
+        format!("a.test,{}", count(0)),
+        format!("ab,{}", count(2)),
+        format!("aéb,{}", count(4)),
+        format!("b.test,{}", count(1)),
+    ];
+    wanted.sort();
+    assert_eq!(grouped, wanted);
+    let lengths = of_both(&format!("SELECT CHAR_LENGTH(G), COUNT(*) FROM (SELECT {all} AS G FROM {{t}} WHERE K <> 7) AS Q GROUP BY G"));
+    let mut long = vec![
+        format!("NULL,{}", count(3)),
+        format!("401,{}", count(2)),
+        format!("402,{}", count(4)),
+        format!("16,{}", count(1)),
+        format!("418,{}", count(0)),
+    ];
+    long.sort();
+    assert_eq!(lengths, long);
+    assert_eq!(of_both("SELECT COUNT(*) FROM {t} WHERE K <> 7 AND U LIKE_REGEX '^a.b$'"), [count(4).to_string()]);
+    for table in ["R", "C"] {
+        assert_eq!(state(&s, &format!("SELECT MAX(CHAR_LENGTH({all})) FROM {table} WHERE K < 2000")), Err("22001".into()), "{table}");
+        assert_eq!(state(&s, &format!("SELECT MAX(CHAR_LENGTH({all})) FROM {table} WHERE K <> 7 AND K < 2000")), Ok(()), "{table}");
+    }
 }

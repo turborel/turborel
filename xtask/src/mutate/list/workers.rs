@@ -7,7 +7,9 @@
 //! partitions for its groups, and a morsel handed whole after morsels no
 //! longer are; and of a run's lead past its window (D1262): a lead taken
 //! whatever the bytes held ahead, and a result's bytes held after the
-//! reader was given it.
+//! reader was given it; and of the lead of the runs over a grouping's
+//! partitions (D1282): a lead that reaches every morsel, and a
+//! statement's runs led by every partition.
 
 use super::{Mutation, Package};
 
@@ -24,7 +26,7 @@ const MANY: &str = "exec::parallel::grouped::waves::tests::a_grouping_of_many_gr
 /// The unit test of a run's lead.
 const LED: &str = "exec::parallel::run::tests::a_run_leads_its_reader_while_what_it_holds_has_room";
 
-pub const WORKERS: [Mutation; 7] = [
+pub const WORKERS: [Mutation; 9] = [
     Mutation {
         name: "a-lead-whatever-is-held-ahead",
         package: Package::Core,
@@ -94,5 +96,25 @@ pub const WORKERS: [Mutation; 7] = [
         replacement: "                others.push((job.owner, job.most));",
         integration: &[],
         unit: &["threads::pool::tests::a_threads_jobs_keep_their_workers"],
+    },
+    Mutation {
+        name: "an-unmetered-lead-kept-to-the-window",
+        package: Package::Core,
+        breaks: "a run whose reader keeps every result takes every morsel past the one its reader waits for (RULES.md D1282)",
+        file: RUN,
+        original: "Lead { wide, size: |_| 0, room: Box::new(|| usize::MAX) }",
+        replacement: "Lead { wide: wide.min(AHEAD_PER_THREAD), size: |_| 0, room: Box::new(|| usize::MAX) }",
+        integration: &[],
+        unit: &["exec::parallel::run::tests::a_run_led_by_every_morsel_takes_them_all_and_counts_no_byte"],
+    },
+    Mutation {
+        name: "partitions-led-by-two-a-thread",
+        package: Package::Core,
+        breaks: "the runs that merge and finish a grouping's partitions lead their reader by every partition (RULES.md D1282)",
+        file: WAVES,
+        original: "parts: PARTS,",
+        replacement: "parts: 2,",
+        integration: &[],
+        unit: &["exec::parallel::grouped::waves::tests::partitions_led_by_every_one_merge_and_spill_as_those_led_by_two"],
     },
 ];
