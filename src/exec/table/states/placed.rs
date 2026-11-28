@@ -93,7 +93,7 @@ impl Sent {
         }
         let mut values: Vec<Value> = Vec::with_capacity(groups.len());
         for (typed, (_, places)) in columns.iter().zip(runs) {
-            for &place in places.iter() {
+            for &place in *places {
                 values.push(typed.finish(index(place))?);
             }
         }
