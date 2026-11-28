@@ -126,19 +126,19 @@ mod tests {
         let s = db.session("O");
         let (st, bound) = s.bound_plan("SELECT K, N FROM P ORDER BY K FETCH FIRST 2 ROWS ONLY").unwrap();
         let ctx = RuleContext { db: &st, seen: &crate::physical::Seen::default() };
-        let LogicalPlan::Limit { limit, input } = bound else { panic!("{bound:?}") };
-        let LogicalPlan::Sort { keys, input: listed } = *input else { panic!("no sort") };
-        let LogicalPlan::Project { input: rows, .. } = *listed else { panic!("no select list") };
+        let LogicalPlan::Limit { limit, input: bound_sort } = bound else { panic!("{bound:?}") };
+        let LogicalPlan::Sort { keys, input: bound_list } = *bound_sort else { panic!("no sort") };
+        let LogicalPlan::Project { input: rows, .. } = *bound_list else { panic!("no select list") };
         let applied = |deterministic: bool| {
             let call = Expr::Call(ScalarRef(Arc::new(Quiet(deterministic))), vec![Expr::Column(0)]);
             let listed = LogicalPlan::Project { exprs: vec![Expr::Column(0), call], input: rows.clone() };
             let sorted = LogicalPlan::Sort { keys: keys.clone(), input: Box::new(listed) };
             ComputeAfterFetchFirst.apply(&LogicalPlan::Limit { limit: limit.clone(), input: Box::new(sorted) }, &ctx)
         };
-        let Some(LogicalPlan::Project { exprs, input }) = applied(true) else { panic!("left") };
+        let Some(LogicalPlan::Project { exprs, input: kept }) = applied(true) else { panic!("left") };
         assert!(matches!(exprs.get(1), Some(Expr::Call(..))), "{exprs:?}");
-        let LogicalPlan::Limit { input: sorted, .. } = *input else { panic!("no FETCH FIRST below") };
-        let LogicalPlan::Sort { input: below, .. } = *sorted else { panic!("no sort below") };
+        let LogicalPlan::Limit { input: ordered, .. } = *kept else { panic!("no FETCH FIRST below") };
+        let LogicalPlan::Sort { input: below, .. } = *ordered else { panic!("no sort below") };
         let LogicalPlan::Project { exprs: columns, .. } = *below else { panic!("no select list below") };
         assert!(matches!(columns.as_slice(), [Expr::Column(0)]), "{columns:?}");
         assert!(applied(false).is_none());
