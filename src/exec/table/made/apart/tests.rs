@@ -22,9 +22,6 @@ const WHOLE: &[usize] = &[];
 const LANE: &[usize] = &[0];
 const BY: [&[usize]; 3] = [WHOLE, LANE, &[1]];
 
-/// No set function.
-const NO_CALLS: &[AggCall] = &[];
-
 /// A morsel's batches, three of 400 rows: integers, each key held four
 /// times and a null every eleventh row, texts with and without a
 /// trailing space, and the integers the set functions take, none null;
