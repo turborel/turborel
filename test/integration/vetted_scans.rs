@@ -221,7 +221,8 @@ fn the_filter_is_given_only_the_rows_the_scan_kept() {
     let a = db.session("A");
     let kept = rows(&a, "SELECT K FROM C WHERE N IS NOT NULL AND U LIKE '%site1%'").unwrap().len();
     let given = scanned(&a, "SELECT K, P FROM C WHERE N IS NOT NULL AND U LIKE '%site1%'");
-    assert!(kept < given && given < MANY * 6 / 7 + 1, "a LIKE judged in part beside a null test: {given} rows given, {kept} kept");
+    let not_null = (0..MANY).filter(|k| !k.is_multiple_of(7)).count();
+    assert!(kept < given && given <= not_null, "a LIKE judged in part beside a null test: {given} rows given, {kept} kept");
     assert_eq!(scanned(&a, "SELECT K, P FROM C WHERE U LIKE '%http%'"), MANY, "a LIKE judged in part alone: nothing said");
     assert_eq!(scanned(&a, "SELECT K, P FROM C WHERE N + K >= 0"), MANY, "a conjunct the scan is not told");
     assert_eq!(scanned(&a, "SELECT K, P FROM C WHERE K / (N + 1000) >= 0 AND N < 50"), MANY, "a condition that can raise");
