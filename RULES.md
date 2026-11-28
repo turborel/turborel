@@ -25017,6 +25017,7 @@ in those than in anything the pattern asked.
 What a search finds is unchanged. The model tests hold the matcher to
 the matcher of threads over the corpus, of texts read by their
 characters and by their octets.
+
 #### D1316. A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows
 
 A column store gives a run's character strings as codes of dictionary
