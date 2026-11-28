@@ -278,6 +278,11 @@ impl Gathered {
         Some(place)
     }
 
+    /// How many octets are gathered.
+    pub(super) fn octets(&self) -> usize {
+        self.octets.len()
+    }
+
     /// \[DESIGN\] (RULES.md D1252) The texts gathered, of `rows` rows:
     /// the octets judged UTF-8 once by `kernels` and made the text, the
     /// vector itself, each entry's end on a character's boundary. None if
@@ -421,19 +426,21 @@ impl Chunk<'_> {
         })
     }
 
-    /// \[DESIGN\] (RULES.md D1252) Adds the rows `asked` of texts coded
-    /// by a table of symbols, each decoded straight after the octets
-    /// gathered and an entry of its own. They are VARCHAR texts alone
+    /// \[DESIGN\] (RULES.md D1252, D1317) Adds the rows `asked` of texts
+    /// coded by a table of symbols, each decoded through one block
+    /// (`fsst::Decoder`), added after the octets gathered and an entry of
+    /// its own. They are VARCHAR texts alone
     /// (`columns.rs`), so none is padded, and one asked padded gives none.
     fn symbols(&self, coded: &super::fsst::Coded<'_>, asked: Asked<'_>, pad: Option<usize>, into: &mut Gathered) -> Option<()> {
         if pad.is_some() {
             return None;
         }
+        let mut decoder = coded.decoder();
         asked.each(|n| {
             if self.is_null(n) {
                 return into.null();
             }
-            coded.text_onto(n, &mut into.octets)?;
+            decoder.decode(coded.codes_of(n)?, &mut into.octets)?;
             into.own()
         })
     }

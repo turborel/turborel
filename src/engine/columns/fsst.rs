@@ -32,7 +32,7 @@ pub(super) use stepped::{Stepped, Steps};
 /// their lengths and count, a fourteenth of a page of 8 KiB.
 const MOST_SYMBOLS: usize = 64;
 /// \[DESIGN\] The longest symbol.
-const LONGEST: usize = 8;
+pub(super) const LONGEST: usize = 8;
 /// The code of a byte written as itself, the next.
 const ESCAPE: u8 = 255;
 /// \[DESIGN\] The bytes of texts a table is chosen by.
@@ -257,20 +257,63 @@ impl Symbols {
     /// Appends the text `codes` encode; none if they end in an escape, or
     /// a code is of no symbol.
     pub(super) fn decode(&self, codes: &[u8], out: &mut Vec<u8>) -> Option<()> {
-        let mut rest = codes.iter();
+        Decoder::of(self).decode(codes, out)
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1317) The octets of a block texts are decoded
+/// into before they are added to a vector: 256, thirty-two of the longest
+/// symbol. A page of 8 KiB that holds a hundred texts or more holds them
+/// in about 80 octets of codes each, so nearly every such text is decoded
+/// whole before it is copied out once, and a decoder made for one value
+/// clears no more than this.
+const BLOCK: usize = 256;
+/// The octets of a block past which the next symbol may not fit, so the
+/// block is added to the vector first.
+const FULL: usize = BLOCK - LONGEST;
+
+/// \[DESIGN\] (RULES.md D1317) Texts decoded of a table's codes through a
+/// block. A code's word of 8 octets is stored whole at the block's place
+/// and the place moves on by the symbol's length, so a code is one store
+/// of a fixed width and no call, and the text is added to its vector by
+/// one copy at its end, or a block at a time if it is longer. Decoding
+/// straight onto the vector asked it for room a code and cut it back a
+/// code. The block is kept from text to text of a chunk.
+pub(super) struct Decoder<'s> {
+    symbols: &'s Symbols,
+    block: [u8; BLOCK],
+}
+
+impl<'s> Decoder<'s> {
+    /// A decoder of the codes of `symbols`.
+    pub(super) fn of(symbols: &'s Symbols) -> Decoder<'s> {
+        Decoder { symbols, block: [0; BLOCK] }
+    }
+
+    /// Appends the text `codes` encode to `out`; none if they end in an
+    /// escape, or a code is of no symbol. What was appended of a text
+    /// refused is of no use.
+    pub(super) fn decode(&mut self, codes: &[u8], out: &mut Vec<u8>) -> Option<()> {
+        let (mut at, mut rest) = (0_usize, codes.iter());
         while let Some(&c) = rest.next() {
+            if at > FULL {
+                out.extend_from_slice(self.block.get(..at)?);
+                at = 0;
+            }
             if c == ESCAPE {
-                out.push(*rest.next()?);
+                *self.block.get_mut(at)? = *rest.next()?;
+                at = at.saturating_add(1);
                 continue;
             }
             let code = usize::from(c);
-            if code >= self.count {
+            if code >= self.symbols.count {
                 return None;
             }
-            let (word, len) = (self.words.get(code)?, usize::from(*self.lens.get(code)?));
-            out.extend_from_slice(word);
-            out.truncate(out.len().saturating_sub(LONGEST.saturating_sub(len)));
+            let (word, len) = (self.symbols.words.get(code)?, usize::from(*self.symbols.lens.get(code)?));
+            self.block.get_mut(at..at.saturating_add(LONGEST))?.copy_from_slice(word);
+            at = at.saturating_add(len);
         }
+        out.extend_from_slice(self.block.get(..at)?);
         Some(())
     }
 }
@@ -398,8 +441,20 @@ impl<'a> Coded<'a> {
     /// The text of value `n`, decoded.
     pub(super) fn text(&self, n: usize) -> Option<Vec<u8>> {
         let mut text = Vec::new();
-        self.text_onto(n, &mut text)?;
+        self.symbols.decode(self.codes_of(n)?, &mut text)?;
         Some(text)
+    }
+
+    /// The codes of value `n`.
+    pub(super) fn codes_of(&self, n: usize) -> Option<&[u8]> {
+        let (a, b) = self.between(n)?;
+        self.codes.get(a..b)
+    }
+
+    /// \[DESIGN\] (RULES.md D1317) A decoder of its table's codes, kept
+    /// for the texts a run reads of it.
+    pub(super) fn decoder(&self) -> Decoder<'_> {
+        Decoder::of(&self.symbols)
     }
 
     /// The order of value `n` against `constant`, as
@@ -426,15 +481,6 @@ impl<'a> Coded<'a> {
     pub(super) fn liked(&self, n: usize, steps: &Steps) -> Option<bool> {
         let (a, b) = self.between(n)?;
         steps.matches(self.codes.get(a..b)?)
-    }
-
-    /// \[DESIGN\] (RULES.md D1252) Decodes the text of value `n` straight
-    /// after what `octets` hold, where a run's texts are gathered
-    /// (`texts.rs`), so it is copied nowhere else. None if its codes are
-    /// malformed. Whether the octets are text is judged of the run's whole.
-    pub(super) fn text_onto(&self, n: usize, octets: &mut Vec<u8>) -> Option<()> {
-        let (a, b) = self.between(n)?;
-        self.symbols.decode(self.codes.get(a..b)?, octets)
     }
 }
 
@@ -486,6 +532,39 @@ mod tests {
         assert_eq!(Table::chosen(&bytes), table, "the same table");
         assert_eq!(round_trip(&Table::default(), b"no symbols"), b"no symbols", "every byte escaped");
         assert!(Table::chosen(&[]).symbols.is_empty(), "of no texts");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1317, texts decoded through a block:
+    /// texts of every count of codes from none to past three blocks, of
+    /// symbols of one, two and eight octets and of escaped octets in turn,
+    /// decoded one after another by one decoder, are each the octets their
+    /// codes spell, added after what the vector held, so a symbol or an
+    /// escape that falls at a block's end is whole; and a text refused
+    /// leaves the one after it right.
+    #[test]
+    fn texts_longer_than_a_block_are_decoded_whole() {
+        let (symbols, _) = Symbols::read(&[3, 1, b'a', 2, b'b', b'c', 8, b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k']).unwrap();
+        let spelled: [&[u8]; 4] = [b"a", b"bc", b"defghijk", b"!"];
+        let mut decoder = Decoder::of(&symbols);
+        let mut out = b"held".to_vec();
+        for count in 0..3 * BLOCK {
+            let (mut codes, mut want) = (Vec::new(), b"held".to_vec());
+            for n in 0..count {
+                let k = (n * 7 + count) % 4;
+                if k == 3 {
+                    codes.extend([ESCAPE, b'!']);
+                } else {
+                    codes.push(u8::try_from(k).unwrap());
+                }
+                want.extend_from_slice(spelled[k]);
+            }
+            out.truncate(4);
+            assert_eq!(decoder.decode(&codes, &mut out), Some(()), "{count} codes");
+            assert_eq!(out, want, "{count} codes");
+        }
+        assert!(decoder.decode(&[2, 2, 9], &mut out).is_none(), "no symbol 9");
+        out.clear();
+        assert_eq!((decoder.decode(&[1, 0], &mut out), out.as_slice()), (Some(()), b"bca".as_slice()), "after a text refused");
     }
 
     /// Verifies: [DESIGN] RULES.md D31, FSST: a table of too many symbols,
