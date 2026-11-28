@@ -24844,6 +24844,17 @@ same not wide, held by the grant, through several waves and through the
 spill, and compare the first rows a sort by a count, a sum and a
 greatest value keeps of wide partitions with those it keeps of tables.
 
+A partition goes wide only of a grouping whose reader reads the groups
+where they lie: the first rows of a sort, and no second grouping over
+it. Whatever else reads a partition reads a table, and a wide partition
+gathered into one for it writes every group a second time, which costs
+what the merge into a table would have and the adoption besides, as a
+grouping under a HAVING condition showed when its partitions went wide.
+So the rule is the reader's, not a count of groups
+(`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
+which goes wide whatever reads, is what the tests of the gathered table
+ask.
+
 #### D447. A unique constraint added in a transaction fills its index with every version
 
 ALTER TABLE ADD UNIQUE inside a transaction filled the constraint's

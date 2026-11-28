@@ -420,6 +420,24 @@ fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> 
     rows
 }
 
+/// Verifies: [DESIGN] RULES.md D1300 a statement's partitions go wide
+/// only of a grouping whose reader reads the groups where they lie. A
+/// grouping every group of which is read merges each wave into tables
+/// however many groups a partition holds, and gives the groups it gives
+/// with no partition wide. The same grouping asked the first rows of a
+/// sort merges its waves into wide partitions, and gives the same rows.
+#[test]
+fn a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie() {
+    let (_db, a) = table();
+    let sql = "SELECT G, COUNT(*), SUM(V), MAX(K) FROM (SELECT K AS G, K, V FROM T) AS Q GROUP BY G";
+    let never = How { forced: NONE, widen: Widen::past(usize::MAX), ..How::default() };
+    let how = How { forced: NONE, widen: Widen::read_as_they_lie(5), ..How::default() };
+    assert_eq!(differing(&waved(&a, sql, &how, 3), &waved(&a, sql, &never, 3)), None);
+    assert_eq!(how.widen.merged.load(Ordering::Relaxed), 0, "every group is read, and a partition went wide");
+    assert_eq!(first_rows(&a, sql, &how, (1, 7)), first_rows(&a, sql, &never, (1, 7)));
+    assert!(how.widen.merged.load(Ordering::Relaxed) > 0, "the first rows of a sort, and no partition went wide");
+}
+
 /// Verifies: [DESIGN] RULES.md D1300, D1256 the first rows a partition
 /// keeps for a sort by a set function are the same rows, each with the
 /// same values and first row's number, whether the partition is wide,

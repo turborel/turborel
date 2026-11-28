@@ -190,7 +190,7 @@ impl Default for How {
             apart: None,
             lead: LEAD_PER_THREAD,
             parts: PARTS,
-            widen: Widen::past(WIDE),
+            widen: Widen::read_as_they_lie(WIDE),
             counted: (AtomicUsize::new(0), AtomicUsize::new(0)),
         }
     }
