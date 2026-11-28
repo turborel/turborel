@@ -31,7 +31,7 @@ use crate::exec::Runner;
 use crate::exec::batch::{Fed, Taken};
 use crate::functions::ColumnarKind;
 use crate::logical::AggCall;
-use crate::storage::{Batch, Row};
+use crate::storage::{Batch, Row, Sel};
 use crate::value::DataType;
 
 use super::Pending;
@@ -134,6 +134,13 @@ impl States {
         }
         let typed = Typed::of(kind, &agg.result).or_else(|| Typed::best(agg));
         typed.map_or_else(|| States::Boxed(Boxed::of(agg)), States::Typed)
+    }
+
+    /// \[DESIGN\] (RULES.md D1313) Makes its states those of groups of
+    /// one row each, as `Typed::set_apart` makes a column's: whether a
+    /// null was passed over; none, nothing made, of states that are fed.
+    pub(super) fn set_apart(&mut self, take: &Taken, held: &[(Batch, Option<Sel>)], sources: &[(u32, u32)]) -> Option<bool> {
+        if let States::Typed(typed) = self { typed.set_apart(take, held, sources) } else { None }
     }
 
     /// Adds a group's, fed nothing.
