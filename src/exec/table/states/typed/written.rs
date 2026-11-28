@@ -2,14 +2,17 @@
 //! read back as it was: its kind, then each group's count, 128-bit total
 //! or best value, or the two parts of its approximate sum, by their bits,
 //! and the scale of its integers once one came. Its function and result's
-//! type are the set function's, given again as it is read back.
+//! type are the set function's, given again as it is read back. A total
+//! is written in 128 bits whichever form its column holds it in, and a
+//! column read back is narrow where 64 bits hold every total (RULES.md
+//! D1308).
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
 use crate::functions::Wide;
 use crate::logical::AggCall;
 
-use super::{Approx, Exact, Typed};
+use super::{Approx, Exact, Totals, Typed};
 
 /// The tags of a column's kinds, as written.
 const COUNT: u8 = 0;
@@ -38,7 +41,7 @@ impl Typed {
                 out.put_u8(EXACT);
                 out.put_u8(u8::from(exact.scale.is_some()));
                 out.put_u32(exact.scale.unwrap_or(0));
-                groups().for_each(|g| out.put_i128(exact.units.get(g).copied().unwrap_or(0)));
+                exact.totals.put_groups(places, out);
                 put_counts(&exact.counts, out);
             }
             Typed::Approx(approx) => {
@@ -71,9 +74,9 @@ impl Typed {
             (EXACT, Some(Typed::Exact(Exact { kind, result, .. }))) => {
                 let scaled = reader.u8()? != 0;
                 let scale = reader.u32()?;
-                let units = (0..len).map(|_| reader.i128()).collect::<Result<Vec<_>>>()?;
+                let totals = Totals::read(reader, len)?;
                 let scale = scaled.then_some(scale);
-                Ok(Typed::Exact(Exact { kind, units, counts: counts(reader, len)?, scale, result }))
+                Ok(Typed::Exact(Exact { kind, totals, counts: counts(reader, len)?, scale, result }))
             }
             (APPROX, Some(Typed::Approx(Approx { mean, result, .. }))) => {
                 let mut sums = Vec::with_capacity(len);
