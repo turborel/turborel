@@ -225,6 +225,40 @@ fn conjuncts_judged_over_integers_keep_what_values_keep() {
     assert_eq!(ints::kept(&Judged::Like(0, None), &ints, Some(&all), &Portable), None, "LIKE");
 }
 
+/// Verifies: [DESIGN] RULES.md D1295 [X3.135-1986 §5.13 GR2, §5.18]: an
+/// IN and a NOT IN of exact constants are judged over a vector of
+/// integers by the constants' units folded to its scale, and keep what
+/// judging each value against each constant keeps, a null row never: a
+/// list of fewer than a set's constants and of more, one with a constant
+/// twice, with a null constant, of which NOT IN keeps no row, with a
+/// constant the scale cannot hold and one past 64 bits, and of constants
+/// far apart; a long list with an approximate constant is judged by its
+/// set as before, and a short one is left to the values.
+#[test]
+fn lists_of_exact_constants_over_integers_keep_what_values_keep() {
+    let hundredths = |n: i128| Value::Exact(Decimal::new(n, 2));
+    let units: Vec<i64> = (0..200_i64).map(|n| n.saturating_mul(37).checked_rem(101).unwrap().saturating_sub(50)).collect();
+    let nulls: Vec<bool> = (0_i32..200_i32).map(|n| n.checked_rem(13_i32) == Some(0_i32)).collect();
+    let ints = crate::storage::Ints::new(units, 2, Some(nulls.into()));
+    let values = ints.values().to_vec();
+    let all: Vec<u32> = rows_of(0..values.len());
+    let lists = [
+        [-50, -37, -3, 0, 4, 11, 25, 50].map(hundredths).to_vec(),
+        vec![hundredths(25), hundredths(-3), hundredths(25), Value::Exact(Decimal::new(250, 3))],
+        vec![hundredths(25), Value::Null, hundredths(-3)],
+        vec![Value::Exact(Decimal::new(255, 3)), hundredths(4), Value::Exact(Decimal::new(100_000_000_000_000_000_000, 0))],
+        vec![hundredths(-5000), hundredths(11), hundredths(5000)],
+        long(vec![hundredths(11), Value::Approx(0.25)], |n| hundredths(n.saturating_add(1000))),
+    ];
+    for (list, not) in lists.iter().flat_map(|list| [(list, false), (list, true)]) {
+        let j = Judged::In(0, set(list.clone()), not);
+        let by_values: Vec<u32> = all.iter().copied().filter(|&n| j.keeps(&values[index(n)])).collect();
+        assert_eq!(ints::kept(&j, &ints, Some(&all), &Portable), Some(by_values), "{j:?}");
+    }
+    let short = Judged::In(0, set(vec![hundredths(11), Value::Approx(0.25)]), false);
+    assert_eq!(ints::kept(&short, &ints, Some(&all), &Portable), None, "a short list with an approximate constant");
+}
+
 /// Verifies: [DESIGN] RULES.md D31 [X3.135-1986 §5.11 GR5, §5.13, §5.14,
 /// §5.15]: a conjunct judged over texts keeps the rows its judgment of
 /// their values keeps: LIKE, of a pattern a null makes unknown too; each

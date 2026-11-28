@@ -833,6 +833,8 @@ verification approach DO-178C expects (§8).
 | D1291 | A regular expression function over a dictionary's codes is run once of each entry a row reads |
 | D1292 | What a searcher keeps is left with its expression for the next searcher |
 | D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
+| D1294 | A column store's scan asks a hash join's runtime filter's keys of each run before it decodes the other columns, while they keep few of its rows |
+| D1295 | An IN list of exact constants is judged of integers by its units folded to their scale once, found by a bit or by halving |
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 
@@ -11565,10 +11567,15 @@ range among the conjuncts its split judges, so a morsel skips what lies
 outside it at any degree. A step right after the operator a filter
 stops at judges the filters of a morsel's batches. A morsel read a row
 at a time passes that step by, which only spares the join rows it
-would drop. A morsel's scan judges no Bloom filter. Measured, judging
-one in each morsel cost more than the probes it spared, as the
-morsel's batches are decoded whole and its threads share the filter's
-counts.
+would drop. A morsel's scan judged no Bloom filter when this was
+decided. Measured then, judging one in each morsel cost more than the
+probes it spared, as a morsel's batches were decoded whole whatever the
+filter kept and its threads wrote the filter's counts for every batch.
+Neither holds any longer, and D1294 changes it. A scan is now told the
+filter's keys and asks them itself before it decodes its other columns,
+which it then decodes at the rows kept alone, and it writes its counts
+through its first runs only. The step still judges every row the scan
+gives.
 
 A Bloom filter costs a hash and a block read a row, and a range
 compare costs less. A scan's range is judged among its conjuncts, by
@@ -24284,6 +24291,111 @@ cross chunks, and a header with a chunk missing
 adds rows in parts whose stored bounds prove a comparison and compares
 every answer with the row store's (`test/integration/proved_bounds.rs`).
 
+#### D1294. A column store's scan asks a hash join's runtime filter's keys of each run before it decodes the other columns, while they keep few of its rows
+
+A hash join tells the scan of its other operand the range of its built
+keys, and judges its Bloom filter, key set or bitmap in a step over the
+batches the scan gives (D369, D389, D600). The scan decoded every column
+the pipeline reads of every row in the range before that step ran. A
+semi join of the orders of one quarter with the lines of every order
+showed the cost. The lines' scan decoded two dates of every row for a
+filter over the scan, the filter judged every row, and only then did
+the join's keys leave a few of them. The key's column is kept as runs
+there, several rows a key, and each key was hashed and looked up a row
+at a time.
+
+A filter of an exact key now tells the scan its keys too
+(`Conjunct::Among`, `storage::Members`): its bitmap, its key set, or, of
+whole numbers, its Bloom filter's words with the seed of the hashes the
+join made. A column store's scan asks them of the key's column
+(`columns/judged/among.rs`), after its comparisons and before a LIKE,
+once a run of equal keys where the column is kept as runs (D1084) and of
+each row otherwise. The rows kept then go the way of any conjunct the
+scan judges (D360, D366). A run of which fewer than one row in eight is
+kept is decoded at those rows alone, so the filter over the scan and
+the join see those rows and no others of it. A run of more is given
+whole.
+
+A row the scan leaves out is one no built row matches, which the join
+drops. A bitmap and a key set are exact. A Bloom filter also keeps a
+few rows no built key equals, and that is harmless only because the
+rows are judged again. So the join's filter step and its probe stay
+exactly where they were and judge every row the scan gives, and the
+rows a statement gives, and the rows every operator above the join
+counts, are unchanged. Only the rows a scan and the operators between
+it and the join count in an analyzed plan fall. An integer the keys
+cannot be asked of is kept: one of another scale than the built keys',
+and under a Bloom filter one of 2^51 or more in magnitude, whose hash
+the join made another way. A null is left out, as the keys are told
+only of a key no null matches. Keys are told of a column of exact
+numbers alone.
+
+Asking costs a hash and a read of the filter a run or a row, and gains
+nothing where the run is given whole. So the keys count the rows the
+scan asked them of in its first 16 runs, the count a filter's own stop
+uses (D369), and after those the scan asks them only while they kept
+fewer than one row in eight of them, the share a run is given whole at
+(D360). No constant is new. The counts are shared by the threads of a
+statement and written only through those first runs.
+
+D389 said a morsel's scan judges no Bloom filter, as judging one cost
+more than the probes it spared. That was measured when a morsel's
+batches were decoded whole whatever the filter kept, so a scan that
+asked the filter saved the probe alone and paid a hash for it, and
+every thread wrote the filter's counts for every batch. Both reasons
+are gone. A scan now decodes the other columns at the rows kept, and
+the counts are written through the first runs only. D389's paragraph is
+rewritten to say so.
+
+The tests ask each form of keys what it holds, compare the keys told
+with what the filter itself keeps of the same rows, ask a scan's runs
+of a group, by rows and by runs, and show a scan that stops asking keys
+that keep one row in eight (`storage/condition/members/tests.rs`,
+`exec/table/runtime.rs`, `columns/judged/among/tests.rs`). An
+integration test counts the rows a scan gives under a join and a semi
+join of few keys, with the filters off and on, and compares every
+answer with the row store's and with the filters off
+(`test/integration/scan_keys.rs`).
+
+#### D1295. An IN list of exact constants is judged of integers by its units folded to their scale once, found by a bit or by halving
+
+A column of exact numbers reaches a filter and a column store's scan as
+a vector of integers of one scale (D31, D360). A comparison with a
+constant was folded to that scale once and judged as integers (D354).
+An IN list was not. The scan made a value of every integer and compared
+it with each constant in turn (`Conjunct::matches_key`). The filter
+compared a list of under eight constants in 128 bits, a constant at a
+time, and looked a longer one up in a set of buckets, which made a value
+and hashed it for every row (`logical/sets.rs`). A profile of a filter
+of eight sizes on a table of parts showed both: the scan's judging and
+the filter's second judging of the same rows were together a sixth of
+the statement.
+
+A list of exact constants is now folded once for a vector
+(`storage/batch/listed.rs`). Each constant folds as an equality with it
+does (`rescaled_bound`, D354). One of fewer fractional digits is scaled
+up, one of more is divided where the scale divides it, and one the
+scale cannot hold, or past 64 bits, equals no integer and is left out.
+The units are kept in order, each once. Where the greatest lies fewer
+than 64 above the least, they are the bits of one word counted from the
+least, and a row is found by one subtraction and one bit. Otherwise it
+is found by halving the list. Neither form has a length to tune. The
+width of a word is the only bound, and it is the machine's.
+
+NOT IN keeps the rows found in none, and no row at all if a constant is
+null, as it is then unknown of every row not found [X3.135-1986 §5.13
+GR2, §5.18]. A null row is kept by neither. A list with a constant that
+is not an exact number, or too large to scale, is judged as before, by
+the set if it is long and of the values if it is short. The filter's
+list of pairs in 128 bits is gone, as every list it took is now folded.
+
+Both readers use the one type, so a scan keeps what the filter keeps.
+The tests compare each list, IN and NOT IN, with each value judged
+against each constant: constants out of order and repeated, a null
+among them, one the scale cannot hold, one past 64 bits, spans of 63, 64
+and 65 units, the ends of an integer, and integers kept as runs
+(`storage/batch/listed/tests.rs`, `columns/judged/tests.rs`,
+`batch/judge/tests.rs`).
 #### D1298. A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened
 
 A scan opens each chunk it reads once for all the runs that read it

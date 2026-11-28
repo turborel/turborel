@@ -385,6 +385,7 @@ mod rowstore;
 mod rule_settings;
 mod running_mark;
 mod savepoints;
+mod scan_keys;
 mod schema_statements;
 mod schema_transactions;
 mod scroll_cursors;
