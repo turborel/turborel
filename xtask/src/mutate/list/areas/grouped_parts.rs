@@ -14,7 +14,7 @@
 use super::super::{Mutation, Package};
 
 /// The partitions' sorts of a grouping's first rows under one bound.
-const TOP_BOUND: &str = "exec::parallel::grouped::waves::tests::the_partitions_share_the_bound_of_a_sorts_first_rows";
+const TOP_BOUND: &str = "exec::parallel::grouped::waves::tests::lying::the_partitions_share_the_bound_of_a_sorts_first_rows";
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
 pub const GROUPED_PARTS: [Mutation; 39] = [
