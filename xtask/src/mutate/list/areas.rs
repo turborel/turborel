@@ -18,6 +18,7 @@ mod client_sync;
 mod commit_path;
 mod commit_stamps;
 mod compiled;
+mod computed_keys;
 mod conditions;
 mod copy_columns;
 mod cost_model;
@@ -245,8 +246,8 @@ fn second() -> [&'static [Mutation]; 48] {
 /// cost model, orders, probed subqueries, predicate transfer, dead entries
 /// taken back by a scan and scans priced by sampled zones, key plans, a
 /// B-link tree probe's path, a commit's stamps in place, the fixed costs cut from a write, a row's fetch by its id,
-/// EXPLAIN of a data change, the work shared, one statement's statistics and the implied edges.
-fn planner() -> [&'static [Mutation]; 17] {
+/// EXPLAIN of a data change, the work shared, one statement's statistics, the implied edges and the grouping columns computed late.
+fn planner() -> [&'static [Mutation]; 18] {
     [
         &super::workers::WORKERS,
         &join_estimates::JOIN_ESTIMATES,
@@ -265,6 +266,7 @@ fn planner() -> [&'static [Mutation]; 17] {
         &shared_work::SHARED_WORK,
         &planning_statistics::PLANNING_STATISTICS,
         &implied_edges::IMPLIED_EDGES,
+        &computed_keys::COMPUTED_KEYS,
     ]
 }
 

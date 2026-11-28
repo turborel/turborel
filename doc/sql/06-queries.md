@@ -760,12 +760,40 @@ kind. Two character strings that differ in trailing spaces are equal and
 yet differ in length, so a column computed of a string stays a grouping
 column.
 
+A grouping column that is an expression of other grouping columns is
+not grouped by either. Of a derived table's `V` and `V + 1 AS NEXT`
+grouped together, the groups are told apart by V alone, and NEXT is
+computed of each group once the groups are made, of the group of nulls
+too. This holds for an expression that gives the same value of the same
+values each time and cannot raise an error, of columns that are a
+table's own and of the kinds above, exact numbers, truth values and
+datetimes without a time zone. A constant among the grouping columns is
+computed so too. An expression that may raise, as a quotient may, stays
+a grouping column and is computed of every row. ROLLUP, CUBE and
+GROUPING SETS group by every column they name.
+
+```sql
+SELECT SALARY, YEARLY, COUNT(*) AS N FROM (SELECT SALARY, SALARY * 12 AS YEARLY FROM STAFF) AS T
+    GROUP BY SALARY, YEARLY ORDER BY SALARY;
+```
+
+```
+      SALARY |        YEARLY |                    N
+-------------+---------------+----------------------
+     5400.00 |      64800.00 |                    1
+     7200.00 |      86400.00 |                    1
+     8100.00 |      97200.00 |                    1
+        NULL |          NULL |                    1
+(4 rows)
+```
+
 Where such a query keeps its first rows with FETCH FIRST n ROWS ONLY,
 the columns a table's key decides are read after the rows are chosen,
 of the table by its key, unless a sort key, a HAVING condition or an
 expression of the select list reads them.
-[EXPLAIN](statements/explain.md) names the rules reduce_grouping_keys
-and fetch_dependents_late where they rewrote a plan.
+[EXPLAIN](statements/explain.md) names the rules reduce_grouping_keys,
+compute_keys_after_grouping and fetch_dependents_late where they rewrote
+a plan.
 
 ### Grouping sets
 

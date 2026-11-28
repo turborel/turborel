@@ -78,6 +78,7 @@ with VALUE_SOURCE NODE. The settings marked *node* here are the database's own o
 | LOG.SYNC_AFTER_MS | 1000 | INTEGER FROM 0 TO 9223372036854775807 | at once |  |
 | MEMORY.BUDGET_BYTES | 1073741824 | INTEGER FROM 1048576 TO 9223372036854775807 | at once |  |
 | MEMORY.WORK_BYTES | 268435456 | INTEGER FROM 65536 TO 9223372036854775807 | at once | *session* |
+| OPTIMIZER.COMPUTE_KEYS_AFTER_GROUPING | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.CONSTANT_FOLDING | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.COUNT_ROWS_OF_VALUES | ON | ONE OF ON, OFF | at once | *session* |
 | OPTIMIZER.DISTINCT_AGGREGATES | ON | ONE OF ON, OFF | at once | *session* |
@@ -210,6 +211,7 @@ Each in a sentence:
 - **LOG.SYNC_AFTER_MS**: The milliseconds after a commit of LOG.COMMIT_SYNC OFF within which the log is synced, by a job of its own if nothing else syncs it first; 0 for none, the commit then synced only by the log's next sync for another reason.
 - **MEMORY.BUDGET_BYTES**: The bytes the database's buffer pools, work areas and caches may reserve in all, with the files of a database kept in memory, its pages, temporary tables and spills; lowering it takes back none they hold.
 - **MEMORY.WORK_BYTES**: The most a sort, hash join, grouping, DISTINCT, EXCEPT, INTERSECT or window holds in memory before it spills: half the free MEMORY.BUDGET_BYTES as it starts, reserved, but 4 MiB unreserved where that is less, and itself below 4 MiB. The lesser of it and 4 MiB bounds a cursor's rows read ahead or kept to scroll, the rows a change chooses and keeps for its checks and referential actions, and a session's temporary tables' pages, the rest spilled.
+- **OPTIMIZER.COMPUTE_KEYS_AFTER_GROUPING**: Whether the optimizer's rule compute_keys_after_grouping rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.CONSTANT_FOLDING**: Whether the optimizer's rule constant_folding rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.COUNT_ROWS_OF_VALUES**: Whether the optimizer's rule count_rows_of_values rewrites plans: ON; or OFF, as to compare plans made without it.
 - **OPTIMIZER.DISTINCT_AGGREGATES**: Whether the optimizer's rule distinct_aggregates rewrites plans: ON; or OFF, as to compare plans made without it.

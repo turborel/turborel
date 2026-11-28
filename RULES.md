@@ -825,6 +825,7 @@ verification approach DO-178C expects (§8).
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
+| D1305 | A grouping column that is an expression of other grouping columns is computed after the grouping |
 
 ### The project
 
@@ -23808,6 +23809,82 @@ chunk whose entries were judged not to be text is not judged again. The
 chunks opened belong to the one scan that reads them, or to one decoding
 of a late column at a time (D361), so no two threads ask one cell at
 once, and the cell would still make the text once if they did.
+
+#### D1305. A grouping column that is an expression of other grouping columns is computed after the grouping
+
+A grouping by the columns of a derived table, a view or a WITH query
+may name a column beside expressions of it, as `GROUP BY A, B, C` of
+`SELECT A, A - 1 AS B, A - 2 AS C`. Every row of a group the first
+makes has one value of each expression, so the first alone tells the
+groups apart [ISO/IEC 9075-2:2023 §9.12, §4.26.1]. The grouping hashed,
+compared and kept every column written, and the projection below it
+computed each expression of every row. The rule of D1201 left such a
+grouping as written, as it carries a column only where the column's
+declared type is known, and a projection's expression has none.
+
+The rule `compute_keys_after_grouping`
+(`optimizer/dependent_keys/computed.rs`) now leaves out of the grouping
+each column that is an expression of other grouping columns alone, or
+of none, a constant. A projection over the grouping computes it of each
+group's columns and puts every column where it was. The projection
+below computes it of the rows no more, and where only column references
+are left of that projection the grouping reads its input in its place.
+The plan is then the one of the query that groups by the columns kept
+and writes the expressions in its select list.
+
+An expression is taken under these conditions.
+
+- It gives the same value of the same columns each time, so it holds
+  no NEXT VALUE FOR and calls no function or routine that is possibly
+  non-deterministic [§4.35.1].
+- It cannot raise or warn, judged by its columns' declared types
+  (D373). Its rows are then evaluated for no longer and its groups once
+  each, which hides no error and adds none (D15). An expression that
+  may raise stays a grouping column and is computed of every row, as it
+  was.
+- Each column it reads is a grouping column, and a base table's column
+  of a type whose values not distinct are one value to every
+  expression, an exact number, a truth value or a datetime of no zone,
+  as D1201 asks of a determinant. Two character strings equal but for
+  trailing spaces are of one group and differ in length, two
+  approximate zeros differ in sign, and two zoned datetimes of one
+  instant differ in zone, so an expression of such a column stays a
+  grouping column. A column of the types taken has no collation. The
+  null value is one value too, and the expression gives of the group
+  what it gave of each of its rows.
+- It is found through the nodes that hand each row of its projection
+  on whole. Those are filters, products, semi joins and the preserved
+  operand of an outer join. The operand an outer join extends with
+  nulls has a null in the column where the expression of nulls may
+  have none, so its columns are left.
+- The grouping makes no group before any row, of an empty grouping set
+  [§7.13 GR2a], and one column at least is kept, as a grouping by none
+  is one group even of no rows. Of constants alone the first written
+  is kept.
+
+A column left out is compared by nothing, so the collation it was
+grouped by drops out, and the columns kept are grouped by theirs as
+before. ROLLUP, CUBE and GROUPING SETS group by columns that read the
+set a row was made for, which is no base table's column, so their
+groupings are left and GROUPING is as it was. HAVING, ORDER BY, the
+select list and a window over the groups read the projection where the
+grouping column was. A HAVING condition over the projection is moved
+below it, onto the grouping, so it is still judged with a grouping run
+in parallel (D1073), and a select list over the projection is merged
+with it. Both are done only over a projection whose expressions read
+grouping columns alone and are of the kind above, so the condition and
+the select list are evaluated of the groups they were.
+
+The rule is a late one (D1201), before `reduce_grouping_keys`, which
+then reads the columns kept and carries those a key determines. The
+planner estimates the groups of the columns kept by their own
+statistics. A grouping column the rule leaves, an expression that may
+raise or reads a column not grouped by, is still bounded by the values
+of the columns it reads (D1082).
+
+Not covered are SELECT DISTINCT of a column and expressions of it,
+which is no grouping in the plan, an expression of a column that is
+itself an expression, and an expression that may raise.
 
 ## 2. Project layout
 
