@@ -276,21 +276,27 @@ fn results_that_raise_are_raised_of_totals_in_either_form() {
 
 /// Asserts that each group of the states of `agg` fed `batches`, read at
 /// its place of the column a table sends, is that state merged into one
-/// fed nothing, its result or its error, a place past the column's end
-/// too; and that the column finished at places for its errors alone
-/// raises what the merged states finished for theirs raise.
+/// fed nothing (`Sent::placed`), its result or its error, a place past
+/// the column's end too; that the column finished at places for its
+/// errors alone raises what the merged states finished for theirs
+/// raise; and that what reads a group where it lies gives both
+/// (`Sent::finished_at`, `Sent::checked_of`).
 fn lying_as_merged(agg: &AggCall, batches: &[&Rows], runner: &Runner) {
     let sent = states_of(agg, 4, batches, runner).sent().unwrap();
     let Sent::Typed(typed) = &sent else { panic!("{} sent as a column", agg.label) };
     for place in 0..5_u32 {
-        let (lying, merged) = (format!("{:?}", typed.finish(index(place))), format!("{:?}", sent.finished_at(agg, place)));
+        let fed_nothing = Sent::placed(agg, &[(&sent, &[place])], &[0]).and_then(|states| states.finish(0));
+        let (lying, merged) = (format!("{:?}", typed.finish(index(place))), format!("{fed_nothing:?}"));
         assert_eq!(lying, merged, "{} at place {place}", agg.label);
+        assert_eq!(format!("{:?}", sent.finished_at(agg, place)), merged, "{} read at place {place}", agg.label);
     }
     let lists: [&[u32]; 5] = [&[0, 1, 2, 3], &[0, 2, 3], &[3, 1, 0], &[2, 9], &[]];
     for places in lists {
         let groups: Vec<u32> = (0_u32..).take(places.len()).collect();
-        let fed_nothing = Sent::checked_of(agg, &[(&sent, places)], &groups);
+        let fed_nothing = Sent::placed(agg, &[(&sent, places)], &groups).and_then(|states| states.checked(groups.len()));
         assert_eq!(format!("{:?}", typed.checked_at(places)), format!("{fed_nothing:?}"), "{} checked at {places:?}", agg.label);
+        let read = Sent::checked_of(agg, &[(&sent, places)], &groups);
+        assert_eq!(format!("{read:?}"), format!("{fed_nothing:?}"), "{} read and checked at {places:?}", agg.label);
     }
     assert_eq!(typed.counts().is_some(), agg.label == "COUNT", "COUNT's counts alone are given as they lie");
 }

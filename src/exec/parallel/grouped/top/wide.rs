@@ -1,8 +1,9 @@
 //! \[DESIGN\] (RULES.md D1300, D1256) A sort's first rows picked of a wide
 //! partition where its groups lie (`table/made/wide.rs`). Of a sort whose
-//! every key names a set function, the groups of several rows are read
-//! of the tables of its sub-parts' own as a table's are, and those of one
-//! row where they lie, in the Mades the partition adopted. A Made holds few
+//! every key names a set function, the groups that took several entries
+//! are read of the tables of its sub-parts' own as a table's are, and
+//! those of one entry where they lie, in the Mades the partition adopted,
+//! with no state made of them (RULES.md D1337). A Made holds few
 //! of a partition's groups, so a batch is read of several Mades one
 //! after another, until it holds the rows a scan's batch holds, and the
 //! sort keys' results of all of them are made in one column. One top-N
@@ -24,7 +25,7 @@ use crate::logical::{AggCall, SortKey};
 use crate::storage::{Batch, Column, Ints, Row, Sel};
 
 /// The Mades a batch is read of, among those a wide partition's groups
-/// of one row lie in: from which to which, and the number of the first
+/// of one entry lie in: from which to which, and the number of the first
 /// of their groups among the partition's groups read so.
 #[derive(Clone, Copy)]
 struct Span {
@@ -62,7 +63,7 @@ fn spans(lying: &[Lying], own: usize, filled: usize) -> (Vec<usize>, Vec<Span>) 
 }
 
 /// \[DESIGN\] (RULES.md D1300, D1256) The batch a sort by the set
-/// functions at `sorted_by`, of `aggs`, reads of the groups of one row
+/// functions at `sorted_by`, of `aggs`, reads of the groups of one entry
 /// that lie in the Mades of `lying` that `span` names: those functions'
 /// results, each group's first row's number, and its number among the
 /// partition's groups read so. Every other set function is finished of
@@ -136,8 +137,8 @@ impl Top {
     /// of each sub-part's own table and the batches of the groups of one
     /// row, so as many rows are kept as of a table. The tables of its own
     /// are read first, as their groups took the most rows, so a sort by
-    /// a count raises the bound of them before the groups of one row are
-    /// judged (RULES.md D1338).
+    /// a count raises the bound of them before the groups of one entry
+    /// are judged (RULES.md D1338).
     fn picked_of_wide(&self, wide: &Wide, (sorted_by, aggs): (&[usize], &[AggCall])) -> Result<Vec<Row>> {
         let (owns, lying): (Vec<&GroupTable>, Arc<Vec<Lying>>) = (wide.owns(), Arc::new(wide.lying()));
         let (mut held, mut bases, mut base) = (Vec::with_capacity(owns.len()), Vec::with_capacity(owns.len()), 0_usize);

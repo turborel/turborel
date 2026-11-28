@@ -854,6 +854,7 @@ verification approach DO-178C expects (§8).
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
 | D1323 | A grouping looks up the first row alone of rows of one key that come one after another |
+| D1337 | A group that lies whole at one place of a Made is finished there, with no state made of it |
 | D1338 | The partitions of a grouping share the bound of a sort's first rows, and judge their groups by it before the sort |
 
 ### The project
@@ -25476,6 +25477,52 @@ a count of distinct values among them, under WHERE and HAVING, of both
 stores, and counts the rows each group took. One of them groups by a
 text the column store gives as codes, in runs, on one thread, which
 fails where runs are followed of rows taken by their codes.
+
+#### D1337. A group that lies whole at one place of a Made is finished there, with no state made of it
+
+A wide partition reads its groups of one entry where they lie, in the
+Mades it adopted (D1300). An entry is what a Made holds for a partition
+to look up once, a morsel's group, a row handed on ungrouped (D1260) or
+a run of rows of one key (D1323), so such a group may hold the state of
+many rows, and its whole state lies at one place of one Made. To give
+the result a table gives of it, the reader merged each such state into
+a state fed nothing, as a table makes a new group's, and finished that.
+Of a grouping nearly every group of which is such a group, a sort's
+first rows by set functions (D1256) made and filled a second column of
+states for every set function of every group, to read a count or to
+find that no sum raises.
+
+A column of counts, of exact totals or of best strings is now read
+where the group lies (`exec/table/states/placed.rs`). Merged into a
+state fed nothing, such a state leaves its count, its total, its scale
+and its string as they were, whichever form the column holds its totals
+in (D1308), a group that took no value and a place past the column's
+end among them. So the result is finished of the Made's column at the
+entry's place, a count given as the integer it is, and the results
+that may raise are finished there for their errors alone
+(`Typed::checked_at`, `states/typed/quiet.rs`), a column of narrow
+totals none of which can reach the bound passed over with no place
+read. The value, the error and the order errors are raised in are those
+of the merged states.
+
+Every other form keeps the merge. A column of approximate sums writes
+no state, so a table refuses to merge it, and a reader that finished it
+where it lies would give a value where the table raises. A part's
+column gives its part and no result (D1186). Carried values and written
+states are not columns of this kind. A grouping some of whose Mades
+hold a function's states in another form merges that function of all
+of them.
+
+A unit test of the columns pins each group's result and error read at
+its place against the same state merged into one fed nothing, and
+against what the reader gives, of counts, sums, means, least and
+greatest values with narrow totals, wide ones and a column widened
+midway, and asserts that an approximate sum is refused. A unit test of
+the waves compares the first rows of wide partitions with those of
+tables, by a count, a sum and a greatest value, of groups of one entry
+of five rows or of three in turn within each Made, and with one group
+whose sum is past its type's precision among the groups not picked,
+which raises either way.
 
 #### D1338. The partitions of a grouping share the bound of a sort's first rows, and judge their groups by it before the sort
 

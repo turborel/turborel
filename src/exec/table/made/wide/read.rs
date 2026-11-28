@@ -1,9 +1,13 @@
-//! \[DESIGN\] (RULES.md D1300) A wide partition's groups read where they
-//! lie. What reads a partition's groups one set function at a time, as a
-//! sort's first rows by set functions do (`parallel/grouped/top/wide.rs`),
-//! reads the groups of several rows of the partition's own table and
-//! those of one row in the Mades the partition adopted, each result made
-//! as a table makes a new group's (`states/placed.rs`).
+//! \[DESIGN\] (RULES.md D1300, D1337) A wide partition's groups read
+//! where they lie. What reads a partition's groups one set function at a
+//! time, as a sort's first rows by set functions do
+//! (`parallel/grouped/top/wide.rs`), reads the groups that took several
+//! entries of the partition's own table and those of one entry in the
+//! Mades the partition adopted. An entry is what a Made holds for the
+//! partition to look up once, a morsel's group, a row handed on
+//! ungrouped or a run of rows of one key, so a group of one entry may
+//! hold the state of many rows, whole at one place of one Made. Its
+//! result is the one a table gives of it (`states/placed.rs`).
 
 use std::sync::Arc;
 
@@ -18,8 +22,8 @@ use crate::storage::mask::index;
 use crate::storage::{Column, Row};
 
 /// A Made a wide partition adopted, with the places in it of the
-/// partition's groups of one row that lie there, in the order of their
-/// first rows.
+/// partition's groups of one entry that lie there, in the order of
+/// their first rows.
 pub(in crate::exec) type Lying = (Arc<Made>, Vec<u32>);
 
 impl Made {
@@ -85,12 +89,12 @@ impl Wide {
     }
 
     /// The tables of its sub-parts' own that hold a group, of the groups
-    /// that took more than one row, in the sub-parts' order.
+    /// that took more than one entry, in the sub-parts' order.
     pub(in crate::exec) fn owns(&self) -> Vec<&GroupTable> {
         self.parts.iter().map(|part| &part.own).filter(|own| own.len() > 0).collect()
     }
 
-    /// Its groups of one row, where they lie: each Made that holds any,
+    /// Its groups of one entry, where they lie: each Made that holds any,
     /// in the order handed, with the places of those groups in it, a
     /// sub-part's after another's.
     pub(in crate::exec) fn lying(&self) -> Vec<Lying> {

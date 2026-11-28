@@ -6,18 +6,26 @@
 //! merged by the statement's thread (D1133), and the second grouping of
 //! a pair made in a table of the first's groups given as a batch (D1123),
 //! the first rows of a sort taken from a grouping's tables (D1124) under
-//! the bound its partitions share (D1338), a partition's groups given as a
+//! the bound its partitions share (D1338), of groups read where they lie
+//! with no state made (D1337), a partition's groups given as a
 //! batch (D1125), the batches a parent that
 //! reads by batch takes of them (D1220), and COUNT(DISTINCT) of no GROUP
 //! BY run as one part, its string argument grouped as it is (D1219).
 
 use super::super::{Mutation, Package};
 
+/// A group read where it lies against the table merged of it.
+const LYING: &str =
+    "exec::parallel::grouped::waves::tests::lying::a_group_read_where_it_lies_gives_and_raises_what_the_table_merged_of_it_does";
+
+/// A column of states read at places against the states merged of them.
+const LYING_STATES: &str = "exec::table::states::tests::widened::a_state_read_where_it_lies_is_the_state_merged_into_one_fed_nothing";
+
 /// The partitions' sorts of a grouping's first rows under one bound.
 const TOP_BOUND: &str = "exec::parallel::grouped::waves::tests::lying::the_partitions_share_the_bound_of_a_sorts_first_rows";
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 39] = [
+pub const GROUPED_PARTS: [Mutation; 44] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -407,5 +415,55 @@ pub const GROUPED_PARTS: [Mutation; 39] = [
         replacement: "let first = first_of_morsel(&keys, Box::new(batches), (self.most, None), (&self.run.0, self.run.1))?;",
         integration: &[],
         unit: &[TOP_BOUND],
+    },
+    Mutation {
+        name: "group-read-where-it-lies-at-another-place",
+        package: Package::Core,
+        breaks: "the result of a group read where it lies is finished of the first place of its Made's column, another group's (RULES.md D1337)",
+        file: "src/exec/table/states/placed.rs",
+        original: "values.push(typed.finish(index(place))?);",
+        replacement: "values.push(typed.finish(0)?);",
+        integration: &[],
+        unit: &[LYING],
+    },
+    Mutation {
+        name: "count-read-where-it-lies-at-another-place",
+        package: Package::Core,
+        breaks: "the count of a group read where it lies is the count at the first place of its Made's column, another group's (RULES.md D1337)",
+        file: "src/exec/table/states/placed.rs",
+        original: "units.extend(places.iter().map(|&place| held.get(index(place)).copied().unwrap_or(0)));",
+        replacement: "units.extend(places.iter().map(|_| held.first().copied().unwrap_or(0)));",
+        integration: &[],
+        unit: &[LYING],
+    },
+    Mutation {
+        name: "groups-read-where-they-lie-not-checked",
+        package: Package::Core,
+        breaks: "a set function no sort key names is not finished of the groups read where they lie, so a result that raises in a group not picked is lost (RULES.md D1337)",
+        file: "src/exec/table/states/placed.rs",
+        original: "columns.iter().zip(runs).try_for_each(|(typed, (_, places))| typed.checked_at(places))",
+        replacement: "columns.iter().zip(runs).try_for_each(|(typed, (_, places))| typed.checked_at(places.get(..0).unwrap_or(places)))",
+        integration: &[],
+        unit: &[LYING],
+    },
+    Mutation {
+        name: "narrow-totals-at-places-all-quiet",
+        package: Package::Core,
+        breaks: "a narrow column of totals is passed over at places whatever its bound, so a mean past its precision in a group read where it lies is lost (RULES.md D1337)",
+        file: "src/exec/table/states/typed/quiet.rs",
+        original: "let none_loud = matches!(self.totals, Totals::Narrow(_)) && bound > NARROW_MOST;",
+        replacement: "let none_loud = matches!(self.totals, Totals::Narrow(_)) && bound > 0;",
+        integration: &[],
+        unit: &[LYING_STATES],
+    },
+    Mutation {
+        name: "approximate-sum-read-where-it-lies",
+        package: Package::Core,
+        breaks: "an approximate sum, which writes no state and which a table refuses to merge, is read where it lies and gives a value (RULES.md D1337)",
+        file: "src/exec/table/states/placed.rs",
+        original: "Typed::Approx(_) => false,",
+        replacement: "Typed::Approx(_) => true,",
+        integration: &[],
+        unit: &[LYING_STATES],
     },
 ];

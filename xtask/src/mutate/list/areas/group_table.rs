@@ -482,7 +482,7 @@ pub const GROUP_TABLE: [Mutation; 50] = [
         original: "states.merge_all(agg, run, (sent, places))?;",
         replacement: "states.merge_all(agg, &[], (sent, &[]))?;",
         integration: &[],
-        unit: &[WIDE_FIRST],
+        unit: &["exec::table::states::tests::widened::a_state_read_where_it_lies_is_the_state_merged_into_one_fed_nothing"],
     },
     Mutation {
         name: "sub-part-rows-placed-by-other-bits",
