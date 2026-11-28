@@ -14,6 +14,7 @@
 use super::read_table;
 use crate::logical::LogicalPlan;
 use crate::physical::PhysicalPlanner;
+use crate::physical::estimate::Known;
 use crate::value::DataType;
 
 /// A probe of a relation by the columns of the chain it names, and its cost.
@@ -40,4 +41,18 @@ impl PhysicalPlanner<'_> {
         }
         probes
     }
+}
+
+/// \[DESIGN\] (RULES.md D1297) The values of the columns `probed` of a
+/// table of `rows` rows together, as `known`'s statistics count them,
+/// else each column's multiplied: of two or more, whose guesses multiply
+/// past any table, at most the rows; one column's guess stands, as a probe
+/// of one value may find no row.
+pub(super) fn joint(known: &Known<'_>, probed: &[usize], rows: f64) -> f64 {
+    let distinct = |c: &usize| known.stats.and_then(|s| s.distinct(*c)).map_or(1.0_f64 / known.cost.equal_selectivity, |d| d.max(1.0_f64));
+    let product = || {
+        let guessed = probed.iter().map(distinct).product::<f64>();
+        if probed.len() > 1 { guessed.min(rows) } else { guessed }
+    };
+    known.stats.and_then(|s| s.group_distinct(probed)).unwrap_or_else(product).max(1.0_f64)
 }
