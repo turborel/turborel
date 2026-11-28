@@ -46,7 +46,7 @@ pub(super) use self::top::Top;
 use super::batched::ByBatch;
 use super::pipeline::Pipeline;
 use super::probe::{PARTS, part_of};
-use super::run::Morsels;
+use super::run::{Lead, Morsels};
 use super::{Held, Limit};
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
@@ -152,8 +152,8 @@ impl Grouping {
     fn kept_of(&self, table: GroupTable, runner: &Runner) -> Result<Run> {
         if let Some(top) = &self.top {
             // Its first rows alone, the number each is merged by its last
-            // column (RULES.md D1124).
-            return Ok(Run::Rows(top.of_table(table)?.into_iter().map(|row| (0, row)).collect()));
+            // column (RULES.md D1124), of a pair the second's (D1281).
+            return Ok(Run::Rows(top.of_part(self, table, runner)?.into_iter().map(|row| (0, row)).collect()));
         }
         if self.having.is_none() && self.outer.is_none() && table.in_order() {
             // Its groups as the table holds them, a row made of each
@@ -388,7 +388,8 @@ fn grouping_of(plan: &Plan, (having, outer): (Option<Cond>, Option<Outer>), seed
 /// The groups of each partition of `grouping`'s pipeline read a row at a
 /// time, each finished with its number, in the order of their first rows:
 /// its morsels' pieces made on up to `degree` threads, then each
-/// partition's merged by a thread; given way past `limit`.
+/// partition's merged by a thread, that run leading its reader by every
+/// partition (RULES.md D1282); given way past `limit`.
 ///
 /// # Errors
 ///
@@ -401,7 +402,7 @@ fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&
         let taken = chunks.get(p).map(|c| std::mem::take(&mut *c.lock().unwrap_or_else(PoisonError::into_inner))).unwrap_or_default();
         merging.ended(merged(&merging, p, taken)?, &Runner::new(&db_for, tx)).map(Run::Rows)
     });
-    Morsels::start(db, tx, (PARTS, degree), merge).collect::<Result<Vec<_>>>().map(Held::Kept)
+    Morsels::led(db, tx, (PARTS, degree), merge, Some(Lead::unmetered(PARTS))).collect::<Result<Vec<_>>>().map(Held::Kept)
 }
 
 /// The pieces of `pipeline`'s rows under `grouping`, each morsel's made

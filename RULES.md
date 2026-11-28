@@ -814,16 +814,25 @@ verification approach DO-178C expects (§8).
 | D1256 | A sort by set functions alone picks its first groups of a partition before their rows are made |
 | D1258 | An abort record that cannot be appended stops the database |
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
+| D1260 | Morsels whose tables reduce nothing hand their rows to the partitions ungrouped |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1275 | A partition merges a morsel's groups in one pass, a new group given its slot as it is met |
 | D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
+| D1279 | A grouping by an expression counts no more groups than its table's sample shows the expression to take values |
 | D1280 | A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot |
+| D1281 | A sort's first rows over a pair of groupings are taken from the second's table of each partition |
+| D1282 | The runs that merge and finish a grouping's partitions lead their reader by every partition |
+| D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1290 | MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states |
 | D1291 | A regular expression function over a dictionary's codes is run once of each entry a row reads |
 | D1292 | What a searcher keeps is left with its expression for the next searcher |
+| D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
+| D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
+| D1299 | A table's sample remembers a function by its handle, not by its name alone |
 
 ### The project
 
@@ -11371,7 +11380,7 @@ most 1,024 evaluations however large the table, so small tables are
 sampled too, where the sample is most of the table and a conjunction
 that keeps no row is estimated to keep none. The sample remembers what
 was asked of it, up to 1,024 answers, each kept under a fingerprint of
-the conjuncts' columns, operators and constants in any order, hashed by
+the conjuncts' columns, operators, constants and functions (D1299) in any order, hashed by
 XXH3 (`physical/estimate/fingerprint.rs`), as the planner asks the same of each plan it weighs and of each
 statement it plans again: it never changes, so an answer holds until the
 next pass replaces it. An index remembers its distinct keys' estimate
@@ -14042,7 +14051,8 @@ store chunk of such a column is of fixed fields, a dictionary or a
 constant, as any other of 16 bytes, and its values are read as values,
 not integers (`types::narrow_scale`), by a scan, a scan's judging and
 the row store's gathering. A column of 18 digits or fewer is kept and
-read as before.
+read as before. A chunk of such a column whose values 64 bits hold is
+read as integers since D1287.
 
 #### D699. A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128
 
@@ -18977,7 +18987,8 @@ every row and is counted as before.
 
 The bound is not tight. A year takes far fewer values than its date
 does. It is still the plan's rows or fewer, which is what it was, so no
-estimate of groups grows by it.
+estimate of groups grows by it. What the expression does to the values
+is read of its table's sample (D1279).
 
 The distinct values a join's equality is estimated by are counted as
 before, an expression's as its plan's rows. Join orders rest on those
@@ -19801,8 +19812,9 @@ It does so of a grouping by hash, alone at the top of its part, whose
 groups are made by batch, under a projection of its columns and of
 constants alone, or none. A sort that asks the peers of its last row (WITH TIES) is not
 taken so, as the number would part groups that are peers. Neither is one
-over a HAVING condition, a projection that computes a value, DISTINCT or
-a pair of groupings (D1113); the sort reads those groups as before. A
+over a HAVING condition, a projection that computes a value or DISTINCT;
+the sort reads those groups as before. A pair of groupings (D1113) gives
+them from the second's tables (D1281). A
 grouping whose groups are made of rows gives its groups in order, which
 are projected and sorted. A part that gives way is grouped alone and its
 rows projected and sorted, the part not tried again.
@@ -23313,6 +23325,55 @@ Opening it again recovers it from its last checkpoint and its log.
 For this a commit pays one load of the `open` mark, in its
 transaction's drop, and takes no lock.
 
+#### D1260. Morsels whose tables reduce nothing hand their rows to the partitions ungrouped
+
+A grouping run in parallel groups each morsel in a table of its own and
+hands the table's groups to the partitions, which merge them (D355,
+D356). The table pays where it reduces: many rows leave as few groups,
+and the partitions merge few. Where nearly every row of a morsel is a
+group of its own, the table found nothing to merge. Every lookup missed
+and every slot was taken for a group the partition finds again by the
+same hash, so the morsel's table was work done twice.
+
+The morsels of such a grouping now hand their rows on ungrouped
+(`exec/batch/groups/morsel.rs`, `rows_apart`). Each row is made a group
+of its own: its key appended, its hash kept, its first row its own
+number, its set functions fed its one row. No group is looked for and no
+slot is taken (`exec/table.rs`, `appended`). What is handed on has the
+form a morsel's groups always had, so the partitions merge it, hold it
+and spill it as before, and a key the morsel held twice is merged there.
+The groups, their order and their results are unchanged. Only where a
+row is first grouped differs.
+
+Whether to group is the workers' own measurement, never the planner's
+estimate (`exec/parallel/grouped/waves.rs`, `Reduction`). Each morsel's
+table tells the groups it ended with of the rows it took. After a table
+that left more than 750 groups a thousand rows the next morsels are
+handed on ungrouped. A table spends a lookup and a slot on each row, and
+saves, for each row it merges, the appending, the ordering by partition
+and the lookup the partition would spend on it. Where the two meet was
+measured, the hand-over forced on and forced off over groupings of
+integer keys whose morsels leave from 640 to 1000 groups a thousand
+rows. Where every group is new to its partition, the two were level at
+640 and the hand-over was ahead at 790 and above. Where the keys are few
+in all, so that the partitions merge the rows anyway into tables that
+stay small, it was ahead at 730 and above. The bound sits between the
+ratio measured level and the least measured ahead of both kinds.
+
+One morsel in sixteen still makes a table. It gives back a sixteenth of
+what the others save, and data that turns to few groups is grouped in
+its morsels again within sixteen of them.
+
+Two things follow from rows of one key arriving as several groups. A
+partition's table finds a key the morsel holds twice in the group its
+first made, as its merge gives a new group its slot before the next is
+looked up (D1275, `exec/table/made.rs`). And a morsel that must go to
+the spill as it is, the grant holding nothing more, is grouped first
+(`waves.rs`, `regrouped`). A partition read back is split by its groups'
+hashes where it outgrows the grant, and rows of one key share a hash, so
+a key held many times must be one group there. Nothing written to the
+spill holds a key twice, then, and its form needs no word for it.
+
 #### D1262. A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold
 
 A run gives its results in the order of its morsels and took no morsel
@@ -23439,6 +23500,36 @@ took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
 
+#### D1275. A partition merges a morsel's groups in one pass, a new group given its slot as it is met
+
+A partition's table merged a morsel's groups in two passes over its
+slots (D1110). It looked every group up, then appended those that were
+new and went over them again to give each its slot. That holds only
+while no two of the morsel's groups share a key, since a group not yet
+placed cannot be found by the one after it. Rows handed on ungrouped
+(D1260) do share keys, so they were found or made one at a time, each
+group's key, first row and states appended through its cells before the
+next was looked up. Where every row is a new group that cost more than
+the morsels' tables had saved.
+
+The merge is now one pass for every morsel (`exec/table/made.rs`,
+`looked_up`). Each group is looked up by its key and hash. One that is
+new takes the next number, and its hash and slot are written at once,
+so the slots stand as they would had it been made. Its key, first row
+and states are not appended yet. A key looked up later that meets its
+slot is compared with the key the morsel holds at that group's place,
+so a key the morsel holds twice finds the group its first made. After
+the pass the new groups' keys, first rows and states are appended a
+column at a time, and each set function's states are merged in one
+loop, as before.
+
+The groups, their numbers and their slots are those that finding or
+making each group in turn gives. A probe that grows past the longest a
+table takes (D357) ends the pass after its group. What is new so far is
+appended, the table hashes its keys anew, and the rest are found or made
+one at a time by their keyed hashes, as a table placed so always merged
+them.
+
 #### D1276. A grouping whose statement thread's table went to the spill reads the spill at its end
 
 A grouping run in parallel merges the morsels of few groups on the
@@ -23461,7 +23552,9 @@ MEMORY.WORK_BYTES. That takes a small grant, or states of long strings.
 The end now takes the early path only if nothing was spilled. With a
 spill it hands the table over as it does any other and reads each
 partition back. A unit test hands every morsel whole under a grant the
-table passes.
+table passes, and a statement whose groups of one morsel pass the
+grant, by the states of many set functions, is compared with itself
+run alone.
 
 #### D1278. Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret
 
@@ -23539,7 +23632,112 @@ by the margin.
 None of the three changes what a grouping gives, as both forms give
 the same groups in the order asked. How far the count of an
 expression's values is from the values it takes is the estimator's
-matter (D1082) and is not settled here.
+matter (D1082, D1279) and is not settled here.
+
+#### D1279. A grouping by an expression counts no more groups than its table's sample shows the expression to take values
+
+A grouping by a deterministic expression counts no more groups than the
+columns it reads take values together (D1082). That says nothing of
+what the expression does to them. A time less its seconds takes a value
+a minute, a number divided by a hundred a hundredth of its values, the
+first two characters of a telephone number a few dozen, and the year of
+a date one a year. Each was counted by its column, most of them a value
+a row. With a group a row a sort of every row looked cheaper than
+hashing them (D550, D1278), and what was planned above the grouping
+was planned for as many rows.
+
+No shape of expression is looked for. There is no node for a
+truncation, and a list of the ways one is written would begin with the
+statements at hand and end there. The expression is evaluated instead
+on the rows of the sample its table's statistics keep (D382), as a
+conjunction no synopsis answers is, and two things are read of the
+values it gives (`cardinality/shown.rs`).
+
+The first is how many differ. The values seen more than once are
+counted as they are. A value seen once stands for the values the sample
+missed, which may be as few as itself or as many as the rows a sampled
+row stands for, and it is counted as the square root of those rows, the
+mean of the two in ratio. This is the estimator GEE of Charikar,
+Chaudhuri, Motwani and Narasayya ("Towards estimation error guarantees
+for distinct values", PODS 2000). Its count is expected to err by about
+that root at most either way, and the paper shows no count from a
+sample to be sure of less. The estimator that counts a column's
+distinct values from a statistics pass (Haas and Stokes, D31) is not
+used here. It takes the values as equally common, which of a sample
+this small counts an expression a few of whose values hold most rows,
+with many rare ones after them, far below what it takes. A count of
+groups is relied on to err high (D1278). A sample that is the whole
+table holds every value.
+
+GEE counts no more than the root of the sample's rows times the
+table's, which is what it gives when every sampled value is seen once.
+Of more values than that it falls short, by up to the same root, and a
+single chance repeat among the sampled rows would pass for a merging.
+So its count is taken only where at most half of the sampled rows hold
+a value seen once. Of values equally common that is where they number
+no more than the sampled rows over the natural logarithm of 2, about
+the sample's own size and a half, and there GEE errs high or not at
+all. Past it the sample holds less than a row a value and could only
+guess, so it tells no count, and the lattice or the columns' bound
+stands.
+
+The second is the lattice the values lie on, of exact numbers of one
+scale, datetimes and intervals. The step is the greatest that every
+sampled value is whole steps from the first by, and between the least
+and the greatest value the lattice has their distance over the step,
+and one, places. A time less its seconds lies on a lattice of a
+minute, whatever the way it is written, and so does a quotient, a
+number rounded and a field of a date on theirs. The step is read, not
+proved. A thousand values that all fall on a coarser lattice than the
+expression's own are not a case to plan for, and the least and the
+greatest seen are near those of the table where its values are spread
+as the sample's are.
+
+The lesser of the two counts is what the sample shows, a null one
+place more of the lattice's, and the grouping counts the lesser of
+that and the columns' bound, never more than it counted before. The
+count then goes through Cardenas' formula with the grouping's rows as
+any column's does (D370). It is of the table, not of the rows a
+condition beside the expression keeps, so a grouping of two days of a
+month's minutes is still counted by the month's.
+
+The sample shows nothing, and the columns' bound stands alone, in each
+of these cases.
+
+- The table has no statistics, or they keep no sample.
+- The expression reads the columns of more than one table, or cannot
+  be evaluated on a row alone, as one of a `?`, a subquery, a sequence
+  or a routine cannot (D382).
+- The sample tells neither a count nor a lattice, as of strings most
+  of which it holds once.
+- No sampled row gives a value. A row whose evaluation raises is left
+  out and nothing is raised, as planning raises nothing of what the
+  statement evaluates (D15).
+- No two sampled rows that differ in the columns read give one value.
+  The sample then shows nothing merged, as of a number and one, and of
+  the columns' own values the statistics, counted from many more rows
+  or from an index, know more than the sample does.
+- A column read may have been cut in a sampled row. A sampled row
+  keeps the first 256 characters of a string, as many octets of a
+  binary string, and no large object (D382). The value of an
+  expression of what was cut is not the value of the expression of the
+  whole, as the length of a string shows, so a string of 256 octets or
+  more in a column read, or a large object, leaves the bound to the
+  columns.
+- The plan under the grouping has no more rows than the sample. The
+  evaluation would cost what the statement's own does, so a statement
+  of few rows plans at no cost more.
+
+The count is the same whenever it is asked of the same statistics, as
+the sample is fixed with them, so no plan depends on when it is made.
+A statement evaluates the sample once for each expression, however
+many plans it weighs, and keeps the answer (`Seen::shown`, D1089). The
+answer is not kept in the sample for later statements, as a
+conjunction's is. It counts by the table's rows, which change with
+every row written, where a share of the sample does not. The
+statement's key writes each function by the address of its handle
+(D1299), and keeps the expression, so no handle is freed and its
+address taken while the key is kept.
 
 #### D1280. A part of a built-in set function reaches the second grouping as its column of states, merged slot by slot
 
@@ -23590,6 +23788,157 @@ as before. A null a set function eliminates warns where the first
 grouping is fed it. A sum past the digits an exact number holds raises
 what the partitions' merge raises of it. EXPLAIN shows the plan it
 showed.
+
+#### D1281. A sort's first rows over a pair of groupings are taken from the second's table of each partition
+
+A sort that asks for its first rows over a grouping run in parallel
+takes them from each partition's table (D1124), and where its keys are
+set functions it picks them before any row is made (D1256). A pair of
+groupings run as one part (D1113), as a DISTINCT set function makes
+them (D340), was left out. Each partition's thread made the second's
+groups in a table (D1123) and then a row of every one of them. The
+statement's thread merged the partitions' rows in the order of their
+first rows and projected each, and the sort kept its few. Of a second
+grouping of very many groups that was a row allocated, moved, compared
+and freed a group, most of it on one thread after the partitions were
+done.
+
+A partition's thread now takes the first rows from the second's table
+(`exec/parallel/grouped/top.rs`, `of_part`). The table is made of the
+partition's groups of the first as before (`regrouped.rs`,
+`second_table`) and given to the code that takes the first rows from
+the table of a grouping alone. The sort stands over the second grouping,
+so its keys and the projection under it already name the columns of the
+second's row. No row is made of a group the partition does not keep,
+and the statement's thread sorts the partitions' few rows alone.
+
+The rows given and their order are the plan's, by the argument of
+D1124. The plan run alone gives the second's groups in the order each
+is first met among the first's groups, and those come in the order of
+their first rows. The sort is stable, so of two groups of equal keys it
+gives the one met earlier. A group of the second is numbered by its
+first group of the first (D1113), which is the number of the first row
+that falls in it. No row falls in two groups, so no two groups share a
+number, and the number as the last key orders any two groups of equal
+keys as the plan does. The partitions are split by the second's
+grouping columns alone, so a group of the second lies whole in one
+partition, and that partition's table holds its one row, with its
+number and its results as the plan computes them. A row among the first
+of all is then among the first of its partition under the same keys, so
+the statement's thread, sorting the partitions' rows by the keys and
+then the number, gives the plan's rows in the plan's order.
+
+It does so where each partition makes the second in a table and the
+second crosses no partition (`Outer::in_tables`). A second that crosses
+the partitions (D1133, D1219) has a group in several of them, a part of
+its count in each, so no partition's table holds its row. A second that
+no grouping by batch reads, as one with a filtered set function, is
+made of rows (D1123). Both are read as before, every group given to the
+sort. So is a pair under a HAVING condition, and a sort that asks the
+peers of its last row.
+
+Whether the first's groups lie in the order of their first rows is
+known of each partition's table only as it is finished (D1123). A
+partition where they do not makes the second's groups of rows put in
+order, as before, and keeps the first of them under the same keys and
+numbers (`of_groups`). Its rows are those its table would have given,
+so the statement's thread reads them alike. A partition read back from
+the spill (D1226) is finished by the same code and gives its first rows
+the same way.
+
+An analyzed plan counts the second grouping the groups its tables made,
+and the projection the rows the partitions kept (D1254).
+
+#### D1282. The runs that merge and finish a grouping's partitions lead their reader by every partition
+
+A grouping run in parallel merges each wave's morsels into its
+partitions, a thread a partition, and finishes the partitions the same
+way at the end (D356). Those runs, as every run, gave their results in
+the order of their numbers and took no partition more than two a thread
+past the one their reader waited for (D290). D1262 widened that for the
+run over the morsels and left the partitions' runs as they were.
+
+Where one partition holds far more groups than the others, the window
+made it cost twice. A grouping over another whose grouping columns hold
+its own (D1113) splits the first's groups by the second's columns alone,
+so one value of those columns that takes a large share of the groups
+puts that share in one partition. Its thread merged it for as long as
+that took. The other threads finished the partitions within the window
+past it and then stood idle, as the reader took no result out of order
+and no partition past the window could be started. Only once the long
+partition was done were the rest merged. A profile over time showed one
+thread busy and the others waiting, then all of them busy again.
+
+The runs that merge a wave, that finish the partitions, and that merge
+the partitions of a grouping read a row at a time now lead their reader
+by every partition (`exec/parallel/run.rs`, `Lead::unmetered`,
+`grouped/waves.rs`, `grouped.rs`). The partitions after a long one are
+merged while it is, and the run ends when the long one does.
+
+The lead is not metered as the morsels' is, and needs no meter. A
+morsel's groups ahead of the reader were charged to nothing until read,
+so D1262 counts their bytes against the grant. A partition's result is
+held either way. The reader of each of these runs gathers every
+partition's result before it gives one row or merges the next wave, so
+a partition finished early holds nothing that would not be held a
+moment later, and at the end of the run both orders hold the same. What
+a partition's table holds between waves is charged as the wave ends, by
+the bytes the run gives back, in the order of the partitions, as
+before. So the waves a grouping merges and the times it writes its
+partitions to the spill are the same at a lead of two a thread and of
+every partition, which a test shows of a grant that holds the groups
+only in waves and of one they pass.
+
+No more threads run than before. The lead says how many partitions may
+be taken past the reader's, not how many are merged at once, which is
+the degree as it was (D1246). A statement cancelled or ended while the
+partitions run drops the run, which waits for the partitions its
+workers are in, one a worker, and lets go of its work and of every
+result not read. That wait is of the same length at any lead. The
+partitions read back from the spill a few at a time (D1226) keep their
+window, as what they hold at once is what bounds them.
+
+The groups, their order, each set function's result, the warnings and
+the errors are unchanged. Results still come in the order of the
+partitions, and a partition's morsels are merged in the order of their
+numbers.
+
+#### D1287. A chunk of 16-byte fields whose values 64 bits hold is read as integers
+
+A column of an exact numeric type of 19 to 38 digits is kept in 16-byte
+fields (D698) and was read a value at a time into a batch's values,
+whatever it held. An identifier is often declared with 19 or 20 digits
+while every value of it fits 64 bits. Such a column was tested by the
+filter above the scan, hashed in 128 bits and summed a value at a time,
+where a column of 18 digits is judged by the scan and computed by the
+kernels (D360, D362).
+
+A scan now reads a run of such a column as integers (`storage::Ints`),
+at the type's scale, if the least and the greatest value of each chunk
+the run reads fit 64 bits (`scan::ints_scale`). A chunk's zone holds
+both, so every value of the chunk fits. Fixed fields are narrowed in one
+loop that keeps each field's low half and tests at its end that every
+high half was its sign alone. A dictionary's entries are narrowed once a
+chunk (`prepared.rs`), and a constant once. A field 64 bits do not hold
+is never cut to them. The reading gives none, and the run is read as
+values, as before (`encoded/words.rs`). A constant of 16 bytes past 64
+bits would otherwise have read as 0. The bounds are tested first, so a
+column whose values do pass 64 bits pays that test alone and opens no
+chunk for it. The scan judges a conjunct on such a column wherever the
+run reads as integers, and leaves it to the filter where it does not
+(`judged.rs`).
+
+No operator reads a column's declared precision. Each reads the kind of
+a batch's column and its values (D696, D699). So a column's type, the
+types of its results, their values and the overflow of its sums are as
+they were. A sum of integers is added in 128 bits and judged against
+its result's precision at its end, as a sum of values is. One column may
+reach an operator as integers in one batch and as values in the next.
+Both hash alike and compare by value.
+
+Nothing stored changes, so data frozen before is read so with no
+reload. The grain is the chunk, so the chunks of a group that hold no
+value past 64 bits are integers though another chunk of it holds one.
 
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
 
@@ -23761,6 +24110,133 @@ expression does, the statement's plan.
 
 What a search finds is unchanged, as an automaton's states are of its
 program alone and the scratch is cleared by each search.
+
+#### D1293. A column store's scan does not judge a comparison that the bounds of every part of a run prove
+
+A chunk of a frozen group is written with the least and the greatest of
+its values and the count of its nulls, and with the same of each part of
+1,024 of its rows (`engine/columns/group/zones.rs`). A scan read them one
+way only. A part whose bounds a told conjunct cannot match is passed
+over (`columns/scan.rs`). A part it may match was decoded and judged a
+row at a time (D360), also where the bounds say it matches every row.
+
+That case is common. A hash join tells its probing side's scan the
+least and the greatest of its built keys (D369), and where the built
+rows span the table's keys nearly every part lies inside that range. A
+profile showed the two bounds of such a range judged of every row of the
+probing table in most joins of the reference queries, by runs of a
+column kept as runs, and it was the largest single cost of a semi join
+over that table. A range of a column a table is written in the order of,
+a day of a log, holds every part between its two ends.
+
+So a run now asks its parts first (`columns/judged/proved.rs`). Of a
+comparison of a column with a constant, the run is proved if every part
+it lies in holds no null and has bounds that satisfy the comparison at
+the end that decides it. `>=` is decided by the least value and `>` by
+the least being above the constant. `<=` and `<` are decided by the
+greatest in the same way. `=` needs both ends equal to the constant, and
+`<>` needs the constant below the least or above the greatest. A
+comparison proved keeps every row, so the scan does not decode its
+column to judge it and tests no row. A null proves nothing, as no
+comparison is true of one [X3.135-1986 §5.11 GR2]. A run must lie
+wholly in chunks whose parts prove it, so a header that lacks a chunk
+proves nothing of the rows it held. The bound of a sort's first rows is
+proved as the comparison it is at that moment (D1241).
+
+The bounds are those of every row frozen in a part. A run gives those
+rows or fewer. A row changed or deleted since the freeze has an entry in
+the tree, its frozen row is left out of the run, and what the tree holds
+of it is given apart and judged by the filter alone
+(`rows/frozen/batches.rs`). So the bounds cover every row a run gives,
+whatever was written since, and no row is given that the scan would
+have left out. The filter judges every row given as before (D15).
+
+Only columns of exact numbers and of datetimes of no time zone are
+proved so. Their bounds are their values whole, and a bound compares
+with the constant as each value does (`value::compare`), at any scale. A
+part whose bounds do not compare with the constant proves nothing. Texts
+are left out, as are approximate numbers. A run asks two comparisons of
+values a part and a conjunct, against a decode and a test of each of up
+to 2,048 rows.
+
+The tests ask each comparison at the bound its parts reach and one unit
+past it, a part with a null, runs that are not whole parts and that
+cross chunks, and a header with a chunk missing
+(`judged/proved/tests.rs`). An integration test changes, deletes and
+adds rows in parts whose stored bounds prove a comparison and compares
+every answer with the row store's (`test/integration/proved_bounds.rs`).
+
+#### D1298. A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened
+
+A scan opens each chunk it reads once for all the runs that read it
+(D352). Opening a dictionary chunk of a character string column made
+its entries text at once. The octets of every entry were judged UTF-8
+and copied, and the text was kept for the runs that give the chunk's
+rows as codes of those entries. Many readers of such a chunk ask for no
+text. A conjunct
+judged of the chunk where its octets lie (D360, D512, D1251, D1253), a
+value read alone, and a row group passed over after its first chunks
+all open the chunk and read its codes or its octets as written. Each
+still paid for the check and the copy of entries nobody read.
+
+The entries are now made text the first time a run asks for the chunk's
+rows as text (`engine/columns/prepared.rs`, `Made::texts_of`), and kept
+from then for the chunk's other runs as before. A chunk never asked for
+text makes none.
+
+Nothing a reader of the text is given changes. The text is made of the
+same octets by the same function, and those octets are judged UTF-8 as
+the text is made, before any of it is given, so a chunk with an entry
+that is no text still gives none and its rows are read the way that
+raises what is malformed. The text is held in a cell that is set once.
+Two runs that ask for the text of one opened chunk make it once, and a
+chunk whose entries were judged not to be text is not judged again. The
+chunks opened belong to the one scan that reads them, or to one decoding
+of a late column at a time (D361), so no two threads ask one cell at
+once, and the cell would still make the text once if they did.
+
+#### D1299. A table's sample remembers a function by its handle, not by its name alone
+
+A table's sample remembers what was asked of it under a fingerprint of
+the question (D382). The fingerprint wrote a function by its name and
+its arguments. A name does not tell a function. EXTRACT holds its
+field, a CAST by a template holds the template, a field of a row its
+number, a difference of two datetimes its interval qualifier, a query
+of XML its expression, TRIM and the greatest and least of strings
+their collation, and a type test its types. Each is one name whatever
+it holds, about thirty kinds of function in all. So two conditions
+that differed only in what such a function held were one question.
+The second asked was given the answer of the first, and a condition on
+the day of a date was estimated at the rows of a condition on its
+month. The estimate was wrong, and it was whichever was asked first.
+
+What does tell one function from another is its handle, as the rule
+that makes a list of ORs one set already takes it (`logical/sets.rs`).
+A function now writes its name and the address of its handle
+(`estimate/fingerprint.rs`). An address is one function's only while
+the function lives, and a sample outlives the statements that ask it.
+So a key comes with the handles it wrote (`stats::sample::Asked`), and
+the sample keeps them beside the answer. No function of a remembered
+answer is freed, and its address taken by another, while the answer
+may be given. The handles go when the sample forgets its answers, at
+1,024 of them, or is dropped with its statistics.
+
+What this costs is stated here so that it is not read later as a
+loss. A function registered once, as the string and numeric functions
+are, is one handle for the database's life, and its answers are shared
+by every statement as before. A function the binder makes for a call,
+as it makes EXTRACT for its field, is its statement's own. Its answers
+are shared within the statement and by each planning of a plan that is
+kept, and not by two statements written apart, each of which evaluates
+the sample once. Before, two such statements shared an answer, and it
+was the wrong one for one of them wherever they differed.
+
+Told apart without the handle, a function would have to give what it
+holds as part of its contract, a method of the function trait for
+every function and plug-in to write. The handle needs none.
+
+The count a grouping makes of an expression (D1279) writes its key the
+same way and keeps the expression for its statement.
 
 ## 2. Project layout
 

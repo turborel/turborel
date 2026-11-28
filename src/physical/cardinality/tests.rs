@@ -514,7 +514,7 @@ fn an_expression_not_deterministic_is_not_bounded() {
     let estimates = Estimates::new(&st);
     assert!(super::lineage::computed_of(&over(Expr::Column(1)), 0).is_none(), "a table's column");
     assert!(super::lineage::computed_of(&over(call(false)), 0).is_none(), "not deterministic");
-    assert_eq!(super::lineage::computed_of(&over(call(true)), 0).map(|(_, read)| read), Some(vec![1]));
+    assert_eq!(super::lineage::computed_of(&over(call(true)), 0).map(|c| c.read), Some(vec![1]));
     assert!(near(estimates.grouped_distinct(&over(call(true)), 0, 0), 10.0_f64), "G's 10 values");
     assert!(near(estimates.grouped_distinct(&over(call(false)), 0, 0), 1_000.0_f64), "a value a row");
     assert!(near(estimates.distinct(&over(call(true)), 0), 1_000.0_f64), "a join's key is counted as before");

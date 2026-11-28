@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 33] = [
+pub const GROUPED_PARTS: [Mutation; 36] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -217,10 +217,10 @@ pub const GROUPED_PARTS: [Mutation; 33] = [
     Mutation {
         name: "top-groups-of-a-pair",
         package: Package::Core,
-        breaks: "first rows are taken from the tables of a pair's first grouping, its groups given for the second's (RULES.md D1124)",
+        breaks: "first rows are taken from the tables of a pair's first grouping, its groups given for the second's (RULES.md D1124, D1281)",
         file: "src/exec/parallel/grouped/top.rs",
-        original: "grouping.read.is_some() && plain &&",
-        replacement: "grouping.read.is_some() &&",
+        original: "let Some(outer) = &grouping.outer else { return self.of_table(table) };",
+        replacement: "let Some(outer) = grouping.outer.as_ref().filter(|_| false) else { return self.of_table(table) };",
         integration: &["regrouped_parts::the_first_rows_of_a_sort_over_a_pair_are_the_second_groupings"],
         unit: &[],
     },
@@ -335,13 +335,43 @@ pub const GROUPED_PARTS: [Mutation; 33] = [
         unit: &[],
     },
     Mutation {
+        name: "rows-apart-numbered-by-batch",
+        package: Package::Core,
+        breaks: "rows handed on ungrouped take their batch's first number, not their own, so their groups' order is lost (RULES.md D1260)",
+        file: "src/exec/batch/groups/morsel.rs",
+        original: "let own = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));",
+        replacement: "let own = number;",
+        integration: &["grouped_parts::morsels_that_reduce_nothing_hand_their_rows_on_ungrouped"],
+        unit: &[],
+    },
+    Mutation {
+        name: "rows-apart-where-they-reduce",
+        package: Package::Core,
+        breaks: "morsels hand their rows on ungrouped where their tables reduce them, and group them where they do not (RULES.md D1260)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "self.left.load(Ordering::Relaxed) > APART_PER_MILLE",
+        replacement: "self.left.load(Ordering::Relaxed) < APART_PER_MILLE",
+        integration: &[],
+        unit: &["exec::parallel::grouped::waves::tests::morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing"],
+    },
+    Mutation {
+        name: "rows-apart-spilled-ungrouped",
+        package: Package::Core,
+        breaks: "a morsel's rows handed on ungrouped are written to the spill as they are, so a key held many times outgrows the grant in a part no hash splits (RULES.md D1260)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "return spilled.write_parts(self.regrouped(made)?.as_ref());",
+        replacement: "return spilled.write_parts(made.as_ref());",
+        integration: &["spilled_groups::a_grouping_spilled_holds_its_partitions_in_one_area"],
+        unit: &[],
+    },
+    Mutation {
         name: "spilled-table-of-the-statements-thread-lost",
         package: Package::Core,
         breaks: "a grouping whose statement thread's table went to the spill with no wave merged gives the last such table's groups alone (RULES.md D1276)",
         file: "src/exec/parallel/grouped/waves.rs",
         original: "if !self.waved && self.wave.is_empty() && self.spilled.is_none() {",
         replacement: "if !self.waved && self.wave.is_empty() {",
-        integration: &[],
+        integration: &["spilled_groups::a_table_of_few_groups_past_the_grant_gives_every_group"],
         unit: &["exec::parallel::grouped::waves::tests::a_table_of_the_statements_thread_past_the_grant_loses_no_group"],
     },
 ];

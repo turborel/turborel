@@ -399,8 +399,7 @@ impl Body<'_> {
         match self {
             Body::Runs(runs) => runs.ints_ends((from, to), out, Some((ends, base))).map(|()| true),
             Body::Constant { field } => {
-                // None if every value is null, its field empty.
-                out.extend(std::iter::repeat_n(integer(field).unwrap_or(0), to.checked_sub(from)?));
+                out.extend(std::iter::repeat_n(words::constant(field)?, to.checked_sub(from)?));
                 if to > from {
                     ends.push(base.checked_add(to.checked_sub(from)?)?);
                 }
@@ -490,6 +489,8 @@ impl Body<'_> {
         let Some(last) = count.checked_sub(1) else { return Some(held) };
         let (start, end) = (between(offsets, 0)?.0, between(offsets, last)?.1);
         let span = kernels.utf8(entries.get(start..end)?)?;
+        // Room for every entry's octets at once, all an unpadded text takes.
+        held.text.reserve(span.len());
         for e in 0..count {
             let (from, to) = between(offsets, e)?;
             padded(&mut held.text, span.get(from.checked_sub(start)?..to.checked_sub(start)?)?, pad);
