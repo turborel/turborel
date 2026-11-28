@@ -26,35 +26,60 @@ pub fn pushed_conjuncts(cond: &Cond) -> Option<Conjunction> {
     if cond.can_raise() {
         return None;
     }
-    let mut found = Vec::new();
-    conjuncts(cond, &mut found);
+    let (mut found, mut own) = (Vec::new(), Vec::new());
+    conjuncts(cond, &mut found, &mut own);
     if found.is_empty() {
         return None;
     }
     Some(Conjunction(found))
 }
 
-/// The conjuncts of `cond` a scan is told (`pushed_conjuncts`).
-fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
-    match cond {
+/// \[DESIGN\] (RULES.md D1266) Each conjunct of `cond`, an operand of its
+/// ANDs, in their order, with the place among the conjuncts a scan is
+/// told (`pushed_conjuncts`) of the one that is that conjunct itself,
+/// true of exactly the rows it is true of: a comparison with a constant,
+/// IS NULL or IS NOT NULL, IN or NOT IN constants, an OR of these of one
+/// column, a LIKE or NOT LIKE of a constant pattern. None of a conjunct a
+/// scan is not told, nor of the bounds of a LIKE's prefix, which hold of
+/// strings the LIKE is false of, and none at all of a condition that can
+/// raise an error, of which a scan is told nothing. A scan that says it
+/// judged the conjunct at that place exactly has judged the filter's own
+/// conjunct, which the filter then need not judge again.
+pub fn told_conjuncts(cond: &Cond) -> Vec<(&Cond, Option<usize>)> {
+    let (mut found, mut own) = (Vec::new(), Vec::new());
+    conjuncts(cond, &mut found, &mut own);
+    if cond.can_raise() {
+        for (_, told) in &mut own {
+            *told = None;
+        }
+    }
+    own
+}
+
+/// The conjuncts of `cond` a scan is told (`pushed_conjuncts`), added to
+/// `found`, and each operand of its ANDs added to `own` with the place in
+/// `found` of the conjunct told that is the operand itself, if one is
+/// (`told_conjuncts`).
+fn conjuncts<'c>(cond: &'c Cond, found: &mut Vec<Conjunct>, own: &mut Vec<(&'c Cond, Option<usize>)>) {
+    let itself = match cond {
         Cond::And(a, b) => {
-            conjuncts(a, found);
-            conjuncts(b, found);
+            conjuncts(a, found, own);
+            conjuncts(b, found, own);
+            return;
         }
         // An `<in predicate>` of constants, as the binder writes it; else an
         // OR of conjuncts of one column.
-        Cond::Or(..) => found.extend(single(cond).or_else(|| alternatives(cond))),
+        Cond::Or(..) => single(cond).or_else(|| alternatives(cond)),
         // NOT IN a list of constants, none null: a null in it leaves no row.
         // Or NOT LIKE a constant pattern.
-        Cond::Not(inner) => found.extend(
-            in_list(inner)
-                .filter(|(_, values)| !values.iter().any(Value::is_null))
-                .map(|(column, values)| Conjunct::NotIn { column, values })
-                .or_else(|| liked(inner, true)),
-        ),
+        Cond::Not(inner) => in_list(inner)
+            .filter(|(_, values)| !values.iter().any(Value::is_null))
+            .map(|(column, values)| Conjunct::NotIn { column, values })
+            .or_else(|| liked(inner, true)),
+        // The bounds of its prefix first, which are not the LIKE itself.
         Cond::Like(Expr::Column(c), pattern, escape) => {
             found.extend(prefixed(*c, pattern, escape.as_ref()));
-            found.extend(liked(cond, false));
+            liked(cond, false)
         }
         Cond::Compare(..)
         | Cond::Distinct(..)
@@ -67,8 +92,10 @@ fn conjuncts(cond: &Cond, found: &mut Vec<Conjunct>) {
         | Cond::Unique(..)
         | Cond::Quantified(..)
         | Cond::Match { .. }
-        | Cond::Value(_) => found.extend(single(cond)),
-    }
+        | Cond::Value(_) => single(cond),
+    };
+    own.push((cond, itself.as_ref().map(|_| found.len())));
+    found.extend(itself);
 }
 
 /// `cond` as one conjunct of one column, if it is: a comparison with a
@@ -359,6 +386,48 @@ mod tests {
         let either = or(or(below.clone(), above), Cond::IsNull(Expr::Column(0), false));
         assert!(passes(&either, int(5)) && passes(&either, int(95)) && passes(&either, Value::Null) && !passes(&either, int(50)));
         assert!(pushed_conjuncts(&or(below, eq(1, 3))).is_none(), "two columns");
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1266 each conjunct of a condition
+    /// knows the place of the conjunct a scan is told that is it: a
+    /// comparison, a LIKE after the two bounds of its prefix, which are
+    /// not it, NOT IN, an OR of one column, IS NULL and NOT LIKE, each
+    /// counted on from those told before; a LIKE with `_`, told as its
+    /// bounds alone, an OR of two columns and a comparison of two
+    /// columns have none; and of a condition that can raise an error,
+    /// which is told nothing, none has.
+    #[test]
+    fn each_conjunct_knows_the_place_of_the_one_told_that_is_it() {
+        let eq = |c: usize, v: i128| Cond::Compare(Expr::Column(c), CompOp::Eq, Expr::Const(int(v)));
+        let or = |a: Cond, b: Cond| Cond::Or(Box::new(a), Box::new(b));
+        let and = |a: Cond, b: Cond| Cond::And(Box::new(a), Box::new(b));
+        let not = |c: Cond| Cond::Not(Box::new(c));
+        let below = |v: i128| Cond::Compare(Expr::Column(1), CompOp::Lt, Expr::Const(int(v)));
+        let conjuncts = [
+            eq(1, 5),
+            like("abc%", None),
+            like("a_c%", None),
+            not(or(eq(1, 1), eq(1, 2))),
+            or(below(3), Cond::IsNull(Expr::Column(1), false)),
+            or(eq(0, 1), eq(1, 1)),
+            Cond::IsNull(Expr::Column(1), true),
+            Cond::Compare(Expr::Column(0), CompOp::Lt, Expr::Column(1)),
+            not(like("%z%", None)),
+        ];
+        let cond = conjuncts.iter().cloned().reduce(and).unwrap();
+        let places: Vec<Option<usize>> = told_conjuncts(&cond).into_iter().map(|(_, place)| place).collect();
+        assert_eq!(places, [Some(0), Some(3), None, Some(6), Some(7), None, Some(8), None, Some(9)]);
+        let told = conjuncts_told(&cond);
+        assert_eq!(told.len(), 10, "{told:?}");
+        assert!(matches!((&told[1], &told[2], &told[3]), (Conjunct::Condition(_), Conjunct::Condition(_), Conjunct::Like { .. })));
+        assert!(matches!((&told[4], &told[5]), (Conjunct::Condition(_), Conjunct::Condition(_))), "the bounds of `a_c%` alone");
+        assert!(matches!((&told[6], &told[7], &told[8]), (Conjunct::NotIn { .. }, Conjunct::Any(_), Conjunct::Null { .. })));
+        assert!(matches!(&told[9], Conjunct::Like { like, .. } if like.not()));
+        let each: Vec<&Cond> = told_conjuncts(&cond).into_iter().map(|(conjunct, _)| conjunct).collect();
+        assert_eq!(format!("{each:?}"), format!("{:?}", conjuncts.iter().collect::<Vec<_>>()), "every operand of the ANDs, in order");
+        let raising = and(eq(1, 5), like("a!x%", Some("!")));
+        assert!(raising.can_raise());
+        assert_eq!(told_conjuncts(&raising).into_iter().map(|(_, place)| place).collect::<Vec<_>>(), [None, None]);
     }
 
     /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a

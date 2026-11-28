@@ -15,6 +15,9 @@
 //! \[DESIGN\] (RULES.md D1274) A lane of integers is compared by its
 //! words where the key gives words (`words.rs`), and a lane that holds
 //! no null reads nothing to learn that a group's value is not one.
+//!
+//! \[DESIGN\] (RULES.md D1255) A lane's texts lie in chunks that never
+//! move (`texts.rs`).
 
 use crate::exec::batch::put_key;
 use crate::storage::{Batch, Cell, Row};
@@ -27,7 +30,10 @@ use super::hash::canonical;
 mod written;
 pub(super) use written::written_alone;
 mod columns;
+mod placed;
+mod texts;
 mod words;
+use texts::Chunks;
 
 /// A key given to a table: of a row of a batch, the columns at these
 /// places of the row at this place; of values; or of a group of another
@@ -72,10 +78,8 @@ enum Data {
     Floats(Vec<f64>),
     Datetimes(Vec<Datetime>),
     Bools(Vec<bool>),
-    Texts {
-        text: String,
-        ends: Vec<usize>,
-    },
+    /// Character strings, in chunks that never move (RULES.md D1255).
+    Texts(Chunks),
     Values {
         values: Vec<Value>,
         keys: Vec<u8>,
@@ -131,12 +135,6 @@ fn trimmed(text: &str) -> &str {
     text.trim_end_matches(' ')
 }
 
-/// The text from `from` to the `g`th end of `ends` in `text`.
-fn text_at<'t>(text: &'t str, ends: &[usize], g: usize) -> Option<&'t str> {
-    let from = g.checked_sub(1).map_or(Some(0), |before| ends.get(before).copied())?;
-    text.get(from..*ends.get(g)?)
-}
-
 impl Data {
     /// The lane of `cell`'s type, its first `nulls` groups null.
     fn of(cell: Cell<'_>, nulls: usize) -> Data {
@@ -149,7 +147,7 @@ impl Data {
         } else if bool_of(cell).is_some() {
             Data::Bools(Vec::new())
         } else if text_of(cell).is_some() {
-            Data::Texts { text: String::new(), ends: Vec::new() }
+            Data::Texts(Chunks::default())
         } else {
             Data::Values { values: Vec::new(), keys: Vec::new(), ends: Vec::new() }
         };
@@ -168,12 +166,7 @@ impl Data {
             Data::Floats(numbers) => approx_of(cell).map(|f| numbers.push(f)).is_some(),
             Data::Datetimes(datetimes) => datetime_of(cell).map(|d| datetimes.push(d)).is_some(),
             Data::Bools(bools) => bool_of(cell).map(|b| bools.push(b)).is_some(),
-            Data::Texts { text, ends } => text_of(cell)
-                .map(|t| {
-                    text.push_str(t);
-                    ends.push(text.len());
-                })
-                .is_some(),
+            Data::Texts(texts) => text_of(cell).is_some_and(|t| texts.push(t)),
             Data::Values { values, keys, ends } => {
                 put_key(cell, keys);
                 ends.push(keys.len());
@@ -191,7 +184,7 @@ impl Data {
             Data::Floats(numbers) => numbers.push(0.0_f64),
             Data::Datetimes(datetimes) => datetimes.push(NO_DATETIME),
             Data::Bools(bools) => bools.push(false),
-            Data::Texts { text, ends } => ends.push(text.len()),
+            Data::Texts(texts) => texts.push_null(),
             Data::Values { values, keys, ends } => {
                 put_key(Cell::Null, keys);
                 ends.push(keys.len());
@@ -238,7 +231,7 @@ impl Lane {
             Data::Floats(numbers) => numbers.get(g).map(|&f| Cell::Approx(f)),
             Data::Datetimes(datetimes) => datetimes.get(g).map(|&d| Cell::Datetime(d)),
             Data::Bools(bools) => bools.get(g).map(|&b| Cell::Bool(b)),
-            Data::Texts { text, ends } => text_at(text, ends, g).map(Cell::Text),
+            Data::Texts(texts) => texts.get(g).map(Cell::Text),
             Data::Values { values, .. } => values.get(g).map(Cell::Value),
         }
         .unwrap_or(Cell::Null)
@@ -282,7 +275,7 @@ impl Lane {
             Data::Floats(numbers) => Some(numbers.get(g).map(|&f| canonical(f)) == Some(canonical(approx_of(cell)?))),
             Data::Datetimes(datetimes) => Some(datetimes.get(g).map(|d| d.utc) == Some(datetime_of(cell)?.utc)),
             Data::Bools(bools) => Some(bools.get(g).copied() == Some(bool_of(cell)?)),
-            Data::Texts { text, ends } => Some(text_at(text, ends, g).map(trimmed) == Some(trimmed(text_of(cell)?))),
+            Data::Texts(texts) => Some(texts.get(g).map(trimmed) == Some(trimmed(text_of(cell)?))),
             Data::Unset | Data::Values { .. } => None,
         }
     }
@@ -310,11 +303,18 @@ impl Lane {
         self.nulls.push(false);
     }
 
-    /// \[DESIGN\] (RULES.md D1110) Appends the values at `places` of
-    /// `other` as new groups': integers of its scale in one loop, any
-    /// other a value at a time.
+    /// \[DESIGN\] (RULES.md D1110, D1255) Appends the values at `places`
+    /// of `other` as new groups': integers of its scale in one loop,
+    /// texts each copied once into its chunks, any other a value at a
+    /// time.
     fn extend(&mut self, other: &Lane, places: &[u32]) {
         self.reserve(other, places.len());
+        if let (Data::Texts(texts), Data::Texts(theirs)) = (&mut self.data, &other.data) {
+            texts.extend(theirs, places);
+            self.nulls.extend(places.iter().map(|&i| other.is_null(crate::storage::mask::index(i))));
+            self.nulled |= other.nulled;
+            return;
+        }
         if let (Data::Ints { units, scale }, Data::Ints { units: theirs, scale: other_scale }) = (&mut self.data, &other.data)
             && scale == other_scale
         {
@@ -329,13 +329,35 @@ impl Lane {
     }
 
     /// Room for `more` groups more: a lane of no group yet takes the
-    /// type of `like`, of integers, so its vector is made once.
+    /// type of `like`, of integers or of texts, so its vector is made
+    /// once and its values are appended as that type's.
     fn reserve(&mut self, like: &Lane, more: usize) {
         self.nulls.reserve(more);
-        if let (Data::Unset, Data::Ints { scale, .. }, true) = (&self.data, &like.data, self.nulls.is_empty()) {
-            self.data = Data::Ints { units: Vec::new(), scale: *scale };
+        if let (Data::Unset, true) = (&self.data, self.nulls.is_empty()) {
+            self.data = match &like.data {
+                Data::Ints { scale, .. } => Data::Ints { units: Vec::new(), scale: *scale },
+                Data::Texts(_) => Data::Texts(Chunks::default()),
+                Data::Unset | Data::Floats(_) | Data::Datetimes(_) | Data::Bools(_) | Data::Values { .. } => Data::Unset,
+            };
         }
         self.reserve_data(more);
+    }
+
+    /// \[DESIGN\] (RULES.md D1255) Its groups in the order of `places`,
+    /// each the number of a group: a lane of texts with its texts where
+    /// they are, only what tells where each lies put in that order; any
+    /// other lane made anew of its values in that order. No group turns
+    /// null by it, so whether one may be null is as it was (RULES.md
+    /// D1274).
+    fn gathered(mut self, places: &[u32]) -> Lane {
+        if let Data::Texts(texts) = &mut self.data {
+            texts.gather(places);
+            self.nulls = places.iter().map(|&i| self.nulls.get(crate::storage::mask::index(i)).copied().unwrap_or(false)).collect();
+            return self;
+        }
+        let mut lane = Lane { unpadded: self.unpadded, ..Lane::default() };
+        lane.extend(&self, places);
+        lane
     }
 
     /// Room for `more` values more in its vector, of a type.
@@ -345,7 +367,8 @@ impl Lane {
             Data::Floats(numbers) => numbers.reserve(more),
             Data::Datetimes(datetimes) => datetimes.reserve(more),
             Data::Bools(bools) => bools.reserve(more),
-            Data::Texts { ends, .. } | Data::Values { ends, .. } => ends.reserve(more),
+            Data::Texts(texts) => texts.reserve(more),
+            Data::Values { ends, .. } => ends.reserve(more),
             Data::Unset => {}
         }
     }
@@ -380,10 +403,7 @@ impl Lane {
             Data::Floats(numbers) => numbers.shrink_to_fit(),
             Data::Datetimes(datetimes) => datetimes.shrink_to_fit(),
             Data::Bools(bools) => bools.shrink_to_fit(),
-            Data::Texts { text, ends } => {
-                text.shrink_to_fit();
-                ends.shrink_to_fit();
-            }
+            Data::Texts(texts) => texts.shrink(),
             Data::Values { values, keys, ends } => {
                 values.shrink_to_fit();
                 keys.shrink_to_fit();
@@ -402,10 +422,7 @@ impl Lane {
             Data::Floats(numbers) => numbers.truncate(len),
             Data::Datetimes(datetimes) => datetimes.truncate(len),
             Data::Bools(bools) => bools.truncate(len),
-            Data::Texts { text, ends } => {
-                text.truncate(end(ends));
-                ends.truncate(len);
-            }
+            Data::Texts(texts) => texts.shorten(len),
             Data::Values { values, keys, ends } => {
                 keys.truncate(end(ends));
                 values.truncate(len);
@@ -429,7 +446,7 @@ impl Lane {
             Data::Floats(numbers) => numbers.capacity().saturating_mul(size_of::<f64>()),
             Data::Datetimes(datetimes) => datetimes.capacity().saturating_mul(size_of::<Datetime>()),
             Data::Bools(bools) => bools.capacity(),
-            Data::Texts { text, ends } => text.capacity().saturating_add(ends.capacity().saturating_mul(size_of::<usize>())),
+            Data::Texts(texts) => texts.bytes(),
             Data::Values { values, keys, ends } => {
                 let made = values.capacity().saturating_mul(size_of::<Value>()).saturating_add(self.heap);
                 made.saturating_add(keys.capacity()).saturating_add(ends.capacity().saturating_mul(size_of::<usize>()))
@@ -462,9 +479,11 @@ impl Keys {
         self.lanes.len()
     }
 
-    /// No keys, of its width, each column compared as its own is.
-    pub(super) fn like(&self) -> Keys {
-        Keys { lanes: self.lanes.iter().map(|lane| Lane { unpadded: lane.unpadded, ..Lane::default() }).collect() }
+    /// \[DESIGN\] (RULES.md D1110, D1255) Its groups' keys in the order
+    /// of `places`, each the number of a group, each column compared as
+    /// it was: a lane at a time, texts left where they are.
+    pub(super) fn gathered(self, places: &[u32]) -> Keys {
+        Keys { lanes: self.lanes.into_iter().map(|lane| lane.gathered(places)).collect() }
     }
 
     /// These keys, each column `seed` says is grouped unpadded compared so

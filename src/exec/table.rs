@@ -29,7 +29,7 @@ mod slots;
 mod states;
 
 pub(crate) use hash::Seed;
-pub(in crate::exec) use hash::{hash_rows, hash_values};
+pub(in crate::exec) use hash::{hash_lanes, hash_rows, hash_values};
 pub(in crate::exec) use join::{BUILD_PARTS, BuiltPart, Parted, Parting, Span};
 pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, keys_equal, numbers_hashed, values_hash};
 pub(in crate::exec) use keys::{Key, Keys};
@@ -128,6 +128,9 @@ pub(in crate::exec) struct GroupTable<S: Columns = Vec<States>> {
     /// \[DESIGN\] (RULES.md D1260) Whether its groups were appended with
     /// none looked for (`unplaced`), so two of them may hold one key.
     apart: bool,
+    /// \[DESIGN\] (RULES.md D1313) How its groups lie by partition, of a
+    /// table written so (`made/apart.rs`), until it is handed on.
+    placed: Option<made::Placed>,
 }
 
 impl GroupTable {
@@ -149,6 +152,7 @@ impl GroupTable {
             taken: 0,
             merging: (Vec::new(), Vec::new()),
             apart: false,
+            placed: None,
         }
     }
 
@@ -198,6 +202,7 @@ impl GroupTable<()> {
             taken: 0,
             merging: (Vec::new(), Vec::new()),
             apart: false,
+            placed: None,
         }
     }
 }

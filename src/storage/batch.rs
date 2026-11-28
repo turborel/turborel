@@ -19,6 +19,7 @@ pub mod listed;
 pub mod mask;
 mod runs;
 pub mod sel;
+mod vetted;
 
 use std::sync::{Arc, OnceLock};
 
@@ -28,6 +29,7 @@ pub use self::kinds::{Bools, Datetimes};
 pub use self::late::{Late, LateSource};
 pub use self::mask::Mask;
 pub use self::sel::Sel;
+pub use self::vetted::{VETTED_PLACES, Vetted, VettedBatches, unvetted};
 use super::{Conjunction, Row, Rows, TableStorage};
 use crate::error::Result;
 use crate::txn::TxId;
@@ -125,7 +127,7 @@ impl Nulls {
 /// \[DESIGN\] Character strings as read, of a VARCHAR column as written, of
 /// a CHARACTER one padded to its length, as its values are and as LIKE
 /// sees them: their text in one buffer, and where each ends in it; or, of
-/// a store's dictionaries, each row's entry among theirs (`Coded`), so a
+/// a store's run that shares entries, each row's entry (`Coded`), so a
 /// condition is judged once of each entry, not of each row.
 #[derive(Debug, Clone, Default)]
 pub struct Texts {
@@ -135,16 +137,16 @@ pub struct Texts {
     pub ends: Vec<usize>,
     /// Which rows are null, if any is.
     pub nulls: Option<Mask>,
-    /// Of a store's dictionaries, each row's entry, and the entries, if the
+    /// Of a store's entries, each row's entry, and the entries, if the
     /// rows are so: `text` and `ends` are then empty.
     pub coded: Option<Box<Coded>>,
     /// The values, made the first time they are asked for.
     made: OnceLock<Vec<Value>>,
 }
 
-/// \[DESIGN\] Character strings of a store's dictionaries: of each row,
-/// its entry's place among `entries`, every dictionary's one after
-/// another.
+/// \[DESIGN\] (RULES.md D1316) Character strings as a store's entries: of
+/// each row, its entry's place among `entries`, each dictionary's and the
+/// rows of chunks that share none, one after another.
 #[derive(Debug, Clone, Default)]
 pub struct Coded {
     /// Each row's entry, a null's 0.

@@ -50,7 +50,7 @@ impl Made {
     ///
     /// # Errors
     ///
-    /// SQLCODE -901 if `bytes` are not such groups.
+    /// SQLCODE -916 if `bytes` are not such groups.
     pub(in crate::exec) fn read(bytes: &[u8], aggs: &[AggCall]) -> Result<Made> {
         let mut reader = Reader::new(bytes, "a partition's groups spilled");
         let len = crate::storage::mask::index(reader.u32()?);

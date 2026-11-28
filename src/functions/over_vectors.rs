@@ -4,13 +4,17 @@
 //! fold one by one [ISO/IEC 9075:1992 §6.7 GR2c], or a dictionary's
 //! entries once; a length counts each string, or each entry once [§6.6
 //! GR4, GR5]; ABS of integers or approximate numbers negates those below
-//! 0 [ISO/IEC 9075-2:2023 §6.31 GR8]. Each gives what the function's call
+//! 0 [ISO/IEC 9075-2:2023 §6.31 GR8]; EXTRACT of a datetime's field and
+//! CAST of a datetime to a datetime type compute a vector's microseconds
+//! (`datetimes.rs`, RULES.md D1320). Each gives what the function's call
 //! gives of each row, a null of a null.
+
+pub(crate) mod datetimes;
 
 use std::sync::Arc;
 
 use crate::storage::mask::index;
-use crate::storage::{Coded, Column, Floats, Ints, Mask, Texts};
+use crate::storage::{Coded, Floats, Ints, Mask, Texts};
 
 /// [ISO/IEC 9075:1992 §6.7 GR2c] `texts` folded to upper case, or lower:
 /// only the simple Latin letters change, a byte each, so every string
@@ -72,20 +76,4 @@ pub(super) fn absolute_floats(floats: &Floats) -> Option<Floats> {
     }
     let numbers = floats.numbers.iter().map(|&x| if x < 0.0_f64 { -x } else { x }).collect();
     Some(Floats::new(numbers, floats.nulls.clone()))
-}
-
-/// The vector of the integers `f` gives of each of `rows` rows, of
-/// `scale`, a null where it gives none.
-pub(crate) fn ints_of(rows: usize, scale: u32, f: impl Fn(usize) -> Option<i64>) -> Column {
-    let mut nulls = Mask::none(rows);
-    let units = (0..rows)
-        .map(|n| {
-            let unit = f(n);
-            if unit.is_none() {
-                nulls.set(n);
-            }
-            unit.unwrap_or(0)
-        })
-        .collect();
-    Column::Ints(Ints::new(units, scale, nulls.any().then_some(nulls)))
 }

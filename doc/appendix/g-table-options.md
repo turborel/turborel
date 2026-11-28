@@ -188,6 +188,13 @@ the other columns are read only of the rows it keeps. A pattern with
 CHARACTER column are searched as text, as before. A query gives the same
 rows either way.
 
+A condition the group's rows were judged by is not judged of them a
+second time. Where the conditions keep most rows of a range the range is
+read whole, and the query then looks only at the rows they kept. So
+EXPLAIN ANALYZE shows the scan of a table of the column store under a
+filter giving the rows its conditions kept, and the filter over it
+keeping as many where every condition was judged of the group.
+
 COLUMNSTORE.LAYOUT says how a frozen group is laid out on its pages.
 COLUMNS, the default, puts each column's values on pages of their own: a
 query reads only the pages of the columns it names, which suits scans

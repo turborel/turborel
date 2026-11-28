@@ -126,6 +126,19 @@ pub(super) fn utf8_avx2(bytes: &[u8]) -> Option<&str> {
     valid.then(|| unsafe { std::str::from_utf8_unchecked(bytes) })
 }
 
+/// `Kernels::text` on AVX2 and AVX-512 (RULES.md D1252): every octet is
+/// judged as `utf8_avx2` judges, and the vector is then the string.
+pub(super) fn text_avx2(octets: Vec<u8>) -> Option<String> {
+    // SAFETY: an `Isa` of AVX2 is made only where the processor has it
+    // (`x86::isa`), and only such a one calls this.
+    let valid = unsafe { avx2(&octets) };
+    // SAFETY: every octet of the vector was just judged, and `avx2`
+    // holds bytes UTF-8 only where `str::from_utf8` does, as the
+    // contract tests hold it of every lead, continuation and their
+    // errors at every place of a step and across steps.
+    valid.then(|| unsafe { String::from_utf8_unchecked(octets) })
+}
+
 /// `table`, in both lanes.
 #[target_feature(enable = "avx2")]
 fn lanes(table: &[u8; 16]) -> __m256i {

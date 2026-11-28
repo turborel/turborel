@@ -6,16 +6,19 @@
 //! what each morsel's groups hold to its grant once they are made
 //! (`parallel/grouped.rs`).
 //!
-//! \[DESIGN\] (RULES.md D1260) A morsel whose rows a table would not
-//! reduce is not grouped here at all. Each row is made a group of its
-//! own, its key appended and its state fed, with no group looked for and
-//! no slot taken, and the partition that merges the morsel finds each
-//! key's group as it merges any morsel's.
+//! \[DESIGN\] (RULES.md D1260, D1313) A morsel whose rows a table would
+//! not reduce is not grouped here at all. Each row is made a group of its
+//! own, with no group looked for and no slot taken, and the partition
+//! that merges the morsel finds each key's group as it merges any
+//! morsel's. The rows are written once where their partition's run lies
+//! (`table/made/apart.rs`): the morsel's batches are held and hashed, the
+//! rows of each partition counted, and then each column is written at its
+//! size, every row's value at its place.
 
 use super::super::{Batches, Read, fed, lanes};
 use super::coded::{Memo, grouped, hash_of};
 use crate::error::Result;
-use crate::exec::table::{GroupTable, Key, Seed, hash_rows};
+use crate::exec::table::{GroupTable, Key, Seed, hash_lanes, hash_rows};
 use crate::exec::{Runner, broken};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
@@ -26,8 +29,11 @@ use crate::storage::{Batch, Sel};
 /// keyed by hashes of `seed`, each its first row numbered from `first` in
 /// the order the rows come, its set functions `aggs` fed and not finished;
 /// their warnings heard by `runner`. The table is made with room for
-/// `room` groups, as many as the morsel is expected to make. If `apart`,
-/// every row is a group of its own, none looked for (RULES.md D1260).
+/// `room` groups, as many as the morsel is expected to make. If `apart`
+/// is given, every row is a group of its own, none looked for (RULES.md
+/// D1260), the groups written by partition among as many partitions as
+/// it says, by the lanes of the key it says, or by whole keys of none
+/// (RULES.md D1313).
 ///
 /// # Errors
 ///
@@ -37,15 +43,15 @@ pub(in crate::exec) fn morsel_groups(
     aggs: &[AggCall],
     batches: Batches,
     (runner, first, seed): (&Runner, u64, &Seed),
-    (room, apart): (usize, bool),
+    (room, apart): (usize, Option<(usize, &[usize])>),
 ) -> Result<GroupTable> {
     if read.groups.is_empty()
         && let Some(states) = writing(aggs)
     {
         return one_group(read, (aggs, states), batches, (runner, first, seed));
     }
-    if apart {
-        return rows_apart(read, aggs, batches, (runner, first, seed), room);
+    if let Some(parted) = apart {
+        return rows_apart(read, aggs, batches, (runner, first, seed), parted);
     }
     let mut table = GroupTable::with_room(read.groups.len(), aggs, seed, room);
     let (mut hashes, mut scratch, mut memo) = (Vec::new(), Vec::new(), Memo::default());
@@ -66,12 +72,14 @@ pub(in crate::exec) fn morsel_groups(
     Ok(table)
 }
 
-/// \[DESIGN\] (RULES.md D1260) The rows of `batches`, one morsel's, each
-/// a group of its own in a table with no slots: its key appended, hashed
-/// of `seed` a vector at a time, its first row its own number from
-/// `first`, and its set functions fed its one row. No group is looked
-/// for, so a key the morsel holds twice is two groups, which the
-/// partition's table merges.
+/// \[DESIGN\] (RULES.md D1260, D1313) The rows of `batches`, one
+/// morsel's, each a group of its own in a table with no slots, its first
+/// row its own number from `first`, its set functions fed its one row.
+/// The batches are held until each row's place among its partition's is
+/// known, of `parts` partitions by the key's `lanes` or by whole keys,
+/// so each key, hash and state is written once, where the morsel hands
+/// it over. No group is looked for, so a key the morsel holds twice is
+/// two groups, which the partition's table merges.
 ///
 /// # Errors
 ///
@@ -81,23 +89,28 @@ fn rows_apart(
     aggs: &[AggCall],
     batches: Batches,
     (runner, first, seed): (&Runner, u64, &Seed),
-    room: usize,
+    (parts, by_lanes): (usize, &[usize]),
 ) -> Result<GroupTable> {
-    let mut table = GroupTable::unplaced(read.groups.len(), aggs, seed, room);
-    let (mut hashes, mut scratch, mut number) = (Vec::new(), Vec::new(), first);
-    for kept in batches {
-        let (batch, rows) = kept?;
+    let held = batches.collect::<Result<Vec<_>>>()?;
+    let (mut hashes, mut by, mut one) = (Vec::new(), Vec::new(), Vec::new());
+    let at = read.groups.as_slice();
+    for (batch, rows) in &held {
         let rows = rows.as_ref().map(Sel::as_slice);
-        hash_rows(&batch, (read.groups.as_slice(), rows), (seed, runner.kernels()), &mut hashes);
-        for (n, &hash) in hashes.iter().enumerate() {
-            let r = nth(rows, n);
-            let own = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
-            let g = table.appended(hash, Key::Row(&batch, &read.groups, r), own);
-            table.take(g, (n, r));
+        hash_rows(batch, (at, rows), (seed, runner.kernels()), &mut one);
+        hashes.extend_from_slice(&one);
+        if !by_lanes.is_empty() {
+            hash_lanes(batch, (at, by_lanes, rows), (seed, runner.kernels()), &mut one);
+            by.extend_from_slice(&one);
         }
-        let lanes = lanes(&read.taken, &batch, rows);
-        table.feed(&batch, (&read.taken, &lanes), (&mut scratch, runner))?;
-        number = number.saturating_add(u64::try_from(hashes.len()).unwrap_or(u64::MAX));
+    }
+    let by = (!by_lanes.is_empty()).then_some(by.as_slice());
+    let mut table = GroupTable::placed((held.as_slice(), at), (aggs, seed), (hashes.as_slice(), by, first), (parts, by_lanes));
+    let mut scratch = Vec::new();
+    for (batch, rows) in &held {
+        let rows = rows.as_ref().map(Sel::as_slice);
+        table.take_placed(rows, rows.map_or(batch.rows, <[u32]>::len));
+        let lanes = lanes(&read.taken, batch, rows);
+        table.feed(batch, (&read.taken, &lanes), (&mut scratch, runner))?;
     }
     Ok(table)
 }

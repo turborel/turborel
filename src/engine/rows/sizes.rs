@@ -1,7 +1,8 @@
 //! \[DESIGN\] The bytes a row table takes, as TABLE_STATISTICS and
 //! COLUMN_STORAGE show them (`TableStorage::sizes`, RULES.md D522, D1165).
 //! Its frozen groups' pages are counted (`rows/frozen.rs`), each group's
-//! from its header, held or read, and so are its tree's
+//! from its header, held or read and then let go (`frozen/held.rs`,
+//! RULES.md D1314), and so are its tree's
 //! (`BLinkTree::pages`), its nodes above the leaves read; the pages of its
 //! long values, its zones and its statistics are not.
 //!
@@ -34,7 +35,8 @@ impl RowTable {
         let mut frozen = 0_u64;
         let mut held: BTreeMap<(usize, Option<&'static str>), ColumnSizes> = BTreeMap::new();
         for entry in &directory.groups {
-            let group = self.group_of(entry, None).ok()?;
+            // Read for every column and held by none (RULES.md D1314).
+            let group = self.group_passed(entry).ok()?;
             let pages = self.pages_for(&group).ok()?;
             // [DESIGN] RULES.md D1146: an extent's own bytes, else its pages'.
             let bytes = entry.summary.extent.map(|p| p.length);

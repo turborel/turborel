@@ -221,17 +221,45 @@ pub(in crate::exec) fn hash_rows(
     (seed, kernels): (&Seed, &dyn Kernels),
     out: &mut Vec<u64>,
 ) {
+    hash_places(batch, (at.iter().copied().enumerate(), rows), (seed, kernels), out);
+}
+
+/// \[DESIGN\] (RULES.md D1113, D1313) As `hash_rows`, of the columns of
+/// the key at `lanes` alone, each hashed as the column of the key it is,
+/// so a row's hash is the one `Keys::hash_of` gives of its group's key of
+/// those lanes, and its partition by them the one its group would take.
+pub(in crate::exec) fn hash_lanes(
+    batch: &Batch,
+    (at, lanes, rows): (&[usize], &[usize], Option<&[u32]>),
+    (seed, kernels): (&Seed, &dyn Kernels),
+    out: &mut Vec<u64>,
+) {
+    let places = lanes.iter().filter_map(|&lane| at.get(lane).map(|&c| (lane, c)));
+    hash_places(batch, (places, rows), (seed, kernels), out);
+}
+
+/// Writes to `out` the hash of each row given of `batch`, `rows` or all,
+/// of the columns `places` names, each the place it has in the key and
+/// where it lies in the batch, joined in the order given; of none, a
+/// null's hash a row.
+fn hash_places(
+    batch: &Batch,
+    (places, rows): (impl Iterator<Item = (usize, usize)>, Option<&[u32]>),
+    (seed, kernels): (&Seed, &dyn Kernels),
+    out: &mut Vec<u64>,
+) {
     out.clear();
-    if at.is_empty() {
-        out.resize(rows.map_or(batch.rows, <[u32]>::len), seed.null());
-    }
-    let mut column_hashes = Vec::new();
-    for (place, &c) in at.iter().enumerate() {
-        let target = if place == 0 { &mut *out } else { &mut column_hashes };
+    let (mut column_hashes, mut first) = (Vec::new(), true);
+    for (place, c) in places {
+        let target = if first { &mut *out } else { &mut column_hashes };
         hash_column((batch, c, rows), (seed, kernels, seed.is_unpadded(place)), target);
-        if place > 0 {
+        if !first {
             kernels.combine_i64(out, &column_hashes, seed.seeded.seed());
         }
+        first = false;
+    }
+    if first {
+        out.resize(rows.map_or(batch.rows, <[u32]>::len), seed.null());
     }
 }
 
