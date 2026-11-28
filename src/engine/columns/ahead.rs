@@ -95,6 +95,7 @@ mod tests {
             edges: Vec::new(),
             sketched: Vec::new(),
             sketches: Vec::new(),
+            lanes: Vec::new(),
             header: Vec::new(),
             place: (crate::disk::buffer::FileId(0), 0),
         };

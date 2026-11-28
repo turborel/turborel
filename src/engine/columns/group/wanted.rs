@@ -31,7 +31,8 @@ impl Group {
         }
     }
 
-    /// Every column's chunks, in order.
+    /// Every column's chunks, in order, then those of every lengths lane
+    /// (RULES.md D1319).
     ///
     /// # Errors
     ///
@@ -40,7 +41,7 @@ impl Group {
         if self.columns.iter().any(Option::is_none) {
             return Err(unread());
         }
-        Ok(self.columns.iter().flatten().flatten())
+        Ok(self.columns.iter().chain(&self.lanes).flatten().flatten())
     }
 
     /// Whether its header was read for each of `wanted`, or for every

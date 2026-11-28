@@ -267,6 +267,7 @@ mod tests {
             edges: Vec::new(),
             sketched: Vec::new(),
             sketches: Vec::new(),
+            lanes: Vec::new(),
             header: vec![PageId(first)],
             place: (FileId(0), 0),
         })

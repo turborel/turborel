@@ -140,6 +140,10 @@ fn kept_by(group: &Group, condition: &Conjunct) -> Result<Vec<(u32, u32)>> {
     if matches!(condition, Conjunct::Like { .. } | Conjunct::Among { .. }) {
         return Ok(vec![(0, group.rows)]);
     }
+    // A comparison with the empty string, by its column's lengths (RULES.md D1319).
+    if let Some(runs) = lengths::kept_parts(group, condition) {
+        return Ok(runs);
+    }
     let columns = condition.columns();
     let width = columns.iter().max().map_or(0, |c| c.saturating_add(1));
     // Of a conjunct of several columns, each column's parts with the

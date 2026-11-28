@@ -838,6 +838,7 @@ verification approach DO-178C expects (§8).
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
+| D1319 | A frozen group keeps each VARCHAR column's octet lengths in a lane of integers, read where a length is wanted and not the text |
 
 ### The project
 
@@ -24474,6 +24475,62 @@ every function and plug-in to write. The handle needs none.
 
 The count a grouping makes of an expression (D1279) writes its key the
 same way and keeps the expression for its statement.
+
+#### D1319. A frozen group keeps each VARCHAR column's octet lengths in a lane of integers, read where a length is wanted and not the text
+
+A column read only for its octet length is given by its scan with its
+lengths and no text (D1267). The scan took each length of the text's own
+chunk, between two ends, of an entry's ends by the row's code, or as the
+sum of the lengths of a value's codes' symbols. That makes no text, but
+it still reads every chunk of the text, a few hundred values a page, and
+of texts coded by symbols every code of every value. A profile of an
+average of a long column's lengths showed half of the statement there,
+most of it in those sums.
+
+A frozen group now writes, beside the chunks of each VARCHAR column, a
+lengths lane (`engine/columns/group/lanes.rs`). It is a second run of
+chunks that hold each row's octet length as an integer, a null where the
+value is null, in the store's own integer encodings on pages of their
+own, with zones as any column of integers has, the least and the
+greatest length and the nulls of each chunk and of each part of it. The
+lengths are the ends of the column's records, which the writer already
+holds. The header lists the lanes after everything it held before, each
+by its column's place.
+
+Where a group has a column's lane, the scan reads a length of it
+(`scan/lengths.rs`), as it reads integers, thousands of rows a page. The
+measured column, the conjunct judged of lengths in the scan and in the
+filter, and OCTET_LENGTH are as D1267 left them. Three things are added,
+all of the comparison of a column with the empty string by octets,
+neither padded, which is the comparison of its octet length with 0
+(D1267). The scan judges it of the lane for any reader, the column
+measured or not, and the text is then decoded of the rows kept alone
+(`judged/lengths.rs`). A run every part of whose lane holds no null and
+has bounds that satisfy the comparison is proved, as D1293 proves a
+comparison of numbers, and nothing of it is judged. And a part whose
+lane's bounds the comparison cannot match is passed over. So an equality
+with the empty string reads the parts that hold an empty value, and an
+inequality passes over the parts that hold nothing else.
+
+The lengths are exact for the same reason D1267's are. A VARCHAR value
+is written as the octets of its text, and its record's ends are where
+those octets begin and end. Only VARCHAR has a lane. A CHARACTER value
+is padded as it is read, so its length is its type's and no lane tells
+it. CHAR_LENGTH still reads the text, as a lane counts octets and no
+column's stored form says its characters are one octet each.
+
+The format's version stays 1 and nothing is migrated. A header written
+with no lane ends where a header ended before lanes were, so a group
+written before is read as one that has none, and so is a group in the
+hybrid layout, which writes none. Of such a group a length is read of
+the text's chunks as D1267 reads it, and the comparison with the empty
+string is judged as it was. Old and new groups of one table are read
+side by side. A group replaced by a merge or a freeze is written with
+lanes, as every group writer goes through one place.
+
+INFORMATION_SCHEMA.COLUMN_STORAGE shows a lane's chunks as rows of
+their column with the encoding LENGTHS, so what the lanes take is read
+there. A group's pages include its lanes', so they are freed with it.
 
 ## 2. Project layout
 

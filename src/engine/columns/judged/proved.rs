@@ -26,7 +26,7 @@
 
 use std::cmp::Ordering;
 
-use super::super::group::{Group, PART_ROWS, Part};
+use super::super::group::{Group, PART_ROWS, Part, Zone};
 use super::{KEPT_SHARE, Pred};
 use crate::error::Result;
 use crate::value::{CompOp, DataType, Value, compare};
@@ -42,7 +42,8 @@ impl Pred {
     ///
     /// As `proved`.
     pub(super) fn passed(&self, group: &Group, t: &DataType, (from, to): (u32, u32)) -> Result<bool> {
-        Ok(self.among().is_some_and(|members| !members.asking(KEPT_SHARE)) || proved(group, (self, t), (from, to))?)
+        let asked = self.among().is_some_and(|members| !members.asking(KEPT_SHARE));
+        Ok(asked || proved(group, (self, t), (from, to))? || super::lengths::proved(group, self, (from, to)))
     }
 }
 
@@ -56,6 +57,12 @@ impl Pred {
 pub(super) fn proved(group: &Group, (pred, t): (&Pred, &DataType), (from, to): (u32, u32)) -> Result<bool> {
     let Some((op, constant)) = pred.compared().filter(|_| whole_bounds(t)) else { return Ok(false) };
     let Some(zones) = group.zones(pred.column)? else { return Ok(false) };
+    Ok(every_part(zones, (from, to), &|part| every(op, part, constant)))
+}
+
+/// Whether `holds` is true of every part of the chunks `zones` that the
+/// run `from` to `to` lies in, and the chunks cover the run whole.
+pub(super) fn every_part(zones: &[Zone], (from, to): (u32, u32), holds: &dyn Fn(&Part) -> bool) -> bool {
     let first = zones.partition_point(|zone| zone.run.first.saturating_add(zone.run.rows) <= from);
     let mut at = from;
     for zone in zones.iter().skip(first) {
@@ -66,13 +73,13 @@ pub(super) fn proved(group: &Group, (pred, t): (&Pred, &DataType), (from, to): (
         }
         let end = zone.run.first.saturating_add(zone.run.rows).min(to);
         let (low, high) = (part_of(at, zone.run.first), part_of(end.saturating_sub(1), zone.run.first));
-        let Some(parts) = zone.parts.get(low..=high) else { return Ok(false) };
-        if !parts.iter().all(|p| every(op, p, constant)) {
-            return Ok(false);
+        let Some(parts) = zone.parts.get(low..=high) else { return false };
+        if !parts.iter().all(holds) {
+            return false;
         }
         at = end;
     }
-    Ok(at >= to)
+    at >= to
 }
 
 /// The place among a chunk's parts of the part row `row` of the group is
@@ -91,7 +98,7 @@ fn whole_bounds(t: &DataType) -> bool {
 /// no null, of which no comparison is true [X3.135-1986 §5.11 GR2], and
 /// its least and greatest values leave no value between them that fails.
 /// Only the end that decides a comparison is compared with the constant.
-fn every(op: CompOp, part: &Part, constant: &Value) -> bool {
+pub(super) fn every(op: CompOp, part: &Part, constant: &Value) -> bool {
     let Some((least, greatest)) = part.bounds.as_ref().filter(|_| part.nulls == 0) else { return false };
     let (low, high) = (|| compare(least, constant), || compare(greatest, constant));
     match op {

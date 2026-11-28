@@ -3,7 +3,7 @@
 
 use super::super::sketch::Edges;
 use super::summary::{Overall, Placed, Summary};
-use super::{Filter, GROUP_FORMAT, Group, Pages, Part, Run, Seal, Zone, corrupt, count32, read_chain};
+use super::{Filter, GROUP_FORMAT, Group, LENGTH, Pages, Part, Run, Seal, Zone, corrupt, count32, read_chain};
 use crate::disk::pager::PageId;
 use crate::error::Result;
 use crate::value::{DataType, Value};
@@ -60,21 +60,7 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
     }
     put_u32(&mut out, count32(group.columns.len())?);
     for (c, t) in types.iter().enumerate().take(group.columns.len()) {
-        let zones = group.zones(c)?.unwrap_or_default();
-        put_u32(&mut out, count32(zones.len())?);
-        for zone in zones {
-            put_run(&mut out, &zone.run);
-            put_u32(&mut out, zone.nulls);
-            put_bounds(&mut out, zone.bounds.as_ref(), t)?;
-            put_u32(&mut out, count32(zone.parts.len())?);
-            for part in &zone.parts {
-                put_u32(&mut out, part.nulls);
-                put_bounds(&mut out, part.bounds.as_ref(), t)?;
-                put_filter(&mut out, part.filter);
-                put_filter(&mut out, part.imprint);
-                put_filter(&mut out, part.sketch);
-            }
-        }
+        put_zones(&mut out, group.zones(c)?.unwrap_or_default(), t)?;
     }
     for (edges, t) in group.edges.iter().zip(types) {
         put_u32(&mut out, count32(edges.len())?);
@@ -90,7 +76,45 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
             put_bound(&mut out, &Value::Char(text.into()), t)?;
         }
     }
+    put_lanes(&mut out, group)?;
     Ok(out)
+}
+
+/// Appends the chunks `zones` of a column of type `t`.
+fn put_zones(out: &mut Vec<u8>, zones: &[Zone], t: &DataType) -> Result<()> {
+    put_u32(out, count32(zones.len())?);
+    for zone in zones {
+        put_run(out, &zone.run);
+        put_u32(out, zone.nulls);
+        put_bounds(out, zone.bounds.as_ref(), t)?;
+        put_u32(out, count32(zone.parts.len())?);
+        for part in &zone.parts {
+            put_u32(out, part.nulls);
+            put_bounds(out, part.bounds.as_ref(), t)?;
+            put_filter(out, part.filter);
+            put_filter(out, part.imprint);
+            put_filter(out, part.sketch);
+        }
+    }
+    Ok(())
+}
+
+/// \[DESIGN\] (RULES.md D1319) Appends the lengths lanes of `group`, if
+/// it has any: how many, then of each its column's place and its chunks,
+/// as a column of `LENGTH` writes them. A group with no lane ends where
+/// a header ended before lanes were, so one written before is read as
+/// one that has none.
+fn put_lanes(out: &mut Vec<u8>, group: &Group) -> Result<()> {
+    let lanes: Vec<(usize, &[Zone])> = (0..group.lanes.len()).filter_map(|c| group.lane(c).map(|zones| (c, zones))).collect();
+    if lanes.is_empty() {
+        return Ok(());
+    }
+    put_u32(out, count32(lanes.len())?);
+    for (column, zones) in lanes {
+        put_u32(out, count32(column)?);
+        put_zones(out, zones, &LENGTH)?;
+    }
+    Ok(())
 }
 
 /// Appends the places of columns `places`.
@@ -248,6 +272,27 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// \[DESIGN\] (RULES.md D1319) The lengths lanes a header ends with,
+    /// by their columns' places among `width`, those of the columns
+    /// `wanted` read and the others passed over: none if the header ends
+    /// before them, as one written before lanes were does.
+    fn lanes(&mut self, width: usize, wanted: Option<&[usize]>) -> Result<Vec<Option<Vec<Zone>>>> {
+        let mut lanes = vec![None; width];
+        if self.0.is_empty() {
+            return Ok(lanes);
+        }
+        for _ in 0..self.count()? {
+            let column = self.count()?;
+            let slot = lanes.get_mut(column).ok_or_else(|| corrupt("a lengths lane is of no column"))?;
+            if wanted.is_none_or(|w| w.contains(&column)) {
+                *slot = Some((0..self.count()?).map(|_| self.zone(&LENGTH)).collect::<Result<Vec<_>>>()?);
+            } else {
+                self.skip_zones()?;
+            }
+        }
+        Ok(lanes)
+    }
+
     /// Passes over a column's chunks, as `zone` reads each, none of its
     /// values decoded (RULES.md D1173).
     fn skip_zones(&mut self) -> Result<()> {
@@ -300,11 +345,12 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType], wa
     let edges = types.iter().map(|t| (0..r.count()?).map(|_| r.bound(t)).collect::<Result<Vec<_>>>()).collect::<Result<Vec<_>>>()?;
     let named = r.places()?;
     let sketches = types.iter().map(|t| r.sketch(t)).collect::<Result<Vec<_>>>()?;
+    let lanes = r.lanes(types.len(), wanted)?;
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }
     let place = (pages.file, pages.base);
-    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, edges, sketched: named, sketches, header, place })
+    Ok(Group { first: first_id, last, rows, ids, by_id, columns, order, pax, edges, sketched: named, sketches, lanes, header, place })
 }
 
 /// Appends `summary`, its columns of `types`, as a table's directory holds

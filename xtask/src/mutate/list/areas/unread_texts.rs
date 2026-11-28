@@ -4,7 +4,11 @@
 //! measured, its lengths of its codes, its entries and its nulls, of
 //! VARCHAR alone, left late at the stream's end, gathered with its
 //! nulls, asked for where no filter reads its text, and the one
-//! comparison its lengths tell, in the filter and in the scan (D1267).
+//! comparison its lengths tell, in the filter and in the scan (D1267);
+//! and a lengths lane, written of VARCHAR alone and of no hybrid group,
+//! each length a record's, read back with its column, its pages the
+//! group's, and the comparison with the empty string judged, proved and
+//! passed over by it (D1319).
 
 use super::super::{Mutation, Package};
 
@@ -22,7 +26,7 @@ const BY_LENGTHS: &str =
 
 /// Mechanisms whose removal must fail the requirements of texts made
 /// only for a reader.
-pub const UNREAD_TEXTS: [Mutation; 13] = [
+pub const UNREAD_TEXTS: [Mutation; 23] = [
     Mutation {
         name: "entries-made-text-at-open",
         package: Package::Core,
@@ -152,5 +156,105 @@ pub const UNREAD_TEXTS: [Mutation; 13] = [
         replacement: "        if !whole",
         integration: &[],
         unit: &[BY_LENGTHS],
+    },
+    Mutation {
+        name: "lane-of-a-padded-column",
+        package: Package::Core,
+        breaks: "a CHARACTER column is written a lengths lane, though its values are padded as read",
+        file: "src/engine/columns/group/lanes.rs",
+        original: "        if padding(t) != Some(None) {\n            lanes.push(None);",
+        replacement: "        if padding(t).is_none() {\n            lanes.push(None);",
+        integration: &[],
+        unit: &["engine::columns::group::tests::lanes::a_group_with_no_lane_is_read_as_before"],
+    },
+    Mutation {
+        name: "lane-length-of-the-end",
+        package: Package::Core,
+        breaks: "a lane holds where each record ends, not how long it is",
+        file: "src/engine/columns/group/lanes.rs",
+        original: "i64::from(end.saturating_sub(before))",
+        replacement: "i64::from(end)",
+        integration: &[],
+        unit: &["engine::columns::group::tests::lanes::a_varchar_column_has_a_lane_of_its_lengths"],
+    },
+    Mutation {
+        name: "lane-in-the-hybrid-layout",
+        package: Package::Core,
+        breaks: "a group in the hybrid layout is written lanes",
+        file: "src/engine/columns/group/written.rs",
+        original: "let lanes = if pages.pax {",
+        replacement: "let lanes = if pages.pax && types.is_empty() {",
+        integration: &[],
+        unit: &["engine::columns::group::tests::lanes::a_group_with_no_lane_is_read_as_before"],
+    },
+    Mutation {
+        name: "lane-section-not-read",
+        package: Package::Core,
+        breaks: "a header's lanes are not read, and its bytes past the sketches refused",
+        file: "src/engine/columns/group/header.rs",
+        original: "        if self.0.is_empty() {\n            return Ok(lanes);",
+        replacement: "        if !self.0.is_empty() {\n            return Ok(lanes);",
+        integration: &[],
+        unit: &["engine::columns::group::tests::lanes::a_varchar_column_has_a_lane_of_its_lengths"],
+    },
+    Mutation {
+        name: "lane-read-of-a-column-not-wanted",
+        package: Package::Core,
+        breaks: "a lane is read with a header read for other columns",
+        file: "src/engine/columns/group/header.rs",
+        original: "            if wanted.is_none_or(|w| w.contains(&column)) {\n                *slot",
+        replacement: "            if wanted.is_none_or(|w| !w.is_empty()) {\n                *slot",
+        integration: &[],
+        unit: &["engine::columns::group::tests::lanes::a_varchar_column_has_a_lane_of_its_lengths"],
+    },
+    Mutation {
+        name: "lane-pages-not-the-groups",
+        package: Package::Core,
+        breaks: "a group's pages leave out its lanes', so they are never freed",
+        file: "src/engine/columns/group/wanted.rs",
+        original: "self.columns.iter().chain(&self.lanes).flatten().flatten()",
+        replacement: "self.columns.iter().flatten().flatten()",
+        integration: &[],
+        unit: &["engine::columns::group::tests::lanes::a_varchar_column_has_a_lane_of_its_lengths"],
+    },
+    Mutation {
+        name: "lane-judged-of-a-measured-column-alone",
+        package: Package::Core,
+        breaks: "a comparison with the empty string is judged of a lane only of a measured column",
+        file: "src/engine/columns/judged/lengths.rs",
+        original: "    if !prepared.measures(pred.column) && group.lane(pred.column).is_none() {",
+        replacement: "    if !prepared.measures(pred.column) {",
+        integration: &[],
+        unit: &["engine::columns::judged::lengths::tests::a_comparison_with_the_empty_string_is_judged_of_a_lane_where_one_is_kept"],
+    },
+    Mutation {
+        name: "lane-lengths-held-of-any-column",
+        package: Package::Core,
+        breaks: "the lengths judged of a column the scan gives as text are held for a batch that takes none",
+        file: "src/engine/columns/judged/lengths.rs",
+        original: "    if given.is_none() && prepared.measures(pred.column) {",
+        replacement: "    if given.is_none() {",
+        integration: &[],
+        unit: &["engine::columns::judged::lengths::tests::a_comparison_with_the_empty_string_is_judged_of_a_lane_where_one_is_kept"],
+    },
+    Mutation {
+        name: "lane-proves-any-constant",
+        package: Package::Core,
+        breaks: "a lane's bounds prove a comparison with any constant, as one with the empty string",
+        file: "src/engine/columns/judged/lengths.rs",
+        original: "    octets.is_empty().then_some(*op)",
+        replacement: "    Some(*op)",
+        integration: &[],
+        unit: &["engine::columns::judged::lengths::tests::a_lanes_bounds_prove_a_run_and_pass_over_parts"],
+    },
+    Mutation {
+        name: "lane-parts-not-passed-over",
+        package: Package::Core,
+        breaks: "no part is passed over by its lane's bounds",
+        file: "src/engine/columns/scan.rs",
+        original: "    if let Some(runs) = lengths::kept_parts(group, condition) {",
+        replacement: "    if let Some(runs) = lengths::kept_parts(group, condition).filter(|_| group.rows == 0) {",
+        integration: &[],
+        unit: &["engine::columns::judged::lengths::tests::a_lanes_bounds_prove_a_run_and_pass_over_parts"],
     },
 ];

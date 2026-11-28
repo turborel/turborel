@@ -14,6 +14,7 @@ use crate::storage::Row;
 use crate::storage::{Condition, Conjunct, Conjunction, Threshold};
 use crate::value::{CompOp, Decimal, Spelled};
 
+mod lanes;
 mod records;
 mod truncated;
 mod wanted;

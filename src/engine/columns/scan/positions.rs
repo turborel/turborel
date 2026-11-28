@@ -141,7 +141,7 @@ fn words_at<S: Seal>(
 /// into `span` and those asked taken of it; else each read alone, so a
 /// scan that kept few rows of a chunk unpacks no others. None if its
 /// encoding does not hold them.
-fn words_of(
+pub(super) fn words_of(
     (chunk, made, kernels): (&Chunk<'_>, &Made, &dyn crate::kernels::Kernels),
     (first, these): (u32, &[u32]),
     (units, nulls): (&mut Vec<i64>, &mut Mask),

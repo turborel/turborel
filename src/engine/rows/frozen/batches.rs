@@ -185,8 +185,11 @@ impl Batched {
         let (candidates, order) = read_ordered(&group, &pages, self.condition.as_ref())?;
         self.judgment.order_by(&order);
         // A late column's pages are read only as it is decoded.
-        // A measured column's are read by the scan, which takes its lengths of them.
-        let eager: Vec<usize> = self.columns.iter().copied().filter(|c| !self.late.contains(c) || self.measured.contains(c)).collect();
+        // A measured column's are read by the scan, which takes its lengths of
+        // them, unless the group keeps its lengths apart (RULES.md D1319).
+        let read =
+            |c: &usize| !self.late.contains(c) && !self.measured.contains(c) || self.measured.contains(c) && group.lane(*c).is_none();
+        let eager: Vec<usize> = self.columns.iter().copied().filter(read).collect();
         self.ahead.take_up(&group, &eager, &candidates);
         for (from, to) in candidates {
             let mut at = from;

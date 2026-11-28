@@ -45,6 +45,7 @@
 mod column;
 mod header;
 mod ids;
+mod lanes;
 mod pax;
 pub mod sink;
 mod summary;
@@ -56,6 +57,7 @@ use std::borrow::Cow;
 
 pub use column::{Column, Decoded, Ordinal, Rowed};
 pub use header::{put_summary, read, read_summaries};
+pub use lanes::LENGTH;
 pub use summary::{Overall, Placed, Summary};
 use zones::{bounds_of, put_filters, zone_of};
 
@@ -316,6 +318,10 @@ pub struct Group {
     /// Of each column, the edges of its sketch, none if it has none
     /// (`columns/sketch.rs`).
     pub sketches: Vec<sketch::Edges>,
+    /// Of each column, the chunks of its lengths lane, each row's octet
+    /// length (`lanes.rs`, RULES.md D1319): none of a column that has no
+    /// lane, or whose chunks its header was read without.
+    pub lanes: Vec<Option<Vec<Zone>>>,
     /// The pages of its header.
     pub header: Vec<PageId>,
     /// Where its pages are read: the file, and the place its page numbers

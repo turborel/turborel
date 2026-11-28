@@ -100,6 +100,8 @@ impl Group {
         };
         let edges = imprints::put_all(pages, (types, values), &mut columns, written)?;
         let sketches = sketch::put_all(pages, (types, values, named), &mut columns, written)?;
+        // A lengths lane of each VARCHAR column, but in the hybrid layout (RULES.md D1319).
+        let lanes = if pages.pax { vec![None; types.len()] } else { super::lanes::write(pages, types, fields, written)? };
         let mut group = Group {
             first,
             last,
@@ -112,6 +114,7 @@ impl Group {
             edges,
             sketched: named.to_vec(),
             sketches,
+            lanes,
             header: Vec::new(),
             place: (pages.file, pages.base),
         };

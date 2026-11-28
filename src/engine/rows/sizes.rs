@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 
 use super::RowTable;
-use crate::engine::columns::group::{Pages, Zone};
+use crate::engine::columns::group::{Group, Pages, Zone};
 use crate::engine::columns::kind_name;
 use crate::engine::rows::sealing::Sealing;
 use crate::error::Result;
@@ -40,9 +40,7 @@ impl RowTable {
             let bytes = entry.summary.extent.map(|p| p.length);
             frozen = within(frozen.checked_add(bytes.or_else(|| u64::try_from(group.pages().ok()?.len()).ok()?.checked_mul(page))?))?;
             for column in (0..group.columns.len()).filter(|_| by_column) {
-                for zone in group.zones(column).ok()?.unwrap_or_default() {
-                    add(&mut held, (column, zone), (&pages, page)).ok()?;
-                }
+                add_column(&mut held, (&group, column), (&pages, page))?;
             }
         }
         if !by_column {
@@ -64,20 +62,43 @@ impl RowTable {
     }
 }
 
+/// Adds the chunks of the column at `column` of `group` to what `held`
+/// holds of each encoding (`add`), then those of its lengths lane, shown
+/// apart (RULES.md D1319). None if a chunk cannot be read.
+fn add_column(
+    held: &mut BTreeMap<(usize, Option<&'static str>), ColumnSizes>,
+    (group, column): (&Group, usize),
+    (pages, page): (&Pages<'_, Sealing>, u64),
+) -> Option<()> {
+    for zone in group.zones(column).ok()?.unwrap_or_default() {
+        add(held, (column, zone, None), (pages, page)).ok()?;
+    }
+    for zone in group.lane(column).unwrap_or_default() {
+        add(held, (column, zone, Some(LENGTHS)), (pages, page)).ok()?;
+    }
+    Some(())
+}
+
+/// What INFORMATION_SCHEMA.COLUMN_STORAGE shows as the encoding of the
+/// chunks of a column's lengths lane (RULES.md D1319).
+const LENGTHS: &str = "LENGTHS";
+
 /// Adds `zone`, a chunk of the column at `column`, to what `columns` holds
 /// of its encoding, its kind and bytes read from `pages`, a chunk on a page
-/// of its own taking the `page` bytes.
+/// of its own taking the `page` bytes. A chunk of the column's lengths
+/// lane is held under `lane`, the name it is shown by, whatever encodes
+/// it.
 ///
 /// # Errors
 ///
 /// As `Pages::with_run`.
 fn add(
     columns: &mut BTreeMap<(usize, Option<&'static str>), ColumnSizes>,
-    (column, zone): (usize, &Zone),
+    (column, zone, lane): (usize, &Zone, Option<&'static str>),
     (pages, page): (&Pages<'_, Sealing>, u64),
 ) -> Result<()> {
     let (kind, bytes) = pages.with_run(&zone.run, |chunk| Ok((chunk.first().copied(), chunk.len())))?;
-    let encoding = kind.and_then(kind_name);
+    let encoding = lane.or_else(|| kind.and_then(kind_name));
     let sizes = columns.entry((column, encoding)).or_insert(ColumnSizes {
         column,
         encoding,
