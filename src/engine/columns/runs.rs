@@ -142,6 +142,30 @@ impl<'a> Runs<'a> {
     /// of `from` to the one of the last position, found by two searches,
     /// have their values and ends unpacked a block at a time
     /// (`packed/blocks.rs`), so no run's value nor end is read alone.
+    /// Timing only, never merged: as `ints`, the runs' values and ends
+    /// unpacked into `scratch`, kept by the caller, and each run filled
+    /// into room made once.
+    pub(super) fn ints_fill(&self, (from, to): (usize, usize), out: &mut Vec<i64>, scratch: &mut (Vec<i64>, Vec<i64>)) -> Option<()> {
+        if to > self.count || from >= to {
+            return (from == to).then_some(());
+        }
+        let (first, last) = (self.run_of(from)?, self.run_of(to.checked_sub(1)?)?.checked_add(1)?);
+        scratch.0.clear();
+        scratch.1.clear();
+        unpack_words(self.values, (self.bits, self.least), (first, last), &mut scratch.0)?;
+        unpack_words(self.ends, (bits_for(u64::try_from(self.count).ok()?), 0), (first, last), &mut scratch.1)?;
+        let base = out.len();
+        out.resize(base.checked_add(to.checked_sub(from)?)?, 0);
+        let room = out.get_mut(base..)?;
+        let mut at = 0_usize;
+        for (&value, &end) in scratch.0.iter().zip(&scratch.1) {
+            let end = usize::try_from(end).ok()?.min(to).checked_sub(from)?;
+            room.get_mut(at..end)?.fill(value);
+            at = end;
+        }
+        (at == room.len()).then_some(())
+    }
+
     pub(super) fn ints_ends(&self, (from, to): (usize, usize), out: &mut Vec<i64>, ends: Option<(&mut Vec<usize>, usize)>) -> Option<()> {
         if to > self.count || from > to {
             return None;
