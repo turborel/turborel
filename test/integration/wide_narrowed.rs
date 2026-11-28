@@ -155,3 +155,34 @@ fn a_wide_column_of_narrow_values_reads_as_the_row_store_gives_it() {
     assert_eq!(past("FROZEN"), past("PLAIN"));
     assert_eq!(past("FROZEN").1, "22003", "a sum past 38 digits");
 }
+
+/// Verifies: [ISO/IEC 9075-2:2023 §10.9 GR7g] [DESIGN] RULES.md D1286, a
+/// wide exact column gathered from records as integers while 64 bits hold
+/// its values: over the row store's rows, and over the column store's
+/// frozen rows with rows not yet frozen after them, fifty of which pass 64
+/// bits, every query gives on both stores the same rows; the sum of the
+/// amounts, of rows within 64 bits and past them, is the exact number
+/// computed here on both; and a sum past 38 digits raises SQLSTATE 22003.
+#[test]
+fn a_wide_column_gathered_from_records_keeps_its_values() {
+    let (_db, a) = tables();
+    for table in ["PLAIN", "FROZEN"] {
+        a.run(&format!("INSERT INTO {table} VALUES {}", values(ROWS))).unwrap();
+    }
+    a.commit().unwrap();
+    for query in QUERIES {
+        let of = |table: &str| rows(&a, &query.replace("{t}", table)).unwrap();
+        let (frozen, plain) = (of("FROZEN"), of("PLAIN"));
+        assert!(!frozen.is_empty(), "{query}");
+        assert_eq!(frozen, plain, "{query}");
+    }
+    let total: i128 = (0..ROWS + GROUP).map(amount_units).sum();
+    let within: i128 = (0..GROUP).map(amount_units).sum();
+    for table in ["PLAIN", "FROZEN"] {
+        assert_eq!(rows(&a, &format!("SELECT SUM(M) FROM {table}")).unwrap(), [hundredths(total)], "{table}");
+        assert_eq!(rows(&a, &format!("SELECT SUM(M) FROM {table} WHERE I < 2048")).unwrap(), [hundredths(within)], "{table}");
+        let past = format!("SELECT COUNT(*) FROM {table} WHERE M > 100000000000000000000000000000 OR M < -100000000000000000000000000000");
+        assert_eq!(rows(&a, &past).unwrap(), ["150"], "{table}");
+        assert_eq!(refused(&a, &format!("SELECT SUM(W) FROM {table}")).1, "22003", "{table}");
+    }
+}

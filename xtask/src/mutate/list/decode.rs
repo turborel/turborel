@@ -9,7 +9,9 @@
 //! or of no position tested with its own, and a wide column's conjunct
 //! not the scan's; and of a wide column's fields narrowed as its group is
 //! written (D1285): a value past 64 bits cut to them, and a column whose
-//! values fit left in 16 bytes.
+//! values fit left in 16 bytes; and of a wide column gathered from records
+//! (D1286): a value past 64 bits kept an integer, the nulls before it
+//! lost, and the batch after it left as values.
 
 use super::super::{Mutation, Package};
 
@@ -37,11 +39,16 @@ const WIDE_RUNS: &str = "engine::columns::prepared::tests::wide::a_wide_column_r
 /// The unit test of a wide column's positions.
 const WIDE_PLACES: &str = "engine::columns::prepared::tests::wide::a_wide_column_reads_as_integers_at_positions";
 
+/// A batch gathered from records.
+const GATHERED_FILE: &str = "src/engine/rows/gathered.rs";
+/// The unit test of a wide column gathered.
+const GATHERED: &str = "engine::rows::gathered::tests::a_wide_column_gathers_as_integers_while_64_bits_hold_it";
+
 /// A group's column as it is written.
 const FIELDS_FILE: &str = "src/engine/columns/fields.rs";
 
 /// Mechanisms of the decode kernels whose removal must fail their tests.
-pub const DECODE: [Mutation; 15] = [
+pub const DECODE: [Mutation; 18] = [
     Mutation {
         name: "decode-block-spill-shift",
         package: Package::Core,
@@ -191,5 +198,35 @@ pub const DECODE: [Mutation; 15] = [
         replacement: "        if let Some(narrow) = narrowed(t, &records).filter(Records::is_empty) {",
         integration: &[],
         unit: &["engine::columns::tests::wide::a_wide_column_of_values_64_bits_hold_is_written_in_8_bytes"],
+    },
+    Mutation {
+        name: "gather-wide-kept-integer",
+        package: Package::Core,
+        breaks: "a row past 64 bits turns its batch's vector to values, never an integer cut to them",
+        file: GATHERED_FILE,
+        original: "        } else if let Ok(unit) = wide.map(i64::try_from).transpose() {",
+        replacement: "        } else if let Ok(unit) = wide.map(|u| i64::try_from(u.clamp(-9, 9))).transpose() {",
+        integration: &[],
+        unit: &[GATHERED],
+    },
+    Mutation {
+        name: "gather-wide-nulls-before",
+        package: Package::Core,
+        breaks: "the rows gathered before a row past 64 bits become values with their nulls",
+        file: GATHERED_FILE,
+        original: "            let held = self.nulls.0.take();",
+        replacement: "            let held: Option<Vec<bool>> = self.nulls.0.take().and(None);",
+        integration: &[],
+        unit: &[GATHERED],
+    },
+    Mutation {
+        name: "gather-wide-next-batch",
+        package: Package::Core,
+        breaks: "the batch after one with a row past 64 bits is gathered as integers again",
+        file: GATHERED_FILE,
+        original: "        match self.past.take() {",
+        replacement: "        match self.past.clone() {",
+        integration: &[],
+        unit: &[GATHERED],
     },
 ];

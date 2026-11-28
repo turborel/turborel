@@ -2,7 +2,9 @@
 //! `TableStorage::scan_batches`): each column asked for decoded straight
 //! from each record's field into its vector, no row made: an exact
 //! number's units, written as an integer of 8 bytes (`record.rs`), into
-//! integers (`storage::Ints`); a character string's text into one buffer
+//! integers (`storage::Ints`), and so the units of a type of more digits
+//! than 64 bits always hold, written in 16 bytes, while 64 bits hold each
+//! row's (RULES.md D1286); a character string's text into one buffer
 //! (`storage::Texts`), a CHARACTER string padded to its length as it is
 //! read [X3.135-1986 §8.7 GR7b]; any other value decoded as a row's is.
 //! So the row store's batches, and the column store's rows not yet
@@ -14,8 +16,8 @@ use crate::engine::record::{RecordFormat, Reference};
 use crate::error::Result;
 use crate::storage::{Batch, Bools, Column, Datetimes, Ints, Mask, Texts};
 use crate::value::datetime::Moment;
-use crate::value::types::narrow_scale;
-use crate::value::{DataType, Value};
+use crate::value::types::{narrow_scale, record_units, wide_scale};
+use crate::value::{DataType, Decimal, Value};
 
 /// Bytes of an exact number's field in a record.
 const UNITS_BYTES: usize = 8;
@@ -24,6 +26,8 @@ const UNITS_BYTES: usize = 8;
 enum Gathered {
     /// Exact numbers of `scale`, as integers.
     Ints { units: Vec<i64>, scale: u32, nulls: Nulls },
+    /// Exact numbers of a type of more digits than 64 bits always hold.
+    Wide(Wide),
     /// Character strings, as their text, padded to `pad` characters if
     /// given.
     Texts { text: String, ends: Vec<usize>, pad: Option<usize>, nulls: Nulls },
@@ -33,6 +37,55 @@ enum Gathered {
     Bools(Mask, Nulls),
     /// Values of any other type, or of a column the table lacks.
     Values(Vec<Value>),
+}
+
+/// \[DESIGN\] (RULES.md D1286) Exact numbers of `scale` of a type of more
+/// digits than 64 bits always hold, whose record keeps them in 16 bytes:
+/// gathered as integers while 64 bits hold each row's, and every row of
+/// the batch as values, `past`, from the first row's that they do not.
+struct Wide {
+    units: Vec<i64>,
+    scale: u32,
+    nulls: Nulls,
+    past: Option<Vec<Value>>,
+}
+
+impl Wide {
+    /// Adds the row whose record's `field` of column `at` is given, none
+    /// of a null, `rows` rows before it: to the integers if 64 bits hold
+    /// its units and held every row's before; else to the values, made of
+    /// the rows before as the first such row comes. A value past 64 bits
+    /// is never cut to them.
+    ///
+    /// # Errors
+    ///
+    /// SQLCODE -916 if the field is not an exact number's.
+    fn push(&mut self, rows: usize, (field, at): (Option<&[u8]>, usize)) -> Result<()> {
+        let wide = field.map(|f| record_units(f).ok_or_else(|| corrupt(&format!("column {at} is not a value of its type")))).transpose()?;
+        let scale = self.scale;
+        let value = |u: Option<i128>| u.map_or(Value::Null, |u| Value::Exact(Decimal::new(u, scale)));
+        if let Some(values) = &mut self.past {
+            values.push(value(wide));
+        } else if let Ok(unit) = wide.map(i64::try_from).transpose() {
+            self.units.push(unit.unwrap_or(0));
+            self.nulls.push(rows, unit.is_none());
+        } else {
+            let held = self.nulls.0.take();
+            let null = |r: usize| held.as_ref().is_some_and(|h| h.get(r).copied().unwrap_or(false));
+            let before = self.units.drain(..).enumerate().map(|(r, u)| if null(r) { Value::Null } else { value(Some(i128::from(u))) });
+            self.past = Some(before.chain([value(wide)]).collect());
+        }
+        Ok(())
+    }
+
+    /// The vector gathered, it then empty: integers, or values if a row
+    /// passed 64 bits.
+    fn take(&mut self) -> Column {
+        match self.past.take() {
+            Some(values) => Column::Values(values),
+            None => Column::Ints(Ints::new(std::mem::take(&mut self.units), self.scale, self.nulls.0.take().map(Mask::from))),
+        }
+    }
 }
 
 /// Whether each row gathered is null, kept only from the first null on.
@@ -73,6 +126,9 @@ impl Gathering {
         if let Some(scale) = t.and_then(narrow_scale) {
             return Gathered::Ints { units: Vec::new(), scale, nulls: Nulls::default() };
         }
+        if let Some(scale) = t.and_then(wide_scale) {
+            return Gathered::Wide(Wide { units: Vec::new(), scale, nulls: Nulls::default(), past: None });
+        }
         match t {
             Some(DataType::Boolean) => Gathered::Bools(Mask::none(0), Nulls::default()),
             Some(t @ DataType::Date) => Self::datetimes(t, (Moment::Date, false, 0)),
@@ -107,6 +163,7 @@ impl Gathering {
         for (_, vector) in &mut self.columns {
             match vector {
                 Gathered::Ints { units, .. } => units.reserve(more),
+                Gathered::Wide(wide) => wide.units.reserve(more),
                 Gathered::Texts { ends, .. } => ends.reserve(more),
                 Gathered::Datetimes(held, _) => {
                     held.1.utc.reserve(more);
@@ -164,6 +221,7 @@ impl Gathering {
                     units.push(unit.unwrap_or(0));
                     nulls.push(rows, unit.is_none());
                 }
+                Gathered::Wide(wide) => wide.push(rows, (format.bytes_with(record, at, fetch)?.as_deref(), at))?,
                 Gathered::Texts { text, ends, pad, nulls } => {
                     let field = format.bytes_with(record, at, fetch)?;
                     if let Some(f) = &field {
@@ -213,6 +271,7 @@ impl Gathering {
                 Gathered::Ints { units, scale, nulls } => {
                     Column::Ints(Ints::new(std::mem::take(units), *scale, nulls.0.take().map(Mask::from)))
                 }
+                Gathered::Wide(wide) => wide.take(),
                 Gathered::Texts { text, ends, nulls, .. } => {
                     Column::Texts(Texts::new(std::mem::take(text), std::mem::take(ends), nulls.0.take().map(Mask::from)))
                 }

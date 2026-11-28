@@ -69,6 +69,16 @@ pub fn word_holds(v: &Value, scale: u32) -> bool {
     d.scale == scale && i64::try_from(d.units).is_ok()
 }
 
+/// \[DESIGN\] (RULES.md D698) The units a record's `field` of an exact
+/// numeric type holds: of 8 bytes, a type's whose values 64 bits always
+/// hold, or of 16, a wider one's. None of another width.
+pub fn record_units(field: &[u8]) -> Option<i128> {
+    match <[u8; NUMBER_BYTES]>::try_from(field) {
+        Ok(word) => Some(i128::from(i64::from_le_bytes(word))),
+        Err(_) => Some(i128::from_le_bytes(<[u8; WIDE_BYTES]>::try_from(field).ok()?)),
+    }
+}
+
 /// \[DESIGN\] (RULES.md D956) The key of `v` among the keys of a column of
 /// `t`, and so its anchor, exactly, if `t` is an exact numeric type whose
 /// values 64 bits hold and `v` an exact number at its scale that 64 bits
@@ -342,11 +352,7 @@ impl SqlType for Exact {
 
     /// Of its width, which its type gives: 8 bytes or 16.
     fn decode_record(&self, field: &[u8], t: &DataType) -> Option<Value> {
-        let units = match <[u8; NUMBER_BYTES]>::try_from(field) {
-            Ok(word) => i128::from(i64::from_le_bytes(word)),
-            Err(_) => i128::from_le_bytes(<[u8; WIDE_BYTES]>::try_from(field).ok()?),
-        };
-        Some(Value::Exact(Decimal::new(units, shape(t).1)))
+        Some(Value::Exact(Decimal::new(record_units(field)?, shape(t).1)))
     }
 
     fn encode_key(&self, v: &Value, t: &DataType, out: &mut Vec<u8>) -> Result<()> {

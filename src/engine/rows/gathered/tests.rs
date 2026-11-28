@@ -115,6 +115,7 @@ fn a_batch_has_room_for_its_rows_at_once() {
             .iter()
             .map(|(_, v)| match v {
                 Gathered::Ints { units, .. } => units.capacity(),
+                Gathered::Wide(wide) => wide.units.capacity(),
                 Gathered::Texts { ends, .. } => ends.capacity(),
                 Gathered::Datetimes(held, _) => held.1.utc.capacity(),
                 Gathered::Bools(..) => usize::MAX,
@@ -129,4 +130,48 @@ fn a_batch_has_room_for_its_rows_at_once() {
     assert_eq!(room(&gathering), 0, "handed on with the batch");
     gathering.reserve(32);
     assert!(room(&gathering) >= 32, "{}", room(&gathering));
+}
+
+/// Verifies: [DESIGN] RULES.md D1286, a wide exact column gathered:
+/// records whose values 64 bits hold, the greatest and the least of them
+/// and a null among them, gather as integers at the type's scale; a batch
+/// with one row past 64 bits, the first above or below them, gathers
+/// every row as values, those before it with their nulls and those after,
+/// none cut; and the batch after it gathers as integers again. A field of
+/// neither 8 nor 16 bytes is refused with SQLCODE -916.
+#[test]
+fn a_wide_column_gathers_as_integers_while_64_bits_hold_it() {
+    let wide = [DataType::Exact { precision: 38, scale: 2, spelled: Spelled::Numeric }];
+    let format = RecordFormat::new(&wide);
+    let exact = |u: i128| Value::Exact(Decimal::new(u, 2));
+    let shown = |values: &[Value]| values.iter().map(|v| format!("{v:?}")).collect::<Vec<String>>();
+    let mut fetch = |r: Reference| -> Result<Vec<u8>> { panic!("fetched {r:?}") };
+    let mut gathering = Gathering::new(&wide, &[0]);
+    let mut batch_of = |values: &[Value]| {
+        for v in values {
+            let mut record = Vec::new();
+            format.encode(&vec![v.clone()], &mut record).unwrap();
+            gathering.push((&format, &record), &mut fetch, None).unwrap();
+        }
+        gathering.take()
+    };
+    let narrow = [exact(i128::from(i64::MAX)), Value::Null, exact(i128::from(i64::MIN)), exact(-150)];
+    let first = batch_of(&narrow);
+    let Column::Ints(ints) = &first.columns[0] else { panic!("integers") };
+    assert_eq!((ints.units.clone(), ints.scale), (vec![i64::MAX, 0_i64, i64::MIN, -150_i64], 2_u32));
+    assert_eq!(ints.nulls, Some(vec![false, true, false, false].into()));
+    for past in [i128::from(i64::MAX) + 1, i128::from(i64::MIN) - 1, 10_i128.pow(37)] {
+        let mixed = [exact(7), Value::Null, exact(past), exact(-3), Value::Null];
+        let batch = batch_of(&mixed);
+        let Column::Values(values) = &batch.columns[0] else { panic!("values: {past}") };
+        assert_eq!(shown(values), shown(&mixed), "{past}");
+        let again = batch_of(&narrow);
+        assert!(matches!(again.columns[0], Column::Ints(_)), "the batch after {past} is of integers again");
+        assert_eq!(shown(again.values(0)), shown(&narrow));
+    }
+    let short = RecordFormat::new(&[DataType::varying(4)]);
+    let mut record = Vec::new();
+    short.encode(&vec![Value::Char("abc".into())], &mut record).unwrap();
+    let mut numbers = Gathering::new(&wide, &[0]);
+    assert_eq!(numbers.push((&short, &record), &mut fetch, None).err().map(|e| e.code), Some(Code::Corrupt), "a field of 3 bytes");
 }

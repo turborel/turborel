@@ -826,6 +826,7 @@ verification approach DO-178C expects (§8).
 | D1281 | A sort's first rows over a pair of groupings are taken from the second's table of each partition |
 | D1282 | The runs that merge and finish a grouping's partitions lead their reader by every partition |
 | D1285 | A group's column of a wide exact type whose values 64 bits hold is written in 8-byte fields |
+| D1286 | A wide exact column is gathered from records as integers while 64 bits hold its values |
 | D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
 | D1288 | A join key that is a whole number of 64 bits is hashed by itself, and any other number by its nearest `f64` |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
@@ -14054,8 +14055,10 @@ constant, as any other of 16 bytes, and its values are read as values,
 not integers (`types::narrow_scale`), by a scan, a scan's judging and
 the row store's gathering. A column of 18 digits or fewer is kept and
 read as before. A group's column of such a type whose values 64 bits
-hold is written in 8-byte fields since D1285, and a chunk of 16-byte
-fields whose values 64 bits hold is read as integers since D1287.
+hold is written in 8-byte fields since D1285, a chunk of 16-byte fields
+whose values 64 bits hold is read as integers since D1287, and the row
+store gathers such a column as integers while they hold its values
+since D1286.
 
 #### D699. A batch computes exact numbers in 64 bits, and a batch with a result past 18 digits by rows in 128
 
@@ -23934,6 +23937,24 @@ records and every key keep 16 bytes (D698).
 The column's declared type is not changed and nothing reads the width
 to tell a type. A value's digits are judged against the declared
 precision as it is stored, as before.
+
+#### D1286. A wide exact column is gathered from records as integers while 64 bits hold its values
+
+The row store's batches, and those of the column store's rows not yet
+frozen, are gathered from records a field at a time (D31). A column of
+19 to 38 digits, whose record keeps 16 bytes (D698), was gathered as
+values, each made of its field, whatever it held.
+
+Such a column is now gathered into integers (`storage::Ints`) at the
+type's scale while 64 bits hold each row's units
+(`rows/gathered.rs`). At the first row of a batch that passes 64 bits
+the batch's vector becomes values, the rows before it made values with
+their nulls, and the rest of the batch follows as values. No value is
+cut. The next batch starts as integers again, so one wide value costs
+its batch alone. Records and keys are not changed.
+
+A column may so reach an operator as integers in one batch and as
+values in the next, as a frozen column does by its chunks (D1287).
 
 #### D1287. A chunk of 16-byte fields whose values 64 bits hold is read as integers
 
