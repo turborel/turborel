@@ -122,6 +122,7 @@ impl Passes {
                 split: Arc::clone(&b.split),
                 steps: b.steps.iter().map(|s| self.swapped(s, (&keep, &table))).collect(),
                 scanned: b.scanned.clone(),
+                vets: b.vets,
             })
             .collect::<Vec<_>>();
         let batched =

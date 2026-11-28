@@ -43,7 +43,7 @@ const SHIFTED: &str = "rewrites::shifted::sums_of_a_value_and_a_constant_share_i
 const UNSHIFTED: &str = "rewrites::shifted::sums_that_could_differ_are_left";
 
 /// Mechanisms whose removal must fail the rewrites' requirements.
-pub const REWRITES: [Mutation; 40] = [
+pub const REWRITES: [Mutation; 41] = [
     Mutation {
         name: "rewrites-hoisting-unregistered",
         package: Package::Core,
@@ -442,6 +442,16 @@ pub const REWRITES: [Mutation; 40] = [
         original: "if let Some(at) = kept.iter().position(same) {",
         replacement: "if let Some(at) = kept.iter().position(same).filter(|_| false) {",
         integration: &[SHIFTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "transitivity-slot-not-passed-on",
+        package: Package::Core,
+        breaks: "a column equal to one compared with a `?` is not given it, so plans with slots and with values differ (D1323)",
+        file: "src/optimizer/transitivity.rs",
+        original: "        (Expr::Column(i), Expr::Dynamic(slot)) => (*i, *op, right, Held::Place(slot.index)),",
+        replacement: "        (Expr::Column(_), Expr::Dynamic(_)) => return None,",
+        integration: &["equated_joins::a_column_equal_to_a_parameter_gives_its_equal_the_comparison"],
         unit: &[],
     },
 ];

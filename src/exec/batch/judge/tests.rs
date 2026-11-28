@@ -502,6 +502,47 @@ fn a_comparison_unpadded_is_judged_over_texts_in_place() {
     assert!(!matches!(other.as_slice(), [Judged::Unpadded(..)]), "{other:?}");
 }
 
+/// Verifies: [X3.135-1986 §5.14 GR4, GR5] [DESIGN] RULES.md D1316, D1119:
+/// a LIKE over texts given as codes of entries keeps the rows the same
+/// texts given plain keep, and those its judgment of their values keeps,
+/// a null never: of a piece between two `%`s, the entries searched at
+/// once, and of a prefix; of every row, of rows given no fewer than the
+/// entries, and of fewer rows than entries, each row's text then judged
+/// alone. MC/DC of the entries judged: as many rows asked as entries
+/// (the entries) against one fewer (the rows).
+#[test]
+fn a_like_over_entries_keeps_the_rows_their_texts_keep() {
+    let words = ["abc", "xbx", "", "é b", "b", "none", "abc", "bb"];
+    let (mut text, mut ends) = (String::new(), Vec::new());
+    for w in words {
+        text.push_str(w);
+        ends.push(text.len());
+    }
+    let entries = Arc::new(crate::storage::Texts::new(text, ends, None));
+    let entry_of_row: Vec<u32> = vec![0, 1, 2, 3, 4, 5, 6, 7, 1, 5, 0, 2];
+    let nulls: Vec<bool> = (0..entry_of_row.len()).map(|n| n == 3 || n == 9).collect();
+    let (mut row_text, mut row_ends) = (String::new(), Vec::new());
+    for (&code, &null) in entry_of_row.iter().zip(&nulls) {
+        row_text.push_str(if null { "" } else { words[index(code)] });
+        row_ends.push(row_text.len());
+    }
+    let plain = crate::storage::Texts::new(row_text, row_ends, Some(nulls.clone().into()));
+    let coded = crate::storage::Texts::coded(crate::storage::Coded { codes: entry_of_row, entries }, Some(nulls.into()));
+    let all: Vec<u32> = rows_of(0..plain.len());
+    let overs: [Option<&[u32]>; 5] = [None, Some(&all), Some(&[0, 3, 5, 8, 9, 11]), Some(&[2]), Some(&[])];
+    for pattern in ["%b%", "%bc%", "a%", "%", "%é b%"] {
+        let j = Judged::Like(0, constant_pattern(&Value::Char(pattern.into()), None).unwrap());
+        for over in overs {
+            let by_values: Vec<u32> = over.unwrap_or(&all).iter().copied().filter(|&n| j.keeps(&plain.values()[index(n)])).collect();
+            assert_eq!(texts::kept(&j, &plain, over, &Portable).as_ref(), Some(&by_values), "{pattern} of {over:?}");
+            assert_eq!(texts::kept(&j, &coded, over, &Portable).as_ref(), Some(&by_values), "{pattern} of {over:?}, coded");
+        }
+    }
+    let held = coded.coded.as_deref().unwrap();
+    assert!(texts::by_entries(held, &coded, None) && texts::by_entries(held, &coded, Some(&all[..8])), "entries no more than the rows");
+    assert!(!texts::by_entries(held, &coded, Some(&all[..7])), "more entries than the rows asked");
+}
+
 /// Verifies: [EXTENSION] [ISO/IEC 9075-2:2023 §4.3.2] (RULES.md D1183) a
 /// comparison judged unpadded keeps, of texts and of a dictionary's, the
 /// rows whose octets hold to the constant's: a prefix below, a trailing

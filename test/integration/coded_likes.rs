@@ -5,11 +5,10 @@
 //! the scan gives, and where it gives way to the filter.
 
 use turborel::db::{Database, Session};
-use turborel::params::Params;
 use turborel::threads::JobPolicy;
 use turborel::value::{Decimal, Value, like};
 
-use crate::common::{exec, rows};
+use crate::common::{exec, rows, scanned};
 
 /// The rows written to each table, six groups of the column store's.
 const MANY: usize = 12_288;
@@ -78,14 +77,6 @@ fn modeled(pattern: &str, escape: Option<char>, not: bool, also: impl Fn(usize) 
 /// The keys K of the rows `keeps` is true of.
 fn keys(keeps: impl Fn(usize) -> bool) -> Vec<String> {
     (0..MANY).filter(|&k| keeps(k)).map(|k| k.to_string()).collect()
-}
-
-/// The rows the scan of `sql` gave, as EXPLAIN ANALYZE counts them.
-fn scanned(s: &Session, sql: &str) -> usize {
-    let analyzed = s.analyzed(sql, &Params::new()).unwrap();
-    let scan =
-        analyzed.operators.iter().find(|o| o.label.starts_with("SeqScan")).unwrap_or_else(|| panic!("no scan in\n{}", analyzed.text));
-    usize::try_from(scan.rows).unwrap()
 }
 
 /// The ways a filter over a scan runs: by batches, a row at a time, and
@@ -169,7 +160,9 @@ fn a_like_is_judged_by_the_scan_before_other_columns_are_decoded_5_14() {
 /// column, whose strings are padded as they are read. So does a LIKE
 /// that keeps most rows, which the scan stops judging as it sees each
 /// run is given whole. EXPLAIN ANALYZE shows the scan giving every row
-/// of the table for each.
+/// of the table for each it does not judge, and of the one it stops
+/// judging the rows the bounds of its prefix keep, which leave out the
+/// nulls (RULES.md D1266).
 #[test]
 fn a_like_the_scan_cannot_judge_gives_way_to_the_filter_8_5() {
     let (db, a) = tables();
@@ -184,6 +177,10 @@ fn a_like_the_scan_cannot_judge_gives_way_to_the_filter_8_5() {
     for (predicate, wanted) in &cases {
         every_way(&db, &format!("SELECT K FROM {{t}} WHERE {predicate} ORDER BY K"), wanted);
         let given = scanned(&a, &format!("SELECT K, P FROM C WHERE {predicate}"));
-        assert_eq!(given, MANY, "the scan gave every row for the filter to judge {predicate}");
+        if predicate.starts_with("U LIKE 'http") {
+            assert!(wanted.len() <= given && given < MANY, "the scan gave the rows its bounds kept of {predicate}: {given}");
+        } else {
+            assert_eq!(given, MANY, "the scan gave every row for the filter to judge {predicate}");
+        }
     }
 }

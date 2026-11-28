@@ -6,6 +6,7 @@
 use turborel::db::{Database, Session};
 use turborel::optimizer::PREDICATE_TRANSITIVITY;
 use turborel::params::Params;
+use turborel::physical::plannings;
 use turborel::value::{DataType, Spelled};
 
 use crate::common::{number, set_rule, sorted};
@@ -75,4 +76,35 @@ fn columns_equal_to_one_parameter_join_by_an_index() {
     let plan = a.physical_plan(&apart, &Params::new()).unwrap();
     assert!(plan.contains("IndexNestedLoop") && plan.contains("L.I, 2"), "{plan}");
     assert_eq!(sorted(&a, &apart), sorted(&a, &apart.replace("S.I = L.I", "S.I + 0 = L.I")));
+}
+
+/// Verifies: [DESIGN] RULES.md D1323, D404, D761, D45, a column compared
+/// with a `?` and equal to a column of another table gives that column the
+/// same comparison, as a constant does: the stock level with its warehouse
+/// given once, by a parameter, fixes S's warehouse in the plan made with
+/// its slots as in the one made with its values. So it learns its plan in
+/// the five runs learning takes and plans nothing after: the first run
+/// binds it and plans it with its values, the second tries it with its
+/// slots and begins learning, and it and the next four each plan it twice.
+/// With the `?` not passed on, the two plans never agree and it plans at
+/// every execution.
+#[test]
+fn a_column_equal_to_a_parameter_gives_its_equal_the_comparison() {
+    let (_db, a) = stock();
+    let level = "SELECT COUNT(DISTINCT S.I) FROM L, S
+        WHERE L.W = ? AND L.D = ? AND L.O < 25 AND L.O >= 5 AND S.W = L.W AND S.I = L.I AND S.Q < ?";
+    let p = a.prepare(level).unwrap();
+    let runs: Vec<u64> = (0..30_i64)
+        .map(|k| {
+            let before = plannings();
+            let counted = a.open_prepared(&p, &[number(1), number(1 + k % 10), number(10 + k % 10)]).unwrap().fetch().unwrap();
+            assert!(counted.is_some());
+            plannings().wrapping_sub(before)
+        })
+        .collect();
+    let learning = runs.iter().skip(1).take_while(|&&n| n > 0).count();
+    assert_eq!((learning, &runs[..=learning]), (5, &[1, 3, 2, 2, 2, 2][..]), "{runs:?}");
+    assert!(runs[learning + 1..].iter().all(|&n| n == 0), "{runs:?}");
+    let mut opened = a.open_prepared(&p, &[number(1), number(3), number(15)]).unwrap();
+    assert_eq!(opened.fetch().unwrap().map(|r| vec![r[0].to_string()]), Some(sorted(&a, LEVEL)));
 }

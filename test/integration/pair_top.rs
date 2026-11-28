@@ -153,6 +153,9 @@ fn the_first_rows_of_a_sort_over_a_pair_are_the_plans() {
 #[test]
 fn an_analyzed_sort_over_a_pair_takes_its_first_rows_from_the_seconds_tables() {
     let (_db, a) = tables();
+    // The select list's constant stays below the FETCH FIRST, where its
+    // rows are counted (RULES.md D1306).
+    exec(&a, "SET OPTIMIZER.COMPUTE_AFTER_FETCH_FIRST = 'OFF'").unwrap();
     let groups = number(&a, "SELECT COUNT(*) FROM (SELECT G FROM C GROUP BY G) AS X");
     for sql in [
         "SELECT 1, G, COUNT(DISTINCT N) FROM C GROUP BY G ORDER BY 3 DESC FETCH FIRST 5 ROWS ONLY",
@@ -181,6 +184,9 @@ fn an_analyzed_sort_over_a_pair_takes_its_first_rows_from_the_seconds_tables() {
 #[test]
 fn a_sort_over_a_pair_no_partition_makes_in_a_table_reads_every_group() {
     let (_db, a) = tables();
+    // The select list's constant stays below the FETCH FIRST, where its
+    // rows are counted (RULES.md D1306).
+    exec(&a, "SET OPTIMIZER.COMPUTE_AFTER_FETCH_FIRST = 'OFF'").unwrap();
     let groups = number(&a, "SELECT COUNT(*) FROM (SELECT G FROM C GROUP BY G) AS X");
     let kept = number(&a, "SELECT COUNT(*) FROM (SELECT G FROM C GROUP BY G HAVING COUNT(DISTINCT N) > 2) AS X");
     let counts = number(&a, "SELECT COUNT(*) FROM (SELECT X.M FROM (SELECT G, COUNT(N) AS M FROM C GROUP BY G) AS X GROUP BY X.M) AS Y");

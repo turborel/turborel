@@ -61,7 +61,7 @@ impl Typed {
     ///
     /// # Errors
     ///
-    /// SQLCODE -901 if the bytes are not such states, or not of `agg`.
+    /// SQLCODE -916 if the bytes are not such states, or not of `agg`.
     pub(in crate::exec::table) fn read(reader: &mut Reader<'_>, len: usize, agg: &AggCall) -> Result<Typed> {
         // A part's column is its function's (RULES.md D1186).
         let own = || Typed::of(agg.func.0.columnar().map(|c| c.0), &agg.result).or_else(|| Typed::best(agg));
