@@ -443,8 +443,9 @@ fn a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie() {
     let how = How { forced: NONE, widen: Widen::read_as_they_lie(5), ..How::default() };
     assert_eq!(differing(&waved(&a, sql, &how, 3), &waved(&a, sql, &never, 3)), None);
     assert_eq!(how.widen.merged.load(Ordering::Relaxed), 0, "every group is read, and a partition went wide");
-    let by_group =
-        |how: &How| first_rows_as(&a, sql, how, |functions, db| Top::by_function((1, functions), (1, 7), (db, NO_TRANSACTION)).by_group());
+    let by_group = |run_as: &How| {
+        first_rows_as(&a, sql, run_as, |functions, db| Top::by_function((1, functions), (1, 7), (db, NO_TRANSACTION)).by_group())
+    };
     assert_eq!(by_group(&how), by_group(&never));
     assert_eq!(how.widen.merged.load(Ordering::Relaxed), 0, "a sort by a grouping column reads a table, and a partition went wide");
     assert_eq!(first_rows(&a, sql, &how, (1, 7)), first_rows(&a, sql, &never, (1, 7)));
