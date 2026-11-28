@@ -5,6 +5,7 @@ use super::*;
 use crate::value::{Decimal, Spelled};
 
 mod pinned;
+mod timing;
 mod truncated;
 mod wide;
 

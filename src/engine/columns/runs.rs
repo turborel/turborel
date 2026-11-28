@@ -164,6 +164,25 @@ impl<'a> Runs<'a> {
     /// before makes none. The values are then written a line a run
     /// (`spread`). None, with `out` as it was, if the runs are not those
     /// of the positions.
+    /// Timing only, never merged: the expansion as it was before D1315.
+    pub(super) fn ints_old(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
+        if to > self.count || from >= to {
+            return (from == to).then_some(());
+        }
+        let (first, last) = (self.run_of(from)?, self.run_of(to.checked_sub(1)?)?.checked_add(1)?);
+        let (mut values, mut run_ends) = (Vec::with_capacity(last.saturating_sub(first)), Vec::with_capacity(last.saturating_sub(first)));
+        unpack_words(self.values, (self.bits, self.least), (first, last), &mut values)?;
+        unpack_words(self.ends, (bits_for(u64::try_from(self.count).ok()?), 0), (first, last), &mut run_ends)?;
+        out.reserve(to.checked_sub(from)?);
+        let mut at = from;
+        for (&value, &end) in values.iter().zip(&run_ends) {
+            let end = usize::try_from(end).ok()?.min(to);
+            out.resize(out.len().checked_add(end.checked_sub(at)?)?, value);
+            at = end;
+        }
+        (at == to).then_some(())
+    }
+
     pub(super) fn ints_ends(
         &self,
         (from, to): (usize, usize),
