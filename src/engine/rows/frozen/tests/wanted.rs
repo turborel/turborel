@@ -49,3 +49,34 @@ fn headers_are_read_for_the_columns_read() {
     assert_eq!(held(&only)[1], Some(vec![true, true]), "read again for the column fetched");
     only.retire_all().unwrap();
 }
+
+/// Verifies: [DESIGN] RULES.md D1314 the listing of a table's bytes by
+/// column reads every group's header for every column and holds none of
+/// them. A table opened again and scanned of one column holds each
+/// header read for that column alone, before the listing and after it,
+/// the cache's bytes and headers the same, though the listing told the
+/// other column's chunks too. A table none of whose headers is held
+/// holds none after it. And a header held for every column is taken as
+/// it is held, the listing the same.
+#[test]
+fn a_listing_of_a_tables_bytes_holds_no_header() {
+    let (_, files) = files();
+    let (table, _) = table(&files, 0, 5000);
+    ended(&table, 1);
+    let cold = TableFiles { headers: Arc::default(), ..files.clone() };
+    let opened = Arc::new(RowTable::open(&cold, table.meta(), &TYPES, options(0)).unwrap());
+    assert_eq!(Arc::clone(&opened).scan_batches(NO_TRANSACTION, &[0], None, &[]).map(|b| b.unwrap().rows).sum::<usize>(), 5000);
+    let before = (held(&opened), cold.headers.held());
+    assert_eq!(before.0, [Some(vec![true, false]), Some(vec![true, false])], "the first column alone");
+    let listed = opened.measured(true).unwrap();
+    assert!(listed.columns.iter().any(|c| c.column == 1 && c.chunks.is_some()), "the other column's chunks told");
+    assert_eq!((held(&opened), cold.headers.held()), before, "what was held is held, and no more");
+    let fresh = TableFiles { headers: Arc::default(), ..files.clone() };
+    let only = RowTable::open(&fresh, table.meta(), &TYPES, options(0)).unwrap();
+    assert_eq!(only.measured(true).unwrap().columns, listed.columns);
+    assert_eq!(fresh.headers.held(), (0, 0), "none held, none read to be held");
+    let whole = files.headers.held();
+    assert_eq!(whole.1, 2, "the headers written, held for every column");
+    assert_eq!(table.measured(true).unwrap().columns, listed.columns);
+    assert_eq!(files.headers.held(), whole);
+}

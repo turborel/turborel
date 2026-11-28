@@ -30,6 +30,7 @@ use super::hash::canonical;
 mod written;
 pub(super) use written::written_alone;
 mod columns;
+mod placed;
 mod texts;
 mod words;
 use texts::Chunks;

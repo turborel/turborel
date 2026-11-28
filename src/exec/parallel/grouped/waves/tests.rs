@@ -172,6 +172,30 @@ fn the_groups_are_the_same_whichever_morsels_hand_their_rows_on_ungrouped() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1313, D1260 rows handed on ungrouped,
+/// written once by partition, give the groups the morsels' tables give,
+/// in the same order, each set function the same value: of a key of an
+/// integer and a character string, of rows a filter kept some of each
+/// batch of, of every morsel, every other and the first half alone;
+/// split among the partitions and handed whole to the statement's
+/// thread; held by the grant and through the spill.
+#[test]
+fn rows_written_by_partition_give_the_groups_the_tables_give() {
+    let (db, a) = table();
+    let named: [Named; 3] = [("every morsel", EVERY), ("every other", Some(|m| m.is_multiple_of(2))), ("the first half", Some(|m| m < 12))];
+    let sql = "SELECT G, S, COUNT(*), SUM(V), MAX(K), MIN(P) FROM (SELECT MOD(K, 9000) AS G, P AS S, K, V, P FROM T WHERE MOD(K, 4) <> 1) AS Q \
+               GROUP BY G, S";
+    set(&db, "MEMORY.WORK_BYTES", HELD);
+    let expected = waved(&a, sql, &How { forced: NONE, apart: NONE, ..How::default() }, 3);
+    // Of 9,000 values of G, a fourth have no row the filter keeps.
+    assert_eq!((expected.rows.len(), expected.spills), (6750, 0));
+    for (grant, (which, apart), (forced, _)) in ways(&named) {
+        set(&db, "MEMORY.WORK_BYTES", grant);
+        let made = waved(&a, sql, &How { forced, apart, ..How::default() }, 3);
+        assert_eq!(differing(&made, &expected), None, "{which}, a grant of {grant}, {} spills", made.spills);
+    }
+}
+
 /// Where the rows of `made` first differ from those of `expected`, told
 /// shortly: how many each holds, and the first row of `made` that is not
 /// the row `expected` holds there. None if they are the same rows.

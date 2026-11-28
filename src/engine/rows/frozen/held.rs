@@ -1,5 +1,12 @@
 //! \[DESIGN\] (RULES.md D1173) A group's header as the table holds it,
 //! read for the columns its reader asks for (`group/wanted.rs`).
+//!
+//! \[DESIGN\] (RULES.md D1314) A reader that passes over every group
+//! once for every column, as the listing of a table's bytes does, holds
+//! none of the headers it reads (`group_passed`). Read for every column a
+//! header is many times one a scan holds, and a table's together may pass
+//! the cache's bound, so held they would take the place of the headers
+//! the scans read again and again.
 
 use std::sync::Arc;
 
@@ -30,5 +37,21 @@ impl RowTable {
         let group = Arc::new(group::read(&self.pages_of(entry)?, entry.summary.header, self.format.types(), all.as_deref())?);
         self.headers.put(entry.header_key(), &entry.slot, &group);
         Ok(group)
+    }
+
+    /// \[DESIGN\] (RULES.md D1314) The group of `entry` with every
+    /// column's chunks, for a reader that passes over the table once. Its
+    /// header as held if it was read for every column, not counted as a
+    /// read of it, else read and not held, so the cache holds after the
+    /// pass what it held before it.
+    ///
+    /// # Errors
+    ///
+    /// As `group::read`.
+    pub(in crate::engine::rows) fn group_passed(&self, entry: &Entry) -> Result<Arc<Group>> {
+        if let Some(group) = entry.slot.peek().filter(|g| g.holds(None)) {
+            return Ok(group);
+        }
+        Ok(Arc::new(group::read(&self.pages_of(entry)?, entry.summary.header, self.format.types(), None)?))
     }
 }

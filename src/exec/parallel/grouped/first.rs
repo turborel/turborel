@@ -61,7 +61,7 @@ pub(super) fn told(plan: &Plan, (db, tx): (&Db, TxId)) -> Result<Vec<Told>> {
     }
     let seed = db.functions.seed().unpadded(&unpadded);
     let (read, runner) = (Read { unpadded, ..read }, Runner::new(db, tx));
-    let mut table = morsel_groups(&read, &[], pipeline.morsel_kept(0, (db, tx))?, (&runner, 0, &seed), (*first, false))?;
+    let mut table = morsel_groups(&read, &[], pipeline.morsel_kept(0, (db, tx))?, (&runner, 0, &seed), (*first, None))?;
     if table.len() < *first {
         return Ok(Vec::new());
     }

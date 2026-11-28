@@ -848,6 +848,8 @@ verification approach DO-178C expects (§8).
 | D1312 | A search stops where nothing can match, compares a straight run at once, and keeps no mark of a program of few ways |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
+| D1313 | Rows handed on ungrouped are written once, each where its partition's run lies |
+| D1314 | The listing of a table's bytes holds none of the headers it reads |
 
 ### The project
 
@@ -23514,7 +23516,8 @@ The morsels of such a grouping now hand their rows on ungrouped
 (`exec/batch/groups/morsel.rs`, `rows_apart`). Each row is made a group
 of its own: its key appended, its hash kept, its first row its own
 number, its set functions fed its one row. No group is looked for and no
-slot is taken (`exec/table.rs`, `appended`). What is handed on has the
+slot is taken (`exec/table/made/apart.rs`, D1313, which writes each row
+once where it is handed over). What is handed on has the
 form a morsel's groups always had, so the partitions merge it, hold it
 and spill it as before, and a key the morsel held twice is merged there.
 The groups, their order and their results are unchanged. Only where a
@@ -25470,6 +25473,170 @@ was fixed that week, and lint baselines and over-long files were paid down.
   M. E. Kounavis and F. L. Berry, *A Systematic Approach to Building High
   Performance Software-based CRC Generators* (2005); D. V. Sarwate,
   *Computation of Cyclic Redundancy Checks via Table Look-Up* (1988).
+
+#### D1300. A partition of a grouping that holds many groups adopts them where its morsels put them
+
+A grouping run in parallel merges each partition's groups into a table
+of the partition's own (D356, D1110). Every new group is copied there
+out of the groups its morsel handed over (`exec/table/made.rs`), key,
+first row's number and states, and found again through the table's
+slots. For a partition of many groups, most of them new, that copy and
+those slots are most of what a group costs to merge, and while a wave is
+merged its groups are held twice, in the Mades and in the tables.
+
+A partition whose table holds more groups than a cache keeps close goes
+wide (`exec/table/made/wide.rs`, `exec/parallel/grouped/waves/wide.rs`).
+A wide partition copies nothing of a new group. It keeps the Mades it
+was handed, shared as they were, and of each group its hash and where
+the group lies, the Made and the place of its first row. A Made is never
+written once its morsel's thread has made it, so any thread may read it,
+and a group that takes a second row cannot merge it there. The first
+time a row meets a group held already, the group is taken up into a
+table of the partition's own, and that row and every later one merge
+there. A group of one row has no state but the Made's. A group is taken
+up alone, its key appended and each state of its first row merged into
+one fed nothing, and the table of its own gives no group a slot, as the
+partition's slots find a group wherever it lies and no key is ever
+looked up there.
+
+The groups, their order and each set function's result are those of the
+table the partition would have merged. A wave holds its Mades in the
+morsels' order and a Made holds a partition's rows in the morsel's, so
+the first row of a group to be looked up is its first row, and the
+groups listed are in the order of their first rows. A group taken up is
+given the states of its first row and then those of its later rows in
+the order they come, which is the order a table merges them in, so a
+state that depends on that order is the same: the least of strings
+equal as padded, the value of a group's first row. A sum of approximate
+numbers writes no state and is not merged at all (D53).
+
+A partition goes wide by its table's own count of groups after a Made
+is merged, never by a count handed nor an estimate, and stays wide for
+the rest of the statement. A grouping whose partitions hold few groups,
+though many are handed them, is merged as before. Which morsels a wave
+holds may differ from one run to the next, as before, and nothing a
+statement returns depends on it.
+
+Between waves a wide partition is kept as it is and charged its share
+of each Made it adopted, the hashes and places of its groups and its own
+table. A sort's first rows by set functions alone (D1256) are picked
+where the groups lie: the sort keys' results are made a Made at a time,
+each as a table makes a new group's, the Made's state merged into one
+fed nothing, so no value differs from a table's; one top-N takes them
+with the partition's own table's, so as many rows are kept as of a
+table; and only the groups picked are made rows, no key copied. Every
+other reader reads a table, so a wide partition is gathered into one
+for it, each group taken up from where it lies in the order of the
+first rows, as it is before it is written to the spill, whose form is
+unchanged. A wide partition whose probe
+grows long places its groups by keyed hashes, each key read where its
+group lies (D357).
+
+Unit tests merge the same Mades into a table and into a partition that
+goes wide before its first Made, after its first and after its second,
+frozen between two Mades or not, and compare every group, first row and
+state, and run groupings with their partitions forced wide against the
+same not wide, held by the grant, through several waves and through the
+spill, and compare the first rows a sort by a count, a sum and a
+greatest value keeps of wide partitions with those it keeps of tables.
+
+A partition goes wide only of a grouping whose reader reads the groups
+where they lie: the first rows of a sort, and no second grouping over
+it. Whatever else reads a partition reads a table, and a wide partition
+gathered into one for it writes every group a second time, which costs
+what the merge into a table would have and the adoption besides, as a
+grouping under a HAVING condition showed when its partitions went wide.
+So the rule is the reader's, not a count of groups
+(`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
+which goes wide whatever reads, is what the tests of the gathered table
+ask.
+
+#### D1313. Rows handed on ungrouped are written once, each where its partition's run lies
+
+A morsel whose rows a table would not reduce hands each row on as a
+group of its own (D1260), in the form a morsel's groups always had, a
+partition's groups one after another (D1110). It made that form in two
+steps. Each row's key, hash, first row's number and states were appended
+in the order the rows came, a row at a time and a key through its cell.
+Then every column was gathered into the partitions' order. So each group
+was written twice and read once between, and of a grouping of a group a
+row that was most of what the morsels did beside reading their rows.
+
+The morsel now learns where each row lies before it writes any
+(`exec/batch/groups/morsel.rs`, `rows_apart`; `exec/table/made/apart.rs`).
+It holds its batches, which are smaller than what it hands over, and
+hashes each batch's keys a vector at a time, as before. It counts the
+rows of each partition over the morsel's hashes, and gives each row its
+place, after the rows before it of its partition and after the
+partitions before. Then each column is made at its size and each row's
+value written at its place. The hashes and the first rows' numbers are
+written so. A key lane of integers of one scale is written straight from
+the batches' vectors, and a lane of any other type takes its values one
+at a time in the order of the places, as a table's lane takes them
+(`exec/table/keys/placed.rs`). The states are grown once to the rows'
+count and fed each batch's rows with their places as their groups, by
+the feed every table uses, so every kind of state is fed as it was.
+
+What is handed over is what the two steps gave. A partition's rows lie
+in the order they came, their places count from zero, and the Made says
+that two of its groups may hold one key. The partitions merge it, adopt
+it (D1300), hold it and spill it as before, and the groups, their order
+and each set function's value are unchanged, of sums of approximate
+numbers too, as each partition still takes a key's rows in the order
+they came.
+
+Of a pair of groupings the partitions are of the hashes of the second's
+columns alone (D1113). Those are hashed a vector at a time too
+(`exec/table/hash.rs`, `hash_lanes`), each lane as the column of the key
+it is, so a row's partition is the one its group takes of a morsel that
+made a table.
+
+A table written by partition says by how many partitions and by which
+lanes. Handed over by those it is frozen as it lies. Asked for others it
+is gathered as any table is. A morsel named to be handed whole to the
+statement's thread is frozen whole, and the table there merges a key's
+rows in the order they came, as that order holds within a partition and
+a key lies in one.
+
+No constant is added and none changed. A morsel holds its batches until
+it hands over, which a morsel of a join that makes many rows of each
+holds too. They are less than the table it held before and the gathered
+copy of it together.
+
+#### D1314. The listing of a table's bytes holds none of the headers it reads
+
+A group's header is held by its entry of the directory, read for the
+columns its readers asked for, and the cache bounds the bytes of the
+headers held (D1090, D1173). A scan asks for the few columns it reads,
+so the headers the scans of a table hold are small beside the table's
+whole headers. The listing of a table's bytes by column
+(INFORMATION_SCHEMA.COLUMN_STORAGE, D1165) asks every group for every
+column, as it tells every column's chunks. It read each header whole
+and held it, as a scan holds what it reads.
+
+Of a table of a hundred columns and many groups the whole headers
+together pass the cache's bound, a 64th of the memory budget. So the
+listing gave up the headers the scans held, group after group, to hold
+whole ones it would not read again, and the scans after it read their
+headers again. A profile of groupings of such a table taken after a
+listing showed a header read for about every group in each of three
+statements running. The same statements in a session with no listing
+showed none after each column's first use, and a session of scans alone
+showed them read again once after a listing.
+
+The listing now reads through (`engine/rows/frozen/held.rs`,
+`group_passed`). A header held for every column is taken as it is held,
+without counting as a read of it. Any other is read for every column
+and let go when the group is told, never put in the cache, so the cache
+holds after a listing what it held before it. The listing reads the
+first bytes of every chunk as well, which is far more than its headers,
+so reading them each time costs it little.
+
+The bound itself is left as it is. The headers the scans of that table
+hold together stay well within it, and no reader but one that walks a
+whole table for every column brought them near it. The other readers
+of whole headers take the groups they rewrite or sample, a few at a
+time.
 
 #### D447. A unique constraint added in a transaction fills its index with every version
 
