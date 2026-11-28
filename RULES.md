@@ -24781,8 +24781,15 @@ argument of the DISTINCT set function.
   first row of each run alone. A group is numbered by its first row,
   which is a run's first, and takes every row of the run in order, so
   the groups, their order and each set function's value are unchanged.
-  A grouping by batch whose keys are all codes of dictionaries takes
-  each row by its codes (D1161) and asks no run.
+- A grouping by batch whose keys are all codes of dictionaries takes
+  each row by its codes (D1161), and must follow no run. A row taken by
+  its code tells the loop that follows runs no group, so a run followed
+  there gives its later rows to the group of the run before, and the
+  grouping counts wrong. Before this decision no run was told of a
+  column of codes, so the two never met. Now runs are told of codes
+  too, for a key of codes and other columns, and where rows are taken
+  by their codes no run is asked. A morsel's rows of such a key never
+  reach the lookup that follows runs (`coded.rs`).
 - Where no row of a batch repeats the one before it, the batch is
   hashed a vector at a time and every row looked up, as before. The
   compare that found none is one pass over each grouping column's
@@ -24799,7 +24806,9 @@ empty strings, of codes and of datetimes, and that a column of another
 kind tells none. An integration test compares groupings whose rows come
 in runs, by batch and in parallel, with the plan run a row at a time,
 a count of distinct values among them, under WHERE and HAVING, of both
-stores, and counts the rows each group took.
+stores, and counts the rows each group took. One of them groups by a
+text the column store gives as codes, in runs, on one thread, which
+fails where runs are followed of rows taken by their codes.
 
 ## 2. Project layout
 
