@@ -35,7 +35,8 @@ fn owned() -> Database {
 /// Verifies: [EXTENSION] [ISO/IEC 9075:1992 §21.1]; [DESIGN] RULES.md
 /// D1165: a column store's frozen columns are shown by the encoding each
 /// chunk got, their chunks, rows, bytes and the pages they take, each
-/// column's rows all the table's; its rows still in its tree are ROW, of
+/// column's rows all the table's, and the lengths lane of a VARCHAR
+/// column beside them as LENGTHS (D1319); its rows still in its tree are ROW, of
 /// no chunk or page, their bytes not known before statistics are gathered;
 /// TABLE_STATISTICS counts the table's bytes, not estimated.
 #[test]
@@ -51,9 +52,15 @@ fn a_column_stores_chunks_are_shown_by_encoding() {
     );
     db.maintain().unwrap();
     let each = "SELECT COLUMN_NAME, SUM(ROW_COUNT), SUM(CHUNKS) >= 2, MIN(BYTES) > 0, SUM(BYTES) <= SUM(PAGE_BYTES), COUNT(*) \
-                FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'G' AND ENCODING <> 'ROW' GROUP BY COLUMN_NAME ORDER BY COLUMN_NAME";
+                FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'G' AND ENCODING NOT IN ('ROW', 'LENGTHS') GROUP BY COLUMN_NAME \
+                ORDER BY COLUMN_NAME";
     assert_eq!(rows(&owner, each).unwrap(), ["K,4096,TRUE,TRUE,TRUE,1", "S,4096,TRUE,TRUE,TRUE,1", "Z,4096,TRUE,TRUE,TRUE,1"], "frozen");
-    let kept = "SELECT COLUMN_NAME, ENCODING FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'G' ORDER BY ORDINAL_POSITION";
+    // [DESIGN] RULES.md D1319: a VARCHAR column's lengths lane is shown apart, of every row, and an integer has none.
+    let lanes = "SELECT COLUMN_NAME, ROW_COUNT, CHUNKS >= 1, BYTES > 0, BYTES <= PAGE_BYTES FROM INFORMATION_SCHEMA.COLUMN_STORAGE \
+                 WHERE TABLE_NAME = 'G' AND ENCODING = 'LENGTHS' ORDER BY COLUMN_NAME";
+    assert_eq!(rows(&owner, lanes).unwrap(), ["S,4096,TRUE,TRUE,TRUE", "Z,4096,TRUE,TRUE,TRUE"], "lanes");
+    let kept = "SELECT COLUMN_NAME, ENCODING FROM INFORMATION_SCHEMA.COLUMN_STORAGE WHERE TABLE_NAME = 'G' AND ENCODING <> 'LENGTHS' \
+                ORDER BY ORDINAL_POSITION";
     let shown = rows(&owner, kept).unwrap();
     assert_eq!(shown.len(), 3, "{shown:?}");
     assert_eq!(shown[2], "Z,CONSTANT", "one value");
