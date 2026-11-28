@@ -326,8 +326,12 @@ impl RowTable {
     }
 
     /// `TableStorage::versions`: the versions not yet readable by all,
-    /// the frozen rows, then each tree entry's versions as of the times.
+    /// the frozen rows, then each tree entry's versions as of the times,
+    /// none before the table's last collection: a horizon given lower, as
+    /// one read while a transaction begins is, would go back to versions
+    /// it released (RULES.md D1322).
     pub(super) fn versions_as_of(self: Arc<Self>, horizon: Timestamp, as_of: Timestamp, columns: &[usize]) -> Rows {
+        let horizon = self.collected_horizon(horizon);
         let keep: Box<dyn Fn(Timestamp, bool) -> bool + Send> = Box::new(move |at, own| if own { at <= as_of } else { at <= horizon });
         let unreadable = self.pending(keep, Some(columns)).map(|read| read.map(|(id, row, _)| (id, row)));
         let frozen = match self.frozen.directory() {

@@ -318,6 +318,13 @@ impl Clock {
 
     /// The oldest snapshot of an open transaction, or with none open, the
     /// durable timestamp: no transaction reads before it.
+    ///
+    /// A transaction beginning, or moving to a new snapshot, holds its
+    /// stripe's oldest at 0 until its snapshot is taken, so that no horizon
+    /// read meanwhile passes it. A horizon can so be read below one read
+    /// before it. A collection given one only collects less, but a walk of
+    /// versions outside any transaction raises it to its table's collected
+    /// horizon (RULES.md D1322).
     pub(super) fn horizon(&self) -> Timestamp {
         let durable = self.durable.load(Ordering::SeqCst);
         self.stripes.iter().map(|s| s.oldest.load(Ordering::SeqCst)).fold(durable, u64::min)

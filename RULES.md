@@ -847,6 +847,7 @@ verification approach DO-178C expects (§8).
 | D1311 | The matcher that marks does a step's work once a step |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
+| D1322 | An index filled beside writers reads no version before its table's last collection |
 
 ### The project
 
@@ -25130,6 +25131,30 @@ displacements, and a spread of a fixed seed. No datetime holds a leap
 second, so none is among them. An integration test holds queries of
 both engines, in sessions of three displacements, to the rows they give
 a row at a time.
+
+#### D1322. An index filled beside writers reads no version before its table's last collection
+
+An index built beside writers (D27, D443) is filled from the table's
+versions, read outside any transaction. It is given an entry for each
+version a reader at or after a horizon may still read, and the fill read
+that horizon from the clock as it began. The build collects its table
+just before (D920). A transaction beginning, or moving to its next
+snapshot, holds its stripe's oldest at 0 until its snapshot is taken, so
+that no horizon read meanwhile passes it. A horizon read in that window
+is 0, and one read just after a begin that took the durable timestamp
+before the build's collection can be below that collection's too. The
+fill took every version committed after it for one a reader may read,
+went back past them to versions the collection had released, and CREATE
+INDEX failed (SQLCODE -916). It was seen once in some ten thousand runs
+of a build beside updates.
+
+The walk of a table's versions now raises the horizon it is given to the
+latest one the table was collected at (`RowTable::versions_as_of`), as
+a maintenance pass's reads do (`RowTable::unpinned`). Every version a
+reader could read before it is collected, and collection has reported
+each removed, so the index needs no entry for it. The clock keeps its 0,
+which only makes a collection collect less. A scan's pruning of index
+entries keeps the highest horizon it has read, not the last.
 
 ## 2. Project layout
 

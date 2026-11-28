@@ -36,12 +36,13 @@ impl Pruning {
 
     /// Takes back the entry of row `id` under `key` if the read that found
     /// no row found it `gone`, a deletion committed at or before the
-    /// horizon: whether it did. The horizon only moves on, as a snapshot
-    /// taken later is never before it, so one read before stays true.
+    /// horizon: whether it did. A snapshot taken later is never before the
+    /// horizon, so one read before stays true, and a horizon read lower,
+    /// as one is while a transaction begins (`txn/clock.rs`), is not kept.
     pub(in crate::exec) fn prune(&mut self, gone: Option<Timestamp>, key: &Key, id: RowId) -> bool {
         let Some(at) = gone else { return false };
         if at > self.horizon {
-            self.horizon = self.tx.horizon();
+            self.horizon = self.horizon.max(self.tx.horizon());
         }
         if at > self.horizon {
             return false;

@@ -24,6 +24,8 @@ use crate::log::MemoryLog;
 use crate::settings::Configurable;
 use crate::value::DataType;
 
+mod fill;
+
 /// Verifies: [DESIGN] RULES.md D31, values out of line: a reference
 /// read for another row or another column than its page holds is
 /// refused with SQLCODE -916, never answered with another row's value;

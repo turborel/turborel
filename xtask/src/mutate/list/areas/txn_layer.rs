@@ -5,7 +5,8 @@
 //! waiting for the shared holds in stripes; and index entries a version
 //! shares with its successor, kept by collection, a checkpoint and a fill;
 //! the validated kept in the order of their commits; and a served
-//! session collecting the tables it wrote itself.
+//! session collecting the tables it wrote itself; and an index fill going
+//! back no further than its table's last collection (D1322).
 
 use super::super::{Mutation, Package};
 
@@ -13,7 +14,7 @@ use super::super::{Mutation, Package};
 const SET_ROW: &str = "txn::writing::tests::an_update_of_the_columns_set_is_given_those_of_the_row_replaced";
 
 /// Mechanisms of the transaction layer whose removal must fail their tests.
-pub const TXN_LAYER: [Mutation; 21] = [
+pub const TXN_LAYER: [Mutation; 22] = [
     Mutation {
         name: "txn-commit-not-stored",
         package: Package::Core,
@@ -229,5 +230,15 @@ pub const TXN_LAYER: [Mutation; 21] = [
             "sparse_updates::recovery_replays_updates_by_the_columns_set",
         ],
         unit: &[],
+    },
+    Mutation {
+        name: "txn-fill-horizon-unraised",
+        package: Package::Core,
+        breaks: "an index fill given a horizon below the table's last collection goes back to versions it released (D1322)",
+        file: "src/engine/rows/scan.rs",
+        original: "        let horizon = self.collected_horizon(horizon);",
+        replacement: "        let horizon = horizon.min(self.collected_horizon(horizon));",
+        integration: &[],
+        unit: &["engine::rows::tests::fill::a_fill_below_the_collected_horizon_reads_no_version_released"],
     },
 ];
