@@ -50,7 +50,7 @@ use super::run::{Lead, Morsels};
 use super::{Held, Limit};
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
-use crate::exec::batch::{Batches, Read, Told, read_for};
+use crate::exec::batch::{Batches, Read, Told, grouping_texts, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
@@ -342,6 +342,7 @@ fn finished_runs(plan: &Plan, (db, tx, degree): (&Db, TxId, usize), told: &[Told
     let (mut grouping, input) = grouping_of(plan, (having, outer), db.functions.seed().clone())?;
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, told)? else { return Ok(Held::GaveWay) };
+    let pipeline = pipeline.measuring(&grouping_texts(&grouping.spec.groups, &grouping.spec.aggs));
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     if let Some(read) = &grouping.read {
         grouping.seed = grouping.seed.unpadded(&read.unpadded);

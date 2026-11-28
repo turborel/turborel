@@ -134,7 +134,9 @@ pub(in crate::exec) fn projectable(plan: &Plan, db: &State) -> bool {
 /// The rows of the projection `plan`, one read by batches (`projectable`).
 pub(in crate::exec) fn projected(plan: Plan, db: &Db, tx: TxId) -> RowIter {
     let Plan::Project { exprs, input, .. } = plan else { return crate::exec::failed(crate::exec::broken("a projection is not one")) };
-    let stream = match stream::open(*input, db, tx) {
+    // A column it takes only the octet length of is asked of its scan measured (RULES.md D1267).
+    let texts = super::late::read_as_text(&exprs.iter().collect::<Vec<_>>(), &[]);
+    let stream = match super::late::opened_measuring(*input, (db, tx), &texts) {
         Ok(stream) => stream,
         Err(e) => return crate::exec::failed(e),
     };

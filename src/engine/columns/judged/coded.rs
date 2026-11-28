@@ -47,7 +47,7 @@ use super::super::group::{Group, Seal, Zone};
 use super::super::scan::Reading;
 use super::super::sketch::{Verdict, Verdicts};
 use super::super::{Chunk, padding};
-use super::{Against, KEPT_SHARE, Pred, entries, sketched, sorted, text_keeps};
+use super::{Against, KEPT_SHARE, Pred, entries, lengths, sketched, sorted, text_keeps};
 use crate::error::Result;
 use crate::storage::Liked;
 use crate::storage::mask::index;
@@ -72,6 +72,10 @@ pub(super) fn kept<S: Seal>(
 ) -> Result<Option<Vec<u32>>> {
     if padding(t).is_none() || text_keeps(&pred.conjunct, &|_| Some(Ordering::Equal)).is_none() {
         return Ok(None);
+    }
+    // Of a column the scan gives measured, by the lengths it takes (RULES.md D1267).
+    if let Some(rows) = lengths::kept(group, (pages, &mut *prepared), (pred, t), (from, to), given)? {
+        return Ok(Some(rows));
     }
     // Symbols of VARCHAR alone, never padded, as the table codes no other.
     let symbols = padding(t) == Some(None);

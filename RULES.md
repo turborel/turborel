@@ -816,8 +816,10 @@ verification approach DO-178C expects (§8).
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
 | D1260 | Morsels whose tables reduce nothing hand their rows to the partitions ungrouped |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
+| D1267 | A column read only for its octet length is given by its scan with its lengths and never decoded |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
+| D1274 | A table of groups compares integer keys by their words, and a lane that holds no null reads none |
 | D1275 | A partition merges a morsel's groups in one pass, a new group given its slot as it is met |
 | D1276 | A grouping whose statement thread's table went to the spill reads the spill at its end |
 | D1278 | Sorting a grouping's input first is weighed with each form priced as it would run, by the groups of the rows built, and by least regret |
@@ -826,14 +828,18 @@ verification approach DO-178C expects (§8).
 | D1281 | A sort's first rows over a pair of groupings are taken from the second's table of each partition |
 | D1282 | The runs that merge and finish a grouping's partitions lead their reader by every partition |
 | D1287 | A chunk of 16-byte fields whose values 64 bits hold is read as integers |
+| D1288 | A join key that is a whole number of 64 bits is hashed by itself, and any other number by its nearest `f64` |
 | D1289 | A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there |
 | D1290 | MAX and MIN compare character strings where they lie, and a grouping keeps each group's best in a column of states |
 | D1291 | A regular expression function over a dictionary's codes is run once of each entry a row reads |
 | D1292 | What a searcher keeps is left with its expression for the next searcher |
 | D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
+| D1294 | A column store's scan asks a hash join's runtime filter's keys of each run before it decodes the other columns, while they keep few of its rows |
+| D1295 | An IN list of exact constants is judged of integers by its units folded to their scale once, found by a bit or by halving |
 | D1297 | An index join is priced as a probe of as much of an index's key as its equalities and the relation's constants cover |
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
+| D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 
 ### The project
 
@@ -11564,10 +11570,15 @@ range among the conjuncts its split judges, so a morsel skips what lies
 outside it at any degree. A step right after the operator a filter
 stops at judges the filters of a morsel's batches. A morsel read a row
 at a time passes that step by, which only spares the join rows it
-would drop. A morsel's scan judges no Bloom filter. Measured, judging
-one in each morsel cost more than the probes it spared, as the
-morsel's batches are decoded whole and its threads share the filter's
-counts.
+would drop. A morsel's scan judged no Bloom filter when this was
+decided. Measured then, judging one in each morsel cost more than the
+probes it spared, as a morsel's batches were decoded whole whatever the
+filter kept and its threads wrote the filter's counts for every batch.
+Neither holds any longer, and D1294 changes it. A scan is now told the
+filter's keys and asks them itself before it decodes its other columns,
+which it then decodes at the rows kept alone, and it writes its counts
+through its first runs only. The step still judges every row the scan
+gives.
 
 A Bloom filter costs a hash and a block read a row, and a range
 compare costs less. A scan's range is judged among its conjuncts, by
@@ -23205,7 +23216,12 @@ A set function that no key names is still finished of every group, with
 no value kept (`checked_but`). Its result may raise, as a sum past the
 range of its type does [ISO/IEC 9075:1992 §6.5 GR2b iv], and the plan run
 alone finishes every group and raises it, so the part raises it too. A
-count raises nothing and is not finished.
+count raises nothing and is not finished. An exact total raises only
+past the most digits a number has, and a mean only if its total written
+at its result's scale is past them, so a column of totals is passed over
+by their units, and only a total large enough to raise is finished to
+know (`exec/table/states/typed/quiet.rs`). The least or greatest string
+is given as it is, raises nothing, and is not finished either.
 
 A sort with a key that names a grouping column or a constant sorts the
 batch of every column, as before. A column of results is made at its
@@ -23422,6 +23438,79 @@ values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
 
+#### D1267. A column read only for its octet length is given by its scan with its lengths and never decoded
+
+OCTET_LENGTH of a column counted the octets of each value's text
+(`functions/strings/counts.rs`), so the scan first made that text. Of a
+column store that meant decoding every chunk the statement read, a
+dictionary's entries checked and copied and texts coded by symbols
+written out, to read from each value only how long it was. A chunk
+holds that length without its text. A varying chunk has it between two
+ends, a constant chunk in its one field, a dictionary in the ends of the
+value's entry, and texts coded by symbols in the lengths of their codes'
+symbols, an escaped octet counting one.
+
+A column whose text no operator of a stream reads, nor whoever reads
+the stream, is now asked of its scan measured
+(`exec/batch/late.rs`, `Deferred::measuring`). The scan of a column
+store reads the length of each row's value from the chunks it has open
+(`engine/columns/encoded/lengths.rs`, `scan/lengths.rs`) and gives the
+column late, as its rows' places (D361), with those lengths beside them
+(`storage/batch/late/measured.rs`). OCTET_LENGTH of such a column reads
+the lengths. `Batch::resolve` leaves the column late, so it is not
+decoded at the stream's end, and it is measured whether or not an
+operator drops rows.
+
+Two readers do not read a column's text. One is OCTET_LENGTH of the
+column itself, alone or within an expression. The other is a filter's
+conjunct that compares the column with the empty string by octets,
+neither padded, as a collation of NO PAD that orders strings as their
+octets do compares them (D1183). Under that comparison alone a string
+of no octets equals the empty string and every other string comes after
+it, so the conjunct is the comparison of the string's octet length with
+0, and the filter judges it of the lengths
+(`exec/batch/judge/measured.rs`). The scan, told the same conjunct,
+judges it of the lengths it takes of the run
+(`engine/columns/judged/lengths.rs`), and the lengths of a run judged
+whole are kept for the run's batch (`prepared/lengths.rs`), so a run's
+chunks are read for their lengths once. This does not hold under a collation
+that pads with spaces, where a string of spaces equals the empty string
+whatever its length, nor for any other constant. Such a conjunct reads
+the column's text, as CHAR_LENGTH, a grouping column and every other
+expression do, and the column is then decoded as before. Readers that
+ask for measured columns are a grouping, on one thread or many, by the
+arguments of its set functions and its grouping columns, and a
+projection that computes, of a statement or within a stream. A join's
+operand asks for none.
+
+The lengths are exact. A VARCHAR value is written in a chunk as the
+octets of its text (D31), and texts coded by symbols decode to exactly
+their symbols' octets, so the length read is the length of the text the
+scan would have made. A null's length is null. Only VARCHAR is
+measured, as a CHARACTER value is padded as it is read and no chunk
+holds its padded length, and no chunk records how many characters its
+octets make, so CHAR_LENGTH reads the text. A chunk whose ends lie
+outside its octets, or whose codes name no symbol, gives no length, and
+the run's column is then decoded, which raises what is malformed. What
+is no longer done is the check that a chunk's octets are UTF-8, for a
+chunk nobody reads as text (as D1251 leaves it for LIKE).
+
+A column measured where its text is read after all is slow, never
+wrong, and this holds by how the column is made, not by the choice of
+when to ask. A measured column is still the late column of D361. It
+keeps where its rows are and how to decode them, and its lengths are
+only a second way to read one property of the same values. Every reader
+of a late column that is not resolved reads its values decoded whole,
+so a reader the plan did not foresee, or an expression evaluated again
+a row at a time after its vectors gave none, reads what the scan would
+have given. The tree's rows of a column store and the rows of a row
+store are given as text, and the function measures the text it is
+given.
+
+The scan is asked through `TableStorage::scan_measured` and
+`Split::morsel_measured`, whose defaults ask for nothing measured, so
+an engine that does not measure answers as before.
+
 #### D1270. A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch
 
 A leaf taken out of a B-link tree is freed once no operation that may
@@ -23500,6 +23589,32 @@ A split that fails after it took a page now gives back every page it
 took (`BLinkTree::give_back`). The old node is not yet written over, so
 the tree is as it was. Each page is emptied first, so one that cannot
 be freed is no node, and freed once no read holds it.
+
+#### D1274. A table of groups compares integer keys by their words, and a lane that holds no null reads none
+
+A table of groups finds a key by its hash and then compares it with
+the group whose slot matched (D356). The compare went lane by lane
+through cells. Each side's value was made a cell of its type, the two
+were matched by type, and an integer was widened before it was
+compared. That is right for every type and every pair of types, and it
+is what a key of two integer columns paid for each of its lanes, in the
+morsels' tables and again in the partitions'.
+
+A lane of integers is now compared by its words where the key gives
+words (`exec/table/keys/words.rs`). A key comes as a row of a batch or
+as a group of another table. Where its value of the lane is read from a
+vector of integers of the lane's scale, the two are equal as their
+units are, and nulls are equal to each other alone. No cell is made and
+no bytes are written. Any other pair, an integer of another scale, a
+value, a lane of another type, is compared by cells as before, so the
+keys that are equal are the same keys (D356).
+
+A lane also notes whether any of its groups is null
+(`exec/table/keys.rs`, `nulled`). While none is, it does not read its
+vector of nulls to learn that a group's value is not one. In a table of
+many groups a compare reads the group's place in each vector from
+memory the processor does not hold, so a lane of integers with no null
+now reads one word there where it read two.
 
 #### D1275. A partition merges a morsel's groups in one pass, a new group given its slot as it is met
 
@@ -23941,6 +24056,49 @@ Nothing stored changes, so data frozen before is read so with no
 reload. The grain is the chunk, so the chunks of a group that hold no
 value past 64 bits are integers though another chunk of it holds one.
 
+#### D1288. A join key that is a whole number of 64 bits is hashed by itself, and any other number by its nearest `f64`
+
+A join hashed every number by the bits of its nearest `f64` (D368), so
+that an exact key of any scale and an approximate one that match hash
+alike. An `f64` keeps 53 bits. Whole numbers past 2^53 share their
+nearest `f64` with their neighbours, 1,024 of them near 2^63. Keys one
+after another there, as identifiers of 19 digits are, fell 1,024 to a
+hash, and each probe compared its key with every row of its hash. Keys
+of 18 digits fell 128 to a hash. A key of 2^51 or more was also made
+its `f64` through its digits, a row at a time.
+
+Two numbers match by their algebraic value, an exact one against an
+approximate one too (`value::compare_numbers`). So the word a number is
+hashed of can be chosen by the number alone, with no word of its type
+or of the other side's. It is now the number itself if the number is a
+whole number 64 bits hold, and the bits of its nearest `f64` if it is
+not (`table/join/keys.rs`). An exact number is such a whole number if
+its units divide by its scale's power of ten into 64 bits. An
+approximate number is one if it has no fraction and lies within them,
+read from its bits. A decimal floating-point number is first made the
+exact number equal to it. Values that match are one number, so they
+have one word, whatever their types, and nothing is decided as a join
+is planned. A fraction, and a number past 64 bits, keep the nearest
+`f64`, which is one for values that match.
+
+A whole number below 2^51 keeps the bits of its `f64` as its word, which
+is the number exactly, so a direct table reads its place of them as
+before (D601). A wider one's word is its 64 bits crossed with the number
+a null is given as to a direct table, so no key's word is a null's.
+Such a word can be the bits of one small number's `f64`, so a wide key
+near 4.6 × 10^18 may share its word with one small key. That is one
+stray pair a key at most, told apart as keys are compared, and never a
+run of keys in one hash. The
+hashes a build makes of its keys' numbers are those a probe makes
+(D1080). A vector of integers of scale 0 is hashed whole by the
+kernels' hash of words (D1098) whatever its values, where one value of
+2^51 or more sent the vector a row at a time before. The hash itself
+is unchanged (D460).
+
+Keys past 64 bits one after another still share their nearest `f64`.
+A table of such keys compares more rows a probe, as before, and gives
+the same rows.
+
 #### D1289. A null's place in a vector of numbers has no meaning, and a window's lane holds 0 there
 
 A batch's vector of integers, of approximate numbers or of datetimes
@@ -24167,6 +24325,111 @@ cross chunks, and a header with a chunk missing
 adds rows in parts whose stored bounds prove a comparison and compares
 every answer with the row store's (`test/integration/proved_bounds.rs`).
 
+#### D1294. A column store's scan asks a hash join's runtime filter's keys of each run before it decodes the other columns, while they keep few of its rows
+
+A hash join tells the scan of its other operand the range of its built
+keys, and judges its Bloom filter, key set or bitmap in a step over the
+batches the scan gives (D369, D389, D600). The scan decoded every column
+the pipeline reads of every row in the range before that step ran. A
+semi join of the orders of one quarter with the lines of every order
+showed the cost. The lines' scan decoded two dates of every row for a
+filter over the scan, the filter judged every row, and only then did
+the join's keys leave a few of them. The key's column is kept as runs
+there, several rows a key, and each key was hashed and looked up a row
+at a time.
+
+A filter of an exact key now tells the scan its keys too
+(`Conjunct::Among`, `storage::Members`): its bitmap, its key set, or, of
+whole numbers, its Bloom filter's words with the seed of the hashes the
+join made. A column store's scan asks them of the key's column
+(`columns/judged/among.rs`), after its comparisons and before a LIKE,
+once a run of equal keys where the column is kept as runs (D1084) and of
+each row otherwise. The rows kept then go the way of any conjunct the
+scan judges (D360, D366). A run of which fewer than one row in eight is
+kept is decoded at those rows alone, so the filter over the scan and
+the join see those rows and no others of it. A run of more is given
+whole.
+
+A row the scan leaves out is one no built row matches, which the join
+drops. A bitmap and a key set are exact. A Bloom filter also keeps a
+few rows no built key equals, and that is harmless only because the
+rows are judged again. So the join's filter step and its probe stay
+exactly where they were and judge every row the scan gives, and the
+rows a statement gives, and the rows every operator above the join
+counts, are unchanged. Only the rows a scan and the operators between
+it and the join count in an analyzed plan fall. An integer the keys
+cannot be asked of is kept: one of another scale than the built keys',
+and under a Bloom filter one of 2^51 or more in magnitude, whose hash
+the join made another way. A null is left out, as the keys are told
+only of a key no null matches. Keys are told of a column of exact
+numbers alone.
+
+Asking costs a hash and a read of the filter a run or a row, and gains
+nothing where the run is given whole. So the keys count the rows the
+scan asked them of in its first 16 runs, the count a filter's own stop
+uses (D369), and after those the scan asks them only while they kept
+fewer than one row in eight of them, the share a run is given whole at
+(D360). No constant is new. The counts are shared by the threads of a
+statement and written only through those first runs.
+
+D389 said a morsel's scan judges no Bloom filter, as judging one cost
+more than the probes it spared. That was measured when a morsel's
+batches were decoded whole whatever the filter kept, so a scan that
+asked the filter saved the probe alone and paid a hash for it, and
+every thread wrote the filter's counts for every batch. Both reasons
+are gone. A scan now decodes the other columns at the rows kept, and
+the counts are written through the first runs only. D389's paragraph is
+rewritten to say so.
+
+The tests ask each form of keys what it holds, compare the keys told
+with what the filter itself keeps of the same rows, ask a scan's runs
+of a group, by rows and by runs, and show a scan that stops asking keys
+that keep one row in eight (`storage/condition/members/tests.rs`,
+`exec/table/runtime.rs`, `columns/judged/among/tests.rs`). An
+integration test counts the rows a scan gives under a join and a semi
+join of few keys, with the filters off and on, and compares every
+answer with the row store's and with the filters off
+(`test/integration/scan_keys.rs`).
+
+#### D1295. An IN list of exact constants is judged of integers by its units folded to their scale once, found by a bit or by halving
+
+A column of exact numbers reaches a filter and a column store's scan as
+a vector of integers of one scale (D31, D360). A comparison with a
+constant was folded to that scale once and judged as integers (D354).
+An IN list was not. The scan made a value of every integer and compared
+it with each constant in turn (`Conjunct::matches_key`). The filter
+compared a list of under eight constants in 128 bits, a constant at a
+time, and looked a longer one up in a set of buckets, which made a value
+and hashed it for every row (`logical/sets.rs`). A profile of a filter
+of eight sizes on a table of parts showed both: the scan's judging and
+the filter's second judging of the same rows were together a sixth of
+the statement.
+
+A list of exact constants is now folded once for a vector
+(`storage/batch/listed.rs`). Each constant folds as an equality with it
+does (`rescaled_bound`, D354). One of fewer fractional digits is scaled
+up, one of more is divided where the scale divides it, and one the
+scale cannot hold, or past 64 bits, equals no integer and is left out.
+The units are kept in order, each once. Where the greatest lies fewer
+than 64 above the least, they are the bits of one word counted from the
+least, and a row is found by one subtraction and one bit. Otherwise it
+is found by halving the list. Neither form has a length to tune. The
+width of a word is the only bound, and it is the machine's.
+
+NOT IN keeps the rows found in none, and no row at all if a constant is
+null, as it is then unknown of every row not found [X3.135-1986 §5.13
+GR2, §5.18]. A null row is kept by neither. A list with a constant that
+is not an exact number, or too large to scale, is judged as before, by
+the set if it is long and of the values if it is short. The filter's
+list of pairs in 128 bits is gone, as every list it took is now folded.
+
+Both readers use the one type, so a scan keeps what the filter keeps.
+The tests compare each list, IN and NOT IN, with each value judged
+against each constant: constants out of order and repeated, a null
+among them, one the scale cannot hold, one past 64 bits, spans of 63, 64
+and 65 units, the ends of an integer, and integers kept as runs
+(`storage/batch/listed/tests.rs`, `columns/judged/tests.rs`,
+`batch/judge/tests.rs`).
 #### D1297. An index join is priced as a probe of as much of an index's key as its equalities and the relation's constants cover
 
 The enumeration (D300) and the greedy order (D35) priced an index
@@ -24581,6 +24844,83 @@ was fixed that week, and lint baselines and over-long files were paid down.
   M. E. Kounavis and F. L. Berry, *A Systematic Approach to Building High
   Performance Software-based CRC Generators* (2005); D. V. Sarwate,
   *Computation of Cyclic Redundancy Checks via Table Look-Up* (1988).
+
+#### D1300. A partition of a grouping that holds many groups adopts them where its morsels put them
+
+A grouping run in parallel merges each partition's groups into a table
+of the partition's own (D356, D1110). Every new group is copied there
+out of the groups its morsel handed over (`exec/table/made.rs`), key,
+first row's number and states, and found again through the table's
+slots. For a partition of many groups, most of them new, that copy and
+those slots are most of what a group costs to merge, and while a wave is
+merged its groups are held twice, in the Mades and in the tables.
+
+A partition whose table holds more groups than a cache keeps close goes
+wide (`exec/table/made/wide.rs`, `exec/parallel/grouped/waves/wide.rs`).
+A wide partition copies nothing of a new group. It keeps the Mades it
+was handed, shared as they were, and of each group its hash and where
+the group lies, the Made and the place of its first row. A Made is never
+written once its morsel's thread has made it, so any thread may read it,
+and a group that takes a second row cannot merge it there. The first
+time a row meets a group held already, the group is taken up into a
+table of the partition's own, and that row and every later one merge
+there. A group of one row has no state but the Made's. A group is taken
+up alone, its key appended and each state of its first row merged into
+one fed nothing, and the table of its own gives no group a slot, as the
+partition's slots find a group wherever it lies and no key is ever
+looked up there.
+
+The groups, their order and each set function's result are those of the
+table the partition would have merged. A wave holds its Mades in the
+morsels' order and a Made holds a partition's rows in the morsel's, so
+the first row of a group to be looked up is its first row, and the
+groups listed are in the order of their first rows. A group taken up is
+given the states of its first row and then those of its later rows in
+the order they come, which is the order a table merges them in, so a
+state that depends on that order is the same: the least of strings
+equal as padded, the value of a group's first row. A sum of approximate
+numbers writes no state and is not merged at all (D53).
+
+A partition goes wide by its table's own count of groups after a Made
+is merged, never by a count handed nor an estimate, and stays wide for
+the rest of the statement. A grouping whose partitions hold few groups,
+though many are handed them, is merged as before. Which morsels a wave
+holds may differ from one run to the next, as before, and nothing a
+statement returns depends on it.
+
+Between waves a wide partition is kept as it is and charged its share
+of each Made it adopted, the hashes and places of its groups and its own
+table. A sort's first rows by set functions alone (D1256) are picked
+where the groups lie: the sort keys' results are made a Made at a time,
+each as a table makes a new group's, the Made's state merged into one
+fed nothing, so no value differs from a table's; one top-N takes them
+with the partition's own table's, so as many rows are kept as of a
+table; and only the groups picked are made rows, no key copied. Every
+other reader reads a table, so a wide partition is gathered into one
+for it, each group taken up from where it lies in the order of the
+first rows, as it is before it is written to the spill, whose form is
+unchanged. A wide partition whose probe
+grows long places its groups by keyed hashes, each key read where its
+group lies (D357).
+
+Unit tests merge the same Mades into a table and into a partition that
+goes wide before its first Made, after its first and after its second,
+frozen between two Mades or not, and compare every group, first row and
+state, and run groupings with their partitions forced wide against the
+same not wide, held by the grant, through several waves and through the
+spill, and compare the first rows a sort by a count, a sum and a
+greatest value keeps of wide partitions with those it keeps of tables.
+
+A partition goes wide only of a grouping whose reader reads the groups
+where they lie: the first rows of a sort, and no second grouping over
+it. Whatever else reads a partition reads a table, and a wide partition
+gathered into one for it writes every group a second time, which costs
+what the merge into a table would have and the adoption besides, as a
+grouping under a HAVING condition showed when its partitions went wide.
+So the rule is the reader's, not a count of groups
+(`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
+which goes wide whatever reads, is what the tests of the gathered table
+ask.
 
 #### D447. A unique constraint added in a transaction fills its index with every version
 

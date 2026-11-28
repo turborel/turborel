@@ -17,12 +17,22 @@
 //! stopped at a projection the declared types prove cannot raise; of
 //! D1063, a grouping run in parallel that judges no filter, and one
 //! told a filter over a column that may hold a null; of D1066, a DISTINCT
-//! told no filter.
+//! told no filter; of D1288, a wide whole number keyed by its nearest
+//! `f64`, its word a null's, an approximate whole number keyed by its
+//! bits, a half taken for a whole number, a decimal floating-point number
+//! keyed by its `f64`, and a whole number at a scale keyed by its `f64`.
 
 use super::super::{Mutation, Package};
 
+/// The hashes of a join's keys.
+const KEYS_FILE: &str = "src/exec/table/join/keys.rs";
+/// The unit test of whole numbers' hashes.
+const APART: &str = "exec::table::join::tests::whole_numbers_apart_hash_apart";
+/// The unit test of what keys by its nearest `f64`.
+const NEAREST: &str = "exec::table::join::tests::numbers_no_whole_number_of_64_bits_hash_by_their_nearest_f64";
+
 /// Mechanisms whose removal must fail the join table's requirements.
-pub const JOIN_TABLE: [Mutation; 26] = [
+pub const JOIN_TABLE: [Mutation; 32] = [
     Mutation {
         name: "join-table-build-order",
         package: Package::Core,
@@ -282,5 +292,65 @@ pub const JOIN_TABLE: [Mutation; 26] = [
         replacement: "        return super::distinct_groupable(plan, db).filter(|w| *w > usize::MAX).map(|width| ((0..width).collect(), width));",
         integration: &["join_filters_told::a_filter_reaches_the_scan_below_a_grouping"],
         unit: &[],
+    },
+    Mutation {
+        name: "join-key-wide-word-nearest",
+        package: Package::Core,
+        breaks: "a whole number of 2^51 or more keys by itself, not by the nearest f64 its neighbours share (D1288)",
+        file: KEYS_FILE,
+        original: "        n.cast_unsigned() ^ NULL_NUMBER",
+        replacement: "        canonical(nearest(i128::from(n), 0))",
+        integration: &[],
+        unit: &[APART],
+    },
+    Mutation {
+        name: "join-key-word-a-nulls",
+        package: Package::Core,
+        breaks: "no whole number's word is the number a null is given as to a direct table (D1288)",
+        file: KEYS_FILE,
+        original: "        n.cast_unsigned() ^ NULL_NUMBER",
+        replacement: "        n.cast_unsigned()",
+        integration: &[],
+        unit: &["exec::table::join::tests::a_wide_keys_word_is_no_nulls_and_strays_to_one_small_key_at_most"],
+    },
+    Mutation {
+        name: "join-key-approximate-whole",
+        package: Package::Core,
+        breaks: "an approximate number that is a whole number of 64 bits keys as the exact number equal to it (D1288)",
+        file: KEYS_FILE,
+        original: "    whole_f64(f).map_or_else(|| canonical(f), whole_word)",
+        replacement: "    canonical(f)",
+        integration: &[],
+        unit: &[APART],
+    },
+    Mutation {
+        name: "join-key-half-whole",
+        package: Package::Core,
+        breaks: "an approximate number with a half is no whole number (D1288)",
+        file: KEYS_FILE,
+        original: "        None => (mantissa & 1 == 0).then_some(mantissa >> 1_u32)?,",
+        replacement: "        None => mantissa >> 1_u32,",
+        integration: &[],
+        unit: &[NEAREST],
+    },
+    Mutation {
+        name: "join-key-decfloat-nearest",
+        package: Package::Core,
+        breaks: "a decimal floating-point number keys as the exact number equal to it (D1288)",
+        file: KEYS_FILE,
+        original: "        Value::DecFloat(d) => match exact_of(d) {",
+        replacement: "        Value::DecFloat(d) => match exact_of(d).filter(|e| e.scale > MAX_EXACT_PRECISION) {",
+        integration: &[],
+        unit: &[APART],
+    },
+    Mutation {
+        name: "join-key-scaled-whole",
+        package: Package::Core,
+        breaks: "a whole number written at a scale keys as the same number at scale 0 (D1288)",
+        file: KEYS_FILE,
+        original: "    whole_of(units, scale).map_or_else(|| canonical(nearest(units, scale)), whole_word)",
+        replacement: "    whole_of(units, scale).filter(|_| scale == 0).map_or_else(|| canonical(nearest(units, scale)), whole_word)",
+        integration: &[],
+        unit: &[APART],
     },
 ];

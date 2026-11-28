@@ -10,8 +10,10 @@ use crate::index::Probe;
 use crate::value::{CompOp, Value, compare};
 
 mod liked;
+mod members;
 mod threshold;
 pub use liked::Liked;
+pub use members::{Held, Members};
 pub use threshold::Threshold;
 
 /// \[DESIGN\] A condition rows were chosen by through an index: their values
@@ -127,6 +129,17 @@ pub enum Conjunct {
         /// The spans, least and greatest, ascending and apart.
         spans: Arc<[(Value, Value)]>,
     },
+    /// \[DESIGN\] (RULES.md D1294) The keys a hash join's runtime filter
+    /// holds, of `column`. True of every row the join keeps, as no built
+    /// row matches a row whose key it does not hold, and the join's own
+    /// filter and probe judge each row given. So a scan may leave out a
+    /// row whose key it does not hold, or give it.
+    Among {
+        /// The column.
+        column: usize,
+        /// The keys.
+        members: Arc<Members>,
+    },
     /// [ISO/IEC 9075-2:2023 §4.3.2, §8.2 GR3b] (RULES.md D1183) `column
     /// <op> constant` of a character string under a collation of NO PAD
     /// that orders strings as their octets do: the octets compared, a
@@ -163,6 +176,7 @@ impl Conjunct {
             | Conjunct::NotIn { column, .. }
             | Conjunct::Dynamic { column, .. }
             | Conjunct::Spans { column, .. }
+            | Conjunct::Among { column, .. }
             | Conjunct::Unpadded { column, .. }
             | Conjunct::Like { column, .. } => vec![*column],
             Conjunct::Any(each) => {
@@ -192,7 +206,7 @@ impl Conjunct {
             }
             // Each of one column, the same.
             Conjunct::Any(each) => each.iter().any(|c| c.matches_key(key)),
-            Conjunct::Dynamic { .. } | Conjunct::Spans { .. } => true,
+            Conjunct::Dynamic { .. } | Conjunct::Spans { .. } | Conjunct::Among { .. } => true,
             Conjunct::Unpadded { op, octets, .. } => key
                 .first()
                 .and_then(|v| if let Value::Char(s) = v { Some(s.as_bytes().cmp(octets)) } else { None })
@@ -212,8 +226,9 @@ impl Conjunct {
     pub fn may_match(&self, bounds: &[Option<(Value, Value)>]) -> bool {
         match self {
             Conjunct::Condition(c) => c.may_match(bounds),
-            // A LIKE's prefix's bounds are told beside it (`logical/pushed.rs`).
-            Conjunct::Null { not: false, .. } | Conjunct::Like { .. } => true,
+            // A LIKE's prefix's bounds are told beside it (`logical/pushed.rs`),
+            // and a filter's range and spans beside its keys (RULES.md D1294).
+            Conjunct::Null { not: false, .. } | Conjunct::Like { .. } | Conjunct::Among { .. } => true,
             Conjunct::Null { column, not: true } => bounds.get(*column).is_some_and(Option::is_some),
             Conjunct::In { column, values } => {
                 bounds.get(*column).and_then(Option::as_ref).is_some_and(|r| values.iter().any(|v| within(CompOp::Eq, r, v)))
@@ -240,7 +255,7 @@ impl Conjunct {
             Conjunct::Dynamic { threshold, .. } => threshold.may_match(range),
             Conjunct::Spans { spans, .. } => meets(spans, range),
             Conjunct::Unpadded { op, octets, .. } => unpadded_within(*op, range, octets),
-            Conjunct::Like { .. } => true,
+            Conjunct::Like { .. } | Conjunct::Among { .. } => true,
             Conjunct::Condition(c) => {
                 let Some(&column) = c.columns.first() else { return true };
                 let mut bounds = vec![None; column.saturating_add(1)];

@@ -11,6 +11,10 @@
 //! the lane into values once, its groups' rewritten, so the lanes never
 //! disagree with those bytes. A group's value is given as its first row
 //! gave it: a CHARACTER string with its spaces, a datetime in its zone.
+//!
+//! \[DESIGN\] (RULES.md D1274) A lane of integers is compared by its
+//! words where the key gives words (`words.rs`), and a lane that holds
+//! no null reads nothing to learn that a group's value is not one.
 
 use crate::exec::batch::put_key;
 use crate::storage::{Batch, Cell, Row};
@@ -23,6 +27,7 @@ use super::hash::canonical;
 mod written;
 pub(super) use written::written_alone;
 mod columns;
+mod words;
 
 /// A key given to a table: of a row of a batch, the columns at these
 /// places of the row at this place; of values; or of a group of another
@@ -206,6 +211,9 @@ pub(super) struct Lane {
     unpadded: bool,
     data: Data,
     nulls: Vec<bool>,
+    /// \[DESIGN\] (RULES.md D1274) Whether a group's may be null. While
+    /// none was, `nulls` is not read to tell that a group's is not.
+    nulled: bool,
     /// What its values hold apart from themselves (`spill::heap_bytes`).
     heap: usize,
     /// The groups its vector is given room for when its first value
@@ -216,7 +224,7 @@ pub(super) struct Lane {
 impl Lane {
     /// Whether group `g`'s is null.
     fn is_null(&self, g: usize) -> bool {
-        self.nulls.get(g).copied().unwrap_or(true)
+        self.nulled && self.nulls.get(g).copied().unwrap_or(true)
     }
 
     /// Group `g`'s value, as a cell.
@@ -285,6 +293,7 @@ impl Lane {
         if cell.is_null() {
             self.data.push_null();
             self.nulls.push(true);
+            self.nulled = true;
             return;
         }
         if let Data::Unset = self.data {
@@ -311,6 +320,7 @@ impl Lane {
         {
             units.extend(places.iter().map(|&i| theirs.get(crate::storage::mask::index(i)).copied().unwrap_or(0)));
             self.nulls.extend(places.iter().map(|&i| other.is_null(crate::storage::mask::index(i))));
+            self.nulled = self.nulled || other.nulled;
             return;
         }
         for &i in places {
@@ -466,10 +476,13 @@ impl Keys {
         self
     }
 
-    /// Whether group `g`'s key equals `key`, bytes made in `scratch` where
-    /// a lane cannot tell by its values.
+    /// Whether group `g`'s key equals `key`. A lane of integers tells by
+    /// its words where `key` gives words (RULES.md D1274), any other by
+    /// its cell, bytes made in `scratch` where a lane cannot tell by its
+    /// values.
     pub(in crate::exec) fn equal(&self, g: usize, key: Key<'_>, scratch: &mut Vec<u8>) -> bool {
-        self.lanes.iter().enumerate().all(|(at, lane)| lane.equal(g, key.cell(at), scratch))
+        let by_cell = |at: usize, lane: &Lane, bytes: &mut Vec<u8>| lane.equal(g, key.cell(at), bytes);
+        self.lanes.iter().enumerate().all(|(at, lane)| lane.equal_words(g, key, at).unwrap_or_else(|| by_cell(at, lane, scratch)))
     }
 
     /// Appends `key` as a new group's.

@@ -25,6 +25,7 @@ use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 use crate::kernels::Kernels;
 
+mod lengths;
 mod stepped;
 pub(super) use stepped::{Stepped, Steps};
 

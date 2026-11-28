@@ -23,6 +23,7 @@ use crate::value::{DataType, Decimal, Value};
 mod best;
 mod few;
 mod merged;
+mod quiet;
 mod stated;
 mod written;
 

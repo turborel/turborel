@@ -12,6 +12,12 @@
 //! them. A reader that reads it before, which the executor never plans
 //! (`exec/batch/late.rs`), still reads the values the scan would have
 //! given, the column then decoded whole (`made`).
+//!
+//! \[DESIGN\] (RULES.md D1267) A late column may hold the octet length
+//! of each of its values, taken by its scan with no text made
+//! (`late/measured.rs`). It is given so where every reader takes the
+//! length of the column and none reads its text, and it is then left
+//! late past the stream's end, never decoded.
 
 use std::sync::{Arc, OnceLock};
 
@@ -47,6 +53,9 @@ pub struct Late {
     /// Its values decoded whole, made the first time a reader that did
     /// not resolve it asks for them; none if decoding failed.
     made: OnceLock<Option<Box<Column>>>,
+    /// \[DESIGN\] (RULES.md D1267) The octet length of the value at each
+    /// of `positions`, if its scan measured them (`measured.rs`).
+    lengths: Option<Arc<super::Ints>>,
 }
 
 impl std::fmt::Debug for Late {
@@ -58,7 +67,7 @@ impl std::fmt::Debug for Late {
 impl Late {
     /// Column `column` of `source`, of the rows at `positions`, ascending.
     pub fn new(source: Arc<dyn LateSource>, column: usize, positions: Arc<[u32]>) -> Late {
-        Late { source, column, positions, picks: None, made: OnceLock::new() }
+        Late { source, column, positions, picks: None, made: OnceLock::new(), lengths: None }
     }
 
     /// How many rows.
@@ -159,13 +168,15 @@ impl Late {
             positions: Arc::clone(&self.positions),
             picks: Some(composed.into()),
             made: OnceLock::new(),
+            lengths: self.lengths.clone(),
         }
     }
 
     /// The bytes it holds, near enough to bound a work area by.
     pub fn bytes(&self) -> usize {
         let picks = self.picks.as_ref().map_or(0, |p| p.len().saturating_mul(size_of::<Option<u32>>()));
-        self.positions.len().saturating_mul(size_of::<u32>()).saturating_add(picks)
+        let lengths = self.lengths.as_ref().map_or(0, |l| l.units.len().saturating_mul(size_of::<i64>()));
+        self.positions.len().saturating_mul(size_of::<u32>()).saturating_add(picks).saturating_add(lengths)
     }
 
     /// Its values, made the first time they are asked for: none if
@@ -179,13 +190,17 @@ impl Batch {
     /// \[DESIGN\] (RULES.md D361) Decodes each late column of the rows
     /// `rows`, or of all, the others null, so it is read as the scan would
     /// have given it, its integers gathered by `kernels` (RULES.md D570).
+    /// A column its scan measured is left late, as its reader takes its
+    /// lengths and no text of it (RULES.md D1267).
     ///
     /// # Errors
     ///
     /// As `LateSource::decode`.
     pub fn resolve(&mut self, rows: Option<&[u32]>, kernels: &dyn crate::kernels::Kernels) -> Result<()> {
         for column in &mut self.columns {
-            if let Column::Late(late) = column {
+            if let Column::Late(late) = column
+                && !late.is_measured()
+            {
                 *column = late.resolved(rows, kernels)?;
             }
         }
@@ -197,6 +212,8 @@ impl Batch {
         self.columns.iter().any(|c| matches!(c, Column::Late(_)))
     }
 }
+
+mod measured;
 
 // Unit tests: a late column decoded of the rows kept, gathered and read
 // before (RULES.md R-TEST-1).
