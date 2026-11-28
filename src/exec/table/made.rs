@@ -15,8 +15,10 @@ use super::slots::MAX_PROBE;
 use super::states::{Sent, States};
 use super::{GroupTable, Key, Keys, Seed, narrow};
 
+mod apart;
 mod wide;
 mod written;
+pub(super) use apart::Placed;
 pub(in crate::exec) use wide::{Adopted, Lying, Wide};
 pub(in crate::exec) use written::PIECE;
 
@@ -100,6 +102,11 @@ impl GroupTable {
     ///
     /// SQLCODE -910 if an accumulator writes no state.
     pub(in crate::exec) fn made(mut self, parts: usize, lanes: &[usize]) -> Result<Made> {
+        // Groups written by these partitions lie as they are handed over
+        // already (RULES.md D1313).
+        if let Some(starts) = self.starts_placed(parts, lanes) {
+            return self.made_placed(starts);
+        }
         let by: Vec<u64> = if lanes.is_empty() {
             std::mem::take(&mut self.hashes)
         } else {

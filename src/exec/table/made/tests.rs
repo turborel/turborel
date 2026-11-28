@@ -15,7 +15,7 @@ use crate::value::{DataType, Decimal, Spelled, Value};
 const INTEGER: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
 
 /// The exact number `n`.
-fn exact(n: i128) -> Value {
+pub(super) fn exact(n: i128) -> Value {
     Value::Exact(Decimal::new(n, 0))
 }
 
@@ -29,7 +29,7 @@ fn call(name: &str, of_column: bool) -> AggCall {
 }
 
 /// COUNT(*), SUM, MIN and MAX of an INTEGER column.
-fn calls() -> Vec<AggCall> {
+pub(super) fn calls() -> Vec<AggCall> {
     vec![call("COUNT", false), call("SUM", true), call("MIN", true), call("MAX", true)]
 }
 
@@ -130,7 +130,7 @@ type Given = (u64, Vec<Value>, u64);
 
 /// Feeds group `g` of `table` the row `n` of `key`: one row counted, its
 /// key's number summed and kept as least and greatest.
-fn fed(table: &mut GroupTable, g: u32, (n, key): (u64, &Vec<Value>)) {
+pub(super) fn fed(table: &mut GroupTable, g: u32, (n, key): (u64, &Vec<Value>)) {
     let units = if let Some(Value::Exact(d)) = key.first() { d.units } else { 7 };
     let (mut total, mut value) = (Vec::new(), Vec::new());
     put_value(&mut total, &exact(units));

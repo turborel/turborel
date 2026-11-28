@@ -97,6 +97,7 @@ mod morsel_memory;
 mod narrowed_windows;
 mod outer_steps;
 mod pair_top;
+mod placed_rows;
 mod semi_joins;
 mod spilled_joins;
 mod steady;
@@ -323,9 +324,10 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
-/// window narrowed's, a join built in passes' and a filter passing over
-/// what its scan judged's last, as `last` holds no more.
-fn closing() -> [&'static [Mutation]; 40] {
+/// window narrowed's, a join built in passes', a filter passing over what
+/// its scan judged's and the rows placed by partition's last, as `last`
+/// holds no more.
+fn closing() -> [&'static [Mutation]; 41] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -345,6 +347,7 @@ fn closing() -> [&'static [Mutation]; 40] {
         &semi_joins::SEMI_JOINS,
         &grouped_parts::GROUPED_PARTS,
         &pair_top::PAIR_TOP,
+        &placed_rows::PLACED_ROWS,
         &first_groups::FIRST_GROUPS,
         &like_pieces::LIKE_PIECES,
         &like_coded::LIKE_CODED,

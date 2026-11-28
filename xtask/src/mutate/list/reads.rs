@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 39] = [
+pub const READS: [Mutation; 40] = [
     Mutation {
         name: "zone-write-visible",
         package: Package::Core,
@@ -347,6 +347,16 @@ pub const READS: [Mutation; 39] = [
         replacement: "            (Some(_), Some(wanted)) => Some(wanted.to_vec()),",
         integration: &[],
         unit: &["engine::rows::frozen::tests::wanted::headers_are_read_for_the_columns_read"],
+    },
+    Mutation {
+        name: "header-of-a-pass-held",
+        package: Package::Core,
+        breaks: "the listing of a table's bytes holds each header it reads for every column, in the place of those the scans hold (RULES.md D1314)",
+        file: "src/engine/rows/frozen/held.rs",
+        original: "        Ok(Arc::new(group::read(&self.pages_of(entry)?, entry.summary.header, self.format.types(), None)?))",
+        replacement: "        self.group_of(entry, None)",
+        integration: &[],
+        unit: &["engine::rows::frozen::tests::wanted::a_listing_of_a_tables_bytes_holds_no_header"],
     },
     Mutation {
         name: "header-skip-short",
