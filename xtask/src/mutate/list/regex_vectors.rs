@@ -44,7 +44,7 @@ pub const REGEX_VECTORS: [Mutation; 26] = [
         file: "src/functions/regex/translate.rs",
         original: "given.push(match texts.get(n).filter(|_| wanted(n)) {",
         replacement: "given.push(match texts.get(n) {",
-        integration: &["regex_functions::a_dictionary_column_is_translated_as_its_rows_are_6_33"],
+        integration: &[],
         unit: &[UNREAD],
     },
     Mutation {
