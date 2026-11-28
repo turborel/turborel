@@ -30,11 +30,10 @@ impl Typed {
     /// As the accumulator's `finish`, of the first group that fails.
     pub(in crate::exec::table::states) fn checked(&self, len: usize) -> Result<()> {
         match self {
-            Typed::Count(_) => Ok(()),
+            // A count raises nothing, and a best string is given as it is.
+            Typed::Count(_) | Typed::Best(_) => Ok(()),
             Typed::Exact(exact) => exact.checked(len),
             Typed::Approx(approx) => (0..len).try_for_each(|g| approx.finish(g).map(drop)),
-            // A best string is given as it is, and raises nothing.
-            Typed::Best(_) => Ok(()),
         }
     }
 }

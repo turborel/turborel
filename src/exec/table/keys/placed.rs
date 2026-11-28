@@ -48,10 +48,12 @@ fn sources(held: &Held, places: &[u32]) -> Vec<(u32, u32)> {
 impl Lane {
     /// The lane of the integers of scale `scale` at `c` of the rows kept
     /// of `held`, each at its place of `places`: a null's unit 0, as a
-    /// lane appended to holds it, and no type yet of a lane of nulls
-    /// alone, as one appended to has none.
+    /// lane appended to holds it, no type yet of a lane of nulls alone,
+    /// as one appended to has none, and told to hold a null only if one
+    /// came (RULES.md D1274).
     fn placed_ints(held: &Held, (c, scale): (usize, u32), places: &[u32]) -> Lane {
-        let (mut units, mut nulls, mut any) = (vec![0_i64; places.len()], vec![false; places.len()], false);
+        let (mut units, mut nulls) = (vec![0_i64; places.len()], vec![false; places.len()]);
+        let (mut any, mut nulled) = (false, false);
         let mut place = places.iter();
         for (batch, rows) in held {
             let Some(ints) = ints_of(batch, c) else { continue };
@@ -59,7 +61,7 @@ impl Lane {
             for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
                 let (r, Some(&p)) = (nth(rows, n), place.next()) else { break };
                 let null = ints.is_null(r);
-                any |= !null;
+                (any, nulled) = (any || !null, nulled || null);
                 if let Some(at) = nulls.get_mut(index(p)) {
                     *at = null;
                 }
@@ -71,7 +73,7 @@ impl Lane {
             }
         }
         let data = if any { Data::Ints { units, scale } } else { Data::Unset };
-        Lane { data, nulls, room: places.len(), ..Lane::default() }
+        Lane { data, nulls, nulled, room: places.len(), ..Lane::default() }
     }
 
     /// The lane of the values at `c` of the rows `order` names of `held`,
