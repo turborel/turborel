@@ -207,17 +207,19 @@ impl<'a> Chunk<'a> {
     /// where each run among positions `from` to `to` ends, past `base`,
     /// pushed to `ends`, of one reading (`encoded::Body::ints_ending`):
     /// whether its encoding keeps its values so, nothing pushed if not;
-    /// none if they are not there.
+    /// none if they are not there. Its runs are unpacked into `unpacked`
+    /// (`runs::Unpacked`, RULES.md D1315).
     pub(super) fn ints_ending(
         &self,
         (from, to): (usize, usize),
         (units, nulls): (&mut Vec<i64>, &mut Mask),
         (ends, base): (&mut Vec<usize>, usize),
+        unpacked: &mut runs::Unpacked,
     ) -> Option<bool> {
         if to > self.count || from > to {
             return None;
         }
-        let ran = self.body.ints_ending((from, to), units, (ends, base))?;
+        let ran = self.body.ints_ending((from, to), units, (ends, base), unpacked)?;
         if ran {
             self.nulls_of((from, to), nulls);
         }

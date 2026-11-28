@@ -18,6 +18,23 @@ use crate::error::Result;
 /// The bytes of an integer field.
 const FRAMED: usize = 8;
 
+/// \[DESIGN\] (RULES.md D1315) The integers a run's value is written to
+/// at once where the run begins, and the room a vector of rows is given
+/// past its last for that. It is the eight of a cache line of 64 bytes.
+/// The rows of a line are written together whichever of them a run
+/// holds, as the runs after it write the line's rest anyway, and a
+/// longer write would touch a line more for every run.
+pub(super) const LINE: usize = 8;
+
+/// \[DESIGN\] (RULES.md D1315) The values and the ends of the runs a
+/// reading unpacks, the vectors kept by the scan from one reading to the
+/// next (`prepared.rs`), so that a reading of a vector of rows makes none.
+#[derive(Debug, Default)]
+pub(in crate::engine) struct Unpacked {
+    values: Vec<i64>,
+    ends: Vec<i64>,
+}
+
 /// A chunk's runs, read in place.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Runs<'a> {
@@ -130,19 +147,29 @@ impl<'a> Runs<'a> {
     }
 
     /// The values at positions `from` to `to`, pushed to `out`, each run's
-    /// value repeated for its rows among them (`ints_ends`).
+    /// value repeated for its rows among them (`ints_ends`), its runs
+    /// unpacked into vectors of its own.
     pub(super) fn ints(&self, (from, to): (usize, usize), out: &mut Vec<i64>) -> Option<()> {
-        self.ints_ends((from, to), out, None)
+        self.ints_ends((from, to), (out, None), &mut Unpacked::default())
     }
 
-    /// \[DESIGN\] (RULES.md D1171) The values at positions `from` to `to`,
-    /// pushed to `out`, each run's value repeated for its rows among them,
-    /// and, if `ends` is given, where each of those runs ends among them,
-    /// past its base, pushed to it, the last at `to`. The runs from the one
-    /// of `from` to the one of the last position, found by two searches,
-    /// have their values and ends unpacked a block at a time
-    /// (`packed/blocks.rs`), so no run's value nor end is read alone.
-    pub(super) fn ints_ends(&self, (from, to): (usize, usize), out: &mut Vec<i64>, ends: Option<(&mut Vec<usize>, usize)>) -> Option<()> {
+    /// \[DESIGN\] (RULES.md D1171, D1315) The values at positions `from`
+    /// to `to`, pushed to `out`, each run's value repeated for its rows
+    /// among them, and, if `ends` is given, where each of those runs ends
+    /// among them, past its base, pushed to it, the last at `to`. The runs
+    /// from the one of `from` to the one of the last position, found by
+    /// two searches, have their values and ends unpacked a block at a time
+    /// (`packed/blocks.rs`) into `unpacked`, so no run's value nor end is
+    /// read alone and a reading that is given the vectors of the one
+    /// before makes none. The values are then written a line a run
+    /// (`spread`). None, with `out` as it was, if the runs are not those
+    /// of the positions.
+    pub(super) fn ints_ends(
+        &self,
+        (from, to): (usize, usize),
+        (out, ends): (&mut Vec<i64>, Option<(&mut Vec<usize>, usize)>),
+        unpacked: &mut Unpacked,
+    ) -> Option<()> {
         if to > self.count || from > to {
             return None;
         }
@@ -150,18 +177,48 @@ impl<'a> Runs<'a> {
             return Some(());
         }
         let (first, last) = (self.run_of(from)?, self.run_of(to.checked_sub(1)?)?.checked_add(1)?);
-        let (mut values, mut run_ends) = (Vec::with_capacity(last.saturating_sub(first)), Vec::with_capacity(last.saturating_sub(first)));
-        unpack_words(self.values, (self.bits, self.least), (first, last), &mut values)?;
-        unpack_words(self.ends, (bits_for(u64::try_from(self.count).ok()?), 0), (first, last), &mut run_ends)?;
-        out.reserve(to.checked_sub(from)?);
+        let Unpacked { values, ends: run_ends } = unpacked;
+        values.clear();
+        run_ends.clear();
+        unpack_words(self.values, (self.bits, self.least), (first, last), values)?;
+        unpack_words(self.ends, (bits_for(u64::try_from(self.count).ok()?), 0), (first, last), run_ends)?;
+        let (start, count) = (out.len(), to.checked_sub(from)?);
+        // The last run's line may pass the last position, by less than a line.
+        out.resize(start.checked_add(count)?.checked_add(LINE)?, 0);
+        let spread = Self::spread((values.as_slice(), run_ends.as_slice()), (from, to), out.get_mut(start..)?, ends);
+        out.truncate(start.saturating_add(if spread.is_some() { count } else { 0 }));
+        spread
+    }
+
+    /// \[DESIGN\] (RULES.md D1315) Writes to `slots`, the rows from `from`
+    /// to `to` and a line more, the value of each run of `values` ending
+    /// at `run_ends`, cut at `to`, for its rows among them, and pushes
+    /// each end to `ends` past its base. A run's value is written to a
+    /// whole line where the run begins, whatever its length, and to the
+    /// rest of its rows only if they are more than a line. So a run of a
+    /// few rows, which is most of a column kept as runs whose values
+    /// change often, takes no loop whose count the processor must guess,
+    /// and the rows after the run in its line are written again by the
+    /// runs after it. None if an end lies before the one before it, or
+    /// the runs end short of `to`.
+    fn spread(
+        (values, run_ends): (&[i64], &[i64]),
+        (from, to): (usize, usize),
+        slots: &mut [i64],
+        ends: Option<(&mut Vec<usize>, usize)>,
+    ) -> Option<()> {
         let mut ends = ends.map(|(ends, base)| {
             ends.reserve(run_ends.len());
             (ends, base)
         });
         let mut at = from;
-        for (&value, &end) in values.iter().zip(&run_ends) {
+        for (&value, &end) in values.iter().zip(run_ends) {
             let end = usize::try_from(end).ok()?.min(to);
-            out.resize(out.len().checked_add(end.checked_sub(at)?)?, value);
+            let run = slots.get_mut(at.checked_sub(from)?..)?;
+            *run.first_chunk_mut::<LINE>()? = [value; LINE];
+            if let Some(rest) = run.get_mut(LINE..end.checked_sub(at)?) {
+                rest.fill(value);
+            }
             if let Some((ends, base)) = &mut ends {
                 ends.push(base.checked_add(end.checked_sub(from)?)?);
             }
@@ -170,3 +227,8 @@ impl<'a> Runs<'a> {
         (at == to).then_some(())
     }
 }
+
+// Unit tests: runs written a line at a time are their rows' values, by
+// vectors kept from one reading to the next (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

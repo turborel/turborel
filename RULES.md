@@ -849,6 +849,7 @@ verification approach DO-178C expects (§8).
 | D1312 | A search stops where nothing can match, compares a straight run at once, and keeps no mark of a program of few ways |
 | D1313 | Rows handed on ungrouped are written once, each where its partition's run lies |
 | D1314 | The listing of a table's bytes holds none of the headers it reads |
+| D1315 | A chunk's runs are written to their rows a line a run, unpacked into vectors the scan keeps |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
 
@@ -25231,6 +25232,40 @@ hold together stay well within it, and no reader but one that walks a
 whole table for every column brought them near it. The other readers
 of whole headers take the groups they rewrite or sample, a few at a
 time.
+
+#### D1315. A chunk's runs are written to their rows a line a run, unpacked into vectors the scan keeps
+
+A scan reads a column kept as runs (D31) a vector of rows at a time, and
+gives each row its run's value (D1171). Every such reading made two
+vectors to unpack the runs' values and ends into, and let them go. Each
+run's value was then appended for its rows by a loop of the run's
+length. A column whose values change every few rows has runs of a few
+rows each, of lengths no two alike, so the loop ended where the
+processor could not foresee, once a run. A profile of a grouping of such
+columns showed the loop and the two vectors as most of what reading
+them cost.
+
+The two vectors are now the scan's (`engine/columns/prepared.rs`,
+`runs::Unpacked`). A reading takes them, unpacks into them and gives
+them back, so the readings of a scan make them once, and a reader with
+no scan makes its own as before.
+
+The rows are made room for once, with a line more past the last
+(`runs::LINE`), and each run's value is written to a whole line where
+the run begins, whatever the run's length (`Runs::spread`). Only a run
+longer than a line has the rest of its rows filled. So a run of a few
+rows costs one test and one write of fixed size. The rows a run's line
+covers past the run's end are written again by the runs after it, and
+the line past the last row is cut off before the vector is given. A
+line is the eight integers of a cache line. The rows of a line are
+written together whichever of them the run holds, as the line is
+written by the runs that follow anyway, and a longer write would touch
+another line for every run.
+
+The values, their nulls and the runs' ends are those read before. Runs
+that are not those of the positions asked, an end before the one before
+it or runs that stop short, give nothing as before, and the vector is
+left as it was given.
 
 #### D1316. A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows
 

@@ -6,6 +6,7 @@
 
 use super::group::{Group, PART_ROWS, Pages, Seal, Zone};
 use super::prepared::Prepared;
+use super::runs::LINE;
 use super::texts::{Asked, Gathered};
 use super::{Chunk, bloom, imprints, padding};
 use crate::error::Result;
@@ -415,8 +416,13 @@ fn words<S: Seal>(
 ) -> Result<Option<RunWords>> {
     let Some(zones) = group.zones(column)? else { return Ok(None) };
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-    let (mut units, mut nulls) = (Vec::with_capacity(count), Mask::default());
+    // Room for the line a chunk's last run is written to (RULES.md D1315).
+    let (mut units, mut nulls) = (Vec::with_capacity(count.saturating_add(LINE)), Mask::default());
     let mut runs = Some(Vec::new());
+    // The vectors its chunks' runs are unpacked into, kept from run to
+    // run, given back before anything is answered.
+    let mut unpacked = std::mem::take(&mut prepared.unpacked);
+    let mut read = Ok(Some(()));
     for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
         let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
@@ -424,7 +430,7 @@ fn words<S: Seal>(
         let held = prepared.with(pages, (column, zone, t), |chunk, made| {
             // Of runs, their values and ends of one reading (RULES.md D1171).
             let ran = match &mut runs {
-                Some(ends) => chunk.ints_ending((at(first), at(end)), (&mut units, &mut nulls), (ends, base)),
+                Some(ends) => chunk.ints_ending((at(first), at(end)), (&mut units, &mut nulls), (ends, base), &mut unpacked),
                 None => Some(false),
             };
             Ok(match ran {
@@ -435,12 +441,14 @@ fn words<S: Seal>(
                 }
                 None => None,
             })
-        })?;
-        if held.is_none() {
-            return Ok(None);
+        });
+        if !matches!(held, Ok(Some(()))) {
+            read = held;
+            break;
         }
     }
-    if units.len() != count {
+    prepared.unpacked = unpacked;
+    if read?.is_none() || units.len() != count {
         return Ok(None);
     }
     Ok(Some(((units, nulls), runs)))

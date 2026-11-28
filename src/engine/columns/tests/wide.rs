@@ -77,7 +77,10 @@ fn chunks_of_wide_fields_give_their_integers() {
     assert_eq!(ints_of(&nulls, (0, 12)), Some(vec!["NULL".to_owned(); 12]), "nulls only");
     assert_eq!(Chunk::parse(&nulls).unwrap().body.int_at(3, None), Some(0), "a null's is of no meaning");
     let (mut units, mut marks, mut ends) = (Vec::new(), Mask::default(), Vec::new());
-    assert_eq!(Chunk::parse(&constant).unwrap().ints_ending((2, 9), (&mut units, &mut marks), (&mut ends, 100)), Some(true));
+    assert_eq!(
+        Chunk::parse(&constant).unwrap().ints_ending((2, 9), (&mut units, &mut marks), (&mut ends, 100), &mut runs::Unpacked::default()),
+        Some(true)
+    );
     assert_eq!((units, ends), (vec![i64::MAX; 7], vec![107_usize]), "one run");
 }
 
@@ -111,7 +114,11 @@ fn a_value_past_64_bits_is_not_read_as_an_integer() {
         assert_eq!(ints_of(&constant, (0, 30)), None, "a constant, {past}");
         assert_eq!(Chunk::parse(&constant).unwrap().body.int_at(4, None), None, "a constant, alone, {past}");
         let (mut units, mut marks, mut ends) = (Vec::new(), Mask::default(), Vec::new());
-        assert_eq!(Chunk::parse(&constant).unwrap().ints_ending((0, 30), (&mut units, &mut marks), (&mut ends, 0)), None, "a run, {past}");
+        assert_eq!(
+            Chunk::parse(&constant).unwrap().ints_ending((0, 30), (&mut units, &mut marks), (&mut ends, 0), &mut runs::Unpacked::default()),
+            None,
+            "a run, {past}"
+        );
         assert_eq!(values_of(&constant, (29, 30)), vec![past.to_string()]);
     }
 }

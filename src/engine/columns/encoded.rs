@@ -36,7 +36,7 @@ use super::alp::{Alp, Factors, Trials};
 use super::fields::Cells;
 use super::fsst::{Coded, Symbols, Table};
 use super::packed::{bits_for, get, pack, packed_len};
-use super::runs::{Runs, runs_len};
+use super::runs::{Runs, Unpacked, runs_len};
 use super::{HEADER, WORD, corrupt, nulls_len, read_word, too_large, word};
 use crate::error::Result;
 use crate::hash::xxhash::Xxh3Map;
@@ -381,15 +381,17 @@ impl Body<'_> {
     /// where each run among them ends, past `base`, pushed to `ends`, both
     /// of one reading of its runs (`Runs::ints_ends`): whether it keeps
     /// its values so, none if they are not there. Of another encoding,
-    /// nothing is pushed.
+    /// nothing is pushed. The runs are unpacked into `unpacked`, the
+    /// vectors the scan keeps for it (RULES.md D1315).
     pub(super) fn ints_ending(
         &self,
         (from, to): (usize, usize),
         out: &mut Vec<i64>,
         (ends, base): (&mut Vec<usize>, usize),
+        unpacked: &mut Unpacked,
     ) -> Option<bool> {
         match self {
-            Body::Runs(runs) => runs.ints_ends((from, to), out, Some((ends, base))).map(|()| true),
+            Body::Runs(runs) => runs.ints_ends((from, to), (out, Some((ends, base))), unpacked).map(|()| true),
             Body::Constant { field } => {
                 out.extend(std::iter::repeat_n(words::constant(field)?, to.checked_sub(from)?));
                 if to > from {

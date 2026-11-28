@@ -33,7 +33,9 @@
 //! charged to no work grant. The bytes of a chunk let go are kept to hold
 //! the next one's, so a scan allocates them about once a column, not once
 //! a chunk. The codes of the group's sketches a scan reads are kept here
-//! too, with what each code says of each conjunct, until the next group.
+//! too, with what each code says of each conjunct, until the next group,
+//! and the vectors the runs of a chunk kept as runs are unpacked into
+//! (RULES.md D1315).
 
 use std::collections::VecDeque;
 
@@ -86,6 +88,10 @@ pub struct Prepared {
     /// are coded by (`fsst/stepped.rs`, RULES.md D1251), kept from group
     /// to group, as each is found again by its table.
     pub(super) stepped: super::fsst::Stepped,
+    /// The vectors a chunk's runs are unpacked into as its rows are read
+    /// (`runs.rs`, RULES.md D1315), kept from run to run and from group
+    /// to group, so a reading makes none.
+    pub(super) unpacked: super::runs::Unpacked,
     /// How many chunks were opened, as a test counts them.
     #[cfg(test)]
     pub(super) opened: usize,

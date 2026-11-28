@@ -438,7 +438,11 @@ fn chunks_of_runs_give_their_values_and_where_each_run_ends() {
             .collect();
         for (from, to) in [(0, count), (0, 1), (1, 2), (63, 200), (249, 252), (count - 1, count), (7, 7), (130, count - 3)] {
             let (mut units, mut nulls, mut ends) = (vec![5], Mask::default(), vec![1]);
-            assert_eq!(chunk.ints_ending((from, to), (&mut units, &mut nulls), (&mut ends, 10)), Some(true), "{from}..{to}");
+            assert_eq!(
+                chunk.ints_ending((from, to), (&mut units, &mut nulls), (&mut ends, 10), &mut runs::Unpacked::default()),
+                Some(true),
+                "{from}..{to}"
+            );
             for n in from..to {
                 let alone = chunk.value(n, &INTEGER).unwrap();
                 assert_eq!(nulls.get(n - from), alone.is_null(), "{from}..{to}: null {n}");
@@ -451,11 +455,25 @@ fn chunks_of_runs_give_their_values_and_where_each_run_ends() {
             assert_eq!(ends[1..], expected[..], "{from}..{to}");
             assert_eq!((units[0], ends[0], units.len()), (5, 1, 1 + to - from), "{from}..{to}: pushed after what was there");
         }
-        assert_eq!(chunk.ints_ending((0, count + 1), (&mut Vec::new(), &mut Mask::default()), (&mut Vec::new(), 0)), None, "past the end");
+        assert_eq!(
+            chunk.ints_ending(
+                (0, count + 1),
+                (&mut Vec::new(), &mut Mask::default()),
+                (&mut Vec::new(), 0),
+                &mut runs::Unpacked::default()
+            ),
+            None,
+            "past the end"
+        );
     }
     let framed = chunk_of(&(0..300_i128).map(int).collect::<Vec<_>>());
     let (mut units, mut ends) = (Vec::new(), Vec::new());
-    let read = Chunk::parse(&framed).unwrap().ints_ending((0, 300), (&mut units, &mut Mask::default()), (&mut ends, 0));
+    let read = Chunk::parse(&framed).unwrap().ints_ending(
+        (0, 300),
+        (&mut units, &mut Mask::default()),
+        (&mut ends, 0),
+        &mut runs::Unpacked::default(),
+    );
     assert_eq!((read, units.len(), ends.len()), (Some(false), 0, 0), "a frame of reference, nothing read");
 }
 

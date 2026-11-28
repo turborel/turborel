@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 40] = [
+pub const READS: [Mutation; 44] = [
     Mutation {
         name: "zone-write-visible",
         package: Package::Core,
@@ -107,6 +107,46 @@ pub const READS: [Mutation; 40] = [
         replacement: "                ends.push(base.checked_add(end.checked_sub(from)?)?.saturating_sub(usize::from(end < to)));",
         integration: &["batches::runs::columns_of_runs_answer_as_row_by_row"],
         unit: &["engine::columns::tests::chunks_of_runs_give_their_values_and_where_each_run_ends"],
+    },
+    Mutation {
+        name: "runs-line-unwritten",
+        package: Package::Core,
+        breaks: "a run's value is not written where the run begins, so a run shorter than a line holds none (RULES.md D1315)",
+        file: "src/engine/columns/runs.rs",
+        original: "            *run.first_chunk_mut::<LINE>()? = [value; LINE];",
+        replacement: "            *run.first_chunk_mut::<LINE>()? = [0; LINE];",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
+    },
+    Mutation {
+        name: "runs-past-a-line-unwritten",
+        package: Package::Core,
+        breaks: "the rows of a run past its first line are not written its value (RULES.md D1315)",
+        file: "src/engine/columns/runs.rs",
+        original: "                rest.fill(value);",
+        replacement: "                rest.fill(0);",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
+    },
+    Mutation {
+        name: "runs-unpacked-kept-whole",
+        package: Package::Core,
+        breaks: "the ends unpacked for one reading are still held at the next, whose values go with them (RULES.md D1315)",
+        file: "src/engine/columns/runs.rs",
+        original: "        run_ends.clear();",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
+    },
+    Mutation {
+        name: "runs-room-past-the-rows-kept",
+        package: Package::Core,
+        breaks: "the room a last run's line is given past the rows asked is left in the vector (RULES.md D1315)",
+        file: "src/engine/columns/runs.rs",
+        original: "        out.truncate(start.saturating_add(if spread.is_some() { count } else { 0 }));",
+        replacement: "        out.truncate(start.saturating_add(if spread.is_some() { count.saturating_add(LINE) } else { 0 }));",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
     },
     Mutation {
         name: "runs-grouped",
