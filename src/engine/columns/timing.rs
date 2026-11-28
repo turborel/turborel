@@ -159,7 +159,7 @@ fn grid_runs(_kernels: &dyn Kernels) {
             let mut kept = Unpacked::default();
             let new = timed(|c, out| runs_of(&bytes[c]).ints_ends((0, ROWS), (out, None), &mut kept).unwrap());
             println!(
-                "GRID RUNS bits={bits} mean_run={:.2} bytes_a_row={:.3} today={:.3} today_median={:.3} d1315={:.3} d1315_median={:.3}",
+                "GRID RUNS bits={bits} mean_run={:.2} bytes_a_row={:.3} today={:.3} today_median={:.3} d1315_d1f219375={:.3} d1315_median={:.3}",
                 (CHUNKS * ROWS) as f64 / runs as f64,
                 size_a_row(&bytes),
                 old.0,
