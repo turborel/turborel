@@ -225,9 +225,19 @@ pub(super) fn thawed_and_merged(grouping: &Grouping, (frozen, p): (&Frozen, usiz
         table.reserve(first, handed.min(past.saturating_add(first.groups_of(p))));
     }
     let mut rest = wave.iter().filter(|made| made.groups_of(p) > 0);
+    let lab_len = |m: &Merging| match m {
+        Merging::Table(table) => table.len(),
+        Merging::Wide(wide) => wide.len(),
+    };
+    let (lab_start, mut lab_handed) = (lab_len(&merging), 0_usize);
+    let lab_all: usize = wave.iter().map(|made| made.groups_of(p)).sum();
     while let Merging::Table(_) = &merging {
         let Some(made) = rest.next() else { break };
+        lab_handed += made.groups_of(p);
         merging = merging.absorbed(made, p, past)?;
+        if let Merging::Wide(wide) = &merging {
+            eprintln!("LAB cross p={p} start={lab_start} handed={lab_handed} made={} of_wave={lab_all}", wide.len() - lab_start);
+        }
     }
     // A wide partition looks up what is left of the wave at once, a
     // sub-part at a time (RULES.md D1301).
@@ -238,5 +248,6 @@ pub(super) fn thawed_and_merged(grouping: &Grouping, (frozen, p): (&Frozen, usiz
         }
         widen.merged.fetch_add(1, Ordering::Relaxed);
     }
+    eprintln!("LAB end p={p} start={lab_start} handed={lab_all} made={} wide={}", lab_len(&merging) - lab_start, matches!(merging, Merging::Wide(_)));
     Ok(merging)
 }
