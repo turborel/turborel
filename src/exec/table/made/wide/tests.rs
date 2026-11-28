@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use super::super::super::hash_values;
+use super::super::super::{Key, hash_values};
 use super::*;
 use crate::functions::Registry;
 use crate::logical::Expr;
@@ -91,28 +91,37 @@ fn mades(text: bool, parts: usize) -> Vec<Arc<Made>> {
     numbered.map(|(first, numbers)| Arc::new(morsel(numbers, first, text).made(parts, &[]).unwrap())).collect()
 }
 
+/// The runs of partition `part` of `handed`, a wave's.
+fn runs(handed: &[Arc<Made>], part: usize) -> Vec<Run<'_>> {
+    handed.iter().map(|made| (made, made.part_places(part))).collect()
+}
+
 /// Partition `part` of `handed` merged: the first `as_table` Mades into
-/// a table, which then goes wide, the others into the wide partition,
-/// frozen and taken up again before the last if `thaw`; gathered.
-fn gathered(handed: &[Arc<Made>], part: usize, (as_table, thaw): (usize, bool)) -> GroupTable {
+/// a table, which then goes wide, the others into the wide partition as
+/// one wave, or as two, the partition frozen and taken up again before
+/// the last Made, if `thaw`, its sub-parts of `sub` groups and rows or
+/// so; gathered.
+fn gathered(handed: &[Arc<Made>], part: usize, (as_table, thaw, sub): (usize, bool, usize)) -> GroupTable {
     let width = handed[0].keys.width();
     let mut first = GroupTable::new(width, &calls(), &seed(), usize::MAX);
     for made in handed.iter().take(as_table) {
         first.absorb(made, part).unwrap();
     }
     let mut wide = Wide::of(first).unwrap();
-    for (at, made) in handed.iter().enumerate().skip(as_table) {
-        if thaw && at == 3 {
-            wide = Wide::thawed(wide.frozen().unwrap(), &calls(), &seed()).unwrap();
-        }
-        wide.absorb(made, made.part_places(part)).unwrap();
+    let rest = &handed[as_table..];
+    let (wave, last) = rest.split_at(if thaw { rest.len().saturating_sub(1) } else { rest.len() });
+    wide.absorb_wave(&runs(wave, part), sub).unwrap();
+    if thaw {
+        wide = Wide::thawed(wide.frozen().unwrap(), &calls(), &seed()).unwrap();
+        wide.absorb_wave(&runs(last, part), sub).unwrap();
     }
     wide.into_table().unwrap()
 }
 
-/// Verifies: [DESIGN] (RULES.md D1300) a partition that goes wide before
-/// its first Made, after its first or after its second, and is frozen
-/// and taken up again between two Mades or not, gathers into a table that
+/// Verifies: [DESIGN] (RULES.md D1300, D1301) a partition that goes wide
+/// before its first Made, after its first or after its second, and is
+/// frozen and taken up again between two waves or not, its groups in one
+/// sub-part or in sub-parts of eight or so, gathers into a table that
 /// holds what a table merged of the same Mades holds: every group once,
 /// in the order of the first rows, with that first row's number, its
 /// count, sum, extremes and mean, and the value of its first row, which
@@ -131,7 +140,8 @@ fn a_wide_partition_holds_the_groups_a_table_holds_in_its_order() {
             }
             let expected = groups(&table);
             assert!(expected.len().saturating_mul(parts) > 400, "the keys spread");
-            for how in [(0_usize, false), (1, false), (2, true), (0, true)] {
+            let ways = [(0_usize, false), (1, false), (2, true), (0, true)];
+            for how in ways.iter().flat_map(|&(as_table, thaw)| [(as_table, thaw, 8_usize), (as_table, thaw, usize::MAX)]) {
                 let wide = gathered(&handed, part, how);
                 assert_eq!(groups(&wide), expected, "text keys {text}, part {part} of {parts}, wide after and thawed {how:?}");
                 assert!(wide.in_order());
@@ -140,19 +150,34 @@ fn a_wide_partition_holds_the_groups_a_table_holds_in_its_order() {
     }
 }
 
-/// Verifies: [DESIGN] (RULES.md D1300) a Made merged into a wide
-/// partition tells how many of its groups were new, and a wide partition
-/// between waves counts its share of the Mades it adopted among the bytes
-/// it holds, more the more it adopted.
+/// Verifies: [DESIGN] (RULES.md D1300, D1301) a wave merged into a wide
+/// partition tells how many of its rows were new groups, the partition
+/// lists its groups in more sub-parts as waves bring more, each split
+/// among those the further bits name with its groups of several rows,
+/// and what it gathers into is still the table merged of the same
+/// Mades. A wide partition between waves counts its share of the Mades
+/// it adopted among the bytes it holds, more the more it adopted.
 #[test]
 fn a_wide_partition_counts_its_new_groups_and_the_bytes_it_adopted() {
     let handed = mades(false, 1);
     let mut wide = Wide::of(GroupTable::new(1, &calls(), &seed(), usize::MAX)).unwrap();
-    let new: Vec<usize> = handed.iter().map(|made| wide.absorb(made, made.part_places(0)).unwrap()).collect();
+    let mut table = GroupTable::new(1, &calls(), &seed(), usize::MAX);
+    let (mut new, mut sub_parts) = (Vec::new(), Vec::new());
+    for made in &handed {
+        new.push(wide.absorb_wave(&runs(std::slice::from_ref(made), 0), 8).unwrap());
+        sub_parts.push(wide.sub_parts());
+        table.absorb(made, 0).unwrap();
+    }
     assert_eq!(new, [900, 600, 200, 400], "the keys no Made before held");
+    assert_eq!(sub_parts, [128, 256, 512, 512], "sub-parts of eight for the groups listed and the rows handed");
     let all = wide.frozen().unwrap().bytes();
+    let mut again = Wide::of(GroupTable::new(1, &calls(), &seed(), usize::MAX)).unwrap();
+    for made in &handed {
+        again.absorb_wave(&runs(std::slice::from_ref(made), 0), 8).unwrap();
+    }
+    assert_eq!(groups(&again.into_table().unwrap()), groups(&table), "split between waves");
     let mut one = Wide::of(GroupTable::new(1, &calls(), &seed(), usize::MAX)).unwrap();
-    one.absorb(&handed[0], handed[0].part_places(0)).unwrap();
+    one.absorb_wave(&runs(&handed[..1], 0), 8).unwrap();
     let least = one.frozen().unwrap().bytes();
     assert!(least >= handed[0].bytes(), "a Made adopted whole is held whole: {least}");
     assert!(all > least, "{all} bytes of four Mades, {least} of one");
@@ -172,9 +197,9 @@ fn colliding_groups_turn_a_wide_partition_keyed() {
     let made = Arc::new(colliding.frozen().unwrap());
     let places: Vec<u32> = (0..400).collect();
     let mut wide = Wide::of(GroupTable::new(1, &aggs, &seed(), usize::MAX)).unwrap();
-    assert_eq!(wide.absorb(&made, &places).unwrap(), 400);
+    assert_eq!(wide.absorb_wave(&[(&made, &places)], 8).unwrap(), 400);
     assert!(wide.is_keyed());
-    assert_eq!(wide.absorb(&made, &places).unwrap(), 0);
+    assert_eq!(wide.absorb_wave(&[(&made, &places)], 8).unwrap(), 0);
     assert_eq!(wide.len(), 400);
     let mut table = GroupTable::new(1, &aggs, &seed(), usize::MAX);
     table.absorb_whole(&made).unwrap();

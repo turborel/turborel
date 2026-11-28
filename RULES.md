@@ -839,6 +839,7 @@ verification approach DO-178C expects (§8).
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
+| D1301 | A wide partition looks a wave's rows up a sub-part at a time, in slots a cache holds |
 | D1313 | Rows handed on ungrouped are written once, each where its partition's run lies |
 | D1314 | The listing of a table's bytes holds none of the headers it reads |
 
@@ -24854,17 +24855,18 @@ statement returns depends on it.
 Between waves a wide partition is kept as it is and charged its share
 of each Made it adopted, the hashes and places of its groups and its own
 table. A sort's first rows by set functions alone (D1256) are picked
-where the groups lie: the sort keys' results are made a Made at a time,
-each as a table makes a new group's, the Made's state merged into one
-fed nothing, so no value differs from a table's; one top-N takes them
-with the partition's own table's, so as many rows are kept as of a
-table; and only the groups picked are made rows, no key copied. Every
-other reader reads a table, so a wide partition is gathered into one
-for it, each group taken up from where it lies in the order of the
+where the groups lie. The sort keys' results are made each as a table
+makes a new group's, the Made's state merged into one fed nothing, so no
+value differs from a table's. A Made holds few of a partition's groups,
+so the results of one Made after another fill a batch of the rows a
+scan's batch holds before the sort reads it. One top-N takes those
+batches with the partition's own table's, so as many rows are kept as
+of a table, and only the groups picked are made rows, no key copied.
+Every other reader reads a table, so a wide partition is gathered into
+one for it, each group taken up from where it lies in the order of the
 first rows, as it is before it is written to the spill, whose form is
-unchanged. A wide partition whose probe
-grows long places its groups by keyed hashes, each key read where its
-group lies (D357).
+unchanged. A wide partition whose probe grows long places its groups by
+keyed hashes, each key read where its group lies (D357).
 
 Unit tests merge the same Mades into a table and into a partition that
 goes wide before its first Made, after its first and after its second,
@@ -24872,19 +24874,71 @@ frozen between two Mades or not, and compare every group, first row and
 state, and run groupings with their partitions forced wide against the
 same not wide, held by the grant, through several waves and through the
 spill, and compare the first rows a sort by a count, a sum and a
-greatest value keeps of wide partitions with those it keeps of tables.
+greatest value keeps of wide partitions with those it keeps of tables,
+the batches filled to a few groups so a partition is read in several.
 
 A partition goes wide only of a grouping whose reader reads the groups
-where they lie: the first rows of a sort, and no second grouping over
-it. Whatever else reads a partition reads a table, and a wide partition
-gathered into one for it writes every group a second time, which costs
-what the merge into a table would have and the adoption besides, as a
-grouping under a HAVING condition showed when its partitions went wide.
+where they lie. That reader is the first rows of a sort whose every key
+names a set function, with no second grouping over it. Whatever else
+reads a partition reads a table, a sort by a grouping column among
+them, and a wide partition gathered into one for it writes every group
+a second time, which costs what the merge into a table would have and
+the adoption besides, as a grouping under a HAVING condition showed
+when its partitions went wide.
 So the rule is the reader's, not a count of groups
 (`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
 which goes wide whatever reads, is what the tests of the gathered table
 ask.
 
+#### D1301. A wide partition looks a wave's rows up a sub-part at a time, in slots a cache holds
+
+A wide partition (D1300) found its groups through one set of slots, as
+a table does. Of a partition of millions of groups those slots are far
+larger than a cache, so nearly every row looked up read memory the
+processor did not hold, and they were made anew each time the partition
+was taken up for a wave.
+
+A wide partition now lists its groups by sub-part
+(`exec/table/made/wide/part.rs`). A sub-part is named by bits of a
+group's hash below the six the first level of partitions takes, which
+are not the bits a probe starts by. A partition has as many sub-parts
+as make one's groups, with the rows the wave hands it, about `SUB`,
+counted of the groups it lists and the rows handed and never of an
+estimate. More bits are taken as waves bring more groups, and each
+sub-part is then split, in its order, among those the further bits
+name. A wave's rows are first put in the order of their sub-parts, each
+with its hash and where it lies, counted and then placed, in passes
+that read the Mades' hashes in the order the wave holds them. Then each
+sub-part in turn is given slots for its groups and its rows, its groups
+are placed with no key compared, as no two of them hold one key, and
+its rows are looked up in the order they came. The slots are let go
+with the sub-part. None are kept between waves, and none grow.
+
+Each sub-part holds a table of its own for its groups that took a
+second row, and a held row merges into it as it is found, one row's
+states at a time. A sub-part's rows keep the wave's order, so each
+group's states are merged in the order a table merges them and are the
+states a table holds. A probe that grows long in one sub-part turns the
+whole partition to keyed hashes (D357), and each sub-part hashes its
+keys where they lie when it is next looked up.
+
+`SUB` is 16,384. Slots for that many are a quarter of a mebibyte and
+the rows looked up beside them as much, within a second-level cache of
+a mebibyte. Of sub-parts of 4,096, 16,384, 65,536 and 262,144, merges
+of integer keys all new cost the same at each size, and merges of keys
+of texts a third of them held already cost least at 16,384.
+
+A wide partition gathered into a table puts its sub-parts' lists in the
+order of the first rows by the numbers read where the groups lie, so
+the table is in the order every reader of a table expects. A sort's
+first rows by set functions read a batch of each sub-part's own table
+and the batches of the groups of one row as before.
+
+Unit tests merge the same Mades into a table and into a wide partition
+of one sub-part and of sub-parts of eight, as one wave and as several
+with the sub-parts split between them, of keys that collide in one
+sub-part past the longest probe, and compare every group, first row and
+state. The groupings forced wide run with sub-parts of eight as well.
 #### D1313. Rows handed on ungrouped are written once, each where its partition's run lies
 
 A morsel whose rows a table would not reduce hands each row on as a
