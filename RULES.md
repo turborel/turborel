@@ -852,6 +852,7 @@ verification approach DO-178C expects (§8).
 | D1314 | The listing of a table's bytes holds none of the headers it reads |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
+| D1323 | A grouping looks up the first row alone of rows of one key that come one after another |
 
 ### The project
 
@@ -25357,6 +25358,67 @@ displacements, and a spread of a fixed seed. No datetime holds a leap
 second, so none is among them. An integration test holds queries of
 both engines, in sessions of three displacements, to the rows they give
 a row at a time.
+#### D1323. A grouping looks up the first row alone of rows of one key that come one after another
+
+A table of groups took every row by its key's hash and a probe of its
+slots. A store that keeps rows in the order they were written holds the
+rows of one key one after another wherever the data was made so, as a
+log of visits holds a visitor's rows. A grouping by one column the
+store keeps as runs already gave a run's rows to one group (D31). A
+grouping by two columns or more looked every row up, a pair's first
+grouping among them (D340), whose key is the grouping columns and the
+argument of the DISTINCT set function.
+
+- Each row's key is compared with the key of the row given before it, a
+  grouping column at a time over the column's vector
+  (`exec/batch/groups/alike.rs`). A row alike in every column is of the
+  group of the row before it. A column tells by its vector where it
+  holds integers, datetimes, the codes of a dictionary or character
+  strings. Two rows of one word, or of the same octets, are of one
+  value under every comparison a grouping makes, and two nulls are of
+  one group [ISO/IEC 9075-2:2023 §7.13 GR2]. A null's place in a vector
+  holds no value (D1289), so a null is told by its null alone.
+- The compare is a sufficient test, never the grouping's own. Two
+  strings that differ by trailing spaces, equal as padded strings
+  compare, are two runs, and the table finds them one group as it
+  compares keys (D356, D1183). A key grouped under a collation whose
+  key is not the text is grouped by its sort key, a column that tells
+  no run. Of approximate numbers, of truth values and of any other
+  column no run is told, and every row is looked up as before.
+- The grouping by batch (`groups.rs`) and a morsel's (`morsel.rs`) ask
+  the same runs (`run_ends`), the store's own of one column kept as
+  runs and the compared ones of any other grouping. A morsel hashes the
+  first row of each run alone. A group is numbered by its first row,
+  which is a run's first, and takes every row of the run in order, so
+  the groups, their order and each set function's value are unchanged.
+- A grouping by batch whose keys are all codes of dictionaries takes
+  each row by its codes (D1161), and must follow no run. A row taken by
+  its code tells the loop that follows runs no group, so a run followed
+  there gives its later rows to the group of the run before, and the
+  grouping counts wrong. Before this decision no run was told of a
+  column of codes, so the two never met. Now runs are told of codes
+  too, for a key of codes and other columns, and where rows are taken
+  by their codes no run is asked. A morsel's rows of such a key never
+  reach the lookup that follows runs (`coded.rs`).
+- Where no row of a batch repeats the one before it, the batch is
+  hashed a vector at a time and every row looked up, as before. The
+  compare that found none is one pass over each grouping column's
+  vector. No count of groups, no estimate and no constant chooses
+  between the two.
+- The hash a pair's groups are split among the partitions by
+  (`Keys::hash_of`, D1113) reads an integer of no fraction as its word
+  from the lane's vector. It is the hash the value's cell has, so the
+  partitions are unchanged, and no number is normalized a group.
+
+Unit tests tell the runs of two columns of integers with nulls, of
+selected rows, of character strings with trailing spaces, nulls and
+empty strings, of codes and of datetimes, and that a column of another
+kind tells none. An integration test compares groupings whose rows come
+in runs, by batch and in parallel, with the plan run a row at a time,
+a count of distinct values among them, under WHERE and HAVING, of both
+stores, and counts the rows each group took. One of them groups by a
+text the column store gives as codes, in runs, on one thread, which
+fails where runs are followed of rows taken by their codes.
 
 ## 2. Project layout
 

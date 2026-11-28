@@ -8,8 +8,13 @@
 //! compared with one group or two, each read from memory the processor
 //! does not hold. With no null in the lane (`Lane::is_null`) the compare
 //! reads one word of it where it read two.
+//!
+//! \[DESIGN\] (RULES.md D1323) A lane of integers of no fraction is
+//! hashed by its words too (`Lane::hash`), as the partitions of a pair of
+//! groupings hash each group's key of some of its lanes.
 
 use super::{Data, Key, Lane};
+use crate::exec::table::Seed;
 use crate::storage::Column;
 
 impl Key<'_> {
@@ -46,5 +51,20 @@ impl Lane {
         let (theirs, null) = key.word(lane, *scale)?;
         let mine = self.is_null(g);
         Some(if mine || null { mine && null } else { units.get(g) == Some(&theirs) })
+    }
+
+    /// \[DESIGN\] (RULES.md D1323) The hash of group `g`'s value, the
+    /// lane the `place`th of its key, as `Seed::key_cell` gives it of
+    /// the value's cell. An integer of no fraction, not null, is hashed
+    /// by its word read from the lane's vector, which is the hash its
+    /// cell has, with no cell made and no number normalized.
+    pub(super) fn hash(&self, g: usize, place: usize, seed: &Seed) -> u64 {
+        if let Data::Ints { units, scale: 0 } = &self.data
+            && !self.is_null(g)
+            && let Some(&unit) = units.get(g)
+        {
+            return seed.word(unit.cast_unsigned());
+        }
+        seed.key_cell(place, self.cell(g))
     }
 }
