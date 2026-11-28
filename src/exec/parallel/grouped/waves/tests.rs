@@ -13,7 +13,6 @@ use super::super::{Ordered, grouping_of, read_of};
 use super::wide::Widen;
 use super::{Forced, How, Reduction, few, waved_as};
 use crate::db::{Database, Session};
-use crate::error::Result;
 use crate::exec::Db;
 use crate::physical::{PhysicalPlanner, Plan};
 use crate::storage::Row;
@@ -439,7 +438,7 @@ fn first_rows_as(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db)
 
 /// As `first_rows_as`, the rows as they are, and the sort as the run
 /// left it, or the error a partition raised.
-fn first_rows_of(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> Result<(Vec<Row>, Arc<Top>)> {
+fn first_rows_of(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> crate::error::Result<(Vec<Row>, Arc<Top>)> {
     let (st, optimized) = a.optimized(sql).unwrap();
     let planned = PhysicalPlanner::new(&st).plan(&optimized);
     let aggregate = if let Plan::Project { input, .. } = planned { *input } else { planned };
@@ -455,7 +454,7 @@ fn first_rows_of(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db)
     let Held::Kept((runs, given)) = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, how)? else {
         panic!("the grouping gave way")
     };
-    Ok((Ordered::of(runs, given)?.collect::<Result<Vec<Row>>>()?, top))
+    Ok((Ordered::of(runs, given)?.collect::<crate::error::Result<Vec<Row>>>()?, top))
 }
 
 /// Verifies: [DESIGN] RULES.md D1300 a statement's partitions go wide
