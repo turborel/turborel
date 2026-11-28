@@ -35,8 +35,11 @@ pub(super) const MOST_BITS: u32 = 16;
 /// Made and its place there.
 pub(super) type Handed = (u64, u32, u32);
 
-/// The sub-part, among those `bits` bits name, of a group of hash `hash`.
-pub(super) fn sub_of(hash: u64, bits: u32) -> usize {
+/// The sub-part, among those `bits` bits name, of a group of hash
+/// `hash`: the bits below those its partition was found by. Whatever
+/// else splits a partition's groups by further bits of their hashes
+/// names its parts by this, so that the parts are these sub-parts.
+pub(in crate::exec::table::made) fn sub_of(hash: u64, bits: u32) -> usize {
     let below = hash.wrapping_shl(ABOVE);
     usize::try_from(below.checked_shr(WORD.saturating_sub(bits)).unwrap_or(0)).unwrap_or(0)
 }

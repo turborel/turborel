@@ -2,8 +2,8 @@
 //! as a table while it holds few groups and adopted where its groups lie
 //! once it holds many (`exec/table/made/wide.rs`). A partition goes wide
 //! when its table, a Made merged into it, holds more groups than `WIDE`
-//! and the wave's rows are mostly new groups or on course to make many
-//! (RULES.md D1302), and stays wide for the rest of the statement. The
+//! and the wave's entries are mostly new groups or on course to make
+//! many (RULES.md D1302), and stays wide for the rest of the statement. The
 //! counts are the partition's own, so the partitions that go wide, and
 //! when, follow from the Mades each wave holds and their order alone. Which morsels a wave
 //! holds may differ from run to run as before. The groups, their order
@@ -48,30 +48,29 @@ pub(super) const WIDE: usize = 1 << 15;
 /// merges of integer keys all new cost the same at each.
 pub(super) const SUB: usize = 1 << 14;
 
-/// \[DESIGN\] (RULES.md D1302) The most rows in a thousand, of those a
-/// wave has handed a partition so far, that may have met a group the
-/// partition held already for it to go wide as a partition of rows
+/// \[DESIGN\] (RULES.md D1302) The most entries in a thousand, of those
+/// a wave has handed a partition so far, that may have met a group the
+/// partition held already for it to go wide as a partition of entries
 /// mostly new. Of eight groupings of a hundred million rows, counted a
-/// partition as its table passed `WIDE`, those that ran faster wide had
-/// seen at most 57 rows in a thousand meet a held group, where their
-/// partitions stayed small, and those that ran faster as tables at
-/// least 192. This is the middle of the two.
+/// partition as its table passed `WIDE`, the four of entries mostly new
+/// had seen at most 57 in a thousand meet a held group, and the others
+/// at least 192. This is the middle of the two.
 pub(super) const MET: usize = 125;
 
 /// \[DESIGN\] (RULES.md D1302) The groups a partition is on course to
 /// hold once the wave is merged from which it goes wide whatever share
-/// of its rows met a held group. Of the same eight groupings, the
+/// of its entries met a held group. Of the same eight groupings, the
 /// partitions that ran faster as tables were on course for 115,000
 /// groups at most, and those that ran faster wide for 329,000 at least,
-/// a fifth to two fifths of whose rows met a held group among them.
+/// one among them a fifth of whose entries had met a held group.
 /// This is the middle of the two in the logarithm, about 194,000, as
 /// three times 65,536.
 pub(super) const COURSE: usize = 3 << 16;
 
 /// When a grouping's partitions go wide: past how many groups a table of
-/// one holds, whether whatever reads them, of how many of a wave's rows
-/// met a held group or on course for how many groups, and how many
-/// times a wave was merged into a wide one, which a test reads.
+/// one holds, whether whatever reads them, of how many of a wave's
+/// entries met a held group or on course for how many groups, and how
+/// many times a wave was merged into a wide one, which a test reads.
 #[derive(Clone)]
 pub(in crate::exec::parallel::grouped) struct Widen {
     pub(in crate::exec::parallel::grouped) past: usize,
@@ -79,14 +78,14 @@ pub(in crate::exec::parallel::grouped) struct Widen {
     /// asks so that the gathered table is compared too. A statement's
     /// partitions go wide only where they are read as they lie.
     every: bool,
-    /// \[DESIGN\] (RULES.md D1302) The most rows in a thousand of a
+    /// \[DESIGN\] (RULES.md D1302) The most entries in a thousand of a
     /// wave's that may have met a held group for a partition to go
-    /// wide by its rows: `MET` of a statement's, and a thousand, so
-    /// whatever share met one, as a test asks of groupings whose rows
-    /// mostly do.
+    /// wide by its entries: `MET` of a statement's, and a thousand, so
+    /// whatever share met one, as a test asks of groupings whose
+    /// entries mostly do.
     met: usize,
     /// \[DESIGN\] (RULES.md D1302) The groups a partition is on
-    /// course to hold from which it goes wide whatever its rows met:
+    /// course to hold from which it goes wide whatever its entries met:
     /// `COURSE` of a statement's.
     course: usize,
     /// \[DESIGN\] (RULES.md D1301) The groups and rows a sub-part of a
@@ -95,13 +94,16 @@ pub(in crate::exec::parallel::grouped) struct Widen {
     pub(in crate::exec::parallel::grouped) merged: Arc<AtomicUsize>,
 }
 
-/// A thousand, the rows a share of them is counted in.
+/// A thousand, the entries a share of them is counted in.
 const THOUSAND: usize = 1000;
 
 /// \[DESIGN\] (RULES.md D1302) What a partition has counted of a wave
 /// while it merges it as a table: the groups it held when the wave
-/// began, the rows the wave hands it in all, those handed so far, and
-/// the groups they made.
+/// began, the entries the wave hands it in all, those handed so far,
+/// and the groups they made. An entry is what a Made holds for the
+/// partition to look up once (`Made::groups_of`): a group of a
+/// morsel's table, a row handed on ungrouped (RULES.md D1260), or a
+/// run of rows of one key (RULES.md D1323).
 #[derive(Clone, Copy)]
 struct Counted {
     began: usize,
@@ -112,15 +114,15 @@ struct Counted {
 
 impl Widen {
     /// Wide past `past` groups whatever reads the partition and whatever
-    /// share of a wave's rows met a held group, no wave merged yet.
+    /// share of a wave's entries met a held group, no wave merged yet.
     pub(in crate::exec::parallel::grouped) fn past(past: usize) -> Widen {
         Widen { past, every: true, met: THOUSAND, course: COURSE, sub: SUB, merged: Arc::new(AtomicUsize::new(0)) }
     }
 
     /// Wide past `past` groups of a grouping whose reader reads the
-    /// groups where they lie, where a wave's rows are mostly new groups
-    /// (`MET`) or the partition is on course for many (`COURSE`), as a
-    /// statement's partitions go.
+    /// groups where they lie, where a wave's entries are mostly new
+    /// groups (`MET`) or the partition is on course for many (`COURSE`),
+    /// as a statement's partitions go.
     pub(in crate::exec::parallel::grouped) fn read_as_they_lie(past: usize) -> Widen {
         Widen { every: false, met: MET, ..Widen::past(past) }
     }
@@ -133,8 +135,8 @@ impl Widen {
     }
 
     /// This, a partition on course for `course` groups or more going
-    /// wide whatever its rows met, as a test asks of partitions of few
-    /// groups.
+    /// wide whatever its entries met, as a test asks of partitions of
+    /// few groups.
     #[cfg(test)]
     pub(in crate::exec::parallel::grouped) fn on_course(self, course: usize) -> Widen {
         Widen { course, ..self }
@@ -143,14 +145,14 @@ impl Widen {
     /// \[DESIGN\] (RULES.md D1302) Whether a partition whose table has
     /// passed the groups it holds before it goes wide goes wide now, by
     /// what it `counted` of the wave. It does for either of two reasons.
-    /// At most `met` in a thousand of the rows handed so far met a
-    /// group it held, so nearly every row is a group whose copy a wide
-    /// partition saves, whatever the partition's size. Or the groups it
-    /// held when the wave began, with those the wave is on course to
-    /// make of all its rows at the rate of those handed so far, are
-    /// `course` or more, a table so far past a cache that its lookups
-    /// cost more than a wide partition's even where many rows meet a
-    /// held group.
+    /// At most `met` in a thousand of the entries handed so far met a
+    /// group it held, so nearly every entry is a group whose copy a
+    /// wide partition saves, whatever the partition's size. Or the
+    /// groups it held when the wave began, with those the wave is on
+    /// course to make of all its entries at the rate of those handed so
+    /// far, are `course` or more, a table so far past a cache that its
+    /// lookups cost more than a wide partition's even where many
+    /// entries meet a held group.
     fn goes_wide(&self, counted: Counted) -> bool {
         let met = counted.so_far.saturating_sub(counted.made);
         let mostly_new = met.saturating_mul(THOUSAND) <= self.met.saturating_mul(counted.so_far);
@@ -265,12 +267,13 @@ pub(super) fn kept_of(grouping: &Grouping, merged: Merging, runner: &Runner) -> 
 /// partition's, partition `p` of each Made of `rest`, in their order,
 /// until it goes wide or they end. Once it holds more groups than
 /// `widen` says, a Made merged, it goes wide if what it has counted of
-/// the wave says so (`Widen::goes_wide`): the rows handed so far are
+/// the wave says so (`Widen::goes_wide`): the entries handed so far are
 /// counted as their Mades are merged, the groups they made are those
 /// the table holds more than it held when the wave began, and `handed`
-/// is the rows the wave hands it in all. A table past that many groups
-/// that does not go wide stays a table, is judged again after each
-/// Made, and is given room once for the rest of the wave's rows.
+/// is the entries the wave hands it in all. A table past that many
+/// groups that does not go wide stays a table, is judged again after
+/// each Made, and is given room once for the rest of the wave's
+/// entries.
 fn merged_while_a_table<'a>(
     mut table: Box<GroupTable>,
     rest: &mut impl Iterator<Item = &'a Arc<Made>>,

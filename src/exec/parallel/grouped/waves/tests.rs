@@ -478,17 +478,17 @@ fn a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie() {
 
 /// Verifies: [DESIGN] RULES.md D1302 a partition whose table has passed
 /// the groups it holds before it goes wide goes wide only where the
-/// rows the wave has handed it are mostly new groups, or it is on
+/// entries the wave has handed it are mostly new groups, or it is on
 /// course to hold many. A grouping each of whose rows is a group of its
 /// own merges its waves into wide partitions. One nine in ten of whose
-/// rows, past the first morsel, meet a group a morsel before it made
+/// entries, past the first morsel, meet a group a morsel before it made
 /// merges every wave into tables, though its partitions' tables pass
 /// the same count of groups, as they go wide where whatever share may
 /// meet one. It goes wide too where a partition on course for forty
 /// five groups does. Each gives the first rows it gives with no
 /// partition wide.
 #[test]
-fn a_partition_goes_wide_only_of_rows_mostly_new_or_on_course_for_many_groups() {
+fn a_partition_goes_wide_only_of_entries_mostly_new_or_on_course_for_many_groups() {
     let (_db, a) = table();
     let grouped = |keyed: &str| format!("SELECT G, COUNT(*), SUM(V), MAX(K) FROM (SELECT {keyed} AS G, K, V FROM T) AS Q GROUP BY G");
     let (new, held) = (grouped("K"), grouped("CASE WHEN MOD(K, 10) = 0 THEN K ELSE MOD(K, 1000) END"));
@@ -496,10 +496,10 @@ fn a_partition_goes_wide_only_of_rows_mostly_new_or_on_course_for_many_groups() 
     let ruled = || How { forced: NONE, widen: Widen::read_as_they_lie(40), ..How::default() };
     let (of_new, of_held) = (ruled(), ruled());
     assert_eq!(first_rows(&a, &new, &of_new, (1, 7)), first_rows(&a, &new, &never, (1, 7)));
-    assert!(of_new.widen.merged.load(Ordering::Relaxed) > 0, "rows all new groups, and no partition went wide");
+    assert!(of_new.widen.merged.load(Ordering::Relaxed) > 0, "entries all new groups, and no partition went wide");
     let expected = first_rows(&a, &held, &never, (1, 7));
     assert_eq!(first_rows(&a, &held, &of_held, (1, 7)), expected);
-    assert_eq!(of_held.widen.merged.load(Ordering::Relaxed), 0, "rows that mostly meet a held group, and a partition went wide");
+    assert_eq!(of_held.widen.merged.load(Ordering::Relaxed), 0, "entries that mostly meet a held group, and a partition went wide");
     let whatever = How { forced: NONE, widen: Widen::past(40), ..How::default() };
     let on_course = How { forced: NONE, widen: Widen::read_as_they_lie(40).on_course(45), ..How::default() };
     for (how, why) in [(&whatever, "no partition's table passed the count"), (&on_course, "on course for many groups, and none went wide")]

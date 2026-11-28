@@ -42,11 +42,12 @@ use crate::error::Result;
 use crate::exec::broken;
 use crate::logical::AggCall;
 use crate::storage::mask::index;
-use part::{Handed, Part, Pass, bits_for, sub_of};
+use part::{Handed, Part, Pass, bits_for};
 
 mod own;
 mod part;
 mod read;
+pub(in crate::exec::table::made) use part::sub_of;
 pub(in crate::exec) use read::Lying;
 
 /// The segment of a group that lies in the table of its sub-part's own.
