@@ -179,7 +179,7 @@ impl Keys {
     ///
     /// # Errors
     ///
-    /// SQLCODE -901 if the bytes are not keys so written.
+    /// SQLCODE -916 if the bytes are not keys so written.
     pub(in crate::exec) fn read(reader: &mut Reader<'_>, len: usize) -> Result<Keys> {
         let width = crate::storage::mask::index(reader.u32()?);
         Ok(Keys { lanes: (0..width).map(|_| Lane::read(reader, len)).collect::<Result<_>>()? })

@@ -6,7 +6,7 @@
 //! value made, so a column of totals is passed over in one loop and only
 //! a total that could raise is finished to know.
 
-use super::{ColumnarKind, Exact, Typed};
+use super::{ColumnarKind, Exact, Totals, Typed};
 use crate::error::Result;
 use crate::value::DataType;
 
@@ -17,6 +17,11 @@ const QUIET_DIGITS: u32 = crate::value::MAX_EXACT_PRECISION.saturating_sub(1);
 
 /// The radix a total's digits are counted in.
 const TEN: u128 = 10;
+
+/// \[DESIGN\] (RULES.md D1308) The greatest total of either sign a
+/// narrow column holds, 2^63, the least integer of 64 bits without its
+/// sign.
+const NARROW_MOST: u128 = 1 << 63;
 
 impl Typed {
     /// \[DESIGN\] (RULES.md D1256) Finishes each of the first `len`
@@ -42,15 +47,21 @@ impl Exact {
     /// \[DESIGN\] (RULES.md D1256) Finishes the results of the first
     /// `len` groups that may raise, keeping none. A total under
     /// `quiet_below` raises nothing whatever its count, so it is passed
-    /// over, and any other is finished to know.
+    /// over, and any other is finished to know. A narrow column no total
+    /// of which can reach the bound is passed over whole, and each total
+    /// of any other is compared as it is held (RULES.md D1308).
     fn checked(&self, len: usize) -> Result<()> {
         let bound = self.quiet_below();
-        for (g, units) in self.units.iter().take(len).enumerate() {
-            if units.unsigned_abs() >= bound {
-                self.finish(g)?;
+        let loud = |g: usize, total: u128| if total >= bound { self.finish(g).map(drop) } else { Ok(()) };
+        match &self.totals {
+            Totals::Narrow(totals) => {
+                if bound > NARROW_MOST {
+                    return Ok(());
+                }
+                totals.iter().take(len).enumerate().try_for_each(|(g, units)| loud(g, u128::from(units.unsigned_abs())))
             }
+            Totals::Wide(totals) => totals.iter().take(len).enumerate().try_for_each(|(g, units)| loud(g, units.unsigned_abs())),
         }
-        Ok(())
     }
 
     /// The total, of either sign, under which finishing a group raises

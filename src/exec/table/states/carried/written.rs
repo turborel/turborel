@@ -27,7 +27,7 @@ impl Carried {
     ///
     /// # Errors
     ///
-    /// SQLCODE -901 if the bytes are not such values.
+    /// SQLCODE -916 if the bytes are not such values.
     pub(in crate::exec::table) fn read(reader: &mut Reader<'_>, len: usize) -> Result<Carried> {
         let (mut values, mut held) = (Vec::with_capacity(len), Vec::with_capacity(len));
         for _ in 0..len {

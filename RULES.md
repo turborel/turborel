@@ -842,6 +842,7 @@ verification approach DO-178C expects (§8).
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 | D1305 | A grouping column that is an expression of other grouping columns is computed after the grouping |
 | D1306 | A select list's expressions that cannot raise are computed after FETCH FIRST |
+| D1308 | An exact total is held in 64 bits and widened at the first add that leaves them |
 | D1311 | The matcher that marks does a step's work once a step |
 
 ### The project
@@ -24818,6 +24819,75 @@ sort is left, as it reads no row past those it keeps. The rule is a
 late one, after the grouping columns are computed (D1305) and before
 `fetch_dependents_late` (D1202), which then finds a select list of
 column references below the FETCH FIRST.
+
+#### D1308. An exact total is held in 64 bits and widened at the first add that leaves them
+
+A column of exact states held each group's total, of SUM and AVG, or
+best value, of MAX and MIN, in 128 bits beside its count (D356). A
+grouping into very many groups writes every group's states as its
+morsels feed them, reads them again as its partitions merge them, and
+again as they are finished. The bytes a total takes are memory the
+statement moves each time. Nearly every total fits 64 bits, as the
+integers a store gives are 64 bits each.
+
+A column now holds its totals in one of two forms
+(`exec/table/states/typed/totals.rs`). It starts narrow, each total in
+64 bits. An add is checked. The first whose sum leaves 64 bits copies
+the column to 128 bits, once, and is done again there by the add the
+column had before. A best value widens its column when 64 bits do not
+hold the value itself. A column held does not narrow again.
+
+The form follows what was added, and nothing is proved of it. A proof
+would need the precision of the argument, which a column of states is
+not told, and a bound on the rows a group takes, which a merge of
+partitions does not have. The checked add needs neither and is exact
+whatever is fed. A total is the same integer in either form, and
+whatever reads one reads it as 128 bits. So a group's result and its
+type, the judgement of a sum of more digits than a number has, the
+state a part writes (D341, D1186) and the column a spill is written
+(D1226) are what they were. Two integers of 64 bits never sum past 128,
+so a sum past 128 bits is raised by the add in 128 bits, at the add
+that raised it before. No stored or spilled format changes. A column
+read back from a spill is narrow where 64 bits hold every total read.
+
+A batch's rows are added to a narrow column by one loop of adds in 64
+bits. The row whose sum leaves them, and the rows after it, are taken
+by the path that widens. The sums of few groups fed by lanes (D1120)
+have lanes as wide as their totals. A batch is added to the totals only
+once every add of it has stayed within their width, so a batch that
+leaves 64 bits has added nothing, and is fed again by lanes of 128 bits
+to the column widened.
+
+Two columns merge whatever forms they hold (D1110). Each total merged
+is taken as a row's value is, so a narrow column widens when a total it
+is given, or the sum, does not fit. A group merged alone and the same
+group merged in a list leave a column the same, bit for bit. A partition
+that takes the states of several morsels in turn (D1300) may be given
+narrow totals by one and wide totals by the next, in either order. A
+column gathered in another order keeps its form, and so does the column
+a second grouping merges a part into (D1280). The pass over totals too
+small to raise (D1256) passes a narrow column whole where no integer of
+64 bits reaches its bound, and compares each total with the bound
+otherwise. A column is charged the width of its form, so what a table
+is charged is what it holds.
+
+An add pays one branch that is predicted, and a column that widens pays
+one copy.
+
+The tests give columns and accumulators the same values in the same
+order and compare each group's result, error and written state. They
+cover a total that leaves 64 bits at the first row of a batch, in the
+middle of one, below the least integer, at the first value fed and in a
+merge, of few groups and of many, and totals left at the greatest and
+least integers of 64 bits, which stay narrow
+(`states/tests/widened.rs`, `typed/totals/tests.rs`,
+`typed/few/tests.rs`). States sent in either form are merged in turn
+into one column, parts of either form are merged whole, a group merged
+alone is compared with the same group merged in a list, and a column
+written to a spill is read back (`typed/written/tests.rs`). Groupings
+whose sums leave 64 bits in some groups are run in parallel, in memory
+and spilled, against the same run alone
+(`test/integration/spilled_groups.rs`).
 
 #### D1311. The matcher that marks does a step's work once a step
 
