@@ -125,10 +125,28 @@ fn rows_written_by_partition_are_the_rows_appended_and_gathered() {
     }
 }
 
+/// Each partition's groups of `made`, merged into a table and finished,
+/// in the order of their first rows, and where its partitions begin.
+fn groups(made: &Made, parts: usize, seed: &Seed) -> (Vec<String>, Vec<u32>) {
+    let mut all = Vec::new();
+    for p in 0..parts {
+        let mut table = GroupTable::new(AT.len(), &calls(), seed, usize::MAX);
+        table.reserve(made, made.groups_of(p));
+        table.absorb(made, p).unwrap();
+        let mut finished = table.finished().unwrap();
+        finished.sort_by_key(|(first, _)| *first);
+        all.extend(finished.iter().map(|(first, row)| format!("{p} {first} {row:?}")));
+    }
+    (all, made.starts.clone())
+}
+
 /// Verifies: [DESIGN] RULES.md D1313 a table written by partition is
 /// handed over as it lies only by the partitions it was written by. Asked
-/// for other partitions it is gathered as any table is, and hands over
-/// what the rows appended and gathered by those give.
+/// for other partitions it is gathered as any table is, and each of those
+/// partitions' tables merges what it hands over into the groups the rows
+/// appended and gathered by them give: every key's rows still in the
+/// order they came, so each state is the same, and a key lies in one
+/// partition.
 ///
 /// Decision: as many partitions as it was written by, or not; the lanes
 /// it was written by, or not. Written by 8 and no lane: asked 8 and no
@@ -143,7 +161,7 @@ fn a_table_written_by_other_partitions_is_gathered_again() {
     let (hashes, _) = hashed(&held, WHOLE, &seed);
     for (parts, lanes) in [(16_usize, WHOLE), (8, LANE)] {
         let (gathered, again) = (appended(&held, &hashes, &seed).made(parts, lanes).unwrap(), written(&held, (8, WHOLE), &seed));
-        assert_eq!(told(&again.made(parts, lanes).unwrap(), parts, &seed), told(&gathered, parts, &seed), "{parts} by {lanes:?}");
+        assert_eq!(groups(&again.made(parts, lanes).unwrap(), parts, &seed), groups(&gathered, parts, &seed), "{parts} by {lanes:?}");
     }
 }
 

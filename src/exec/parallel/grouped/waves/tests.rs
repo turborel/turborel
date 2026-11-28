@@ -187,7 +187,8 @@ fn rows_written_by_partition_give_the_groups_the_tables_give() {
                GROUP BY G, S";
     set(&db, "MEMORY.WORK_BYTES", HELD);
     let expected = waved(&a, sql, &How { forced: NONE, apart: NONE, ..How::default() }, 3);
-    assert_eq!((expected.rows.len(), expected.spills), (9000, 0));
+    // Of 9,000 values of G, a fourth have no row the filter keeps.
+    assert_eq!((expected.rows.len(), expected.spills), (6750, 0));
     for (grant, (which, apart), (forced, _)) in ways(&named) {
         set(&db, "MEMORY.WORK_BYTES", grant);
         let made = waved(&a, sql, &How { forced, apart, ..How::default() }, 3);

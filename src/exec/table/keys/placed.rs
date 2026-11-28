@@ -58,14 +58,14 @@ impl Lane {
             let rows = rows.as_ref().map(Sel::as_slice);
             for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
                 let (r, Some(&p)) = (nth(rows, n), place.next()) else { break };
-                if ints.is_null(r) {
-                    if let Some(null) = nulls.get_mut(index(p)) {
-                        *null = true;
-                    }
-                    continue;
+                let null = ints.is_null(r);
+                any |= !null;
+                if let Some(at) = nulls.get_mut(index(p)) {
+                    *at = null;
                 }
-                any = true;
-                if let Some(unit) = units.get_mut(index(p)) {
+                // A null's unit is left 0, as what its vector holds there
+                // has no meaning (RULES.md D1289).
+                if let Some(unit) = units.get_mut(index(p)).filter(|_| !null) {
                     *unit = ints.units.get(r).copied().unwrap_or(0);
                 }
             }
