@@ -95,6 +95,7 @@ mod morsel_memory;
 mod narrowed_windows;
 mod outer_steps;
 mod pair_top;
+mod placed_rows;
 mod semi_joins;
 mod spilled_joins;
 mod steady;
@@ -342,6 +343,7 @@ fn closing() -> [&'static [Mutation]; 39] {
         &semi_joins::SEMI_JOINS,
         &grouped_parts::GROUPED_PARTS,
         &pair_top::PAIR_TOP,
+        &placed_rows::PLACED_ROWS,
         &first_groups::FIRST_GROUPS,
         &like_pieces::LIKE_PIECES,
         &like_coded::LIKE_CODED,

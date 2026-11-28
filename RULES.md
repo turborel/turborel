@@ -838,6 +838,7 @@ verification approach DO-178C expects (§8).
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
+| D1313 | Rows handed on ungrouped are written once, each where its partition's run lies |
 
 ### The project
 
@@ -23354,7 +23355,8 @@ The morsels of such a grouping now hand their rows on ungrouped
 (`exec/batch/groups/morsel.rs`, `rows_apart`). Each row is made a group
 of its own: its key appended, its hash kept, its first row its own
 number, its set functions fed its one row. No group is looked for and no
-slot is taken (`exec/table.rs`, `appended`). What is handed on has the
+slot is taken (`exec/table/made/apart.rs`, D1313, which writes each row
+once where it is handed over). What is handed on has the
 form a morsel's groups always had, so the partitions merge it, hold it
 and spill it as before, and a key the morsel held twice is merged there.
 The groups, their order and their results are unchanged. Only where a
@@ -24854,6 +24856,58 @@ So the rule is the reader's, not a count of groups
 (`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
 which goes wide whatever reads, is what the tests of the gathered table
 ask.
+
+#### D1313. Rows handed on ungrouped are written once, each where its partition's run lies
+
+A morsel whose rows a table would not reduce hands each row on as a
+group of its own (D1260), in the form a morsel's groups always had, a
+partition's groups one after another (D1110). It made that form in two
+steps. Each row's key, hash, first row's number and states were appended
+in the order the rows came, a row at a time and a key through its cell.
+Then every column was gathered into the partitions' order. So each group
+was written twice and read once between, and of a grouping of a group a
+row that was most of what the morsels did beside reading their rows.
+
+The morsel now learns where each row lies before it writes any
+(`exec/batch/groups/morsel.rs`, `rows_apart`; `exec/table/made/apart.rs`).
+It holds its batches, which are smaller than what it hands over, and
+hashes each batch's keys a vector at a time, as before. It counts the
+rows of each partition over the morsel's hashes, and gives each row its
+place, after the rows before it of its partition and after the
+partitions before. Then each column is made at its size and each row's
+value written at its place. The hashes and the first rows' numbers are
+written so. A key lane of integers of one scale is written straight from
+the batches' vectors, and a lane of any other type takes its values one
+at a time in the order of the places, as a table's lane takes them
+(`exec/table/keys/placed.rs`). The states are grown once to the rows'
+count and fed each batch's rows with their places as their groups, by
+the feed every table uses, so every kind of state is fed as it was.
+
+What is handed over is what the two steps gave. A partition's rows lie
+in the order they came, their places count from zero, and the Made says
+that two of its groups may hold one key. The partitions merge it, adopt
+it (D1300), hold it and spill it as before, and the groups, their order
+and each set function's value are unchanged, of sums of approximate
+numbers too, as each partition still takes a key's rows in the order
+they came.
+
+Of a pair of groupings the partitions are of the hashes of the second's
+columns alone (D1113). Those are hashed a vector at a time too
+(`exec/table/hash.rs`, `hash_lanes`), each lane as the column of the key
+it is, so a row's partition is the one its group takes of a morsel that
+made a table.
+
+A table written by partition says by how many partitions and by which
+lanes. Handed over by those it is frozen as it lies. Asked for others it
+is gathered as any table is. A morsel named to be handed whole to the
+statement's thread is frozen whole, and the table there merges a key's
+rows in the order they came, as that order holds within a partition and
+a key lies in one.
+
+No constant is added and none changed. A morsel holds its batches until
+it hands over, which a morsel of a join that makes many rows of each
+holds too. They are less than the table it held before and the gathered
+copy of it together.
 
 #### D447. A unique constraint added in a transaction fills its index with every version
 

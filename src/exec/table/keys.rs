@@ -23,6 +23,7 @@ use super::hash::canonical;
 mod written;
 pub(super) use written::written_alone;
 mod columns;
+mod placed;
 
 /// A key given to a table: of a row of a batch, the columns at these
 /// places of the row at this place; of values; or of a group of another

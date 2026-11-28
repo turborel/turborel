@@ -297,7 +297,8 @@ fn grouped(
         let apart = ungrouped.map_or_else(|| reduction.apart(m), |names| names(m));
         let expected = room.load(Ordering::Relaxed);
         let asked = (&runner, first_of(&making, m), &making.seed);
-        let table = morsel_groups(read, &making.spec.aggs, batches, asked, (expected, apart))?;
+        let parted = apart.then(|| (PARTS, making.lanes()));
+        let table = morsel_groups(read, &making.spec.aggs, batches, asked, (expected, parted))?;
         room.store(table.len(), Ordering::Relaxed);
         if !apart {
             reduction.tell(table.taken, table.len());
