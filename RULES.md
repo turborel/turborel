@@ -24874,11 +24874,13 @@ greatest value keeps of wide partitions with those it keeps of tables,
 the batches filled to a few groups so a partition is read in several.
 
 A partition goes wide only of a grouping whose reader reads the groups
-where they lie: the first rows of a sort, and no second grouping over
-it. Whatever else reads a partition reads a table, and a wide partition
-gathered into one for it writes every group a second time, which costs
-what the merge into a table would have and the adoption besides, as a
-grouping under a HAVING condition showed when its partitions went wide.
+where they lie. That reader is the first rows of a sort whose every key
+names a set function, with no second grouping over it. Whatever else
+reads a partition reads a table, a sort by a grouping column among
+them, and a wide partition gathered into one for it writes every group
+a second time, which costs what the merge into a table would have and
+the adoption besides, as a grouping under a HAVING condition showed
+when its partitions went wide.
 So the rule is the reader's, not a count of groups
 (`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
 which goes wide whatever reads, is what the tests of the gathered table

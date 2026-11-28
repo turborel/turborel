@@ -60,7 +60,7 @@ const WIDE_FIRST: &str = "exec::parallel::grouped::waves::tests::the_first_rows_
 const WIDE_READ: &str = "exec::parallel::grouped::waves::tests::a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 46] = [
+pub const GROUP_TABLE: [Mutation; 47] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -480,6 +480,16 @@ pub const GROUP_TABLE: [Mutation; 46] = [
         replacement: "states.merge_all(agg, &[], (sent, &[]))?;",
         integration: &[],
         unit: &[WIDE_FIRST],
+    },
+    Mutation {
+        name: "wide-under-a-sort-by-a-grouping-column",
+        package: Package::Core,
+        breaks: "a partition goes wide of a grouping asked the first rows of a sort by a grouping column, which reads a table, and is gathered into one again (RULES.md D1300)",
+        file: "src/exec/parallel/grouped/waves/wide.rs",
+        original: "is_some_and(|top| top.sorted_by(width).is_some());",
+        replacement: "is_some_and(|top| top.sorted_by(width).is_some() || width > 0);",
+        integration: &[],
+        unit: &[WIDE_READ],
     },
     Mutation {
         name: "wide-whatever-reads-the-groups",

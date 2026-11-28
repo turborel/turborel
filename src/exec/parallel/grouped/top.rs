@@ -285,7 +285,7 @@ impl Top {
     /// keys are `width` columns, if every key names one. A key that names
     /// a grouping column or a constant is sorted by with every column of
     /// the groups made, as `of_table` makes them.
-    fn sorted_by(&self, width: usize) -> Option<Vec<usize>> {
+    pub(super) fn sorted_by(&self, width: usize) -> Option<Vec<usize>> {
         let named = |key: &SortKey| match self.columns.get(key.column) {
             Some(Pick::Column(c)) => c.checked_sub(width),
             Some(Pick::Const(_)) | None => None,
@@ -406,6 +406,16 @@ impl Top {
         let key = SortKey { descending: true, ..SortKey::ascending(width.saturating_add(by)) };
         let keys = vec![key, SortKey::ascending(columns.len())];
         Top { columns, keys, most, run: (db.clone(), tx), counts: Counts::default(), filled: FEW }
+    }
+
+    /// This sort, for tests, by the first grouping column in place of its
+    /// first key's set function.
+    #[cfg(test)]
+    pub(super) fn by_group(mut self) -> Top {
+        if let Some(key) = self.keys.first_mut() {
+            key.column = 0;
+        }
+        self
     }
 }
 
