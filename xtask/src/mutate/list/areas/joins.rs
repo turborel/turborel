@@ -28,7 +28,7 @@ const SHAPED_OR: &str = "benchmark_shapes::an_equality_each_disjunct_repeats_joi
 const MERGED: &str = "join_enumeration::merge_joins_pair_runs_of_equal_keys";
 
 /// Mechanisms of join enumeration whose removal must fail its tests.
-pub const JOINS: [Mutation; 15] = [
+pub const JOINS: [Mutation; 16] = [
     Mutation {
         name: "joins-conflict-rule",
         package: Package::Core,
@@ -180,6 +180,16 @@ pub const JOINS: [Mutation; 15] = [
             "join_enumeration::an_index_join_is_priced_by_as_much_of_the_key_as_it_covers",
             "tpcc_plans::stock_level_joined_learns_one_plan_whatever_its_threshold",
         ],
+        unit: &[],
+    },
+    Mutation {
+        name: "joins-one-column-guess-capped",
+        package: Package::Core,
+        breaks: "a probe of one column guessed at more values than its table has rows is priced at a whole row",
+        file: "src/physical/indexed/keyed.rs",
+        original: "if probed.len() > 1 { guessed.min(rows) } else { guessed }",
+        replacement: "guessed.min(rows)",
+        integration: &["graph_table::joins::edges_are_expanded_either_way_16"],
         unit: &[],
     },
 ];
