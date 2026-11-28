@@ -71,6 +71,13 @@ fn selected_rows_are_compared_in_the_order_given() {
     assert_eq!(ends(&rows, &[0], Some(&[0, 2, 3, 5])), Some(vec![3, 4]));
     assert_eq!(ends(&rows, &[0], Some(&[4, 6, 0])), Some(vec![2, 3]));
     assert_eq!(ends(&rows, &[0], Some(&[0, 1, 2])), Some(vec![1, 2, 3]));
+    // Strings none of which is null are read by their octets where the
+    // selection says, as integers are.
+    let s = texts(&[Some("a"), Some("b"), Some("a"), Some("a"), Some("c")]);
+    let strings = batch(vec![s], 5);
+    assert_eq!(ends(&strings, &[0], Some(&[0, 2, 3])), Some(vec![3]));
+    assert_eq!(ends(&strings, &[0], Some(&[1, 2, 4])), Some(vec![1, 2, 3]));
+    assert_eq!(ends(&strings, &[0], Some(&[3, 5])), None);
     // A row given past the vector tells no run.
     assert_eq!(ends(&rows, &[0], Some(&[0, 7])), None);
     assert_eq!(ends(&rows, &[0], Some(&[])), None);
