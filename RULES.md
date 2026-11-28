@@ -24470,6 +24470,7 @@ every function and plug-in to write. The handle needs none.
 
 The count a grouping makes of an expression (D1279) writes its key the
 same way and keeps the expression for its statement.
+
 #### D1305. A grouping column that is an expression of other grouping columns is computed after the grouping
 
 A grouping by the columns of a derived table, a view or a WITH query
@@ -24540,7 +24541,7 @@ then reads the columns kept and carries those a key determines. The
 planner estimates the groups of the columns kept by their own
 statistics. A grouping column the rule leaves, an expression that may
 raise or reads a column not grouped by, is still bounded by the values
-of the columns it reads (D1082).
+of the columns it reads (D1082) and by its table's sample (D1279).
 
 Not covered are SELECT DISTINCT of a column and expressions of it,
 which is no grouping in the plan, an expression of a column that is
