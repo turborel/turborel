@@ -24213,7 +24213,11 @@ written once its morsel's thread has made it, so any thread may read it,
 and a group that takes a second row cannot merge it there. The first
 time a row meets a group held already, the group is taken up into a
 table of the partition's own, and that row and every later one merge
-there. A group of one row has no state but the Made's.
+there. A group of one row has no state but the Made's. A group is taken
+up alone, its key appended and each state of its first row merged into
+one fed nothing, and the table of its own gives no group a slot, as the
+partition's slots find a group wherever it lies and no key is ever
+looked up there.
 
 The groups, their order and each set function's result are those of the
 table the partition would have merged. A wave holds its Mades in the

@@ -56,7 +56,7 @@ const WIDE_WAVES: &str = "exec::parallel::grouped::waves::tests::the_groups_are_
 const WIDE_FIRST: &str = "exec::parallel::grouped::waves::tests::the_first_rows_by_a_set_function_are_the_same_of_wide_partitions";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 39] = [
+pub const GROUP_TABLE: [Mutation; 40] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -364,6 +364,16 @@ pub const GROUP_TABLE: [Mutation; 39] = [
         file: "src/exec/table/made/wide.rs",
         original: "        *lies = (OWN, number);",
         replacement: "        *lies = (segment, place);",
+        integration: &[],
+        unit: &[WIDE],
+    },
+    Mutation {
+        name: "wide-group-taken-up-with-no-state",
+        package: Package::Core,
+        breaks: "a group of a wide partition taken up into the partition's own table is given its key and first row but not the states of its first row, so its results are those of its later rows alone (RULES.md D1300)",
+        file: "src/exec/table/made/wide.rs",
+        original: "            states.merge((index(g), agg), (sent, at))?;",
+        replacement: "            if at == usize::MAX { states.merge((index(g), agg), (sent, at))?; }",
         integration: &[],
         unit: &[WIDE],
     },

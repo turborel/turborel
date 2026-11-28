@@ -14,7 +14,9 @@
 //! is what lets any thread read it. The first time a row meets a group
 //! held already the group is taken up into a table of the partition's own,
 //! key, first row and states, and that row and every later one merge
-//! there. A group of one row has no state but the Made's.
+//! there. A group of one row has no state but the Made's. The table of
+//! its own is never looked a key up in, as the partition's slots find a
+//! group wherever it lies, so its groups are appended and given no slot.
 //!
 //! A wave's Mades come in the morsels' order and a Made's rows of a
 //! partition in the morsel's, so the first row of a group to be looked up
@@ -108,7 +110,7 @@ impl Wide {
             lies: (0..hashes.len()).map(|g| (0, narrow(g))).collect(),
             segments: vec![Segment { made: Some(Arc::new(made)), bytes, lying: hashes.len() }],
             hashes,
-            own: GroupTable::new(width, &aggs, &seed, usize::MAX),
+            own: GroupTable::of_own(width, &aggs, &seed),
             slots,
             keyed,
             seed,
@@ -220,8 +222,7 @@ impl Wide {
         let held = self.segments.get_mut(index(segment)).ok_or_else(|| broken("a segment a wide partition does not hold"))?;
         held.lying = held.lying.saturating_sub(1);
         let made = held.made.as_deref().ok_or_else(|| broken("a segment a wide partition let go holds a group"))?;
-        self.own.take_up(made, &[place])?;
-        Ok(number)
+        self.own.taken_up(made, place)
     }
 
     /// Lets go of each Made from segment `from` on that none of its groups
@@ -290,7 +291,7 @@ impl Wide {
             segments: adopted.segments,
             hashes: adopted.hashes,
             lies: adopted.lies,
-            own: GroupTable::thawed(adopted.own, aggs, seed)?,
+            own: GroupTable::thawed_unplaced(adopted.own, aggs, seed)?,
             keyed: adopted.keyed,
             seed: seed.clone(),
             scratch: Vec::new(),
@@ -354,6 +355,35 @@ impl GroupTable {
             states.merge_all(agg, &groups, (sent, places))?;
         }
         Ok(())
+    }
+
+    /// \[DESIGN\] (RULES.md D1300) A wide partition's table of its own, of
+    /// keys of `width` columns, each group computing `aggs`: no group
+    /// yet, and none ever given a slot, as none is looked up in it. No
+    /// two of its groups hold one key, as the partition's slots found
+    /// each before it was taken up.
+    fn of_own(width: usize, aggs: &[AggCall], seed: &Seed) -> GroupTable {
+        let mut table = GroupTable::unplaced(width, aggs, seed, 0);
+        table.apart = false;
+        table
+    }
+
+    /// \[DESIGN\] (RULES.md D1300) Appends the group at `place` of `made`
+    /// as a group of its own, not looked up and given no slot: its key,
+    /// hash and first row, and each set function's state merged into one
+    /// fed nothing, as a merge makes a new group's. Gives its number.
+    ///
+    /// # Errors
+    ///
+    /// As `Accumulator::merge`; a sum past 128 bits.
+    fn taken_up(&mut self, made: &Made, place: u32) -> Result<u32> {
+        let at = index(place);
+        let (hash, first) = (made.hashes.get(at).copied().unwrap_or(0), made.firsts.get(at).copied().unwrap_or(u64::MAX));
+        let g = self.appended(hash, Key::Group(&made.keys, at), first);
+        for ((states, agg), sent) in self.states.iter_mut().zip(&self.aggs).zip(&made.states) {
+            states.merge((index(g), agg), (sent, at))?;
+        }
+        Ok(g)
     }
 
     /// Places its groups from the `from`th on, appended and not yet
