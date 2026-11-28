@@ -24913,7 +24913,11 @@ with the sub-part. None are kept between waves, and none grow.
 
 Each sub-part holds a table of its own for its groups that took a
 second row, and a held row merges into it as it is found, one row's
-states at a time. A sub-part's rows keep the wave's order, so each
+states at a time. The table a partition had merged when it went wide
+becomes that table of its one sub-part, and is split with the sub-part,
+so its groups, the first a partition met and those most rows meet
+again, are never copied a second time and are compared and merged in a
+table a cache holds. A sub-part's rows keep the wave's order, so each
 group's states are merged in the order a table merges them and are the
 states a table holds. A probe that grows long in one sub-part turns the
 whole partition to keyed hashes (D357), and each sub-part hashes its

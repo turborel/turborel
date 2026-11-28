@@ -144,7 +144,7 @@ impl Merging {
         match self {
             Merging::Table(mut table) => {
                 table.absorb(made, p)?;
-                if table.len() > widen { Wide::of(*table).map(|wide| Merging::Wide(Box::new(wide))) } else { Ok(Merging::Table(table)) }
+                Ok(if table.len() > widen { Merging::Wide(Box::new(Wide::of(*table))) } else { Merging::Table(table) })
             }
             Merging::Wide(wide) => Ok(Merging::Wide(wide)),
         }

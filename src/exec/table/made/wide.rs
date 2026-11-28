@@ -35,6 +35,7 @@
 
 use std::sync::Arc;
 
+use super::super::slots::Slots;
 use super::super::{GroupTable, Seed, narrow};
 use super::Made;
 use crate::error::Result;
@@ -107,32 +108,22 @@ impl Adopted {
 
 impl Wide {
     /// The groups of `table`, a partition's that grew past what a cache
-    /// holds, as a wide partition's: the table frozen is its first
-    /// segment and every group lies where the table held it, all in one
-    /// sub-part until a wave is merged.
-    ///
-    /// # Errors
-    ///
-    /// SQLCODE -910 if an accumulator writes no state.
-    pub(in crate::exec) fn of(table: GroupTable) -> Result<Wide> {
+    /// holds, as a wide partition's. The table becomes the table of its
+    /// one sub-part's own, its slots let go, as it holds each group's key
+    /// and states already and its groups are those most likely to take
+    /// further rows. It is split among the sub-parts with them when a
+    /// wave is merged, so a row that meets one of its groups compares
+    /// and merges in a table a cache holds, and no group of it is copied
+    /// a second time to take a row.
+    pub(in crate::exec) fn of(mut table: GroupTable) -> Wide {
         let (aggs, seed, width) = (table.aggs.clone(), table.seed.clone(), table.keys.width());
-        let mut made = table.frozen()?;
-        let keyed = made.keyed.take();
-        let (hashes, bytes, by_keys) = (made.hashes.clone(), made.bytes(), keyed.is_some());
-        let mut part = Part::new(GroupTable::of_own(width, &aggs, &seed));
-        part.lies = (0..hashes.len()).map(|g| (0, narrow(g))).collect();
+        let keyed = table.keyed.take();
+        table.slots = Slots::default();
+        let (hashes, by_keys) = (table.hashes.clone(), keyed.is_some());
+        let mut part = Part::new(table);
+        part.lies = (0..hashes.len()).map(|g| (OWN, narrow(g))).collect();
         (part.hashes, part.keyed) = (hashes, keyed.unwrap_or_default());
-        Ok(Wide {
-            lying: vec![part.hashes.len()],
-            segments: vec![Segment { made: Some(Arc::new(made)), bytes }],
-            parts: vec![part],
-            bits: 0,
-            keyed: by_keys,
-            aggs,
-            seed,
-            width,
-            scratch: Vec::new(),
-        })
+        Wide { lying: Vec::new(), segments: Vec::new(), parts: vec![part], bits: 0, keyed: by_keys, aggs, seed, width, scratch: Vec::new() }
     }
 
     /// How many groups.
