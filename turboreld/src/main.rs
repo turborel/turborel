@@ -38,6 +38,11 @@ static ALLOCATOR: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 static ALLOCATOR: rpmalloc::RpMalloc = rpmalloc::RpMalloc;
 
 fn main() -> ExitCode {
+    // Timing only, never merged.
+    if let Ok(mode) = std::env::var("TURBOREL_TIMING") {
+        turborel::engine::columns::timing::run(&turborel_simd::Simd::detect(), &mode);
+        return ExitCode::SUCCESS;
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let served = turboreld::parse(&args).and_then(|command| match command {
         Command::Help => {

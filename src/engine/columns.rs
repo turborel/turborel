@@ -37,6 +37,7 @@ mod runs;
 pub mod scan;
 pub mod sketch;
 mod texts;
+pub mod timing;
 
 pub(crate) use encoded::kind_name;
 pub use fields::Fields;
