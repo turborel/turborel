@@ -23383,7 +23383,7 @@ A morsel now and then still makes a table, a probe. The first comes
 sixteen morsels after the last table that reduced its rows, and the gap
 to each next is twice the last while no probe reduces. So the morsels
 handed on between two probes are never more than those handed on since
-that table: data that turns to few groups is seen after as many morsels
+that table. Data that turns to few groups is seen after as many morsels
 more as were handed on already, at most, and what a turn seen late
 costs is no more than the hand-over cost so far. A grouping that never
 reduces probes as many times as its morsels halve to sixteen, where a
