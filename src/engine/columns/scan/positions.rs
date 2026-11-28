@@ -9,6 +9,7 @@
 use super::super::group::{Group, Seal, Zone};
 use super::super::packed::dense;
 use super::super::prepared::Made;
+use super::super::runs::Unpacked;
 use super::super::texts::{Asked, Gathered};
 use super::super::{Chunk, padding};
 use super::{Reading, Words, datetime_shape, float_of, ints_scale, nulls_of, stored};
@@ -114,7 +115,10 @@ fn words_at<S: Seal>(
     let Some(zones) = group.zones(column)? else { return Ok(None) };
     let (mut units, mut nulls) = (Vec::with_capacity(positions.len()), Mask::default());
     let mut span = (Vec::new(), Mask::default());
-    let mut rest = positions;
+    // The vectors a chunk's runs are unpacked into, kept from run to run
+    // (RULES.md D1315), given back before anything is answered.
+    let mut unpacked = std::mem::take(&mut prepared.unpacked);
+    let (mut rest, mut read) = (positions, Ok(Some(())));
     for zone in zones {
         let end = zone.run.first.saturating_add(zone.run.rows);
         let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
@@ -123,13 +127,15 @@ fn words_at<S: Seal>(
             continue;
         }
         let held = prepared.with(pages, (column, zone, t), |chunk, made| {
-            Ok(words_of((chunk, made, pages.kernels), (zone.run.first, these), (&mut units, &mut nulls), &mut span))
-        })?;
-        if held.is_none() {
-            return Ok(None);
+            Ok(words_of((chunk, made, pages.kernels), (zone.run.first, these), (&mut units, &mut nulls), (&mut span, &mut unpacked)))
+        });
+        if !matches!(held, Ok(Some(()))) {
+            read = held;
+            break;
         }
     }
-    if units.len() != positions.len() {
+    prepared.unpacked = unpacked;
+    if read?.is_none() || units.len() != positions.len() {
         return Ok(None);
     }
     Ok(Some((units, nulls)))
@@ -140,19 +146,25 @@ fn words_at<S: Seal>(
 /// null to `nulls`: of positions one after another, read as a run; of
 /// positions dense in their span (`packed::dense`), the span decoded whole
 /// into `span` and those asked taken of it; else each read alone, so a
-/// scan that kept few rows of a chunk unpacks no others. None if its
-/// encoding does not hold them.
+/// scan that kept few rows of a chunk unpacks no others. Of a chunk of
+/// runs, positions not one after another are read along its runs, which
+/// are unpacked into `unpacked` where the positions are dense among them
+/// and not among the rows (`Chunk::ints_among`, RULES.md D1340). None if
+/// its encoding does not hold them.
 fn words_of(
     (chunk, made, kernels): (&Chunk<'_>, &Made, &dyn crate::kernels::Kernels),
     (first, these): (u32, &[u32]),
     (units, nulls): (&mut Vec<i64>, &mut Mask),
-    span: &mut (Vec<i64>, Mask),
+    (span, unpacked): (&mut (Vec<i64>, Mask), &mut Unpacked),
 ) -> Option<()> {
     let at = |p: u32| usize::try_from(p.saturating_sub(first)).unwrap_or(usize::MAX);
     let (low, high) = (at(*these.first()?), at(*these.last()?));
     let width = high.checked_sub(low)?.saturating_add(1);
     if width == these.len() {
         return chunk.ints_made((low, high.saturating_add(1)), (units, nulls), (made, kernels));
+    }
+    if chunk.ints_among(these.iter().map(|&p| at(p)), (low, high), (&mut *units, &mut *nulls), unpacked)? {
+        return Some(());
     }
     if !dense(these.len(), width) {
         for &p in these {

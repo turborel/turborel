@@ -108,3 +108,46 @@ fn runs_that_are_not_the_positions_leave_the_rows_as_they_were() {
     let (read, slots) = spread(&[5, 30]);
     assert_eq!((read, &slots[..12]), (Some(()), [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2].as_slice()), "a run past the last position");
 }
+
+/// Verifies: [DESIGN] RULES.md D1340, D360 the values at positions that
+/// ascend are those the positions hold, read along the runs or each by
+/// its own search, pushed after what the vector held: positions in one
+/// run and in runs apart, at a run's first row and its last, the chunk's
+/// first and last, by vectors kept from one reading to the next. A
+/// position past the chunk's end gives nothing and leaves the vector.
+///
+/// Decision: the positions' reads alone, each of the bits of the runs'
+/// count and one more, against the two values unpacked a run of their
+/// span. Of 3,000 runs of a row each a search takes 12 reads, so two
+/// positions are 26 reads, dense among the 208 values of 104 runs and
+/// not among those of 105. The first are read along the runs, which are
+/// then held unpacked, and the second each alone, nothing unpacked, as
+/// three positions a thousand runs apart are.
+#[test]
+fn positions_dense_among_a_chunks_runs_are_read_along_them() {
+    let values = held(3);
+    let (bytes, count) = (runs_of(&values), values.len());
+    let runs = Runs::parse(&bytes, count).unwrap();
+    let mut unpacked = Unpacked::default();
+    let asked: [&[usize]; 6] =
+        [&[0, 1, 2, 5], &[3, 6, 13, 20, 21, 45, 46], &[30, 119, 120, 359], &[0, 359], &[61, 62, 78, 79, 240], &[358, 359]];
+    for positions in asked {
+        let (mut out, low, high) = (vec![5_i64], positions[0], positions[positions.len() - 1]);
+        assert_eq!(runs.ints_at(positions.iter().copied(), (low, high), &mut out, &mut unpacked), Some(()), "{positions:?}");
+        assert_eq!(out[1..], positions.iter().map(|&p| values[p]).collect::<Vec<_>>(), "{positions:?}");
+        assert_eq!((out[0], unpacked.values.is_empty()), (5, false), "{positions:?}: after what was there, along the runs");
+    }
+    let mut out = vec![5_i64];
+    assert_eq!(runs.ints_at([3, count].into_iter(), (3, count), &mut out, &mut unpacked), None, "past the end");
+    assert_eq!(out, [5]);
+    let single: Vec<i64> = (0..3000_i64).map(value_of).collect();
+    let bytes = runs_of(&single);
+    let runs = Runs::parse(&bytes, single.len()).unwrap();
+    for (positions, along) in [(vec![0, 103], 104), (vec![7, 110], 104), (vec![0, 104], 0), (vec![5, 1500, 2999], 0)] {
+        let (mut out, mut unpacked) = (Vec::new(), Unpacked::default());
+        let (low, high) = (positions[0], positions[positions.len() - 1]);
+        assert_eq!(runs.ints_at(positions.iter().copied(), (low, high), &mut out, &mut unpacked), Some(()), "{positions:?}");
+        assert_eq!(out, positions.iter().map(|&p| single[p]).collect::<Vec<_>>(), "{positions:?}");
+        assert_eq!(unpacked.values.len(), along, "{positions:?}: the runs unpacked");
+    }
+}

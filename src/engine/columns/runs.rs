@@ -11,7 +11,7 @@
 //! ```
 
 use super::fields::Cells;
-use super::packed::{bits_for, get, pack, packed_len, unpack_words};
+use super::packed::{bits_for, dense, get, pack, packed_len, unpack_words};
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
 
@@ -25,6 +25,10 @@ const FRAMED: usize = 8;
 /// holds, as the runs after it write the line's rest anyway, and a
 /// longer write would touch a line more for every run.
 pub(super) const LINE: usize = 8;
+
+/// The values unpacked a run where a span's runs are read whole, its
+/// value and its end (RULES.md D1340).
+const PAIR: usize = 2;
 
 /// \[DESIGN\] (RULES.md D1315) The values and the ends of the runs a
 /// reading unpacks, the vectors kept by the scan from one reading to the
@@ -188,6 +192,87 @@ impl<'a> Runs<'a> {
         let spread = Self::spread((values.as_slice(), run_ends.as_slice()), (from, to), out.get_mut(start..)?, ends);
         out.truncate(start.saturating_add(if spread.is_some() { count } else { 0 }));
         spread
+    }
+
+    /// \[DESIGN\] (RULES.md D1340, D360) The values at `positions`, which
+    /// ascend from `low` to `high`, pushed to `out`. A position's run is
+    /// found alone by a search of as many of the runs' ends as their count
+    /// has bits, and its value then read, each read alone costing what
+    /// `packed::DENSE_SPAN` values unpacked in a block cost. So where the
+    /// positions are that many reads apiece worth more than the two
+    /// values a run of their span is unpacked for (`walked`), the span's
+    /// runs are unpacked once into `unpacked` and the positions walked
+    /// along them, no row written. Where they are fewer each is found by
+    /// its own search, the first's and the last's being those that told
+    /// the span. None, with `out` as it was, if they are not there.
+    pub(super) fn ints_at(
+        &self,
+        positions: impl ExactSizeIterator<Item = usize>,
+        (low, high): (usize, usize),
+        out: &mut Vec<i64>,
+        unpacked: &mut Unpacked,
+    ) -> Option<()> {
+        if high >= self.count || low > high {
+            return None;
+        }
+        let (first, last) = (self.run_of(low)?, self.run_of(high)?);
+        let (start, count) = (out.len(), positions.len());
+        let read = if self.walked(count, last.saturating_sub(first).saturating_add(1)) {
+            self.walk(positions, (first, last), out, unpacked)
+        } else {
+            let run = |(n, p): (usize, usize)| {
+                if n == 0 {
+                    Some(first)
+                } else if n.saturating_add(1) == count {
+                    Some(last)
+                } else {
+                    self.run_of(p)
+                }
+            };
+            positions.enumerate().try_for_each(|at| run(at).and_then(|r| self.value(r)).map(|value| out.push(value)))
+        };
+        if read.is_none() {
+            out.truncate(start);
+        }
+        read
+    }
+
+    /// \[DESIGN\] (RULES.md D1340) Whether `count` positions that span
+    /// `runs` of its runs are read by unpacking those runs whole and
+    /// walking them: when the reads their searches would take alone,
+    /// each of the bits of the runs' count and one for the value, are
+    /// dense among the two values unpacked a run (`packed::dense`).
+    fn walked(&self, count: usize, runs: usize) -> bool {
+        let steps = usize::try_from(bits_for(u64::try_from(self.many).unwrap_or(u64::MAX))).unwrap_or(usize::MAX);
+        dense(count.saturating_mul(steps.saturating_add(1)), runs.saturating_mul(PAIR))
+    }
+
+    /// The values at `positions`, ascending, all within the runs from
+    /// `first` to `last`, pushed to `out`: those runs' values and ends
+    /// unpacked into `unpacked`, and each position's run the first of
+    /// them whose end is past it, looked for from the run of the position
+    /// before. None if the runs end before a position.
+    fn walk(
+        &self,
+        mut positions: impl Iterator<Item = usize>,
+        (first, last): (usize, usize),
+        out: &mut Vec<i64>,
+        unpacked: &mut Unpacked,
+    ) -> Option<()> {
+        let Unpacked { values, ends } = unpacked;
+        values.clear();
+        ends.clear();
+        let to = last.checked_add(1)?;
+        unpack_words(self.values, (self.bits, self.least), (first, to), values)?;
+        unpack_words(self.ends, (bits_for(u64::try_from(self.count).ok()?), 0), (first, to), ends)?;
+        let mut r = 0_usize;
+        positions.try_for_each(|p| {
+            while usize::try_from(*ends.get(r)?).ok()? <= p {
+                r = r.saturating_add(1);
+            }
+            out.push(*values.get(r)?);
+            Some(())
+        })
     }
 
     /// \[DESIGN\] (RULES.md D1315) Writes to `slots`, the rows from `from`
