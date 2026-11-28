@@ -102,7 +102,7 @@ fn texts_codes_and_datetimes_tell_their_runs() {
 /// vector shorter than the batch.
 #[test]
 fn a_column_that_tells_no_run_tells_none() {
-    let floats = Column::Floats(Floats::new(vec![0.0, -0.0, 1.0], None));
+    let floats = Column::Floats(Floats::new(vec![0.0_f64, -0.0_f64, 1.0_f64], None));
     let rows = batch(vec![ints(&[Some(1), Some(1), Some(2)]), floats], 3);
     assert_eq!(ends(&rows, &[0, 1], None), None);
     assert_eq!(ends(&rows, &[1], None), None);

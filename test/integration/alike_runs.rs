@@ -12,7 +12,7 @@ use crate::common::{exec, rows};
 /// Rows of each table.
 const ROWS: i64 = 6_000;
 
-/// Tables C, of the column store in groups of 1024, and R, of the row
+/// Tables C, of the column store in groups of 2048, and R, of the row
 /// store, alike, their rows in the order of K: G in runs of 40 rows, null
 /// in every 11th run; U in runs of 5, null in every 13th; S in runs of
 /// 3, each second run the text of the run before it with a trailing
@@ -24,7 +24,7 @@ fn tables() -> (Database, Session) {
     db.schema(
         "CREATE SCHEMA AUTHORIZATION A
            CREATE TABLE C (K INTEGER PRIMARY KEY, G INTEGER, U INTEGER, S VARCHAR(8), D DATE)
-             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 1024)
+             USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)
            CREATE TABLE R (K INTEGER PRIMARY KEY, G INTEGER, U INTEGER, S VARCHAR(8), D DATE)",
     )
     .unwrap();
@@ -33,9 +33,9 @@ fn tables() -> (Database, Session) {
     for table in ["C", "R"] {
         let values: Vec<String> = (0..ROWS)
             .map(|k| {
-                let (g, u, s) = (k / 40, k / 5, k / 3);
-                let text = format!("'s{}{}'", (s / 2) % 50, if s % 2 == 1 { " " } else { "" });
-                let day = format!("DATE '2020-01-{:02}'", 1 + (k / 7) % 28);
+                let (g, u, s) = (k.div_euclid(40), k.div_euclid(5), k.div_euclid(3));
+                let text = format!("'s{}{}'", s.div_euclid(2) % 50, if s % 2 == 1 { " " } else { "" });
+                let day = format!("DATE '2020-01-{:02}'", 1 + k.div_euclid(7) % 28);
                 format!(
                     "({k}, {}, {}, {}, {day})",
                     null_or(g % 11 == 5, (g % 37).to_string()),
