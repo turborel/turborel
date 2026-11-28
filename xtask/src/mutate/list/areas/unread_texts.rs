@@ -26,7 +26,7 @@ const BY_LENGTHS: &str =
 
 /// Mechanisms whose removal must fail the requirements of texts made
 /// only for a reader.
-pub const UNREAD_TEXTS: [Mutation; 23] = [
+pub const UNREAD_TEXTS: [Mutation; 22] = [
     Mutation {
         name: "entries-made-text-at-open",
         package: Package::Core,
@@ -138,16 +138,6 @@ pub const UNREAD_TEXTS: [Mutation; 23] = [
         unit: &["engine::rows::frozen::tests::morsels::a_morsel_gives_a_column_asked_measured_late_with_its_lengths"],
     },
     Mutation {
-        name: "measured-judged-of-any-constant",
-        package: Package::Core,
-        breaks: "the scan judges a comparison with any constant of a measured column's lengths, as one with the empty string",
-        file: "src/engine/columns/judged/lengths.rs",
-        original: "    if !octets.is_empty() || !prepared.measures(pred.column) {",
-        replacement: "    if !prepared.measures(pred.column) {",
-        integration: &[],
-        unit: &[BY_LENGTHS],
-    },
-    Mutation {
         name: "measured-lengths-of-another-column",
         package: Package::Core,
         breaks: "the lengths held of one column are given as another's",
@@ -238,14 +228,14 @@ pub const UNREAD_TEXTS: [Mutation; 23] = [
         unit: &["engine::columns::judged::lengths::tests::a_comparison_with_the_empty_string_is_judged_of_a_lane_where_one_is_kept"],
     },
     Mutation {
-        name: "lane-proves-any-constant",
+        name: "lengths-tell-any-constant",
         package: Package::Core,
-        breaks: "a lane's bounds prove a comparison with any constant, as one with the empty string",
+        breaks: "a comparison with any constant is judged and proved of lengths, as one with the empty string",
         file: "src/engine/columns/judged/lengths.rs",
         original: "    octets.is_empty().then_some(*op)",
         replacement: "    Some(*op)",
         integration: &[],
-        unit: &["engine::columns::judged::lengths::tests::a_lanes_bounds_prove_a_run_and_pass_over_parts"],
+        unit: &[BY_LENGTHS, "engine::columns::judged::lengths::tests::a_lanes_bounds_prove_a_run_and_pass_over_parts"],
     },
     Mutation {
         name: "lane-parts-not-passed-over",
