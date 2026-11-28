@@ -21,8 +21,23 @@
 //! search of the octets finds a word at a time, as no octet of a longer
 //! character is one of ASCII.
 
+//!
+//! \[DESIGN\] (RULES.md D1312) The straight runs: instructions one after
+//! another that each match one given character of ASCII, with no way in
+//! but at the run's first. A text read by its octets is compared with a
+//! run's octets at once.
+//!
+//! And whether the program has few ways. A program whose every match
+//! begins at the string's start, and whose loops are all run through or
+//! skipped as the rest of the text, forks into two ways at each fork left
+//! and into no more, each way a straight walk. While two to the power of
+//! its forks, times its loops and one, is within its instructions, all
+//! its ways together follow fewer instructions than the program has
+//! times the program and the text together, with no mark kept.
+
 use super::Inst;
-use super::runs::taken_by;
+use super::runs::{LOOP, taken_by};
+use crate::regex::text::Lines;
 
 /// The characters of ASCII.
 const ASCII: u8 = 128;
@@ -99,6 +114,58 @@ pub(super) fn ends(insts: &[Inst], runs: &[bool], ahead: usize) -> Vec<Option<u8
             u8::try_from(first).ok().filter(|octet| first == last && *octet < ASCII)
         })
         .collect()
+}
+
+/// \[DESIGN\] (RULES.md D1312) Of each instruction of `insts`, the
+/// character of ASCII it matches as an octet, 0 of any other; and how
+/// many instructions from it on each match one such character with no
+/// way in after the first, which `meets` tells: its straight run, 0 or 1
+/// of an instruction that begins none.
+pub(super) fn straight(insts: &[Inst], meets: &[bool]) -> (Vec<u8>, Vec<u8>) {
+    let octet = |inst: &Inst| if let Inst::Char(c) = inst { u8::try_from(*c).ok().filter(|octet| *octet < ASCII) } else { None };
+    let octets: Vec<u8> = insts.iter().map(|inst| octet(inst).unwrap_or(0)).collect();
+    let mut runs = vec![0_u8; insts.len()];
+    for pc in (0..insts.len()).rev() {
+        let after = pc.checked_add(1).filter(|after| meets.get(*after) == Some(&false)).and_then(|after| runs.get(after)).copied();
+        if let (Some(_), Some(run)) = (insts.get(pc).and_then(octet), runs.get_mut(pc)) {
+            *run = after.unwrap_or(0).saturating_add(1);
+        }
+    }
+    (octets, runs)
+}
+
+/// \[DESIGN\] (RULES.md D1312) Whether the program `insts` has few ways
+/// (see the module): every match begins at the string's start, `runs`
+/// and `rest` tell its only loops, and two to the power of its other
+/// forks, times its loops and one, is within its instructions.
+pub(super) fn few_ways(insts: &[Inst], runs: &[bool], rest: Option<(usize, usize)>) -> bool {
+    let skipped = |pc: usize| rest.is_some_and(|(first, after)| first <= pc && pc < after);
+    let run_through = |pc: usize| (0..LOOP).any(|back| pc.checked_sub(back).is_some_and(|fork| runs.get(fork) == Some(&true)));
+    let mut forks = 0_u32;
+    for (pc, inst) in insts.iter().enumerate().filter(|(pc, _)| !skipped(*pc) && !run_through(*pc)) {
+        match inst {
+            Inst::Split(..) => forks = forks.saturating_add(1),
+            Inst::Jump(to) => {
+                if *to <= pc {
+                    return false;
+                }
+            }
+            Inst::BackRef(_) => return false,
+            Inst::Char(_)
+            | Inst::Set(_)
+            | Inst::AnyButCrlf
+            | Inst::LineStart(_)
+            | Inst::LineEnd(_)
+            | Inst::Save(_)
+            | Inst::LoopEnter(_)
+            | Inst::LoopCheck(_)
+            | Inst::Match => {}
+        }
+    }
+    let anchored = matches!(insts.get(1), Some(Inst::LineStart(Lines::Whole)));
+    let loops = runs.iter().filter(|run| **run).count().saturating_add(1);
+    let ways = 1_usize.checked_shl(forks).and_then(|ways| ways.checked_mul(loops));
+    anchored && ways.is_some_and(|ways| ways <= insts.len())
 }
 
 // Unit tests: each of the three against the instructions themselves

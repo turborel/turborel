@@ -279,6 +279,12 @@ fn a_dictionary_column_is_translated_as_its_rows_are_6_33() {
     wanted.sort();
     assert_eq!(grouped, wanted);
     let lengths = of_both(&format!("SELECT CHAR_LENGTH(G), COUNT(*) FROM (SELECT {all} AS G FROM {{t}} WHERE K <> 7) AS Q GROUP BY G"));
+    // The same rows kept by conditions of the string itself and of an expression of the key. Whether the string taken
+    // out stays among the entries the rows' codes name is the store's choice, so the unit tests hold that case.
+    for kept in ["CHAR_LENGTH(U) < 50", "MOD(K, 6000) <> 7", "U NOT LIKE 'aaaa%'"] {
+        let above = of_both(&format!("SELECT CHAR_LENGTH(G), COUNT(*) FROM (SELECT {all} AS G FROM {{t}} WHERE {kept}) AS Q GROUP BY G"));
+        assert_eq!(above, lengths, "{kept}");
+    }
     let mut long = vec![
         format!("NULL,{}", count(3)),
         format!("401,{}", count(2)),

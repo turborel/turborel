@@ -92,6 +92,15 @@ pub(super) struct Passed {
     /// Of each fork of a loop run through, the one octet of ASCII its
     /// instruction does not match, if it matches every other character.
     pub(super) ends: Vec<Option<u8>>,
+    /// \[DESIGN\] (RULES.md D1312) Of each instruction, the character of
+    /// ASCII it matches, as an octet, 0 of any other (`compile/steps.rs`).
+    pub(super) octets: Vec<u8>,
+    /// Of each instruction, how long the straight run of instructions
+    /// that each match one character of ASCII is from it.
+    pub(super) straight: Vec<u8>,
+    /// Whether the program has few ways, so a matcher that goes back
+    /// keeps no mark of it.
+    pub(super) few_ways: bool,
 }
 
 /// Compiles `parsed` under `flags`, `.` matching newlines under `s`, `^`
@@ -116,7 +125,8 @@ pub(super) fn compile(parsed: &Parsed, flags: Flags) -> Result<Program> {
     let (rest, runs) = (rest::rest(&c.insts), runs::runs(&c.insts));
     let (meets, ascii) = (steps::meets(&c.insts, rest), steps::tables(&c.insts));
     let ends = steps::ends(&c.insts, &runs, LOOP_TAKES);
-    let known = Box::new(Passed { rest, runs, meets, ascii, ends });
+    let ((octets, straight), few_ways) = (steps::straight(&c.insts, &meets), steps::few_ways(&c.insts, &runs, rest));
+    let known = Box::new(Passed { rest, runs, meets, ascii, ends, octets, straight, few_ways });
     Ok(Program { passed: known, insts: c.insts, slots, loops: c.loops })
 }
 
