@@ -249,7 +249,8 @@ impl RowTable {
             }
             Dead::Older(id, appended, unchanged) => {
                 let kept = Kept { at, unchanged: *unchanged };
-                let gone = self.remove_version((*id, &self.undo.read(*appended)?), kept, removed)?;
+                let older = self.undo.read(*appended).map_err(|e| self.lost_row(e, *id, super::gone::Walker::Collecting))?;
+                let gone = self.remove_version((*id, &older), kept, removed)?;
                 self.undo.release(*appended);
                 if gone {
                     self.zones.superseded(*id, false);

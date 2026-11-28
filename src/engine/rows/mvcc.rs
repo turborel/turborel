@@ -66,6 +66,7 @@ use std::sync::{Arc, Mutex, RwLock};
 mod commit;
 mod found;
 mod gc;
+mod gone;
 mod lists;
 mod open;
 mod opens;
@@ -414,7 +415,8 @@ impl RowTable {
             return Ok((!version.deleted).then_some(Seen::Borrowed(version.record)));
         }
         let Some(at) = version.older else { return Ok(None) };
-        Ok(self.visible_from(self.undo.read(at)?, reader)?.map(Seen::Held))
+        let older = self.undo.read(at).map_err(|e| self.lost(e, newest, gone::Walker::Reading(reader)))?;
+        Ok(self.visible_from(older, reader)?.map(Seen::Held))
     }
 
     /// The record of the version of the row whose newest version is
@@ -432,7 +434,7 @@ impl RowTable {
                 version.older
             };
             let Some(at) = older else { return Ok(None) };
-            bytes = self.undo.read(at)?;
+            bytes = self.undo.read(at).map_err(|e| self.lost(e, &bytes, gone::Walker::Reading(reader)))?;
         }
     }
 }
@@ -468,7 +470,7 @@ impl RowTable {
             let inserted = change.before.is_none() && change.appended.is_none();
             let before = match (change.before, change.appended) {
                 (Some(own), _) => Some(Held::from(own)),
-                (None, Some(at)) => Some(self.undo.read(at)?),
+                (None, Some(at)) => Some(self.undo.read(at).map_err(|e| self.lost_row(e, change.id, gone::Walker::Undoing(tx)))?),
                 (None, None) => None,
             };
             let replaced = if let Some(before) = &before {
@@ -543,10 +545,8 @@ impl RowTable {
             return Ok(Newest { row: decoded(version.record, version.deleted)?, pending: None, writer: None, stamp });
         };
         let pending = decoded(version.record, version.deleted)?;
-        let committed = match version.older {
-            Some(at) => self.visible_from(self.undo.read(at)?, Reader::Latest)?,
-            None => None,
-        };
+        let older = version.older.map(|at| self.undo.read(at).map_err(|e| self.lost(e, &newest, gone::Walker::Reading(Reader::Latest))));
+        let committed = older.transpose()?.map(|older| self.visible_from(older, Reader::Latest)).transpose()?.flatten();
         let row = committed.map(|record| self.decode(id, &record, None)).transpose()?;
         Ok(Newest { row, pending: Some(pending), writer: Some(by), stamp: 0 })
     }
@@ -592,7 +592,7 @@ impl RowTable {
                 (version.older, still)
             };
             match older.filter(|_| readable_before) {
-                Some(at) => bytes = self.undo.read(at)?,
+                Some(at) => bytes = self.undo.read(at).map_err(|e| self.lost(e, &bytes, gone::Walker::Filling(horizon, as_of)))?,
                 None => return Ok(found),
             }
         }

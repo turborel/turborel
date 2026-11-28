@@ -841,6 +841,7 @@ verification approach DO-178C expects (§8).
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
 | D1311 | The matcher that marks does a step's work once a step |
+| D1312 | An older row version the undo store cannot give back is reported with what the store knew of it |
 
 ### The project
 
@@ -24746,6 +24747,34 @@ in those than in anything the pattern asked.
 What a search finds is unchanged. The model tests hold the matcher to
 the matcher of threads over the corpus, of texts read by their
 characters and by their octets.
+
+#### D1312. An older row version lost is told with what the store knew
+
+The undo store's error for an older row version it does not hold
+(SQLCODE -916) gave the position alone. When it is seen once in a
+suite of thousands, as a reader that went back past every committed
+version of its row, that position cannot say whether the reader's
+snapshot was old, whether a maker's status read it as open, or whether
+collection released the position early.
+
+So the read that fails adds what the store knew to the message
+(`rows/mvcc/gone.rs`). It names who went back, which is a reader with
+its transaction and snapshot, the validation or the undo of a
+transaction's change, collection, or the fill of an index with the
+horizon and the commit it reads through. It lists the versions walked
+from where the walk began, at most eight, each with its position and its
+maker as written and as its transaction's status reads it, up to the
+position not found. It gives the oldest position still pinned, the
+position the log's last truncation kept it from, and the latest
+snapshot and horizon the store's tables were told of. A walk that began
+at a version read from the undo store starts the list there. Collection
+and the undo of a change start it at the row's newest version as the
+tree holds it then.
+
+The message is built only once a read has failed, so a read that
+succeeds does no more than before. It holds positions, transaction ids
+and timestamps, and never a value of the row, so it can be quoted from
+a log as it is.
 
 ## 2. Project layout
 

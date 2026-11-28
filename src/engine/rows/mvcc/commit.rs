@@ -140,7 +140,8 @@ impl RowTable {
             let maker = self.maker(&version);
             if maker == Maker::Open(tx) || maker == Maker::Committed(at) {
                 let made = self.row_of(id, &version)?;
-                let before = version.older.map(|older| self.undo.read(older)).transpose()?;
+                let lost = |e| self.lost(e, &bytes, super::gone::Walker::Validating(tx));
+                let before = version.older.map(|older| self.undo.read(older).map_err(lost)).transpose()?;
                 let before = before.map(|b| Version::parse(&b).and_then(|v| self.row_of(id, &v))).transpose()?.flatten();
                 return Ok([made, before]);
             }
@@ -150,7 +151,7 @@ impl RowTable {
                     format!("[DESIGN] the version row {id} had at {at} is gone; run the transaction again"),
                 ));
             };
-            bytes = self.undo.read(older)?;
+            bytes = self.undo.read(older).map_err(|e| self.lost(e, &bytes, super::gone::Walker::Validating(tx)))?;
         }
     }
 
