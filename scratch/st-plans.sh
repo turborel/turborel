@@ -36,8 +36,8 @@ dump() { # dump TAG
 slev() { FMO_PLANS=1 cargo test -q --test integration -- --ignored --exact tpcc_plans::fm_slev_runs --nocapture 2>&1 | grep -E "FMSLEV|FMOPLAN" | grep -E "FMSLEV|COUNT.DISTINCT" | while read -r k line; do if [ "$k" = FMSLEV ]; then echo "FMSLEV $1 $line"; else echo "SLEVPLAN $1 $(echo "$line" | grep -q Dynamic && echo S || echo V) $(echo "$line" | grep -oE "^[A-Za-z]+|[A-Z][A-Za-z]*(Join|Loop|Scan) \{|est: [0-9.e-]+|ident: \"[A-Z_]+\"" | tr "\n" " ")"; fi; done; }
 slev new
 [ -n "${SLEVONLY:-}" ] || dump new
-git checkout $BASE -- src/optimizer/transitivity.rs
-grep -c "Held::Place" src/optimizer/transitivity.rs
+git fetch -q --depth=1 origin $BASE && git checkout $BASE -- src/optimizer/transitivity.rs
+n=$(grep -c "Held::Place" src/optimizer/transitivity.rs); echo "BASE-CHECK Held::Place $n"; [ "$n" = 0 ] || { echo BASE-NOT-CHECKED-OUT; exit 7; }
 slev base
 [ -n "${SLEVONLY:-}" ] || dump base
 [ -n "${SLEVONLY:-}" ] && CASES=""
