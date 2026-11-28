@@ -7,12 +7,15 @@
 //! a pair made in a table of the first's groups given as a batch (D1123),
 //! the first rows of a sort taken from a grouping's tables (D1124) under
 //! the bound its partitions share (D1338), of groups read where they lie
-//! with no state made (D1337), a partition's groups given as a
+//! with no state made (D1337), a Made by its own run (D1339), a partition's groups given as a
 //! batch (D1125), the batches a parent that
 //! reads by batch takes of them (D1220), and COUNT(DISTINCT) of no GROUP
 //! BY run as one part, its string argument grouped as it is (D1219).
 
 use super::super::{Mutation, Package};
+
+/// A Made read by its own run where every entry still lies in it.
+const LYING_RUN: &str = "exec::table::made::wide::tests::a_made_whose_entries_all_lie_in_it_is_read_by_its_own_run";
 
 /// A group read where it lies against the table merged of it.
 const LYING: &str =
@@ -25,7 +28,7 @@ const LYING_STATES: &str = "exec::table::states::tests::widened::a_state_read_wh
 const TOP_BOUND: &str = "exec::parallel::grouped::waves::tests::lying::the_partitions_share_the_bound_of_a_sorts_first_rows";
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 44] = [
+pub const GROUPED_PARTS: [Mutation; 46] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -434,7 +437,7 @@ pub const GROUPED_PARTS: [Mutation; 44] = [
         original: "units.extend(places.iter().map(|&place| held.get(index(place)).copied().unwrap_or(0)));",
         replacement: "units.extend(places.iter().map(|_| held.first().copied().unwrap_or(0)));",
         integration: &[],
-        unit: &[LYING],
+        unit: &[LYING_STATES],
     },
     Mutation {
         name: "groups-read-where-they-lie-not-checked",
@@ -465,5 +468,25 @@ pub const GROUPED_PARTS: [Mutation; 44] = [
         replacement: "Typed::Approx(_) => true,",
         integration: &[],
         unit: &[LYING_STATES],
+    },
+    Mutation {
+        name: "made-read-whole-though-a-group-left-it",
+        package: Package::Core,
+        breaks: "a Made is read by its own run of the partition though some of its groups were taken up since, so those are read twice, once with their first entry's states alone (RULES.md D1339)",
+        file: "src/exec/table/made/wide/read.rs",
+        original: "segment.whole.filter(|run| run.1 == groups).map(|run| run.0)",
+        replacement: "segment.whole.map(|run| run.0)",
+        integration: &[],
+        unit: &[LYING_RUN],
+    },
+    Mutation {
+        name: "made-never-read-by-its-own-run",
+        package: Package::Core,
+        breaks: "no Made is known for handed whole, so the places of every group that lies in one are listed again to be read (RULES.md D1339)",
+        file: "src/exec/table/made/wide/read.rs",
+        original: "std::ptr::eq(made.places_of(part), places).then_some(part)",
+        replacement: "std::ptr::eq(made.places_of(part), places).then_some(part).filter(|_| false)",
+        integration: &[],
+        unit: &[LYING_RUN],
     },
 ];

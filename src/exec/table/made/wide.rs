@@ -58,6 +58,12 @@ const OWN: u32 = u32::MAX;
 struct Segment {
     made: Option<Arc<Made>>,
     bytes: usize,
+    /// \[DESIGN\] (RULES.md D1339) The partition of the Made whose
+    /// entries, whole, the partition was handed of it, with how many
+    /// they are, if it was handed them so (`read::whole_of`). While
+    /// every one of them still lies in the Made, what reads them reads
+    /// the Made's own run of that partition, and no list of places.
+    whole: Option<(usize, usize)>,
 }
 
 /// The Made of segment `segment`, if any group still lies in it.
@@ -217,7 +223,8 @@ impl Wide {
         let handed: usize = wave.iter().map(|(_, places)| places.len()).sum();
         for &(made, places) in wave {
             let bytes = made.bytes().saturating_mul(places.len()).checked_div(made.len()).unwrap_or(0);
-            self.segments.push(Segment { made: Some(Arc::clone(made)), bytes });
+            let whole = read::whole_of(made, places).map(|part| (part, places.len()));
+            self.segments.push(Segment { made: Some(Arc::clone(made)), bytes, whole });
             self.lying.push(0);
         }
         self.parted(bits_for(before.saturating_add(handed), sub).max(self.bits))?;

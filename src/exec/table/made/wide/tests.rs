@@ -206,3 +206,22 @@ fn colliding_groups_turn_a_wide_partition_keyed() {
     table.absorb_whole(&made).unwrap();
     assert_eq!(groups(&wide.into_table().unwrap()), groups(&table));
 }
+
+/// Verifies: [DESIGN] (RULES.md D1339) a wide partition gives a Made
+/// every entry of which it was handed still lies in it to be read by
+/// the Made's own run of the partition, the same places at the same
+/// address, and lists the places of the groups that lie in a Made some
+/// of whose entries a later entry met, as many as still lie there.
+#[test]
+fn a_made_whose_entries_all_lie_in_it_is_read_by_its_own_run() {
+    let mut handed = mades(false, 1);
+    let fresh: Vec<i128> = (5000..5300).collect();
+    handed.push(Arc::new(morsel(&fresh, 50_000, false).made(1, &[]).unwrap()));
+    let mut wide = Wide::of(GroupTable::new(1, &calls(), &seed(), usize::MAX));
+    wide.absorb_wave(&runs(&handed, 0), 8).unwrap();
+    let lying = wide.lying();
+    let counts: Vec<usize> = lying.iter().map(|run| run.places().len()).collect();
+    assert_eq!(counts, [300, 450, 200, 400, 300], "the groups no later entry met");
+    let own: Vec<bool> = lying.iter().zip(&handed).map(|(run, made)| std::ptr::eq(run.places(), made.part_places(0))).collect();
+    assert_eq!(own, [false, false, false, false, true], "the last Made alone is read by its own run");
+}

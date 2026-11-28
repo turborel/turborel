@@ -47,9 +47,9 @@ fn numbers(from: usize, count: usize) -> Column {
 fn spans(lying: &[Lying], own: usize, filled: usize) -> (Vec<usize>, Vec<Span>) {
     let (mut bases, mut spans) = (Vec::with_capacity(lying.len()), Vec::new());
     let (mut base, mut open) = (own, Span { from: 0, to: 0, base: own });
-    for (k, (_, places)) in lying.iter().enumerate() {
+    for (k, run) in lying.iter().enumerate() {
         bases.push(base);
-        base = base.saturating_add(places.len());
+        base = base.saturating_add(run.places().len());
         open.to = k.saturating_add(1);
         if base.saturating_sub(open.base) >= filled {
             spans.push(open);
@@ -72,7 +72,7 @@ fn spans(lying: &[Lying], own: usize, filled: usize) -> (Vec<usize>, Vec<Span>) 
 /// the partitions share, and none is given if it keeps none.
 fn lying_batch(lying: &[Lying], span: Span, (sorted_by, aggs): (&[usize], &[AggCall]), judge: &Judge) -> Result<Option<Kept>> {
     let runs = lying.get(span.from..span.to).ok_or_else(|| broken("Mades a wide partition does not hold"))?;
-    let rows: usize = runs.iter().map(|(_, places)| places.len()).sum();
+    let rows: usize = runs.iter().map(|run| run.places().len()).sum();
     let groups: Vec<u32> = (0..rows).map(narrow).collect();
     let mut columns = Vec::with_capacity(sorted_by.len().saturating_add(2));
     for &agg in sorted_by {
@@ -175,7 +175,7 @@ impl Top {
         let whole = if let Some(own) = owns.get(k) {
             own.row(within)?
         } else {
-            let lies = lying.get(k.saturating_sub(owns.len())).and_then(|(made, places)| places.get(within).map(|&place| (made, place)));
+            let lies = lying.get(k.saturating_sub(owns.len())).and_then(|run| run.places().get(within).map(|&place| (run.made(), place)));
             let (made, place) = lies.ok_or_else(|| broken("a picked group lies in no Made"))?;
             made.row_at(place, aggs)?
         };

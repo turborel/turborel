@@ -856,6 +856,7 @@ verification approach DO-178C expects (§8).
 | D1323 | A grouping looks up the first row alone of rows of one key that come one after another |
 | D1337 | A group that lies whole at one place of a Made is finished there, with no state made of it |
 | D1338 | The partitions of a grouping share the bound of a sort's first rows, and judge their groups by it before the sort |
+| D1339 | A Made all of whose entries a wide partition was handed still lie in it is read by its own run |
 
 ### The project
 
@@ -25573,6 +25574,37 @@ and wide. Told a bound of ten before any partition runs, the
 partitions keep the ten groups alone, each the row it keeps under no
 bound. Told none, their sorts raise it to ten, and the ten are among
 the rows kept.
+
+#### D1339. A Made all of whose entries a wide partition was handed still lie in it is read by its own run
+
+What reads a wide partition's groups where they lie (D1300) is given,
+for each Made the partition adopted, the places of the groups that lie
+in it. The partition made those lists anew for each reader, from the
+lists of its sub-parts, a place of each group pushed to its Made's
+list. Of a grouping nearly every entry of which is a new group, every
+list so made was the run of places the Made already holds for the
+partition.
+
+A wide partition now remembers of each Made whether it was handed the
+Made's own run of a partition whole, and how many entries that is
+(`exec/table/made/wide.rs`, `Segment::whole`,
+`wide/read.rs`, `whole_of`). It is, where the places handed are the
+Made's own for the partition its first entry falls in, the same places
+at the same address. While as many groups still lie in the Made as it
+handed, none of its entries met a group and none was met again, so the
+groups that lie in it are that run, and the reader is given the Made
+to read by it (`Lying::places`). The places of the groups that lie in
+any other Made are listed as before, and where no Made needs a list
+the sub-parts' lists are not read at all. The order a Made's groups
+are read in is then the Made's, where a list has a sub-part's after
+another's. A sort's first rows cut ties by the first rows' numbers, so
+neither order shows.
+
+A unit test hands a wide partition four Mades each of which lost
+entries to a group met again and one that lost none, and reads the
+last by the Made's own run, at its address, and the others by lists of
+as many places as groups still lie there. The tests of D1300 compare
+the first rows read so with a table's.
 
 ## 2. Project layout
 
