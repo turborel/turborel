@@ -216,6 +216,8 @@ struct Waves<'a> {
     /// Whether morsels are still handed whole, and the groups the table
     /// they are merged into may hold while they are.
     whole: (Arc<AtomicBool>, usize),
+    /// The bytes of a pair's side charged to the grant (RULES.md D1324).
+    side_bytes: usize,
     how: &'a How,
 }
 
@@ -268,7 +270,7 @@ pub(super) fn waved_as(
             Handed::Whole(made) => waves.direct(&made)?,
             Handed::Parted(made) => waves.flushed()? && waves.parted(made)?,
         };
-        if !held {
+        if !held || !waves.side_held()? {
             return Ok(Held::GaveWay);
         }
     }
@@ -294,6 +296,11 @@ fn grouped(
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
         let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
+        // Of a pair with a side, the plain set functions are fed there (RULES.md D1324).
+        let batches = match making.side() {
+            Some(side) => side.fed(batches, (&runner, first_of(&making, m)))?,
+            None => batches,
+        };
         let apart = ungrouped.map_or_else(|| reduction.apart(m), |names| names(m));
         let expected = room.load(Ordering::Relaxed);
         let asked = (&runner, first_of(&making, m), &making.seed);
@@ -333,6 +340,7 @@ impl<'a> Waves<'a> {
             direct_bytes: 0,
             spilled: None,
             whole: (whole, run.0.settings.count(crate::settings::EXECUTOR_MORSEL_ROWS).max(1)),
+            side_bytes: 0,
             how,
         }
     }
@@ -367,6 +375,20 @@ impl Waves<'_> {
         // The table outgrows the grant: to the partitions, which go to the
         // spill if they must.
         self.flushed()
+    }
+
+    /// \[DESIGN\] (RULES.md D1324) Charges what a pair's side holds more
+    /// than it did to the grant: whether the grant holds it, the first's
+    /// partitions gone to the spill if it takes that. The side stays in
+    /// memory, so past that the part gives way.
+    ///
+    /// # Errors
+    ///
+    /// As writing the partitions to the spill fails.
+    fn side_held(&mut self) -> Result<bool> {
+        let more = self.grouping.side().map_or(0, |side| side.bytes().saturating_sub(self.side_bytes));
+        self.side_bytes = self.side_bytes.saturating_add(more);
+        Ok(more == 0 || self.limit.take(more) || (self.spilled_all()? && self.limit.held() <= self.limit.most()))
     }
 
     /// The statement thread's table, if any, handed to the partitions as a

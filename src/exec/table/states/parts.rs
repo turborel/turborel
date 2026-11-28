@@ -82,18 +82,29 @@ impl States {
     ///
     /// As `Accumulator::merge`, a sum past 128 bits; SQLCODE -910 if they
     /// are not a column of the part's function.
-    pub(in crate::exec::table) fn merge_part(&mut self, part: &Typed, (groups, places): (&[u32], &[u32])) -> Result<()> {
+    pub(in crate::exec::table) fn merge_part(&mut self, part: &Typed, taken: (&[u32], &[u32])) -> Result<()> {
         let States::Typed(mine) = self else { return Err(broken("a part's column merged into no column")) };
-        if mine.merge_all(groups, part, places)? {
-            return Ok(());
-        }
-        // A column no group of which was fed a value tells no scale, and
-        // is merged a group at a time, each adding nothing.
-        for (&g, &i) in groups.iter().zip(places) {
-            if !mine.merge_from(crate::storage::mask::index(g), part, crate::storage::mask::index(i))? {
-                return Err(broken("a part's column of another function than its own"));
-            }
-        }
-        Ok(())
+        merge_column(mine, part, taken)
     }
+}
+
+/// \[DESIGN\] (RULES.md D1280, D1324) Merges the states at `places` of
+/// `part` into `mine`, a column of the same function, each into the group
+/// of `groups` beside it.
+///
+/// # Errors
+///
+/// As `States::merge_part`.
+pub(in crate::exec::table) fn merge_column(mine: &mut Typed, part: &Typed, (groups, places): (&[u32], &[u32])) -> Result<()> {
+    if mine.merge_all(groups, part, places)? {
+        return Ok(());
+    }
+    // A column no group of which was fed a value tells no scale, and
+    // is merged a group at a time, each adding nothing.
+    for (&g, &i) in groups.iter().zip(places) {
+        if !mine.merge_from(crate::storage::mask::index(g), part, crate::storage::mask::index(i))? {
+            return Err(broken("a part's column of another function than its own"));
+        }
+    }
+    Ok(())
 }

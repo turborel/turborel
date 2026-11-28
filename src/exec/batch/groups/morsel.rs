@@ -170,7 +170,7 @@ fn written_state(state: &dyn Accumulator) -> Option<Vec<u8>> {
 /// Groups the rows `rows`, or all, of `batch` by its columns `at` into
 /// `table`, each row's key hashed of `seed` a vector at a time, its group
 /// found or made, its first row numbered from `number`.
-fn hashed(
+pub(super) fn hashed(
     table: &mut GroupTable,
     (batch, at, rows): (&Batch, &[usize], Option<&[u32]>),
     (number, seed, runner): (u64, &Seed, &Runner),

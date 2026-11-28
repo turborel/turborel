@@ -33,24 +33,26 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 mod first;
+mod reads;
 mod regrouped;
 mod runs;
 mod second;
+mod sided;
 mod top;
 mod waves;
 
+use self::reads::{first_of, read_of};
 use self::regrouped::Outer;
 use self::runs::{Ordered, Run};
 pub(super) use self::top::Top;
 
-use super::batched::ByBatch;
 use super::pipeline::Pipeline;
 use super::probe::{PARTS, part_of};
 use super::run::{Lead, Morsels};
 use super::{Held, Limit};
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
-use crate::exec::batch::{Batches, Read, Told, grouping_texts, read_for};
+use crate::exec::batch::{Batches, Read, Told, grouping_texts};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
@@ -60,10 +62,6 @@ use crate::physical::Plan;
 use crate::storage::Row;
 use crate::txn::TxId;
 use crate::value::{CompOp, Value};
-
-/// \[DESIGN\] The bits of a group's number its row's place in its morsel
-/// takes: more than any morsel's rows need.
-const PLACE_BITS: u32 = 32;
 
 /// \[DESIGN\] The bytes a piece takes beside its key, values and states:
 /// its vectors and number.
@@ -347,6 +345,7 @@ fn finished_runs(plan: &Plan, (db, tx, degree): (&Db, TxId, usize), told: &[Told
     if let Some(read) = &grouping.read {
         grouping.seed = grouping.seed.unpadded(&read.unpadded);
     }
+    grouping.sided()?;
     grouping.top = top.cloned().filter(|_| top::fits(&grouping));
     let grouping = Arc::new(grouping);
     let (mut runs, mut given) = if grouping.read.is_some() {
@@ -453,32 +452,6 @@ fn pieces_bytes(made: &[Piece]) -> usize {
                 .saturating_add(p.states.iter().map(Vec::len).sum::<usize>())
         })
         .sum()
-}
-
-/// \[DESIGN\] (RULES.md D354) What `grouping` reads of each batch of a
-/// pipeline read `by` batch, if it reads them so: of DISTINCT, every
-/// column of batches holding every column of the rows; else its grouping
-/// columns and set functions as a grouping by batch reads them, no seed
-/// among them, nor a collation but one whose key is the text itself
-/// (RULES.md D1183).
-fn read_of(grouping: &Grouping, by: &ByBatch) -> Option<Read> {
-    if grouping.distinct {
-        let whole = by.layout.iter().copied().eq(0..by.width);
-        return whole.then(|| read_for(&by.layout, &[], &by.layout)).flatten();
-    }
-    let spec = &grouping.spec;
-    if !spec.seeds.is_empty() {
-        return None;
-    }
-    let unpadded = super::super::group::unpadded_keys(&spec.collations)?;
-    read_for(&spec.groups, &spec.aggs, &by.layout).map(|read| Read { unpadded, ..read })
-}
-
-/// The number of the first row of morsel `m`: after the seeds, numbered
-/// first, its morsel's number in the high bits.
-fn first_of(grouping: &Grouping, m: usize) -> u64 {
-    let seeds = u64::try_from(grouping.spec.seeds.len()).unwrap_or(u64::MAX);
-    seeds.saturating_add(u64::try_from(m).unwrap_or(u64::MAX).checked_shl(PLACE_BITS).unwrap_or(u64::MAX))
 }
 
 /// The pieces of morsel `m`'s `rows`, by partition, its expressions

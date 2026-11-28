@@ -25,6 +25,7 @@ mod keys;
 mod made;
 mod merged;
 mod runtime;
+mod sided;
 mod slots;
 mod states;
 
@@ -35,6 +36,7 @@ pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, keys_e
 pub(in crate::exec) use keys::{Key, Keys};
 pub(in crate::exec) use made::{Adopted, Lying, Made, PIECE, Wide};
 pub(in crate::exec) use runtime::RuntimeFilter;
+pub(in crate::exec) use sided::Sides;
 
 use crate::error::Result;
 use crate::exec::Runner;

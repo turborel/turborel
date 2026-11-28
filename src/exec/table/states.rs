@@ -37,6 +37,7 @@ use crate::value::DataType;
 use super::Pending;
 pub(super) use boxed::Boxed;
 pub(in crate::exec) use carried::Carried;
+pub(super) use parts::merge_column;
 pub(in crate::exec) use typed::Typed;
 
 /// \[DESIGN\] The bytes an accumulator a group holds, near enough: as

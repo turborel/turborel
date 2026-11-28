@@ -400,6 +400,7 @@ mod set_tables;
 mod settings;
 mod shared_groupings;
 mod short_name_views;
+mod sided_pairs;
 mod simple_features;
 mod single_keys;
 mod sketches;

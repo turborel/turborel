@@ -43,6 +43,7 @@ use std::collections::hash_map::Entry;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use super::sided::Side;
 use super::{Merging, feed, finished, fresh};
 use crate::error::Result;
 use crate::exec::batch::{Read, read_for};
@@ -73,7 +74,10 @@ pub(super) struct Outer {
     /// groups given as a batch, if it reads them so (`second.rs`): of one
     /// with no projection between the two, each set function as a
     /// grouping by batch takes it.
-    read: Option<Read>,
+    pub(super) read: Option<Read>,
+    /// \[DESIGN\] (RULES.md D1324) The side its plain set functions are
+    /// kept in by its own columns, of a pair kept so (`sided.rs`).
+    pub(super) side: Option<Side>,
 }
 
 impl Outer {
@@ -102,7 +106,7 @@ impl Outer {
         let unpadded = unpadded_keys(collations)?;
         let read = if batched { read_for(groups, aggs, &layout).map(|read| Read { unpadded, ..read }) } else { None };
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: Vec::new() };
-        Some((Outer { spec, count, projected, crossing, read }, first))
+        Some((Outer { spec, count, projected, crossing, read, side: None }, first))
     }
 
     /// The lanes of the first grouping's keys its partitions are split
@@ -166,9 +170,11 @@ impl Outer {
     /// partition's groups of the first grouping, in the executor's table
     /// (`regrouped_table`): it reads them as a batch, and they are in the
     /// order of their first rows, the order its set functions take them
-    /// in.
+    /// in. Of a pair with a side it always does, as the first's groups
+    /// hold no part a row could give, and puts them in that order itself
+    /// (RULES.md D1324).
     pub(super) fn tabled(&self, first: &GroupTable) -> bool {
-        self.read.is_some() && first.in_order()
+        self.read.is_some() && (self.side.is_some() || first.in_order())
     }
 
     /// \[DESIGN\] (RULES.md D1281) Whether a sort's first rows are taken
@@ -193,7 +199,11 @@ impl Outer {
         self.counted(first.len());
         // Its keys are hashed and compared as its own columns are grouped,
         // each by its place in its key (RULES.md D1184).
-        super::second::regrouped(first, (read, &self.spec.aggs), (runner, &seed.unpadded(&read.unpadded))).map(Some)
+        let run = (runner, &seed.unpadded(&read.unpadded));
+        match &self.side {
+            Some(side) => super::second::regrouped_sided(first, (read, &self.spec.aggs), run, side).map(Some),
+            None => super::second::regrouped(first, (read, &self.spec.aggs), run).map(Some),
+        }
     }
 
     /// [X3.135-1986 §5.22 GR2] The groups of `first`, a partition's

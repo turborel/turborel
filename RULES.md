@@ -850,6 +850,7 @@ verification approach DO-178C expects (§8).
 | D1314 | The listing of a table's bytes holds none of the headers it reads |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
+| D1324 | The plain set functions of a pair of groupings are kept by the second grouping's columns alone |
 
 ### The project
 
@@ -25257,6 +25258,62 @@ displacements, and a spread of a fixed seed. No datetime holds a leap
 second, so none is among them. An integration test holds queries of
 both engines, in sessions of three displacements, to the rows they give
 a row at a time.
+
+#### D1324. The plain set functions of a pair of groupings are kept by the second grouping's columns alone
+
+A grouping with a DISTINCT set function is made by two groupings
+(D340), and a set function without DISTINCT beside it is computed in
+parts (D341). The first grouping, by the grouping columns and the
+DISTINCT argument, kept a part's state in each of its groups, a column
+of states a function (D1186), and the second merged the parts of each
+of its groups (D1280). So a count of rows beside a count of distinct
+users kept a state for every user of every group. Each such state was
+grown with its group, sent to its partition, merged there, and merged
+again by the second grouping, though the function asks one state a
+group of the second.
+
+- Where every part is a column of counts or of exact totals, which
+  merge in any order (D1280), the first grouping of such a pair
+  computes no set function (`exec/parallel/grouped/sided.rs`). Its
+  tables hold keys alone, and its morsels, its partitions and what it
+  writes to the spill are those of a pair with no plain function.
+- Each morsel's batches are grouped a second time, by the second
+  grouping's columns alone, and the parts are fed there
+  (`exec/batch/groups/sided.rs`). That side table is grouped as a
+  morsel's is, by codes, a run of a stored run at a time, or by hashes.
+  It is parted by its key's hash, which is the hash the first's groups
+  of the same values are parted by (D1113), and each part is merged at
+  once into its partition's side table, under that partition's lock.
+- The thread that makes a partition's second grouping (D1123) feeds
+  its table the first's groups for the other set functions, and each
+  function that merges a part takes the side's column of states as it
+  takes a part's column, a group's state from the side group of its
+  key (`exec/table/sided.rs`). The first's groups are put in the order
+  of their first rows first if they are not in it, since they hold no
+  part a row could give.
+- A pair is left as it was if a part is anything else, an approximate
+  sum or the least of strings, if the second grouping reads a part any
+  other way than to merge it whole, if it reads the first's groups
+  through a projection, or if it has no column of its own and so
+  crosses the first's partitions (D1133).
+
+The side's tables stay in memory. What they hold is charged to the
+grouping's grant after every morsel. If the grant cannot hold it, the
+first grouping's partitions go to the spill (D1226). If the side alone
+then passes the grant, the part gives way to the serial plan, which
+gives the same rows. Before this decision such a pair spilled its parts
+with the first's groups and finished. The side holds one group a value
+of the second grouping's columns. The second grouping's own tables hold
+that many groups in memory when the partitions are finished, and they
+are never spilled, so a pair that gives way now for its side had no
+room for its result either way.
+
+Unit tests hold a sided pair to the pair of parts, with every morsel
+handed whole, none, and every morsel's rows handed on ungrouped, with a
+null group and values all null, and with its partitions in the spill.
+One test gives the side a grant it alone passes and sees the part give
+way, and an integration test sees the statement give the plan's rows
+then. Another lists the pairs that keep no side.
 
 ## 2. Project layout
 

@@ -42,7 +42,7 @@ use std::sync::Arc;
 pub(crate) use count::{storage_counted, storage_summarized};
 use expr::Program;
 pub(super) use first::fewer_groups;
-pub(super) use groups::morsel_groups;
+pub(super) use groups::{morsel_groups, side_groups};
 pub(super) use joined::{Filters, Frame, SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
 pub(crate) use judge::bound_by;
 pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};

@@ -28,7 +28,7 @@ const HALF: u32 = 32;
 
 /// The partition of a group of hash `hash` among `parts`: of its high
 /// half, so of other bits than its slot's.
-fn part_of(hash: u64, parts: usize) -> usize {
+pub(super) fn part_of(hash: u64, parts: usize) -> usize {
     let parts = u64::try_from(parts).unwrap_or(u64::MAX);
     usize::try_from(((hash >> HALF).wrapping_mul(parts)) >> HALF).unwrap_or(0)
 }
