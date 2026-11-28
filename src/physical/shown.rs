@@ -285,8 +285,9 @@ fn counted_note(c: &super::Counted) -> String {
 
 /// \[EXTENSION\] What `notes` hold of an operator that gave `rows` rows,
 /// added to `actual` (RULES.md D620, D621): its batches and their mean
-/// rows, what it spilled, and each count of what it read of indexes, each
-/// only if any.
+/// rows, what it spilled, each count of what it read of indexes, and the
+/// groups of its first morsel's side if it keeps one (RULES.md D1324),
+/// each only if any.
 fn noted_of(notes: &NotesRead, rows: u64, actual: &mut String) {
     // Writing to a String cannot fail.
     if let Some(mean) = rows.checked_add(notes.batches.checked_div(2).unwrap_or_default()).and_then(|r| r.checked_div(notes.batches)) {
@@ -296,7 +297,7 @@ fn noted_of(notes: &NotesRead, rows: u64, actual: &mut String) {
         let _ = write!(actual, ", spilled={} bytes, partitions={}, passes={}", notes.spilled, notes.partitions, notes.passes);
     }
     let read = [("entries", notes.entries), ("leaf pages", notes.leaves), ("fetched", notes.fetched), ("rechecked", notes.rechecked)];
-    for (name, n) in read.into_iter().filter(|&(_, n)| n > 0) {
+    for (name, n) in read.into_iter().chain([("side groups", notes.side)]).filter(|&(_, n)| n > 0) {
         let _ = write!(actual, ", {name}={n}");
     }
 }

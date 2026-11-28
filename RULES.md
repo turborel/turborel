@@ -25296,6 +25296,21 @@ group of the second.
   other way than to merge it whole, if it reads the first's groups
   through a projection, or if it has no column of its own and so
   crosses the first's partitions (D1133).
+- The first morsel decides, once for the statement, whether such a
+  pair keeps a side (`Grouping::sided`). Its rows are grouped by the
+  first grouping's whole key and by the side's key, no set function
+  fed. A side group costs about what a first-level group's states cost,
+  each grown, handed to its partition and merged there once a morsel,
+  so the side saves what the first's groups outnumber its own by. The
+  side is kept where the first morsel makes two groups of the first
+  grouping at least for each side group, which saves half of what the
+  parts cost or more. Where it makes fewer, as where the DISTINCT
+  argument is fixed by the grouping columns and every group of the
+  first is a side group too, the pair runs as a pair of parts, exactly
+  as before this decision. The morsel's batches are kept and given to
+  its worker, so no row is read twice. An analyzed plan shows
+  `side groups=` on the first grouping of a pair that keeps a side,
+  with the groups its first morsel made by the side's key (D620).
 
 The side's tables stay in memory. What they hold is charged to the
 grouping's grant after every morsel. If the grant cannot hold it, the
@@ -25313,7 +25328,8 @@ handed whole, none, and every morsel's rows handed on ungrouped, with a
 null group and values all null, and with its partitions in the spill.
 One test gives the side a grant it alone passes and sees the part give
 way, and an integration test sees the statement give the plan's rows
-then. Another lists the pairs that keep no side.
+then. Another lists the pairs that keep no side, and one holds each
+side of the first morsel's rule to what it decides.
 
 ## 2. Project layout
 

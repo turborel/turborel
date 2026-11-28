@@ -86,7 +86,7 @@ fn paired(a: &Session, sql: &str, sided: bool, how: &How) -> Paired {
     let unpadded = grouping.read.as_ref().map(|by_batch| by_batch.unpadded.clone());
     grouping.seed = grouping.seed.unpadded(&unpadded.expect("grouped by batch"));
     if sided {
-        grouping.sided().unwrap();
+        grouping.sided(&pipeline, (&db, NO_TRANSACTION)).unwrap();
     }
     let side = grouping.side().is_some();
     let waved = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, how).unwrap();
@@ -160,6 +160,24 @@ fn a_pair_of_other_parts_keeps_no_side() {
         "SELECT COUNT(DISTINCT V), COUNT(*) FROM T",
     ] {
         assert!(!paired(&a, sql, true, &How::default()).side, "{sql}");
+    }
+}
+
+/// Verifies: [DESIGN] RULES.md D1324: the first morsel decides once
+/// whether a pair keeps a side. Where its rows make two groups of the
+/// first grouping for each group of the side, the DISTINCT argument one
+/// of two values in every group, the side is kept. Where they make one,
+/// the argument fixed by the grouping column, the pair keeps none and
+/// runs as a pair of parts; both give the groups of the pair of parts.
+#[test]
+fn the_first_morsel_s_groups_decide_whether_a_side_is_kept() {
+    let (_db, a) = table();
+    let two = "SELECT G, COUNT(DISTINCT H), COUNT(*), SUM(K) FROM (SELECT G, MOD(K, 2) AS H, K FROM T) AS Q GROUP BY G";
+    let one = "SELECT G, COUNT(DISTINCT H), COUNT(*), SUM(K) FROM (SELECT G, G + 1 AS H, K FROM T) AS Q GROUP BY G";
+    for (sql, kept) in [(two, true), (one, false)] {
+        let (parts, probed) = (paired(&a, sql, false, &How::default()), paired(&a, sql, true, &How::default()));
+        assert_eq!(probed.side, kept, "{sql}");
+        assert!(parts.rows.as_ref().is_some_and(|rows| rows.len() > 30) && probed.rows == parts.rows, "{sql}");
     }
 }
 

@@ -28,6 +28,7 @@ pub struct Notes {
     leaves: AtomicU64,
     fetched: AtomicU64,
     rechecked: AtomicU64,
+    side: AtomicU64,
 }
 
 /// \[EXTENSION\] What an operator's notes count.
@@ -51,6 +52,10 @@ pub enum Noted {
     /// The rows whose condition it judged again of the row read, an
     /// index's entry not deciding it.
     Rechecked,
+    /// The groups its first morsel made by the columns of the grouping
+    /// over it, of the first grouping of a pair that keeps its plain set
+    /// functions by those columns (RULES.md D1324).
+    Side,
 }
 
 /// \[EXTENSION\] What an operator's notes held once it ran: each count of
@@ -73,6 +78,9 @@ pub struct NotesRead {
     pub fetched: u64,
     /// The rows it rechecked.
     pub rechecked: u64,
+    /// The groups of its first morsel's side, of a pair's first grouping
+    /// that keeps one.
+    pub side: u64,
 }
 
 impl Notes {
@@ -87,6 +95,7 @@ impl Notes {
             Noted::Leaves => &self.leaves,
             Noted::Fetched => &self.fetched,
             Noted::Rechecked => &self.rechecked,
+            Noted::Side => &self.side,
         };
         count.fetch_add(n, Ordering::Relaxed);
     }
@@ -103,6 +112,7 @@ impl Notes {
             leaves: at(&self.leaves),
             fetched: at(&self.fetched),
             rechecked: at(&self.rechecked),
+            side: at(&self.side),
         }
     }
 }

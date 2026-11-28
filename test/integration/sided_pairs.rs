@@ -105,6 +105,34 @@ fn plain_functions_beside_a_distinct_one_give_the_plans_groups() {
     }
 }
 
+/// The plan of `sql` run and analyzed on 4 threads by batch.
+fn analyzed(s: &Session, sql: &str) -> String {
+    for set in
+        ["SET EXECUTOR.BATCHES = 'ON'", "SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 256", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"]
+    {
+        exec(s, set).unwrap();
+    }
+    rows(s, &format!("EXPLAIN ANALYZE {sql}")).unwrap_or_else(|e| panic!("{sql}: {e:?}")).join("\n")
+}
+
+/// Verifies: [EXTENSION] RULES.md D1324, D620: the analyzed plan of a
+/// grouping whose plain set functions are kept by its own columns says
+/// so on its first grouping, with the groups its first morsel made by
+/// them; one whose DISTINCT argument is fixed by the grouping column, so
+/// that its first morsel makes a group of the first grouping for each of
+/// those, says nothing of a side, and gives the plan's rows.
+#[test]
+fn the_analyzed_plan_says_whether_a_side_was_kept() {
+    let (_db, a) = tables();
+    let kept = analyzed(&a, &PAIRS[0].replace("{t}", "C"));
+    assert!(kept.contains("side groups="), "{kept}");
+    let fixed = "SELECT G, COUNT(DISTINCT H2), COUNT(*), SUM(K) FROM (SELECT G, G + 1 AS H2, K FROM C) AS Q GROUP BY G";
+    let refused = analyzed(&a, fixed);
+    assert!(refused.contains("Parallel") && !refused.contains("side groups="), "{refused}");
+    let (alone, together, _) = both(&a, fixed);
+    assert!(alone.as_ref().is_ok_and(|r| r.len() > 5) && alone == together, "{fixed}: {alone:?}");
+}
+
 /// Verifies: [DESIGN] RULES.md D1324, D1281 [ISO/IEC 9075-2:2023 §7.17
 /// GR4]: the first rows of a sort over such a grouping, by a plain set
 /// function, by the DISTINCT one and by a grouping column, are the rows

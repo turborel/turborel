@@ -40,10 +40,10 @@ mod crossing;
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
-use super::sided::Side;
+use super::sided::{Probed, Side};
 use super::{Merging, feed, finished, fresh};
 use crate::error::Result;
 use crate::exec::batch::{Read, read_for};
@@ -60,7 +60,7 @@ use crossing::{Crossing, Merged};
 /// and computes, and, of an analyzed plan, the count of the first's.
 pub(super) struct Outer {
     pub(super) spec: Spec,
-    count: Option<Arc<NodeCount>>,
+    pub(super) count: Option<Arc<NodeCount>>,
     /// \[EXTENSION\] (RULES.md D1116) Of an analyzed plan, the counts of
     /// the projections between the two, each given a row a group of the
     /// first.
@@ -78,6 +78,10 @@ pub(super) struct Outer {
     /// \[DESIGN\] (RULES.md D1324) The side its plain set functions are
     /// kept in by its own columns, of a pair kept so (`sided.rs`).
     pub(super) side: Option<Side>,
+    /// \[DESIGN\] (RULES.md D1324) The first morsel's batches as the
+    /// probe that decides on a side read them, until that morsel's worker
+    /// takes them.
+    pub(super) probed: Mutex<Option<Probed>>,
 }
 
 impl Outer {
@@ -106,7 +110,7 @@ impl Outer {
         let unpadded = unpadded_keys(collations)?;
         let read = if batched { read_for(groups, aggs, &layout).map(|read| Read { unpadded, ..read }) } else { None };
         let spec = Spec { groups: groups.clone(), collations: collations.clone(), aggs: aggs.clone(), seeds: Vec::new() };
-        Some((Outer { spec, count, projected, crossing, read, side: None }, first))
+        Some((Outer { spec, count, projected, crossing, read, side: None, probed: Mutex::new(None) }, first))
     }
 
     /// The lanes of the first grouping's keys its partitions are split

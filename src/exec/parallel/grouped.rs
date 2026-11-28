@@ -345,7 +345,7 @@ fn finished_runs(plan: &Plan, (db, tx, degree): (&Db, TxId, usize), told: &[Told
     if let Some(read) = &grouping.read {
         grouping.seed = grouping.seed.unpadded(&read.unpadded);
     }
-    grouping.sided()?;
+    grouping.sided(&pipeline, (db, tx))?;
     grouping.top = top.cloned().filter(|_| top::fits(&grouping));
     let grouping = Arc::new(grouping);
     let (mut runs, mut given) = if grouping.read.is_some() {

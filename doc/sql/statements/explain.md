@@ -152,7 +152,10 @@ entries' row ids,
 and `rechecked=R`, the rows whose condition it judged again because the
 index could not decide it of the entry. An operator that read the
 leaves of a B-tree adds `leaf pages=L`, an index's leaves or those of
-the tree its table of the row store is kept in. An operator of a part run on
+the tree its table of the row store is kept in. A grouping under another
+that computes DISTINCT set functions beside plain ones adds `side groups=G`
+where it keeps the plain functions by the outer grouping's columns alone:
+the groups the first of its rows made by those columns. An operator of a part run on
 several threads notes what its workers did.
 
 Each operator's time, its inputs' among it, is added as `time=X ms` when

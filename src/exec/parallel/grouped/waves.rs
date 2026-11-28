@@ -295,12 +295,8 @@ fn grouped(
     Box::new(move |m: usize| {
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
-        let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
-        // Of a pair with a side, the plain set functions are fed there (RULES.md D1324).
-        let batches = match making.side() {
-            Some(side) => side.fed(batches, (&runner, first_of(&making, m)))?,
-            None => batches,
-        };
+        // Of a pair, the first morsel as its probe read it, and its side fed (RULES.md D1324).
+        let batches = making.morsel_batches(&pipeline, m, (&db_for, tx), &runner)?;
         let apart = ungrouped.map_or_else(|| reduction.apart(m), |names| names(m));
         let expected = room.load(Ordering::Relaxed);
         let asked = (&runner, first_of(&making, m), &making.seed);

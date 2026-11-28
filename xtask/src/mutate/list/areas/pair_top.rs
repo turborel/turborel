@@ -30,12 +30,15 @@ const SIDE_NONE: &str = "exec::parallel::grouped::sided::tests::a_pair_of_other_
 const SIDE_PAST: &str = "exec::parallel::grouped::sided::tests::a_sided_pair_spills_its_partitions_and_gives_way_past_its_side";
 const SIDE_STRINGS: &str = "exec::parallel::grouped::sided::tests::a_side_groups_strings_as_the_pair_groups_them";
 const SIDE_READ: &str = "exec::parallel::grouped::sided::tests::a_part_read_any_other_way_than_merged_whole_keeps_no_side";
+const SIDE_PROBED: &str = "exec::parallel::grouped::sided::tests::the_first_morsel_s_groups_decide_whether_a_side_is_kept";
+/// The analyzed plan of a pair that keeps a side and of one that keeps none.
+const SIDE_SAID: &str = "sided_pairs::the_analyzed_plan_says_whether_a_side_was_kept";
 /// Sided pairs by SQL against the plan run alone.
 const SIDED_PAIRS: &str = "sided_pairs::plain_functions_beside_a_distinct_one_give_the_plans_groups";
 /// A sided pair past the grant against the plan run alone.
 const SIDED_PAST: &str = "sided_pairs::such_a_grouping_past_the_grant_gives_its_rows";
 
-pub const PAIR_TOP: [Mutation; 10] = [
+pub const PAIR_TOP: [Mutation; 11] = [
     Mutation {
         name: "pair-top-of-a-crossing-second",
         package: Package::Core,
@@ -135,5 +138,15 @@ pub const PAIR_TOP: [Mutation; 10] = [
         replacement: "                drop((part, &groups, &places));",
         integration: &[SIDED_PAIRS],
         unit: &[SIDE_TAKEN],
+    },
+    Mutation {
+        name: "side-kept-whatever-the-first-morsel",
+        package: Package::Core,
+        breaks: "a pair keeps a side though its first morsel makes a side group for every group of the first grouping, so the side saves no state (RULES.md D1324)",
+        file: "src/exec/parallel/grouped/sided.rs",
+        original: "Ok((side > 0 && side.saturating_mul(FIRSTS_A_SIDE) <= firsts, side))",
+        replacement: "Ok((side > 0 && firsts > 0, side))",
+        integration: &[SIDE_SAID],
+        unit: &[SIDE_PROBED],
     },
 ];
