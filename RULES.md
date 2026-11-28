@@ -3460,21 +3460,6 @@ server's, with features rt and signal only. rpassword 7.5.4 (Apache-2.0)
 reads unechoed terminal input on Unix and Windows, is small enough to
 review, and has been maintained since 2015.
 
-#### D447. A unique constraint added in a transaction fills its index with every version
-
-ALTER TABLE ADD UNIQUE inside a transaction filled the constraint's
-index with only the rows the transaction saw. Collection takes back an
-entry for each older version it removes, so once those versions went, a
-row whose older version had the same key lost its entry, and the
-constraint stopped finding it.
-
-Of an engine keeping versions, the index is now filled as CREATE INDEX
-fills one, with every committed version a reader may still see, and the
-fill noted for D443. The transaction holds the table's exclusive lock,
-so nothing commits meanwhile. Each row the transaction changed itself
-adds an entry of the row as it left it. Rolling back removes the index
-with the rest of the statement.
-
 #### D765. The server program allocates through the system's allocator, and an operator may build it on mimalloc, snmalloc or rpmalloc
 
 `turboreld` sets no global allocator by default, so the program that ships,
@@ -25016,6 +25001,21 @@ was fixed that week, and lint baselines and over-long files were paid down.
   M. E. Kounavis and F. L. Berry, *A Systematic Approach to Building High
   Performance Software-based CRC Generators* (2005); D. V. Sarwate,
   *Computation of Cyclic Redundancy Checks via Table Look-Up* (1988).
+
+#### D447. A unique constraint added in a transaction fills its index with every version
+
+ALTER TABLE ADD UNIQUE inside a transaction filled the constraint's
+index with only the rows the transaction saw. Collection takes back an
+entry for each older version it removes, so once those versions went, a
+row whose older version had the same key lost its entry, and the
+constraint stopped finding it.
+
+Of an engine keeping versions, the index is now filled as CREATE INDEX
+fills one, with every committed version a reader may still see, and the
+fill noted for D443. The transaction holds the table's exclusive lock,
+so nothing commits meanwhile. Each row the transaction changed itself
+adds an entry of the row as it left it. Rolling back removes the index
+with the rest of the statement.
 
 #### D448. SERIALIZABLE certifies by column, and skips the check when no one read
 
