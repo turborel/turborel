@@ -165,27 +165,31 @@ fn a_table_written_by_other_partitions_is_gathered_again() {
     }
 }
 
-/// Verifies: [DESIGN] RULES.md D1313 the rows of a batch taken into a
+/// Verifies: [DESIGN] RULES.md D1313 the rows of each batch taken into a
 /// table written by partition are to be fed to the groups at their
-/// places: the rows from the one asked, each as given and as read of its
-/// batch, a filter's rows where it kept some; and none is noted of a
-/// table that computes no set function, which counts them all the same.
+/// places: the rows after those of the batches taken before, each as
+/// given and as read of its batch, a filter's rows where it kept some;
+/// and none is noted of a table that computes no set function, which
+/// counts them all the same.
 #[test]
 fn rows_taken_of_a_batch_are_fed_at_their_places() {
     let (held, seed) = (held(false), Seed::fixed(0x5EED));
     let mut table = written(&held, (8, WHOLE), &seed);
     let places = table.placed.as_ref().unwrap().places.clone();
+    table.take_placed(None, 400);
+    assert_eq!(table.pending.groups, &places[..400]);
+    table.pending = crate::exec::table::Pending::default();
     let kept = held.get(1).and_then(|(_, rows)| rows.as_ref()).map(Sel::as_slice).unwrap();
-    table.take_placed(400, (Some(kept), 320));
-    assert_eq!(table.pending.groups, &places[400..720]);
+    table.take_placed(Some(kept), 320);
+    assert_eq!(table.pending.groups, &places[400..720], "the rows after the first batch's");
     assert_eq!(table.pending.read, kept);
     assert_eq!(table.pending.given, (0..320).collect::<Vec<u32>>());
     table.pending = crate::exec::table::Pending::default();
-    table.take_placed(720, (None, 400));
-    assert_eq!((table.pending.groups.as_slice(), table.taken), (&places[720..], 720));
+    table.take_placed(None, 400);
+    assert_eq!((table.pending.groups.as_slice(), table.taken), (&places[720..], 1120));
     assert_eq!(table.pending.read, (0..400).collect::<Vec<u32>>());
     let (hashes, _) = hashed(&held, WHOLE, &seed);
     let mut keys = GroupTable::placed((held.as_slice(), AT.as_slice()), (NO_CALLS, &seed), (hashes.as_slice(), None, 0), (8, WHOLE));
-    keys.take_placed(0, (None, 400));
+    keys.take_placed(None, 400);
     assert!(keys.pending.groups.is_empty() && keys.taken == 400, "no set function, nothing to feed");
 }

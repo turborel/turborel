@@ -23,12 +23,14 @@ use crate::storage::{Batch, Sel};
 
 /// Where the rows of a table written by partition lie: the place of each
 /// row as it came, where each partition's rows begin and the last's end,
-/// and the lanes of the keys the partitions are of, none of whole keys.
+/// the lanes of the keys the partitions are of, none of whole keys, and
+/// how many of the rows were taken to be fed so far.
 #[derive(Debug)]
 pub(in crate::exec::table) struct Placed {
     places: Vec<u32>,
     starts: Vec<u32>,
     lanes: Vec<usize>,
+    fed: usize,
 }
 
 /// Where each partition's rows begin among `parts` partitions, and the
@@ -88,18 +90,21 @@ impl GroupTable {
         table.hashes = scattered(hashes.iter().copied(), &places);
         table.firsts = scattered((0_u64..).map(|n| first.saturating_add(n)), &places);
         table.states.iter_mut().for_each(|states| states.grow_by(places.len()));
-        (table.apart, table.placed) = (true, Some(Placed { places, starts, lanes: lanes.to_vec() }));
+        (table.apart, table.placed) = (true, Some(Placed { places, starts, lanes: lanes.to_vec(), fed: 0 }));
         table
     }
 
-    /// Takes the `count` rows kept of a batch, `rows` or all, the rows
-    /// from the `from`th of those the table was placed of, each into the
-    /// group at its place, to be fed to its states (`feed`).
-    pub(in crate::exec) fn take_placed(&mut self, from: usize, (rows, count): (Option<&[u32]>, usize)) {
+    /// Takes the `count` rows kept of the next batch, `rows` or all, each
+    /// into the group at its place, to be fed to its states (`feed`). The
+    /// batches are taken in the order the table was placed of them, so
+    /// these are the rows after those taken before.
+    pub(in crate::exec) fn take_placed(&mut self, rows: Option<&[u32]>, count: usize) {
         self.taken = self.taken.saturating_add(count);
         let Self { placed, pending, aggs, .. } = self;
-        let places = placed.as_ref().and_then(|placed| placed.places.get(from..from.saturating_add(count)));
-        let Some(places) = places.filter(|_| !aggs.is_empty()) else { return };
+        let Some(placed) = placed.as_mut() else { return };
+        let from = placed.fed;
+        placed.fed = from.saturating_add(count);
+        let Some(places) = placed.places.get(from..placed.fed).filter(|_| !aggs.is_empty()) else { return };
         pending.given.extend((0..count).map(narrow));
         match rows {
             Some(rows) => pending.read.extend_from_slice(rows),

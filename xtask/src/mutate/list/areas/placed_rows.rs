@@ -20,7 +20,7 @@ const GATHERED: &str = "exec::table::made::apart::tests::a_table_written_by_othe
 
 /// Mechanisms whose removal must fail the requirements of rows written
 /// by partition.
-pub const PLACED_ROWS: [Mutation; 10] = [
+pub const PLACED_ROWS: [Mutation; 9] = [
     Mutation {
         name: "placed-rows-one-place-a-partition",
         package: Package::Core,
@@ -66,8 +66,8 @@ pub const PLACED_ROWS: [Mutation; 10] = [
         package: Package::Core,
         breaks: "the rows of every batch are fed to the groups of the morsel's first rows (RULES.md D1313)",
         file: APART_FILE,
-        original: "placed.places.get(from..from.saturating_add(count))",
-        replacement: "placed.places.get(0..count)",
+        original: "        placed.fed = from.saturating_add(count);\n",
+        replacement: "        placed.fed = from;\n",
         integration: &[],
         unit: &["exec::table::made::apart::tests::rows_taken_of_a_batch_are_fed_at_their_places"],
     },
@@ -110,15 +110,5 @@ pub const PLACED_ROWS: [Mutation; 10] = [
         replacement: "at.get(lane).map(|&c| (0, c))",
         integration: &[],
         unit: &[WRITTEN],
-    },
-    Mutation {
-        name: "placed-rows-every-batch-fed-as-the-first",
-        package: Package::Core,
-        breaks: "a morsel's batches after its first feed their rows to the groups of the first batch's rows (RULES.md D1313)",
-        file: "src/exec/batch/groups/morsel.rs",
-        original: "        from = from.saturating_add(count);\n",
-        replacement: "",
-        integration: &[],
-        unit: &["exec::parallel::grouped::waves::tests::rows_written_by_partition_give_the_groups_the_tables_give"],
     },
 ];
