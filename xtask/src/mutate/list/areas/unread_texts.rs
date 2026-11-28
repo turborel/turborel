@@ -1,47 +1,188 @@
-//! The mutations of texts a scan does not make because nobody reads them
-//! (RULES.md R-TEST-9): a dictionary chunk's entries made text on first
-//! use and of character strings alone (D1298); and a column given
-//! measured, its lengths of its codes, its entries and its nulls, of
-//! VARCHAR alone, left late at the stream's end, gathered with its
-//! nulls, asked for where no filter reads its text, and the one
+//! The mutations of the texts a scan makes and of those it does not
+//! (RULES.md R-TEST-9): a run's texts gathered into one vector and
+//! judged once, each end on a character's boundary, texts coded by
+//! symbols decoded straight into it, and a vector made a string only
+//! where its octets are judged (D1252); a run's rows given codes once a
+//! chunk shares entries, a dictionary's entries whole or those its rows
+//! read, each once a chunk, one value one entry, and a LIKE searched in
+//! the entries where they are no more than the rows asked (D1316); and a
+//! column given measured, its lengths of its codes, its entries and its
+//! nulls, of VARCHAR alone, left late at the stream's end, gathered with
+//! its nulls, asked for where no filter reads its text, and the one
 //! comparison its lengths tell, in the filter and in the scan (D1267).
 
 use super::super::{Mutation, Package};
 
-/// The file of the chunks a scan opens once.
-const PREPARED: &str = "src/engine/columns/prepared.rs";
+/// The file of a run's texts gathered.
+const TEXTS: &str = "src/engine/columns/texts.rs";
 
-/// The test of when a dictionary's entries are made text.
-const FIRST_ASKED: &str = "engine::columns::prepared::tests::a_dictionarys_entries_are_made_text_when_first_asked_for";
-/// The test of entries that are no text.
-const NOT_TEXT: &str = "engine::columns::prepared::tests::entries_not_text_give_none_however_late_they_are_made";
+/// The test of every encoding's rows gathered.
+const EVERY: &str = "engine::columns::texts::tests::every_encoding_gives_its_rows_texts";
+/// The test of a dictionary's entries given whole or by the rows' use.
+const ENTRIES: &str = "engine::columns::texts::tests::a_dictionary_gives_its_entries_whole_or_those_its_rows_read";
+/// The test of a run across chunks of several encodings.
+const ACROSS: &str = "engine::columns::texts::tests::a_run_across_encodings_has_codes_once_a_chunk_shares_entries";
+/// The test of a LIKE over a coded column's entries.
+const LIKE_ENTRIES: &str = "exec::batch::judge::tests::a_like_over_entries_keeps_the_rows_their_texts_keep";
+/// The test of octets that are no text.
+const NOT_TEXT: &str = "engine::columns::texts::tests::octets_that_are_no_text_give_no_column";
 
 /// The test of a measured column's comparison judged of its lengths.
 const BY_LENGTHS: &str =
     "engine::columns::judged::lengths::tests::a_measured_columns_comparison_with_the_empty_string_is_judged_of_its_lengths";
 
-/// Mechanisms whose removal must fail the requirements of texts made
-/// only for a reader.
-pub const UNREAD_TEXTS: [Mutation; 13] = [
+/// Mechanisms whose removal must fail the requirements of a scan's texts,
+/// gathered once a run, and of texts made only for a reader.
+pub const UNREAD_TEXTS: [Mutation; 26] = [
     Mutation {
-        name: "entries-made-text-at-open",
+        name: "texts-ends-within-characters",
         package: Package::Core,
-        breaks: "a dictionary chunk's entries are made text as the chunk is opened, read or not",
-        file: PREPARED,
-        original: "        let made = Made { words, ..Made::default() };",
-        replacement: "        let made = Made { words, ..Made::default() };\n        made.texts_of(&chunk, (t, pages.kernels));",
-        integration: &[],
-        unit: &[FIRST_ASKED],
-    },
-    Mutation {
-        name: "entries-made-text-of-any-type",
-        package: Package::Core,
-        breaks: "a dictionary's entries are made text for a column that holds no character strings",
-        file: PREPARED,
-        original: "            padding(t).and_then(|pad| chunk.body.entry_texts(pad, kernels))",
-        replacement: "            chunk.body.entry_texts(padding(t).flatten(), kernels)",
+        breaks: "a run's octets judged UTF-8 together are given as texts though one ends within a character",
+        file: TEXTS,
+        original: "        if !ends.iter().all(|&end| text.is_char_boundary(end)) {",
+        replacement: "        if !ends.iter().all(|&end| end <= text.len()) {",
         integration: &[],
         unit: &[NOT_TEXT],
+    },
+    Mutation {
+        name: "texts-symbols-not-decoded",
+        package: Package::Core,
+        breaks: "a text coded by symbols adds no octets to its run's vector",
+        file: TEXTS,
+        original: "            coded.text_onto(n, &mut into.octets)?;\n",
+        replacement: "",
+        integration: &[],
+        unit: &[EVERY],
+    },
+    Mutation {
+        name: "text-made-unjudged",
+        package: Package::Simd,
+        breaks: "a vector of octets is made a string on AVX2 though they are not UTF-8",
+        file: "simd/src/x86/utf8.rs",
+        original: "    let valid = unsafe { avx2(&octets) };",
+        replacement: "    let valid = unsafe { avx2(&octets) } || !octets.is_empty();",
+        integration: &[],
+        unit: &["tests::every_available_set_keeps_the_contract"],
+    },
+    Mutation {
+        name: "texts-span-unshifted",
+        package: Package::Core,
+        breaks: "a field of a run of varying fields copied at once ends where it ends in its chunk, not past the run's start (D1131)",
+        file: TEXTS,
+        original: "            self.ends.push(at.checked_add(ends.checked_sub(start)?)?);",
+        replacement: "            self.ends.push(at.checked_add(ends)?);",
+        integration: &[],
+        unit: &[EVERY],
+    },
+    Mutation {
+        name: "texts-nulls-at-positions-dropped",
+        package: Package::Core,
+        breaks: "a null row asked at a position is given as a text",
+        file: TEXTS,
+        original: "places.iter().for_each(|&n| into.nulls.push(self.is_null(n))),",
+        replacement: "places.iter().for_each(|_| into.nulls.push(false)),",
+        integration: &[],
+        unit: &[EVERY],
+    },
+    Mutation {
+        name: "texts-rows-before-uncoded",
+        package: Package::Core,
+        breaks: "the rows gathered before a chunk that shares entries are all given the first entry's code",
+        file: TEXTS,
+        original: "            codes.extend(0..so_far);",
+        replacement: "            codes.extend((0..so_far).map(|_| 0));",
+        integration: &[],
+        unit: &[ACROSS],
+    },
+    Mutation {
+        name: "texts-entries-from-the-runs-first",
+        package: Package::Core,
+        breaks: "a row's code of a dictionary read after other chunks is taken among the run's first entries, not its chunk's",
+        file: TEXTS,
+        original: "                Some(base) => base.checked_add(u32::try_from(code).ok()?)?,",
+        replacement: "                Some(_) => u32::try_from(code).ok()?,",
+        integration: &[],
+        unit: &[ACROSS],
+    },
+    Mutation {
+        name: "texts-run-codes-from-the-runs-first",
+        package: Package::Core,
+        breaks: "the codes of a run with no null, taken in one loop, are not past the entries the run held before its chunk",
+        file: TEXTS,
+        original: "base.wrapping_add(u32::try_from(code).unwrap_or(0))",
+        replacement: "u32::try_from(code).unwrap_or(0)",
+        integration: &[],
+        unit: &[NOT_TEXT],
+    },
+    Mutation {
+        name: "texts-entries-whole-of-fewer-rows",
+        package: Package::Core,
+        breaks: "a dictionary asked for fewer rows than it has entries gives them all, so a run holds more entries than rows",
+        file: TEXTS,
+        original: "        let base = if asked.count() >= count {",
+        replacement: "        let base = if asked.count() > 0 {",
+        integration: &[],
+        unit: &[ENTRIES],
+    },
+    Mutation {
+        name: "texts-entry-given-a-row",
+        package: Package::Core,
+        breaks: "an entry a row before read of the chunk is added again for each row that reads it",
+        file: TEXTS,
+        original: "is_ok_and(|place| place >= first && place < self.ends.len())",
+        replacement: "is_ok_and(|place| place >= first && place > self.ends.len())",
+        integration: &[],
+        unit: &[ENTRIES],
+    },
+    Mutation {
+        name: "texts-entry-of-a-chunk-before",
+        package: Package::Core,
+        breaks: "a code is given the entry a chunk before gave that code",
+        file: TEXTS,
+        original: "is_ok_and(|place| place >= first && place < self.ends.len())",
+        replacement: "is_ok_and(|place| place < self.ends.len())",
+        integration: &[],
+        unit: &[ENTRIES],
+    },
+    Mutation {
+        name: "texts-one-value-an-entry-a-row",
+        package: Package::Core,
+        breaks: "a chunk of one value adds an entry for each of its rows",
+        file: TEXTS,
+        original: "            if held.is_none() {",
+        replacement: "            if held.is_none() || n > 0 {",
+        integration: &[],
+        unit: &[ACROSS],
+    },
+    Mutation {
+        name: "like-entries-none-kept",
+        package: Package::Core,
+        breaks: "a LIKE searched at once in a coded column's entries keeps no entry, so no row",
+        file: "src/exec/batch/judge/texts.rs",
+        original: "        let (entries, mut out) = (Mask::from_bools(&all), Vec::new());",
+        replacement: "        let (entries, mut out) = (Mask::none(all.len()), Vec::new());",
+        integration: &[],
+        unit: &[LIKE_ENTRIES],
+    },
+    Mutation {
+        name: "entries-judged-of-fewer-rows",
+        package: Package::Core,
+        breaks: "every entry of a coded column is judged though fewer rows are asked than it has entries",
+        file: "src/exec/batch/judge/texts.rs",
+        original: "    coded.entries.len() <= over.map_or(texts.len(), <[u32]>::len)",
+        replacement: "    coded.entries.len() <= texts.len()",
+        integration: &[],
+        unit: &[LIKE_ENTRIES],
+    },
+    Mutation {
+        name: "like-entry-by-the-rows-place",
+        package: Package::Core,
+        breaks: "a row's LIKE is read of the entry at the row's place, not at its code",
+        file: "src/exec/batch/expr/compare.rs",
+        original: "coded.codes.get(n).and_then(|&code| all.get(index(code)).copied())",
+        replacement: "all.get(n).copied()",
+        integration: &[],
+        unit: &["exec::batch::expr::tests::like_is_judged_of_a_vector_s_text_or_of_its_entries"],
     },
     Mutation {
         name: "measured-escape-counted-twice",

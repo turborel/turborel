@@ -219,6 +219,16 @@ pub trait Kernels: Send + Sync {
     fn utf8<'a>(&self, bytes: &'a [u8]) -> Option<&'a str> {
         std::str::from_utf8(bytes).ok()
     }
+
+    /// \[DESIGN\] (RULES.md D1252) The text `octets` hold, the vector
+    /// itself made the string and no octet copied, if they are UTF-8 as
+    /// `str::from_utf8` judges them. A scan gathers the texts of a run
+    /// of rows as octets in one vector and makes them text by this one
+    /// judgement (`engine/columns/scan/texts.rs`), so a set of kernels
+    /// may judge them faster.
+    fn text(&self, octets: Vec<u8>) -> Option<String> {
+        String::from_utf8(octets).ok()
+    }
 }
 
 /// \[DESIGN\] The term a distance kernel sums over each pair of elements
