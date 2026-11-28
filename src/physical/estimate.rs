@@ -18,6 +18,8 @@ mod sampled;
 mod valued;
 
 pub use conjunction::conjunction;
+pub(super) use fingerprint::key_of_expr;
+pub(super) use sampled::evaluable_expr;
 pub(super) use valued::{estimated, filled, valued};
 
 use crate::logical::{Cond, Expr, Truth, compared_with_constant, split_and};

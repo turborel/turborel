@@ -22,9 +22,19 @@
 //! searches for captures found, a window of them at a time, and asks the
 //! automaton first only while at least half of the last window found
 //! none. A search that asks only whether there is a match always asks it.
+//!
+//! \[DESIGN\] (RULES.md D1292) A searcher done leaves what it kept, its
+//! automaton, its count of what its searches found and its scratch, with
+//! its expression (`Leavings`), and the next searcher of that expression
+//! takes them up. A call over vectors makes a searcher a vector, so the
+//! automaton's states and the window's verdict now last the column, not
+//! the vector.
+
+use std::sync::Mutex;
 
 use super::{Ascii, Captures, Matcher, Regex, Text, Utf8, backtrack, bounded, dfa, pike};
 use crate::error::Result;
+use crate::sync::lock_builtin;
 
 /// Searches of a regular expression, and its automaton, if it has one and
 /// has not outgrown its states.
@@ -35,6 +45,62 @@ pub struct Searcher<'r> {
     pub(super) found: Found,
     /// What the matcher that marks keeps from one search to the next.
     pub(super) kept: bounded::Scratch,
+    /// Whether it searches text after text, so what it keeps is worth
+    /// leaving for the next (`Regex::searcher`), not one text alone.
+    pub(super) lasting: bool,
+}
+
+/// \[DESIGN\] (RULES.md D1292) What a searcher done leaves for the next
+/// of its expression: its automaton, if it has one still, what its last
+/// window of searches found, and its scratch.
+pub(super) struct Left {
+    pub(super) dfa: Option<dfa::Dfa>,
+    pub(super) found: Found,
+    pub(super) kept: bounded::Scratch,
+}
+
+/// \[DESIGN\] (RULES.md D1292) What the searchers of an expression left,
+/// one `Left` of each that was at work at once and is done. A searcher
+/// takes one up as it is made and leaves one as it is dropped, so there
+/// are never more than the searchers that were at work at one time, the
+/// threads of the statements that share the expression, and each is
+/// within what one searcher may hold (`dfa::OCTETS_MOST`,
+/// `bounded::MARKS_OCTETS`). An expression copied starts with none.
+#[derive(Default)]
+pub(super) struct Leavings(Mutex<Vec<Left>>);
+
+impl Clone for Leavings {
+    fn clone(&self) -> Leavings {
+        Leavings::default()
+    }
+}
+
+impl std::fmt::Debug for Leavings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Leavings")
+    }
+}
+
+impl Leavings {
+    /// What a searcher done left, the last to be done first, taken out.
+    pub(super) fn take(&self) -> Option<Left> {
+        lock_builtin(&self.0).pop()
+    }
+
+    /// Keeps `left` for the next searcher.
+    fn leave(&self, left: Left) {
+        lock_builtin(&self.0).push(left);
+    }
+}
+
+impl Drop for Searcher<'_> {
+    /// Leaves what it kept with its expression, if it searched text after
+    /// text.
+    fn drop(&mut self) {
+        if self.lasting {
+            self.regex.left.leave(Left { dfa: self.dfa.take(), found: self.found, kept: std::mem::take(&mut self.kept) });
+        }
+    }
 }
 
 /// \[DESIGN\] (RULES.md D1188) The searches for captures a searcher counts

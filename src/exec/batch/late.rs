@@ -11,6 +11,14 @@
 //! operator that drops rows, as Abadi, Myers, DeWitt and Madden (ICDE
 //! 2007) find early materialization faster where most rows are kept.
 //!
+//! \[DESIGN\] (RULES.md D1267) A column whose text no operator of the
+//! stream reads, nor whoever reads the stream, is asked of its scan
+//! measured (`measured`). Its only readers take its octet length, by
+//! OCTET_LENGTH of the column or by comparing it unpadded with the empty
+//! string, and the scan gives it late with its lengths beside its
+//! places (`storage::Late::measured`). It is never decoded, whether an
+//! operator drops rows or not.
+//!
 //! What a column store's scan decodes late is what it would have decoded
 //! then, as its groups are replaced, never changed, and a batch holds the
 //! group it reads (`rows/frozen/late.rs`). A damaged page is reported as
@@ -20,10 +28,14 @@
 use std::sync::Arc;
 
 use super::runtime::Told;
-use super::stream::Batches;
-use crate::logical::{Cond, Expr, cond_columns, expr_columns};
-use crate::physical::JoinKey;
+use super::stream::{Batches, Stream, batches_with, layout};
+use crate::error::Result;
+use crate::exec::Db;
+use crate::lexer::kw;
+use crate::logical::{AggCall, Cond, Expr, compared_unpadded, cond_columns, expr_columns};
+use crate::physical::{JoinKey, Plan};
 use crate::storage::{Conjunct, Threshold};
+use crate::txn::TxId;
 
 /// Of a top-N, its first key's column and the bound it raises, told the
 /// scan (RULES.md D379).
@@ -50,6 +62,10 @@ pub(in crate::exec) struct Deferred {
     /// given in shows in nothing it gives. A projection of columns hands
     /// it on to its input, and no other operator does.
     any_order: bool,
+    /// \[DESIGN\] (RULES.md D1267) The columns of the subtree's rows
+    /// whose text none above reads, ascending. A scan gives them
+    /// measured.
+    measured: Vec<usize>,
 }
 
 impl Deferred {
@@ -67,9 +83,17 @@ impl Deferred {
         Deferred { reduced: true, unread: without(&self.unread, keys), bound, ..Deferred::default() }
     }
 
-    /// Whether it leaves any column unread, or tells a bound.
+    /// \[DESIGN\] (RULES.md D1267) It, of a reader that reads the text
+    /// of the columns `read` alone of the subtree's rows, `width` wide.
+    /// Every other column it reads for its octet length or not at all,
+    /// so a scan may give it measured.
+    pub(in crate::exec) fn measuring(self, read: &[usize], width: usize) -> Deferred {
+        Deferred { measured: without(&(0..width).collect::<Vec<_>>(), read), ..self }
+    }
+
+    /// Whether it leaves any column unread or measured, or tells a bound.
     pub(in crate::exec) fn any(&self) -> bool {
-        !self.unread.is_empty() || self.bound.is_some()
+        !self.unread.is_empty() || self.bound.is_some() || !self.measured.is_empty()
     }
 
     /// The conjunct of the bound it tells the scan, if any.
@@ -90,7 +114,9 @@ impl Deferred {
         // A condition that can raise sees every row, so no group is passed
         // over under it.
         let bound = self.bound.clone().filter(|_| !cond.can_raise());
-        Deferred { reduced: true, unread: without(&self.unread, &read), bound, ..Deferred::default() }
+        // A column the condition reads the text of is measured no more (RULES.md D1267).
+        let measured = without(&self.measured, &read_as_text(&[], &[cond]));
+        Deferred { reduced: true, unread: without(&self.unread, &read), bound, measured, ..Deferred::default() }
     }
 
     /// \[DESIGN\] (RULES.md D1063) Of the input of runtime filters judged
@@ -129,7 +155,9 @@ impl Deferred {
             let quiet = !exprs.iter().any(Expr::can_raise);
             let of_column = |at: usize| if let Some(Expr::Column(c)) = exprs.get(at) { Some(*c) } else { None };
             let bound = self.bound.as_ref().filter(|_| quiet).and_then(|(at, t)| of_column(*at).map(|c| (c, Arc::clone(t))));
-            return Deferred { bound, ..Deferred::default() };
+            // The columns it reads for their octet length alone (RULES.md D1267).
+            let all: Vec<&Expr> = exprs.iter().collect();
+            return Deferred { bound, measured: without(&measured_in(&all), &read_as_text(&all, &[])), ..Deferred::default() };
         };
         let (mut unread, mut read) = (Vec::new(), Vec::new());
         for (n, (e, c)) in exprs.iter().zip(&moved).enumerate() {
@@ -145,7 +173,14 @@ impl Deferred {
         let bound = self.bound.as_ref().and_then(|(at, t)| moved.get(*at).copied().flatten().map(|c| (c, Arc::clone(t))));
         // A projection of columns gives its input's rows in their order,
         // so what may come in any order of it may of its input (RULES.md D1221).
-        Deferred { reduced: self.reduced, unread: without(&unread, &read), bound, any_order: self.any_order, told: Vec::new() }
+        // A column moved to one measured is measured, unless another is made of it.
+        let mut measured: Vec<usize> = self.measured.iter().filter_map(|&n| moved.get(n).copied().flatten()).collect();
+        measured.sort_unstable();
+        measured.dedup();
+        let moves_of = |c: usize| moved.iter().enumerate().filter(move |(_, m)| **m == Some(c)).map(|(n, _)| n);
+        measured.retain(|&c| moves_of(c).all(|n| self.measured.binary_search(&n).is_ok()));
+        let measured = without(&measured, &read);
+        Deferred { reduced: self.reduced, unread: without(&unread, &read), bound, any_order: self.any_order, told: Vec::new(), measured }
     }
 
     /// Of an inner hash join's left operand, `width` columns wide, `keys`
@@ -179,6 +214,12 @@ impl Deferred {
         self.any_order
     }
 
+    /// \[DESIGN\] (RULES.md D1267) The columns of a scan of `columns` it
+    /// asks for measured: those whose text none above reads.
+    pub(in crate::exec) fn measured_of(&self, columns: &[usize]) -> Vec<usize> {
+        columns.iter().copied().filter(|c| self.measured.binary_search(c).is_ok()).collect()
+    }
+
     /// The columns of a scan of `columns` it gives late: those left unread,
     /// if an operator above drops rows.
     pub(in crate::exec) fn late_of(&self, columns: &[usize]) -> Vec<usize> {
@@ -187,6 +228,89 @@ impl Deferred {
         }
         columns.iter().copied().filter(|c| self.unread.binary_search(c).is_ok()).collect()
     }
+}
+
+/// \[DESIGN\] (RULES.md D1267) The column `e` takes the octet length of,
+/// if it is OCTET_LENGTH of a column.
+fn measured_operand(e: &Expr) -> Option<usize> {
+    let Expr::Call(function, args) = e else { return None };
+    let [Expr::Column(c)] = args.as_slice() else { return None };
+    (function.0.name() == kw::OCTET_LENGTH).then_some(*c)
+}
+
+/// \[DESIGN\] (RULES.md D1267) The column `cond` compares unpadded with
+/// the empty string, if it is such a comparison. It is one of the
+/// column's octet length with 0 (`judge/measured.rs`).
+fn measured_compared(cond: &Cond) -> Option<usize> {
+    compared_unpadded(cond).filter(|(_, _, octets)| octets.is_empty()).map(|(column, ..)| column)
+}
+
+/// Adds to `out` every column `e` reads the text of: every column it
+/// refers to but as the operand of OCTET_LENGTH.
+fn expr_texts(e: &Expr, out: &mut Vec<usize>) {
+    if measured_operand(e).is_some() {
+        return;
+    }
+    if let Expr::Column(c) = e {
+        out.push(*c);
+    }
+    e.for_each_child(&mut |child| expr_texts(child, out));
+}
+
+/// As `expr_texts`, of a condition: of each conjunct, every column it
+/// refers to, but that of a comparison unpadded with the empty string.
+fn cond_texts(cond: &Cond, out: &mut Vec<usize>) {
+    if let Cond::And(a, b) = cond {
+        cond_texts(a, out);
+        cond_texts(b, out);
+    } else if measured_compared(cond).is_none() {
+        cond.for_each_expr(&mut |e| expr_texts(e, out));
+    }
+}
+
+/// \[DESIGN\] (RULES.md D1267) The columns `exprs` and `conds` read the
+/// text of, ascending: every column they refer to, but one read only as
+/// the operand of OCTET_LENGTH or in a conjunct that compares it
+/// unpadded with the empty string.
+pub(in crate::exec) fn read_as_text(exprs: &[&Expr], conds: &[&Cond]) -> Vec<usize> {
+    let mut read = Vec::new();
+    for e in exprs {
+        expr_texts(e, &mut read);
+    }
+    for c in conds {
+        cond_texts(c, &mut read);
+    }
+    read.sort_unstable();
+    read.dedup();
+    read
+}
+
+/// The columns `exprs` take the octet length of, ascending.
+fn measured_in(exprs: &[&Expr]) -> Vec<usize> {
+    fn walk(e: &Expr, out: &mut Vec<usize>) {
+        out.extend(measured_operand(e));
+        e.for_each_child(&mut |child| walk(child, out));
+    }
+    let mut out = Vec::new();
+    for e in exprs {
+        walk(e, &mut out);
+    }
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// \[DESIGN\] (RULES.md D1267) The columns a grouping by `groups`
+/// computing `aggs` reads the text of, ascending: its grouping columns
+/// and those its set functions' expressions read as text
+/// (`read_as_text`).
+pub(in crate::exec) fn grouping_texts(groups: &[usize], aggs: &[AggCall]) -> Vec<usize> {
+    let exprs: Vec<&Expr> = aggs.iter().flat_map(AggCall::exprs).collect();
+    let mut read = read_as_text(&exprs, &[]);
+    read.extend_from_slice(groups);
+    read.sort_unstable();
+    read.dedup();
+    read
 }
 
 /// `columns`, ascending, but those of `read`.
@@ -206,6 +330,21 @@ pub(in crate::exec) fn resolved(batches: Batches, kernels: Arc<dyn crate::kernel
         }
         Ok((batch, rows))
     }))
+}
+
+/// \[DESIGN\] (RULES.md D1267) The stream of `plan` as `stream::open`
+/// gives it, read whole by one that reads the text of the columns `read`
+/// alone of its rows. A scan's column whose text neither that reader
+/// nor an operator of the stream reads is given measured and left so
+/// (`Batch::resolve`).
+///
+/// # Errors
+///
+/// As `stream::open`.
+pub(super) fn opened_measuring(plan: Plan, (db, tx): (&Db, TxId), read: &[usize]) -> Result<Stream> {
+    let (columns, width) = layout(&plan, db).ok_or_else(|| crate::exec::broken("a plan that gives no batches"))?;
+    let batches = batches_with(plan, (db, tx), &Deferred::all(width).measuring(read, width))?;
+    Ok(Stream { batches: resolved(batches, crate::db::kernels::chosen(db)), columns })
 }
 
 // Unit tests: the bound a top-N tells its scan, moved by projections and

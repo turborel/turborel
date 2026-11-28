@@ -48,6 +48,7 @@ use crate::engine::tree::Direction;
 use crate::error::Result;
 use crate::storage::{BATCH_ROWS, Batch, Conjunction, LateSource, Ramp, RowId, Vetted};
 
+mod measured;
 mod pending;
 mod run;
 mod vetted;
@@ -68,6 +69,9 @@ pub(in crate::engine::rows) struct Batched {
     /// read decodes them of, if any is.
     late: Vec<usize>,
     source: Option<Arc<dyn LateSource>>,
+    /// The columns given measured, late with their values' octet lengths
+    /// (RULES.md D1267, `batches/measured.rs`).
+    measured: Vec<usize>,
     /// The rows kept of the group being read, not yet given, and the
     /// columns judging decoded of them (RULES.md D366).
     pending: pending::Pending,
@@ -118,6 +122,7 @@ impl Batched {
             judgment,
             late: Vec::new(),
             source: None,
+            measured: Vec::new(),
             pending: pending::Pending::default(),
             directory,
             next_group: 0,
@@ -155,6 +160,15 @@ impl Batched {
         self
     }
 
+    /// As it is, the columns of `late` given late (`with_late`) and
+    /// those of `measured` given measured (RULES.md D1267).
+    pub(in crate::engine::rows) fn asked(self, (late, measured): (&[usize], &[usize])) -> Batched {
+        let mut asked = self.with_late(late);
+        asked.measured = measured.iter().copied().filter(|c| asked.columns.contains(c)).collect();
+        asked.prepared.measure(&asked.measured);
+        asked
+    }
+
     /// Takes up the next group, its runs a vector at most each, and the
     /// tree's entries in its range; whether there was one. A group the
     /// condition cannot match by its summary is passed over unread, the
@@ -180,7 +194,8 @@ impl Batched {
         let (candidates, order) = read_ordered(&group, &pages, self.condition.as_ref())?;
         self.judgment.order_by(&order);
         // A late column's pages are read only as it is decoded.
-        let eager: Vec<usize> = self.columns.iter().copied().filter(|c| !self.late.contains(c)).collect();
+        // A measured column's are read by the scan, which takes its lengths of them.
+        let eager: Vec<usize> = self.columns.iter().copied().filter(|c| !self.late.contains(c) || self.measured.contains(c)).collect();
         self.ahead.take_up(&group, &eager, &candidates);
         for (from, to) in candidates {
             let mut at = from;
@@ -190,7 +205,7 @@ impl Batched {
                 at = end;
             }
         }
-        self.source = (!self.late.is_empty()).then(|| {
+        self.source = (!self.late.is_empty() || !self.measured.is_empty()).then(|| {
             let source: Arc<dyn LateSource> = Arc::new(FrozenLate::new(Arc::clone(&self.table), Arc::clone(&entry), Arc::clone(&group)));
             source
         });

@@ -283,8 +283,15 @@ impl RowTable {
     /// (`rows/frozen/batches.rs`), any other its tree's records, each
     /// column decoded straight into its vector (`gathered.rs`); one that
     /// no longer freezes but still holds groups its scan's rows, gathered.
-    /// The frozen rows' columns of `late` are given late (RULES.md D361).
-    pub(super) fn scan_batches_of(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>, late: &[usize]) -> Batches {
+    /// The frozen rows' columns of `asked.0` are given late (RULES.md D361),
+    /// and those of `asked.1` measured (RULES.md D1267).
+    pub(super) fn scan_batches_of(
+        self: Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        condition: Option<Conjunction>,
+        asked: (&[usize], &[usize]),
+    ) -> Batches {
         let freezes = self.frozen.columns().is_some();
         if !freezes && self.frozen.directory().is_ok_and(|directory| directory.groups.is_empty()) {
             return self.gathered(tx, columns, condition.as_ref());
@@ -293,7 +300,7 @@ impl RowTable {
             let rows = Arc::clone(&self).scan_rows(tx, columns, condition);
             return batches_of(rows, columns);
         }
-        match self.batched(tx, columns, condition, late) {
+        match self.batched(tx, columns, condition, asked) {
             Ok(batched) => Box::new(batched),
             Err(e) => Box::new(iter::once(Err(e))),
         }
@@ -307,12 +314,12 @@ impl RowTable {
         tx: TxId,
         columns: &[usize],
         condition: Option<Conjunction>,
-        late: &[usize],
+        asked: (&[usize], &[usize]),
     ) -> VettedBatches {
         if self.frozen.columns().is_none() {
-            return unvetted(self.scan_batches_of(tx, columns, condition, late));
+            return unvetted(self.scan_batches_of(tx, columns, condition, asked));
         }
-        match self.batched(tx, columns, condition, late) {
+        match self.batched(tx, columns, condition, asked) {
             Ok(batched) => Box::new(Vetting(batched)),
             Err(e) => Box::new(iter::once(Err(e))),
         }
@@ -342,11 +349,17 @@ impl RowTable {
 
     /// The batches of a table that freezes rows, as `tx` sees them, what
     /// `condition` matches counted as read.
-    fn batched(self: &Arc<Self>, tx: TxId, columns: &[usize], condition: Option<Conjunction>, late: &[usize]) -> Result<Batched> {
+    fn batched(
+        self: &Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        condition: Option<Conjunction>,
+        asked: (&[usize], &[usize]),
+    ) -> Result<Batched> {
         let read = || Read::scan(condition.as_ref(), columns);
         let reader = self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader))?;
         let directory = self.directory_for(reader)?;
-        Ok(Batched::new(Arc::clone(self), (reader, directory), columns.to_vec(), condition).with_late(late))
+        Ok(Batched::new(Arc::clone(self), (reader, directory), columns.to_vec(), condition).asked(asked))
     }
 
     /// The batches of the rows `tx` sees, of `columns`, of only the zones

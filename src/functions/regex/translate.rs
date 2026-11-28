@@ -14,14 +14,14 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use super::subject::{Body, Subject, short, slice};
-use super::{Cache, as_long_as, operands, parameter};
+use super::{Cache, as_long_as, entries, operands, parameter};
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::functions::strings::{character, text, whole};
 use crate::functions::{Arg, ScalarFunction};
 use crate::lexer::kw;
 use crate::params::ParameterType;
 use crate::regex::{Captures, Emit, LobText, Regex, Replacement, Searcher, Text, zero_length};
-use crate::storage::{Column, Mask, Texts};
+use crate::storage::{Coded, Column, Mask, Texts};
 use crate::value::lob::{CHUNK_OCTETS, LobBuilder, LobKind, MAX_LOB_LENGTH, TempLobs};
 use crate::value::{CharUnits, DataType, MAX_CHARACTER_LENGTH, Value};
 
@@ -103,8 +103,10 @@ impl ScalarFunction for Translate {
     /// \[DESIGN\] (RULES.md D1188, D363) Over a vector of subjects in
     /// memory, every other operand a constant: the pattern compiled, its
     /// replacement read and its searcher made once for the vector, so its
-    /// automaton is kept from one subject to the next. None of any other
-    /// operands, each row then called.
+    /// automaton is kept from one subject to the next. Of a dictionary's
+    /// codes, each entry a row reads is translated once, and the rows keep
+    /// their codes (RULES.md D1291). None of any other operands, each row
+    /// then called.
     fn eval_batch(&self, args: &[Arg<'_>], rows: usize) -> Option<Result<Column>> {
         let [
             Arg::Const(units),
@@ -154,19 +156,16 @@ impl Translate {
     /// it becomes.
     fn of_texts(&self, operands: [&Value; 7], subjects: &Texts, rows: usize) -> Result<Column> {
         let Some((regex, asked)) = self.asked(operands)? else { return Ok(Column::Values(vec![Value::Null; rows])) };
-        let (mut searcher, mut with, mut found) = (regex.searcher(), None, Captures::default());
-        let (mut made, mut ends, mut nulls) = (String::new(), Vec::with_capacity(rows), Mask::none(rows));
-        for n in 0..rows {
-            let given = match subjects.get(n) {
-                Some(subject) => asked.of_text(subject, (&mut searcher, &mut with, &mut found), &mut made)?,
-                None => false,
-            };
-            if !given {
-                nulls.set(n);
-            }
-            ends.push(made.len());
+        let mut state = (regex.searcher(), None, Captures::default());
+        if let Some((coded, read)) = entries::read(subjects, rows) {
+            let (made, given) = asked.of_each((&coded.entries, read.len()), |e| read.get(e) == Some(&true), &mut state)?;
+            let nulls = entries::nulls(subjects, coded, &given);
+            return Ok(Column::Texts(Texts::coded(Coded { codes: coded.codes.clone(), entries: Arc::new(made) }, nulls)));
         }
-        Ok(Column::Texts(Texts::new(made, ends, nulls.any().then_some(nulls))))
+        let (mut made, given) = asked.of_each((subjects, rows), |_| true, &mut state)?;
+        let nulls = Mask::from_bools(&given.iter().map(|held| !held).collect::<Vec<_>>());
+        made.nulls = nulls.any().then_some(nulls);
+        Ok(Column::Texts(made))
     }
 }
 
@@ -219,6 +218,28 @@ impl Asked<'_> {
         let mut out = String::new();
         job.put(&counted.body, &mut out)?;
         Ok(Value::Char(out.into()))
+    }
+
+    /// Each of the first `count` strings of `texts` that `wanted` says is
+    /// wanted, translated (`of_text`), one after another, the empty string
+    /// of one not wanted, null, or given a null; and of each whether it
+    /// was given a string. `state` is the searcher, the replacement once
+    /// read, and the match vector, kept from one string to the next.
+    fn of_each(
+        &self,
+        (texts, count): (&Texts, usize),
+        wanted: impl Fn(usize) -> bool,
+        state: &mut (Searcher<'_>, Option<Replacement>, Captures),
+    ) -> Result<(Texts, Vec<bool>)> {
+        let (mut made, mut ends, mut given) = (String::new(), Vec::with_capacity(count), Vec::with_capacity(count));
+        for n in 0..count {
+            given.push(match texts.get(n).filter(|_| wanted(n)) {
+                Some(subject) => self.of_text(subject, (&mut state.0, &mut state.1, &mut state.2), &mut made)?,
+                None => false,
+            });
+            ends.push(made.len());
+        }
+        Ok((Texts::new(made, ends, None), given))
     }
 
     /// \[GR9\] (RULES.md D1188) As `of`, of the character string

@@ -22,6 +22,7 @@ impl Typed {
                 approx.sums.resize(approx.sums.len().saturating_add(more), NO_FLOATS);
                 approx.counts.resize(approx.counts.len().saturating_add(more), 0);
             }
+            Typed::Best(best) => best.grow_by(more),
         }
     }
 
@@ -37,6 +38,7 @@ impl Typed {
                 approx.sums.reserve(more);
                 approx.counts.reserve(more);
             }
+            Typed::Best(best) => best.reserve(more),
         }
     }
 
@@ -58,6 +60,7 @@ impl Typed {
                 counts: counts(&approx.counts),
                 result: approx.result.clone(),
             }),
+            Typed::Best(best) => Typed::Best(best.gathered(order)),
         }
     }
 
@@ -79,7 +82,8 @@ impl Typed {
                 Ok(true)
             }
             (Typed::Exact(exact), Typed::Exact(theirs)) => exact.merge_all(groups, theirs, places),
-            (Typed::Count(_) | Typed::Exact(_) | Typed::Approx(_), _) => Ok(false),
+            (Typed::Best(best), Typed::Best(theirs)) => Ok(best.merge_all(groups, theirs, places)),
+            (Typed::Count(_) | Typed::Exact(_) | Typed::Approx(_) | Typed::Best(_), _) => Ok(false),
         }
     }
 }

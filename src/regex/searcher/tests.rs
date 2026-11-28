@@ -384,3 +384,45 @@ fn a_text_of_longer_characters_read_where_it_lies_matches_as_its_characters() {
     let found = again.find_in(&Utf8::of("k\u{212A}k"), 0).unwrap().unwrap();
     assert_eq!((found.get(0), found.get(1)), (Some((0, 4)), Some((0, 1))), "a sign of three octets after a letter of one");
 }
+
+/// Verifies: [DESIGN] (RULES.md D1292) a searcher done leaves its
+/// automaton and what its last window of searches found with its
+/// expression, and the next searcher takes them up: after a window of
+/// matches it asks the automaton first no longer, and neither does the
+/// searcher made after it is dropped, which holds the same states. Two
+/// searchers at work at once keep states of their own, and both are left.
+/// A searcher of one text takes up nothing and leaves nothing, and a copy
+/// of the expression starts with nothing left. What a searcher that took
+/// another's leavings finds is what a new one finds.
+#[test]
+fn a_searcher_takes_up_what_the_last_one_left() {
+    let regex = Regex::new("^(a+)b", "").unwrap();
+    let held = |searcher: &Searcher<'_>| searcher.dfa.as_ref().map(dfa::Dfa::held);
+    let text = Ascii::of("aab").unwrap();
+    let mut found = Captures::default();
+    let states = {
+        let mut first = regex.searcher();
+        assert_eq!((first.asks_first(), held(&first)), (true, Some(0)));
+        for _ in 0..WINDOW {
+            assert!(first.find_into(&text, 0, &mut found).unwrap());
+        }
+        let second = regex.searcher();
+        assert_eq!((second.asks_first(), held(&second)), (true, Some(0)), "at work at once, a searcher of its own");
+        assert!(!first.asks_first() && held(&first) > Some(0), "a window of matches, found by way of the automaton");
+        held(&first)
+    };
+    // One text searched alone takes nothing up, and leaves nothing.
+    assert!(regex.is_match("aab").unwrap() && regex.once().asks_first() && regex.once().dfa.is_none());
+    let mut next = regex.searcher();
+    assert_eq!((next.asks_first(), held(&next)), (false, states), "what the last to be done left");
+    let other = regex.searcher();
+    assert_eq!((other.asks_first(), held(&other)), (true, Some(0)), "what the other left");
+    let third = regex.searcher();
+    assert_eq!((third.asks_first(), held(&third)), (true, Some(0)), "nothing more was left");
+    let copy = regex.clone();
+    assert_eq!(held(&copy.searcher()), Some(0), "a copy starts with nothing left");
+    for string in ["b", "ab", "aaab", "ba", ""] {
+        let (subject, mut fresh) = (Ascii::of(string).unwrap(), copy.searcher());
+        assert_eq!(next.find_in(&subject, 0).unwrap(), fresh.find_in(&subject, 0).unwrap(), "{string}");
+    }
+}

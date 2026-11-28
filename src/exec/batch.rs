@@ -46,7 +46,7 @@ pub(super) use groups::morsel_groups;
 pub(super) use joined::{Filters, Frame, SharedTable, TABLE_ROW_BYTES, dense_wanted, gathered, rows_of};
 pub(crate) use judge::bound_by;
 pub(super) use keyed::{Keyed, kept, put_key, topped, whole_width};
-pub(super) use late::{Bound, Deferred, resolved};
+pub(super) use late::{Bound, Deferred, grouping_texts, resolved};
 pub(super) use parted::built_by_batch;
 use project::Place;
 pub(super) use project::{projectable, projected, vector_of};
@@ -208,7 +208,7 @@ pub(super) fn filterable(plan: &Plan, db: &State) -> bool {
 
 /// The rows of the aggregation `plan`, one read by batches (`aggregable`).
 pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
-    let (Some(read), Plan::Aggregate { aggs, input, streamed, first, .. }) = (read_of(&plan, db), plan) else {
+    let (Some(read), Plan::Aggregate { groups, aggs, input, streamed, first, .. }) = (read_of(&plan, db), plan) else {
         return failed(super::broken("an aggregation not read by batches"));
     };
     // A bare COUNT(*), counted by the table's storage if it can (`count.rs`).
@@ -219,7 +219,8 @@ pub(super) fn aggregated(plan: Plan, db: &Db, tx: TxId) -> super::RowIter {
     if let Some(row) = count::bounded_table(&read, &aggs, &input).and_then(|table| count::bounded(table, (&read, &aggs), db, tx)) {
         return Box::new(std::iter::once(row));
     }
-    let stream = match stream::open(*input, db, tx) {
+    // A column it takes only the octet length of is asked of its scan measured (RULES.md D1267).
+    let stream = match late::opened_measuring(*input, (db, tx), &grouping_texts(&groups, &aggs)) {
         Ok(stream) => stream,
         Err(e) => return failed(e),
     };

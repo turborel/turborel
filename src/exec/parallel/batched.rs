@@ -38,6 +38,10 @@ pub(super) struct ByBatch {
     /// with their late columns not decoded, for a sort of its first rows
     /// to decode of the rows it gives (`Pipeline::topped`).
     unresolved: bool,
+    /// \[DESIGN\] (RULES.md D1267) Of each branch, the columns its
+    /// morsels give measured, late with their values' octet lengths, as
+    /// whoever reads the pipeline reads no text of them (`measuring`).
+    measured: Vec<Vec<usize>>,
     pub(super) layout: Vec<usize>,
     pub(super) width: usize,
 }
@@ -60,7 +64,7 @@ pub(super) fn by_batch(branches: &[Branch], db: &State) -> Option<ByBatch> {
         late.push(deferred_of(branch, Deferred::all(width)).late_of(branch.scanned.as_ref().map_or(&[], |s| &s.0)));
     }
     let (layout, width) = shape?;
-    Some(ByBatch { steps, late, unresolved: false, layout, width })
+    Some(ByBatch { steps, late, unresolved: false, measured: vec![Vec::new(); branches.len()], layout, width })
 }
 
 impl ByBatch {
@@ -70,6 +74,7 @@ impl ByBatch {
     /// D1240).
     pub(super) fn late_of_first(mut self, template: &ByBatch) -> ByBatch {
         self.late.clone_from(&template.late);
+        self.measured.clone_from(&template.measured);
         self.unresolved = template.unresolved;
         self
     }
@@ -187,6 +192,23 @@ impl Pipeline {
         self
     }
 
+    /// \[DESIGN\] (RULES.md D1267) It, read by one that reads the text of
+    /// the columns `read` alone of the rows at its end. A column of a
+    /// branch's scan whose text neither that reader nor a step of the
+    /// branch reads (`Deferred::measuring`) is asked of the scan
+    /// measured, late with its values' octet lengths, and left so past
+    /// the pipeline's end (`Batch::resolve`), as its readers take its
+    /// length alone. A pipeline not read by batch is left as it is.
+    pub(super) fn measuring(mut self, read: &[usize]) -> Pipeline {
+        let Some(by) = self.batched.as_mut() else { return self };
+        let width = by.width;
+        for (branch, given) in self.branches.iter().zip(by.measured.iter_mut()) {
+            let deferred = deferred_of(branch, Deferred::all(width).measuring(read, width));
+            *given = deferred.measured_of(branch.scanned.as_ref().map_or(&[], |s| &s.0));
+        }
+        self
+    }
+
     /// The batches of morsel `n`, each with the rows its steps kept, of a
     /// pipeline read by batch, its expressions evaluated for the statement
     /// of `tx`.
@@ -212,12 +234,13 @@ impl Pipeline {
         }
         let by = self.batched.as_ref().ok_or_else(|| broken("a pipeline not read by batch"))?;
         let mut at = n;
-        for ((branch, steps), late) in self.branches.iter().zip(&by.steps).zip(&by.late) {
+        for (((branch, steps), late), measured) in self.branches.iter().zip(&by.steps).zip(&by.late).zip(&by.measured) {
             let morsels = branch.split.morsels();
             if at < morsels {
                 // A morsel's stream has its own word of its scan's batches.
                 let said = branch.told_filter().map(|_| Arc::new(Said::default()));
-                let read = morsel_read(&*branch.split, at, late, said.as_ref()).ok_or_else(|| broken("a morsel not read by batch"))?;
+                let read =
+                    morsel_read(&*branch.split, at, (late, measured), said.as_ref()).ok_or_else(|| broken("a morsel not read by batch"))?;
                 return Ok(through(read, steps, said.as_ref(), (db, tx)));
             }
             at = at.saturating_sub(morsels);

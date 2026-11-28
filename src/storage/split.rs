@@ -33,12 +33,21 @@ pub trait Split: Send + Sync {
         None
     }
 
-    /// \[DESIGN\] (RULES.md D1266) As `morsel_batches`, each batch with
+    /// \[DESIGN\] (RULES.md D1267) As `morsel_batches`, the columns of
+    /// `asked.0` late and those of `asked.1` measured if it can, late
+    /// with their values' octet lengths and never decoded
+    /// (`TableStorage::scan_vetted`). Default: `morsel_batches`, none
+    /// measured.
+    fn morsel_measured(&self, n: usize, asked: (&[usize], &[usize])) -> Option<Batches> {
+        self.morsel_batches(n, asked.0)
+    }
+
+    /// \[DESIGN\] (RULES.md D1266) As `morsel_measured`, each batch with
     /// what the scan judged of it (`Vetted`), as
     /// `TableStorage::scan_vetted` gives a scan's: by default nothing said
     /// of any.
-    fn morsel_vetted(&self, n: usize, late: &[usize]) -> Option<VettedBatches> {
-        self.morsel_batches(n, late).map(unvetted)
+    fn morsel_vetted(&self, n: usize, asked: (&[usize], &[usize])) -> Option<VettedBatches> {
+        self.morsel_measured(n, asked).map(unvetted)
     }
 
     /// \[DESIGN\] (RULES.md D1241) The same split, each morsel reading the

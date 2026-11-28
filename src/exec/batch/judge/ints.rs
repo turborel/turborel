@@ -1,18 +1,20 @@
 //! \[DESIGN\] RULES.md D31: a conjunct judged over a vector of exact
 //! numbers as integers (`storage::Ints`), no value made of each: its
-//! constants and the integers each scaled once to the greater of their
-//! scales, then compared as integers, as `Decimal::cmp_value` compares them
-//! [X3.135-1986 §5.11 GR4]; a null true of no comparison [§5.11 GR2], of IS
-//! NULL only [§5.15]. A constant not exact, or one too large to scale, is
+//! constants folded once to the integers' scale, then compared as
+//! integers, as `Decimal::cmp_value` compares them [X3.135-1986 §5.11
+//! GR4], an IN list's kept in order and looked into (`storage::listed`,
+//! RULES.md D1295); a null true of no comparison [§5.11 GR2], of IS NULL
+//! only [§5.15]. A constant not exact, or one too large to scale, is
 //! judged of the values instead.
 
 use super::Judged;
 use crate::kernels::Kernels;
 use crate::storage::Ints;
 pub(super) use crate::storage::bound::{Bound, holds, rescaled_bound};
+use crate::storage::listed::Listed;
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
-use crate::value::{Decimal, Value, pow10};
+use crate::value::{Decimal, Value};
 
 /// The rows of `over`, or of all, that `judged` keeps of `ints`, if it is
 /// judged of integers: a comparison by the kernel `select_i64`, its
@@ -46,32 +48,21 @@ pub(super) fn kept(judged: &Judged, ints: &Ints, over: Option<&[u32]>, kernels: 
             Some(out)
         }
         // [X3.135-1986 §5.13 GR2, §5.18] an OR of equalities; NOT of it:
-        // a long list's by its set, each integer made the number it is.
+        // of exact constants, by their units folded to the vector's
+        // scale once (RULES.md D1295); of a long list of others by its
+        // set, each integer made the number it is.
         Judged::In(_, set, not) => {
-            if set.hashed() {
-                let want = super::wanted(*not);
-                return Some(filtered(&|u: i64| set.truth(&Value::Exact(Decimal::new(i128::from(u), ints.scale))) == want));
+            if let Some(listed) = Listed::of(ints.scale, set.values(), *not) {
+                return Some(filtered(&|u| listed.holds(u)));
             }
-            let list = set.values();
-            let scaled_list: Vec<(i128, i128)> =
-                list.iter().filter(|v| !v.is_null()).map(|v| scaled(ints.scale, v)).collect::<Option<_>>()?;
-            let has_null = list.iter().any(Value::is_null);
-            let equal = |u: i64| scaled_list.iter().any(|&(f, c)| i128::from(u).checked_mul(f) == Some(c));
-            Some(filtered(&|u| if *not { !has_null && !equal(u) } else { equal(u) }))
+            if !set.hashed() {
+                return None;
+            }
+            let want = super::wanted(*not);
+            Some(filtered(&|u: i64| set.truth(&Value::Exact(Decimal::new(i128::from(u), ints.scale))) == want))
         }
         Judged::Like(..) | Judged::Truth(..) | Judged::LikeOf(..) | Judged::Any(_) | Judged::Unpadded(..) => None,
     }
-}
-
-/// The factor each integer of `scale` is multiplied by, and `constant` at
-/// the greater of their scales: none if it is not an exact number, or
-/// either does not fit 128 bits there.
-fn scaled(scale: u32, constant: &Value) -> Option<(i128, i128)> {
-    let Value::Exact(d) = constant else { return None };
-    let common = scale.max(d.scale);
-    let factor = pow10(common.checked_sub(scale)?)?;
-    let c = d.units.checked_mul(pow10(common.checked_sub(d.scale)?)?)?;
-    Some((factor, c))
 }
 
 #[cfg(test)]

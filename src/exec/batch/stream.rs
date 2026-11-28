@@ -575,7 +575,7 @@ fn scan_of(scan: (&QualifiedName, &[usize], Option<Filtering<'_>>), deferred: &D
         pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.extend(more);
     }
     let hears = scan.2.filter(|(cond, _)| !cond.can_raise()).map(|(_, said)| said);
-    let read = vetted::scanned(storage, tx, (scan.1, pushed.as_ref(), &deferred.late_of(scan.1)), hears);
+    let read = vetted::scanned(storage, tx, (scan.1, pushed.as_ref()), deferred, hears);
     let batches = Box::new(counted(read, db.tx.stop_of(tx), |(b, _)| u64::try_from(b.rows).unwrap_or(u64::MAX)));
     Ok(runtime::applied(batches, told.to_vec(), scan.1, (db, true)))
 }

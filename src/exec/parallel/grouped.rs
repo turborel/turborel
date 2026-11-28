@@ -46,11 +46,11 @@ pub(super) use self::top::Top;
 use super::batched::ByBatch;
 use super::pipeline::Pipeline;
 use super::probe::{PARTS, part_of};
-use super::run::Morsels;
+use super::run::{Lead, Morsels};
 use super::{Held, Limit};
 use crate::error::{Result, SqlState};
 use crate::exec::Db;
-use crate::exec::batch::{Batches, Read, Told, read_for};
+use crate::exec::batch::{Batches, Read, Told, grouping_texts, read_for};
 use crate::exec::group::{Spec, admitted, group_key};
 use crate::exec::table::{GroupTable, Seed};
 use crate::exec::{RowIter, Runner, broken, eval, eval_cond, warn};
@@ -342,6 +342,7 @@ fn finished_runs(plan: &Plan, (db, tx, degree): (&Db, TxId, usize), told: &[Told
     let (mut grouping, input) = grouping_of(plan, (having, outer), db.functions.seed().clone())?;
     let limit = Limit::of(db);
     let Held::Kept(pipeline) = Pipeline::told(input, (db, tx), &limit, told)? else { return Ok(Held::GaveWay) };
+    let pipeline = pipeline.measuring(&grouping_texts(&grouping.spec.groups, &grouping.spec.aggs));
     grouping.read = pipeline.batched.as_ref().and_then(|by| read_of(&grouping, by));
     if let Some(read) = &grouping.read {
         grouping.seed = grouping.seed.unpadded(&read.unpadded);
@@ -388,7 +389,8 @@ fn grouping_of(plan: &Plan, (having, outer): (Option<Cond>, Option<Outer>), seed
 /// The groups of each partition of `grouping`'s pipeline read a row at a
 /// time, each finished with its number, in the order of their first rows:
 /// its morsels' pieces made on up to `degree` threads, then each
-/// partition's merged by a thread; given way past `limit`.
+/// partition's merged by a thread, that run leading its reader by every
+/// partition (RULES.md D1282); given way past `limit`.
 ///
 /// # Errors
 ///
@@ -401,7 +403,7 @@ fn merged_all(pipeline: Pipeline, grouping: &Arc<Grouping>, (db, tx, degree): (&
         let taken = chunks.get(p).map(|c| std::mem::take(&mut *c.lock().unwrap_or_else(PoisonError::into_inner))).unwrap_or_default();
         merging.ended(merged(&merging, p, taken)?, &Runner::new(&db_for, tx)).map(Run::Rows)
     });
-    Morsels::start(db, tx, (PARTS, degree), merge).collect::<Result<Vec<_>>>().map(Held::Kept)
+    Morsels::led(db, tx, (PARTS, degree), merge, Some(Lead::unmetered(PARTS))).collect::<Result<Vec<_>>>().map(Held::Kept)
 }
 
 /// The pieces of `pipeline`'s rows under `grouping`, each morsel's made

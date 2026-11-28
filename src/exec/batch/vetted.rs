@@ -17,6 +17,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
+use super::late::Deferred;
 use super::stream::Batches;
 use crate::logical::Cond;
 use crate::storage::{Conjunction, Sel, Split, TableStorage, Vetted, VettedBatches};
@@ -109,29 +110,34 @@ fn said(read: VettedBatches, said: &Arc<Said>) -> Batches {
     }))
 }
 
-/// The batches of a scan of `columns` of `storage` told `told`, those of
-/// `late` late: for a filter whose conjuncts it was told, which hears
-/// `to`, each with what the scan judged of it
-/// (`TableStorage::scan_vetted`); for any other reader, as
-/// `TableStorage::scan_batches` gives them, every row of each kept.
+/// The batches of a scan of `what`, columns of `storage` and the
+/// conjuncts it is told, the columns `deferred` leaves unread late and
+/// those it reads for their lengths alone measured (RULES.md D361,
+/// D1267): for a filter whose conjuncts it was told, which hears `to`,
+/// each with what the scan judged of it (`TableStorage::scan_vetted`);
+/// for any other reader, every row of each kept and nothing heard.
 pub(super) fn scanned(
     storage: Arc<dyn TableStorage>,
     tx: TxId,
-    (columns, told, late): (&[usize], Option<&Conjunction>, &[usize]),
+    what: (&[usize], Option<&Conjunction>),
+    deferred: &Deferred,
     to: Option<&Arc<Said>>,
 ) -> Batches {
+    let (late, measured) = (deferred.late_of(what.0), deferred.measured_of(what.0));
+    let read = storage.scan_vetted(tx, what, (&late, &measured));
     match to {
-        Some(to) => said(storage.scan_vetted(tx, columns, told, late), to),
-        None => Box::new(storage.scan_batches(tx, columns, told, late).map(|b| b.map(|b| (b, None)))),
+        Some(to) => said(read, to),
+        None => Box::new(read.map(|b| b.map(|(b, _)| (b, None)))),
     }
 }
 
 /// As `scanned`, of morsel `n` of `split` (`Split::morsel_vetted`,
-/// `Split::morsel_batches`): none if its engine reads no morsel by batch.
-pub(in crate::exec) fn morsel(split: &dyn Split, n: usize, late: &[usize], to: Option<&Arc<Said>>) -> Option<Batches> {
+/// `Split::morsel_measured`): none if its engine reads no morsel by
+/// batch.
+pub(in crate::exec) fn morsel(split: &dyn Split, n: usize, asked: (&[usize], &[usize]), to: Option<&Arc<Said>>) -> Option<Batches> {
     match to {
-        Some(to) => Some(said(split.morsel_vetted(n, late)?, to)),
-        None => Some(Box::new(split.morsel_batches(n, late)?.map(|b| b.map(|b| (b, None))))),
+        Some(to) => Some(said(split.morsel_vetted(n, asked)?, to)),
+        None => Some(Box::new(split.morsel_measured(n, asked)?.map(|b| b.map(|b| (b, None))))),
     }
 }
 

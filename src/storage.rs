@@ -26,9 +26,9 @@ mod split;
 
 pub use batch::{
     BATCH_ROWS, Batch, Batches, Bools, Cell, Coded, Column, Datetimes, FIRST_BATCH_ROWS, Floats, Ints, Late, LateSource, Mask, NO_ROW,
-    Nulls, Picks, Ramp, Sel, Texts, VETTED_PLACES, Vetted, VettedBatches, batches_of, bound, dictionaries, mask, sel, unvetted,
+    Nulls, Picks, Ramp, Sel, Texts, VETTED_PLACES, Vetted, VettedBatches, batches_of, bound, dictionaries, listed, mask, sel, unvetted,
 };
-pub use condition::{Condition, Conjunct, Conjunction, Liked, Threshold};
+pub use condition::{Condition, Conjunct, Conjunction, Held, Liked, Members, Threshold};
 pub use cost::{DEFAULT_FETCH_COST, cost_of};
 pub use engine::StorageEngine;
 pub use image::{AfterImage, Patch};
@@ -190,9 +190,10 @@ pub trait TableStorage: Send + Sync {
     fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, _late: &[usize]) -> Batches {
         batch::scanned(self, tx, columns, conditions)
     }
-    /// \[DESIGN\] (RULES.md D1266) As `scan_batches`, each batch with what the scan judged of it (`Vetted`). Default: nothing said of any.
-    fn scan_vetted(self: Arc<Self>, tx: TxId, columns: &[usize], conditions: Option<&Conjunction>, late: &[usize]) -> VettedBatches {
-        unvetted(self.scan_batches(tx, columns, conditions, late))
+    /// \[DESIGN\] (RULES.md D1266, D1267) As `scan_batches` of the columns and conditions `what`, those of `asked.0` late and those of
+    /// `asked.1` measured if it can (late with their octet lengths, undecoded), each batch with what its scan judged of it. Default: none.
+    fn scan_vetted(self: Arc<Self>, tx: TxId, what: (&[usize], Option<&Conjunction>), asked: (&[usize], &[usize])) -> VettedBatches {
+        unvetted(self.scan_batches(tx, what.0, what.1, asked.0))
     }
     /// \[DESIGN\] The rows `scan_where` gives, or `scan` with no `conditions`, split into morsels of about `rows` rows each, for workers to
     /// read at once (RULES.md D290); none if it cannot split them, or failed to, its scan then raising what failed. Default: none.
