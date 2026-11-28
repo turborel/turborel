@@ -11,7 +11,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms of direct range reads whose removal must fail their tests.
-pub const RANGE_READS: [Mutation; 22] = [
+pub const RANGE_READS: [Mutation; 23] = [
     Mutation {
         name: "range-read-setting-ignored",
         package: Package::Core,
@@ -231,5 +231,15 @@ pub const RANGE_READS: [Mutation; 22] = [
         replacement: "                ends.push(base.checked_add(end)?);",
         integration: &[],
         unit: &["engine::columns::tests::chunks_of_runs_give_their_values_and_where_each_run_ends"],
+    },
+    Mutation {
+        name: "index-only-priced-by-the-window",
+        package: Package::Core,
+        breaks: "an index-only read is priced by the zones settled now, none just after a write (RULES.md D1233)",
+        file: "src/engine/rows.rs",
+        original: "        Some(1.0_f64)",
+        replacement: "        Some(0.0_f64)",
+        integration: &[],
+        unit: &["exec::range::tests::an_index_only_read_is_planned_alike_just_after_a_write"],
     },
 ];

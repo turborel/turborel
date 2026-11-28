@@ -457,9 +457,12 @@ impl TableStorage for RowTable {
         self.zones.visible(id)
     }
 
-    /// Its zones' (`rows/zones.rs`).
-    fn visible_share(&self) -> Option<f64> {
-        Some(self.zones.visible_share())
+    /// \[DESIGN\] (RULES.md D1233) All of them: each zone is settled
+    /// visible once collection and the horizon pass its writes. Asked by a
+    /// plan weighing an index-only read, which warms the table (D868).
+    fn settled_share(&self) -> Option<f64> {
+        self.zones.warm();
+        Some(1.0_f64)
     }
 
     /// Its zone's count of versions superseded one less.

@@ -74,7 +74,7 @@ fn each_ask_of_a_zone_makes_an_opened_tables_wanted() {
     assert_eq!(counted.zones.settled().0, 0);
     assert!(counted.maintenance_due(), "a count");
     let weighed = open();
-    assert!(weighed.zones.visible_share() < 1.0_f64 && weighed.maintenance_due(), "an index-only read weighed");
+    assert!(weighed.settled_share() == Some(1.0_f64) && weighed.maintenance_due(), "an index-only read weighed");
 }
 
 /// Verifies: [DESIGN] RULES.md D1212, D31: the zones summed up before a
