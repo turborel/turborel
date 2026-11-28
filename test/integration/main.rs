@@ -238,6 +238,7 @@ mod json_index;
 mod json_table;
 mod json_type;
 mod kept_entries;
+mod ke_scratch;
 mod kept_plans;
 mod kept_routines;
 mod kept_set_plans;

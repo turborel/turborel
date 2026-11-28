@@ -277,7 +277,10 @@ impl UndoStore {
     /// SQLCODE -916 if the log no longer holds it: it was released too soon,
     /// or lost; the log's errors.
     pub(super) fn read(&self, at: Lsn) -> Result<Held> {
-        let gone = || SqlError::new(Code::Corrupt, format!("[DESIGN] an older row version, at {}, is not in the undo store", at.0));
+        let gone = || {
+            eprintln!("KEGONE at={} batch={} first_pinned={:?} end={:?}\n{}", at.0, self.batch, lock_builtin(&self.pinned).keys().next(), self.log.end(), std::backtrace::Backtrace::force_capture());
+            SqlError::new(Code::Corrupt, format!("[DESIGN] an older row version, at {}, is not in the undo store", at.0))
+        };
         if self.batch == 0 {
             return self.log.read_at(at)?.map(Held::from).ok_or_else(gone);
         }
