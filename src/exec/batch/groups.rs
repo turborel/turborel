@@ -247,8 +247,10 @@ impl Groups {
             hash_rows(batch, (&how.read.groups, rows), (how.seed, how.runner.kernels()), &mut self.hashes);
         }
         // A row of the run of the row before it goes to that row's group,
-        // no key compared (`run_ends`).
-        let mut ends = run_ends(batch, &how.read.groups, rows).into_iter().flatten();
+        // no key compared (`run_ends`). Rows taken by their codes need no
+        // run, and tell this loop no group for the next row to follow.
+        let runs = if coded { None } else { run_ends(batch, &how.read.groups, rows) };
+        let mut ends = runs.into_iter().flatten();
         let (mut boundary, mut last) = (0_usize, None);
         for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
             let r = nth(rows, n);

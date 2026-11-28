@@ -24781,6 +24781,8 @@ argument of the DISTINCT set function.
   first row of each run alone. A group is numbered by its first row,
   which is a run's first, and takes every row of the run in order, so
   the groups, their order and each set function's value are unchanged.
+  A grouping by batch whose keys are all codes of dictionaries takes
+  each row by its codes (D1161) and asks no run.
 - Where no row of a batch repeats the one before it, the batch is
   hashed a vector at a time and every row looked up, as before. The
   compare that found none is one pass over each grouping column's

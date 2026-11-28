@@ -80,17 +80,21 @@ fn selected_rows_are_compared_in_the_order_given() {
 /// §7.13 GR2] character strings are alike as their octets are the same:
 /// a string and the same string with a trailing space are two runs,
 /// which the table of groups then compares as the grouping does; a null
-/// is unlike the empty string and alike a null. Codes of a dictionary
+/// is unlike the empty string and alike a null; of strings none null,
+/// two of one length are alike only as their octets are. Codes of a dictionary
 /// are alike as the codes are, and datetimes as their instants.
 #[test]
 fn texts_codes_and_datetimes_tell_their_runs() {
     let plain = texts(&[Some("a"), Some("a"), Some("a "), Some(""), None, None, Some(""), Some("b")]);
     assert_eq!(ends(&batch(vec![plain], 8), &[0], None), Some(vec![2, 3, 4, 6, 7, 8]));
+    // None null and every row given: octets against octets, lengths first.
+    let dense = texts(&[Some("a"), Some("a"), Some("a "), Some(""), Some(""), Some("b"), Some("c"), Some("ab"), Some("ab")]);
+    assert_eq!(ends(&batch(vec![dense], 9), &[0], None), Some(vec![2, 3, 5, 6, 7, 9]));
     let entries = Arc::new(Texts::new("ab".to_owned(), vec![1, 2], None));
     let codes = vec![0_u32, 0, 1, 1, 0, 0];
     let nulls = mask_of(&[false, false, false, false, false, true]);
-    let coded = Column::Texts(Texts::coded(Coded { codes, entries }, nulls));
-    assert_eq!(ends(&batch(vec![coded], 6), &[0], None), Some(vec![2, 4, 5, 6]));
+    let by_code = Column::Texts(Texts::coded(Coded { codes, entries }, nulls));
+    assert_eq!(ends(&batch(vec![by_code], 6), &[0], None), Some(vec![2, 4, 5, 6]));
     let days = Datetimes::new(vec![5, 5, 6, 6, 6], None, (Moment::Date, false, 0), None);
     assert_eq!(ends(&batch(vec![Column::Datetimes(days)], 5), &[0], None), Some(vec![2, 5]));
 }

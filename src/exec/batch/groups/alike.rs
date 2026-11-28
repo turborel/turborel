@@ -83,6 +83,9 @@ fn marked<T: PartialEq>((words, nulls): (&[T], Option<&Mask>), rows: Option<&[u3
 /// own text: a row is unlike the row given before it unless both are
 /// null or their octets are the same.
 fn marked_texts(texts: &Texts, rows: Option<&[u32]>, begins: &mut [bool]) -> Option<()> {
+    if rows.is_none() && texts.nulls.is_none() {
+        return marked_octets(texts.text.as_bytes(), &texts.ends, begins);
+    }
     let mut before: Option<Option<&str>> = None;
     for (n, begun) in begins.iter_mut().enumerate() {
         let r = nth(rows, n);
@@ -95,6 +98,25 @@ fn marked_texts(texts: &Texts, rows: Option<&[u32]>, begins: &mut [bool]) -> Opt
             *begun |= text != this;
         }
         before = Some(this);
+    }
+    Some(())
+}
+
+/// As `marked_texts`, of every row, none null: each string's octets, the
+/// part of `octets` up to its end in `ends`, against those of the string
+/// before it, their lengths first, so two empty strings and two strings
+/// of unlike lengths are told with no octet read.
+fn marked_octets(octets: &[u8], ends: &[usize], begins: &mut [bool]) -> Option<()> {
+    if ends.len() != begins.len() {
+        return None;
+    }
+    let (mut from, mut before): (usize, &[u8]) = (0, &[]);
+    for (n, (begun, &end)) in begins.iter_mut().zip(ends).enumerate() {
+        let this = octets.get(from..end)?;
+        if n > 0 {
+            *begun |= this.len() != before.len() || (!this.is_empty() && this != before);
+        }
+        (from, before) = (end, this);
     }
     Some(())
 }

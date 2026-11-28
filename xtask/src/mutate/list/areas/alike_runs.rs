@@ -28,7 +28,7 @@ const PLANS: &str = "alike_runs::groups_of_rows_in_runs_are_the_plans";
 
 /// Mechanisms whose removal must fail the requirements of the runs of
 /// rows of one key.
-pub const ALIKE_RUNS: [Mutation; 9] = [
+pub const ALIKE_RUNS: [Mutation; 11] = [
     Mutation {
         name: "run-of-the-last-column-of-words-alone",
         package: Package::Core,
@@ -118,5 +118,25 @@ pub const ALIKE_RUNS: [Mutation; 9] = [
         replacement: "return seed.word(unit.cast_unsigned().wrapping_add(1));",
         integration: &[],
         unit: &["exec::table::keys::tests::a_groups_hash_of_its_lanes_is_that_of_their_values"],
+    },
+    Mutation {
+        name: "texts-of-one-length-alike",
+        package: Package::Core,
+        breaks: "two character strings of one length are alike whatever their octets, so the second joins the first's group (RULES.md D1323)",
+        file: ALIKE,
+        original: "*begun |= this.len() != before.len() || (!this.is_empty() && this != before);",
+        replacement: "*begun |= this.len() != before.len();",
+        integration: &[],
+        unit: &[TEXTS],
+    },
+    Mutation {
+        name: "runs-followed-of-rows-taken-by-their-codes",
+        package: Package::Core,
+        breaks: "a grouping by batch that takes rows by their dictionary codes follows runs too, the rows after a run's first given to the group of an earlier run (RULES.md D1323)",
+        file: "src/exec/batch/groups.rs",
+        original: "let runs = if coded { None } else { run_ends(batch, &how.read.groups, rows) };",
+        replacement: "let runs = run_ends(batch, &how.read.groups, rows);",
+        integration: &[PLANS],
+        unit: &[],
     },
 ];

@@ -76,7 +76,8 @@ fn three_ways(s: &Session, sql: &str) -> (Rows, Rows, Rows) {
 /// whose runs end apart, nulls in both; a count of distinct values
 /// beside other set functions, and alone, and under HAVING; by a text
 /// whose runs differ from the run before them by a trailing space
-/// alone, one group as padded strings compare; by a date and an integer
+/// alone, one group as padded strings compare, which the column store
+/// gives as codes of a dictionary, taken by their codes and by no run; by a date and an integer
 /// under a WHERE clause that takes rows out of the middle of runs; by a
 /// column whose kept rows are nulls and the values after them; and by
 /// three columns. Of the column store and of the row store.
@@ -122,7 +123,7 @@ fn rows_of_a_run_are_all_counted() {
     assert_eq!(one(&format!("SELECT COUNT(*) FROM {by_g}")), ["38"]);
     assert_eq!(one(&format!("SELECT SUM(N) FROM {by_g}")), ["6000"]);
     assert_eq!(one(&format!("SELECT N FROM {by_g} WHERE G IS NULL")), ["560"]);
-    let by_run = "(SELECT K - MOD(K, 5) AS B, G, U, COUNT(*) AS N FROM C GROUP BY K - MOD(K, 5), G, U) AS T";
+    let by_run = "(SELECT B, G, U, COUNT(*) AS N FROM (SELECT K - MOD(K, 5) AS B, G, U FROM C) AS X GROUP BY B, G, U) AS T";
     assert_eq!(one(&format!("SELECT COUNT(*) FROM {by_run}")), ["1200"]);
     assert_eq!(one(&format!("SELECT COUNT(*) FROM {by_run} WHERE N = 5")), ["1200"]);
     let by_pair = "(SELECT G, U, COUNT(*) AS N FROM C GROUP BY G, U) AS T";
