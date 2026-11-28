@@ -53,7 +53,9 @@ fn main() -> ExitCode {
                 turboreld::read_owner_password(&mut config, &mut *password_input(true)?)?;
             }
             let signals = (turboreld::signalled(), turboreld::signalled());
-            turboreld::run(&config, |at| eprintln!("turboreld: listening at {}", at.join(", ")), signals)
+            let ran = turboreld::run(&config, |at| eprintln!("turboreld: listening at {}", at.join(", ")), signals);
+            turborel::engine::columns::resize::dump();
+            ran
         }
         Command::Reseal(config, table) => turboreld::run_reseal(&config, &table, &mut std::io::stdout()),
         Command::Rekey(config) => turboreld::run_rekey(&config, &mut std::io::stdout()),

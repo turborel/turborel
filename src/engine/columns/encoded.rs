@@ -104,6 +104,25 @@ pub(super) struct Sizer<'f> {
     fsst: Option<(&'f Table, usize)>,
 }
 
+/// PROBE: the bytes of a chunk's values in each encoding that can hold them.
+#[derive(Default)]
+pub(super) struct Candidates {
+    pub(super) count: usize,
+    /// The kind taking fewest bytes, and its bytes.
+    pub(super) kind: u8,
+    pub(super) bytes: usize,
+    pub(super) fixed: Option<usize>,
+    pub(super) constant: Option<usize>,
+    /// Bits and bytes.
+    pub(super) frame: Option<(u32, usize)>,
+    /// Runs, bits and bytes.
+    pub(super) runs: Option<(usize, u32, usize)>,
+    /// Bits and bytes.
+    pub(super) alp: Option<(u32, usize)>,
+    /// Entries, code bits and bytes.
+    pub(super) dictionary: Option<(usize, u32, usize)>,
+}
+
 fn integer(field: &[u8]) -> Option<i64> {
     <[u8; FRAMED]>::try_from(field).ok().map(i64::from_le_bytes)
 }
@@ -169,6 +188,32 @@ impl<'f> Sizer<'f> {
             self.entries.insert(f, next);
             self.entry_bytes = self.entry_bytes.saturating_add(f.len());
         }
+    }
+
+    /// PROBE: what each encoding that can hold the values takes.
+    pub(super) fn candidates(&self) -> Candidates {
+        let base = HEADER.saturating_add(nulls_len(self.count));
+        let (plan, bytes) = self.best();
+        let mut c = Candidates { count: self.count, kind: kind_of(plan), bytes, ..Candidates::default() };
+        c.fixed = self.width.map(|w| base.saturating_add(WORD).saturating_add(self.count.saturating_mul(w)));
+        if self.same {
+            c.constant = Some(base.saturating_add(WORD).saturating_add(self.first.map_or(0, <[u8]>::len)));
+        }
+        if let (true, false, Some((lo, hi))) = (self.framed, self.same, self.range) {
+            let bits = bits_for(u64::try_from(i128::from(hi).saturating_sub(i128::from(lo))).unwrap_or(u64::MAX));
+            c.frame = Some((bits, base.saturating_add(1 + FRAMED).saturating_add(packed_len(self.count, bits).unwrap_or(usize::MAX))));
+            c.runs = Some((self.runs, bits, base.saturating_add(runs_len((self.count, self.runs, bits)).unwrap_or(usize::MAX))));
+        }
+        if let Some(((_, _, bits), bytes)) = self.alp.as_ref().and_then(|a| a.best(self.count)) {
+            c.alp = Some((bits, base.saturating_add(bytes)));
+        }
+        if self.entries.len() < MOST_ENTRIES {
+            let bits = bits_for(u64::try_from(self.entries.len().saturating_sub(1)).unwrap_or(u64::MAX));
+            let table = self.entries.len().saturating_add(1).saturating_mul(WORD).saturating_add(self.entry_bytes);
+            let bytes = base.saturating_add(1 + WORD).saturating_add(table).saturating_add(packed_len(self.count, bits).unwrap_or(usize::MAX));
+            c.dictionary = Some((self.entries.len(), bits, bytes));
+        }
+        c
     }
 
     /// The encoding that takes the fewest bytes, and how many.

@@ -33,6 +33,7 @@ pub mod imprints;
 pub mod judged;
 mod packed;
 pub mod prepared;
+pub mod resize;
 mod runs;
 pub mod scan;
 pub mod sketch;

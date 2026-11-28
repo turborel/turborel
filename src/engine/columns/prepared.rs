@@ -135,7 +135,7 @@ impl Prepared {
             while kept.front().is_some_and(|h| h.end <= first) || kept.len() >= KEPT {
                 spare.extend(kept.pop_front().map(|h| h.bytes));
             }
-            kept.push_back(open(pages, (zone, t), spare.pop().unwrap_or_default())?);
+            kept.push_back(open(pages, (zone, t, column), spare.pop().unwrap_or_default())?);
             #[cfg(test)]
             {
                 *opened = opened.saturating_add(1);
@@ -155,7 +155,7 @@ impl Prepared {
 /// The chunk `zone`, of a column of type `t`, read of `pages`, and what
 /// its runs share made of it: its bytes kept in `bytes` only if its page
 /// had to be opened by its encodings.
-fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t): (&Zone, &DataType), mut bytes: Vec<u8>) -> Result<Held> {
+fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t, column): (&Zone, &DataType, usize), mut bytes: Vec<u8>) -> Result<Held> {
     bytes.clear();
     let (table, made, in_place) = pages.with_run_told(&zone.run, |read, in_place| {
         if !in_place {
@@ -165,6 +165,7 @@ fn open<S: Seal>(pages: &Pages<'_, S>, (zone, t): (&Zone, &DataType), mut bytes:
         // Entries as integers of a type not of character strings. Those
         // of texts are read of the chunk by each run (RULES.md D1252).
         let words = if padding(t).is_some() { None } else { chunk.body.entry_words() };
+        super::resize::note(pages, (column, zone, t), &chunk, (words.as_deref(), read.first().copied().unwrap_or(0)));
         Ok((chunk.table(), Made { words }, in_place))
     })?;
     Ok(Held { first: zone.run.first, end: zone.run.first.saturating_add(zone.run.rows), bytes, in_place, table, made })
