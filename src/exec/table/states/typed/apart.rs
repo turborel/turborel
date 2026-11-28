@@ -15,11 +15,15 @@ use crate::storage::{Batch, Column, Ints, Sel};
 /// A morsel's batches as it holds them, each with the rows kept of it.
 type Held = [(Batch, Option<Sel>)];
 
+/// The integers of the column at `c` of `batch`, if it holds them so.
+fn column(batch: &Batch, c: usize) -> Option<&Ints> {
+    if let Some(Column::Ints(ints)) = batch.columns.get(c) { Some(ints) } else { None }
+}
+
 /// The integers of the column at `c` of every batch of `held`, and their
 /// scale, if each batch holds the column as integers of one scale.
 fn ints_of(held: &Held, c: usize) -> Option<(Vec<&Ints>, u32)> {
-    let column = |batch: &'_ Batch| if let Some(Column::Ints(ints)) = batch.columns.get(c) { Some(ints) } else { None };
-    let ints = held.iter().map(|(batch, _)| column(batch)).collect::<Option<Vec<_>>>()?;
+    let ints = held.iter().map(|(batch, _)| column(batch, c)).collect::<Option<Vec<_>>>()?;
     let scale = ints.first()?.scale;
     ints.iter().all(|of| of.scale == scale).then_some((ints, scale))
 }
