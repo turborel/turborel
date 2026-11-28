@@ -46,7 +46,7 @@ impl Sent {
     ///
     /// # Errors
     ///
-    /// SQLCODE -901 if the bytes are not such states.
+    /// SQLCODE -916 if the bytes are not such states.
     pub(in crate::exec::table) fn read(reader: &mut Reader<'_>, len: usize, agg: &AggCall) -> Result<Sent> {
         match reader.u8()? {
             TYPED => Ok(Sent::Typed(Typed::read(reader, len, agg)?)),

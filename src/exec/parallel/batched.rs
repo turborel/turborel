@@ -21,8 +21,8 @@ use crate::db::State;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::batch::{
-    Batches, Bound, Deferred, Shaped, filter_step, outer_step, probe_step, project_step, resolved, rows_of, runtime_step, semi_step,
-    through,
+    Batches, Bound, Deferred, Said, Shaped, filter_step, morsel_read, outer_step, probe_step, project_step, resolved, rows_of,
+    runtime_step, semi_step, through, told_step,
 };
 use crate::exec::{RowIter, broken};
 use crate::txn::TxId;
@@ -91,9 +91,12 @@ impl ByBatch {
 fn branch_steps(branch: &Branch) -> Option<(Vec<Shaped>, Vec<usize>, usize)> {
     let (mut layout, mut width) = branch.scanned.clone()?;
     let mut shaped = Vec::with_capacity(branch.steps.len());
-    for step in &branch.steps {
+    // The filter the scan was told the conjuncts of hears what the scan
+    // judged of each batch (RULES.md D1266).
+    let hearing = branch.told_filter();
+    for (n, step) in branch.steps.iter().enumerate() {
         match step {
-            Step::Filter(cond) => shaped.push(filter_step(cond, &layout)),
+            Step::Filter(cond) => shaped.push(if hearing == Some(n) { told_step(cond, &layout) } else { filter_step(cond, &layout) }),
             Step::Project(exprs) => {
                 let (made, after) = project_step(exprs, &layout)?;
                 shaped.push(made);
@@ -234,9 +237,11 @@ impl Pipeline {
         for (((branch, steps), late), measured) in self.branches.iter().zip(&by.steps).zip(&by.late).zip(&by.measured) {
             let morsels = branch.split.morsels();
             if at < morsels {
-                let read = branch.split.morsel_measured(at, (late, measured)).ok_or_else(|| broken("a morsel not read by batch"))?;
-                let kept: Batches = Box::new(read.map(|b| b.map(|b| (b, None))));
-                return Ok(through(kept, steps, (db, tx)));
+                // A morsel's stream has its own word of its scan's batches.
+                let said = branch.told_filter().map(|_| Arc::new(Said::default()));
+                let read =
+                    morsel_read(&*branch.split, at, (late, measured), said.as_ref()).ok_or_else(|| broken("a morsel not read by batch"))?;
+                return Ok(through(read, steps, said.as_ref(), (db, tx)));
             }
             at = at.saturating_sub(morsels);
         }
@@ -255,6 +260,11 @@ impl Pipeline {
         Ok(rows_of(self.morsel_kept(n, (db, tx))?, by.layout.clone(), by.width))
     }
 }
+
+// Unit tests: a pipeline whose first filter hears its scan gives the rows
+// it gives with the filter deaf (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod vetting;
 
 // Unit tests: the columns a pipeline's morsels give late (RULES.md
 // R-TEST-1, R-TEST-8).

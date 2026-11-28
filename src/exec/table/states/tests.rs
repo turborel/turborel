@@ -10,6 +10,9 @@ use crate::storage::{Column, Floats, Ints, Mask};
 use crate::txn::NO_TRANSACTION;
 use crate::value::{Decimal, Spelled, Value};
 
+// Exact totals held in 64 bits and widened (RULES.md D1308).
+mod widened;
+
 /// The type of an INTEGER column.
 const INTEGER: DataType = DataType::Exact { precision: 10, scale: 0, spelled: Spelled::Integer };
 

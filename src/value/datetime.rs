@@ -155,12 +155,12 @@ pub struct Written {
 }
 
 /// `a` divided by `b`, rounded down; `b` is a positive constant.
-fn floor_div(a: i64, b: i64) -> i64 {
+pub(crate) fn floor_div(a: i64, b: i64) -> i64 {
     a.checked_div_euclid(b).unwrap_or(0)
 }
 
 /// What is left of `a` after `floor_div(a, b)`, from 0 to below `b`.
-fn floor_rem(a: i64, b: i64) -> i64 {
+pub(crate) fn floor_rem(a: i64, b: i64) -> i64 {
     a.checked_rem_euclid(b).unwrap_or(0)
 }
 

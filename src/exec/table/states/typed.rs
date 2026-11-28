@@ -1,11 +1,12 @@
 //! \[DESIGN\] (RULES.md D356) Columns of states of the built-in set
 //! functions: COUNT's counts; SUM's, AVG's, MAX's and MIN's of integers of
-//! one scale, a 128-bit total or best value and a count a group; SUM's and
-//! AVG's of approximate numbers, a `Wide` sum and a count a group; MAX's
-//! and MIN's of character strings, a string a group (`typed/best.rs`,
-//! RULES.md D1290). Each is fed only the vectors it holds; any other turns
-//! it into accumulators (`states.rs`). A sum past 128 bits raises as SUM's
-//! accumulator does.
+//! one scale, a total or best value and a count a group, the total in 64
+//! bits while its column's totals fit them and in 128 once one does not
+//! (`typed/totals.rs`, RULES.md D1308); SUM's and AVG's of approximate
+//! numbers, a `Wide` sum and a count a group; MAX's and MIN's of character
+//! strings, a string a group (`typed/best.rs`, RULES.md D1290). Each is
+//! fed only the vectors it holds; any other turns it into accumulators
+//! (`states.rs`). A sum past 128 bits raises as SUM's accumulator does.
 
 use crate::bytes::Reader;
 use crate::error::{Code, Result, fail};
@@ -20,23 +21,26 @@ use crate::storage::{Batch, Column, Ints, Mask};
 use crate::value::codec::value;
 use crate::value::{DataType, Decimal, Value};
 
+mod apart;
 mod best;
 mod few;
 mod merged;
 mod quiet;
 mod stated;
+mod totals;
 mod written;
 
 use super::super::Pending;
 use super::{Boxed, columns_of};
 pub(in crate::exec) use best::Best;
+use totals::Totals;
 
 /// Exact states: of which function, each group's total (of SUM and AVG)
 /// or best value (of MAX and MIN), how many values it took, the scale of
 /// its integers once one came, and the result's type.
 pub(in crate::exec) struct Exact {
     kind: ColumnarKind,
-    units: Vec<i128>,
+    totals: Totals,
     counts: Vec<i64>,
     scale: Option<u32>,
     result: DataType,
@@ -104,9 +108,9 @@ impl Typed {
             return Some(Typed::Count(Vec::new()));
         }
         let (exact, approx) = columns_of(kind, result);
-        let (units, counts, sums) = (Vec::new(), Vec::new(), Vec::new());
+        let (counts, sums) = (Vec::new(), Vec::new());
         if exact {
-            return Some(Typed::Exact(Exact { kind, units, counts, scale: None, result: result.clone() }));
+            return Some(Typed::Exact(Exact { kind, totals: Totals::new(), counts, scale: None, result: result.clone() }));
         }
         approx.then(|| Typed::Approx(Approx { mean: kind == ColumnarKind::Avg, sums, counts, result: result.clone() }))
     }
@@ -116,7 +120,7 @@ impl Typed {
         match self {
             Typed::Count(counts) => counts.push(0),
             Typed::Exact(exact) => {
-                exact.units.push(0);
+                exact.totals.grow();
                 exact.counts.push(0);
             }
             Typed::Approx(approx) => {
@@ -232,8 +236,7 @@ impl Typed {
                 counts.shrink_to_fit();
             }
             Typed::Exact(exact) => {
-                exact.units.truncate(len);
-                exact.units.shrink_to_fit();
+                exact.totals.truncate(len);
                 exact.counts.truncate(len);
                 exact.counts.shrink_to_fit();
             }
@@ -252,7 +255,7 @@ impl Typed {
         let count = size_of::<i64>();
         match self {
             Typed::Count(counts) => counts.capacity().saturating_mul(count),
-            Typed::Exact(exact) => exact.units.capacity().saturating_mul(size_of::<i128>().saturating_add(count)),
+            Typed::Exact(exact) => exact.totals.bytes().saturating_add(exact.counts.capacity().saturating_mul(count)),
             Typed::Approx(approx) => approx.sums.capacity().saturating_mul(size_of::<Wide>().saturating_add(count)),
             Typed::Best(best) => best.bytes(),
         }
@@ -365,12 +368,15 @@ impl Exact {
         let sums = self.kind == ColumnarKind::Sum || self.kind == ColumnarKind::Avg;
         if sums
             && ints.nulls.is_none()
-            && let Some(over) = few::summed(&mut self.units, &mut self.counts, (&ints.units, places, &pending.groups))
+            && let Some(over) = few::summed(&mut self.totals, &mut self.counts, (&ints.units, places, &pending.groups))
         {
             return if over { beyond() } else { Ok(true) };
         }
-        let mut any = false;
-        for (&at, &g) in places.iter().zip(&pending.groups) {
+        // [DESIGN] (RULES.md D1308) A sum's rows are added in 64 bits
+        // while its column is narrow. The row whose sum leaves them, and
+        // those after it, are taken below, where the column widens.
+        let (taken, mut any) = if sums { self.totals.fed(&mut self.counts, ints, (places, &pending.groups)) } else { (0, false) };
+        for (&at, &g) in places.iter().zip(&pending.groups).skip(taken) {
             let at = crate::storage::mask::index(at);
             if null_at(ints.nulls.as_ref(), at) {
                 any = true;
@@ -410,18 +416,20 @@ impl Exact {
 
     /// Takes into group `g`'s `units` of `count` values: added, of a sum or
     /// mean; kept if better, of an extreme, a tie keeping the one first.
+    /// Its column of totals widens if 64 bits do not hold what it is left
+    /// with (RULES.md D1308).
     fn take(&mut self, g: usize, units: i128, count: i64) -> Result<()> {
-        let (Some(total), Some(held)) = (self.units.get_mut(g), self.counts.get_mut(g)) else { return Ok(()) };
+        let Some(held) = self.counts.get_mut(g) else { return Ok(()) };
         let better = match self.kind {
             ColumnarKind::Sum | ColumnarKind::Avg | ColumnarKind::Count => {
-                *total = total.checked_add(units).map_or_else(beyond, Ok)?;
+                self.totals.add(g, units)?;
                 false
             }
-            ColumnarKind::Min => *held == 0 || units < *total,
-            ColumnarKind::Max => *held == 0 || units > *total,
+            ColumnarKind::Min => *held == 0 || self.totals.get(g).is_some_and(|total| units < total),
+            ColumnarKind::Max => *held == 0 || self.totals.get(g).is_some_and(|total| units > total),
         };
         if better {
-            *total = units;
+            self.totals.set(g, units);
         }
         *held = held.saturating_add(count);
         Ok(())
@@ -438,7 +446,7 @@ impl Exact {
         if other.kind != self.kind || other.scale != Some(scale) {
             return Ok(false);
         }
-        self.take(g, other.units.get(i).copied().unwrap_or(0), held)?;
+        self.take(g, other.totals.get(i).unwrap_or(0), held)?;
         Ok(true)
     }
 
@@ -485,8 +493,8 @@ impl Exact {
     /// Group `g`'s total or best value, if it took one.
     fn summed(&self, g: usize) -> Summed {
         let held = self.counts.get(g).is_some_and(|&n| n > 0);
-        match (held, self.units.get(g)) {
-            (true, Some(&units)) => Summed::Exact(Decimal::new(units, self.scale.unwrap_or(0))),
+        match (held, self.totals.get(g)) {
+            (true, Some(units)) => Summed::Exact(Decimal::new(units, self.scale.unwrap_or(0))),
             (true, None) | (false, _) => Summed::Empty,
         }
     }

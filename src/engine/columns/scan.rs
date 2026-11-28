@@ -6,6 +6,7 @@
 
 use super::group::{Group, PART_ROWS, Pages, Part, Seal, Zone};
 use super::prepared::Prepared;
+use super::texts::{Asked, Gathered};
 use super::{Chunk, bloom, imprints, padding};
 use crate::error::Result;
 use crate::storage::{Column, Conjunct, Conjunction, Datetimes, Floats, Ints, Mask, Row, Texts};
@@ -18,7 +19,6 @@ mod positions;
 mod truths;
 
 pub use lengths::octets_at;
-use positions::coded_at;
 pub use positions::{column_at, datetimes_at, floats_at, ints_at, texts_at, values_at};
 pub use truths::{bools, bools_at};
 
@@ -463,8 +463,30 @@ fn words<S: Seal>(
     Ok(Some(((units, nulls), runs)))
 }
 
-/// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
-/// positions `from` to `to` of `group`, as text, as `texts_at` gives them.
+/// \[DESIGN\] (RULES.md D1252) The room first made for the texts of a run
+/// that reads `asked`, each a chunk and how many of its rows are read: of
+/// each chunk the octets it takes stored on `pages`, a chunk on a page of
+/// its own the page's, by the share of its rows read. A dictionary's
+/// entries, varying fields and one value are no more octets than their
+/// chunk stores, so rows read whole seldom pass it, and texts coded by
+/// symbols, or long rows among few read, grow the vector past it.
+pub(super) fn stored<'z, S: Seal>(pages: &Pages<'_, S>, asked: impl Iterator<Item = (&'z Zone, usize)>) -> usize {
+    let of = |zone: &Zone| usize::try_from(zone.run.len).ok().filter(|&len| len > 0).unwrap_or(pages.capacity);
+    let share = |zone: &Zone, rows: usize| {
+        let held = usize::try_from(zone.run.rows).unwrap_or(usize::MAX);
+        of(zone).saturating_mul(rows.min(held)).checked_div(held).unwrap_or(0)
+    };
+    asked.fold(0, |sum, (zone, rows)| sum.saturating_add(share(zone, rows)))
+}
+
+/// \[DESIGN\] (RULES.md D1252, D1316) The values of column `column`, of
+/// type `t`, of the rows at positions `from` to `to` of `group`, as text
+/// (`storage::Texts`), if `t` is a character string type, which a record
+/// writes as its text (a CHARACTER string's then padded as it is read, so
+/// as LIKE sees it), and every chunk's encoding holds text: each chunk's
+/// rows gathered into one vector of octets, judged once
+/// (`texts::Gathered`), as their chunks' entries and each row's code among
+/// them where a chunk of the run shares entries among its rows.
 ///
 /// # Errors
 ///
@@ -475,29 +497,23 @@ pub fn texts<S: Seal>(
     (column, t): (usize, &DataType),
     (from, to): (u32, u32),
 ) -> Result<Option<Texts>> {
-    if padding(t).is_none() {
-        return Ok(None);
-    }
+    let Some(pad) = padding(t) else { return Ok(None) };
     let Some(zones) = group.zones(column)? else { return Ok(None) };
-    if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), &(from..to).collect::<Vec<u32>>())? {
-        return Ok(Some(coded));
-    }
     let count = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(count), Mask::default());
-    for zone in zones.iter().filter(|z| z.run.first < to && z.run.first.saturating_add(z.run.rows) > from) {
-        let (first, end) = (zone.run.first.max(from), zone.run.first.saturating_add(zone.run.rows).min(to));
+    // Each chunk with a row of the run, and the rows of the run it holds.
+    let read = |z: &Zone| (z.run.first.max(from), z.run.first.saturating_add(z.run.rows).min(to));
+    let touched = || zones.iter().map(|z| (z, read(z))).filter(|(_, (first, end))| first < end);
+    let room = stored(pages, touched().map(|(z, (first, end))| (z, usize::try_from(end.saturating_sub(first)).unwrap_or(0))));
+    let mut gathered = Gathered::with_room(count, room);
+    for (zone, (first, end)) in touched() {
         let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        let held = prepared.with(pages, (column, zone, t), |chunk, _| {
-            Ok(chunk.texts((at(first), at(end)), (&mut text, &mut ends, &mut nulls), (t, pages.kernels)))
-        })?;
+        let held =
+            prepared.with(pages, (column, zone, t), |chunk, _| Ok(chunk.gather(Asked::Run(at(first), at(end)), pad, &mut gathered)))?;
         if held.is_none() {
             return Ok(None);
         }
     }
-    if ends.len() != count {
-        return Ok(None);
-    }
-    Ok(Some(Texts::new(text, ends, nulls_of(nulls))))
+    Ok(gathered.finish(pages.kernels))
 }
 
 /// \[DESIGN\] Column `c`, of type `t`, of the rows at positions `from` to

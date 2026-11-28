@@ -2,11 +2,14 @@
 //! spill and read back as they were, lane by lane: whether the lane is
 //! grouped unpadded, its nulls, and its vector of its type, each value's
 //! bits as it holds them, a null's place too, so a lane read back is the
-//! lane written. A lane of values writes each with `codec::put_value` and
-//! its key's bytes; of a large object, an XML value, a value of a type
-//! beyond the standard, or one that holds others, it writes nothing, as
-//! what keeps such a value apart, or the types it is read by, are not the
-//! spill's, and the table's groups stay where they are.
+//! lane written. A lane of texts writes their whole length, each one's
+//! length, and their octets in one run, so it is read back into one
+//! buffer of that length (RULES.md D1255). A lane of values writes each
+//! with `codec::put_value` and its key's bytes; of a large object, an XML
+//! value, a value of a type beyond the standard, or one that holds
+//! others, it writes nothing, as what keeps such a value apart, or the
+//! types it is read by, are not the spill's, and the table's groups stay
+//! where they are.
 
 use crate::bytes::{Put, Reader};
 use crate::error::Result;
@@ -14,7 +17,7 @@ use crate::value::codec::{put_value, value};
 use crate::value::datetime::Moment;
 use crate::value::{Datetime, Value};
 
-use super::{Data, Keys, Lane, text_at};
+use super::{Chunks, Data, Keys, Lane};
 
 /// The tags of a lane's types, as written.
 const UNSET: u8 = 0;
@@ -106,9 +109,11 @@ impl Lane {
                 out.put_u8(BOOLS);
                 groups().for_each(|g| out.put_u8(u8::from(at(bools, g, false))));
             }
-            Data::Texts { text, ends } => {
+            Data::Texts(texts) => {
                 out.put_u8(TEXTS);
-                groups().for_each(|g| out.put_str(text_at(text, ends, g).unwrap_or("")));
+                out.put_u64(u64::try_from(texts.held_at(places)).unwrap_or(u64::MAX));
+                groups().for_each(|g| out.put_u32(u32::try_from(texts.get(g).map_or(0, str::len)).unwrap_or(u32::MAX)));
+                groups().for_each(|g| out.extend_from_slice(texts.get(g).unwrap_or("").as_bytes()));
             }
             Data::Values { values, keys, ends } => {
                 out.put_u8(VALUES);
@@ -135,14 +140,7 @@ impl Lane {
             FLOATS => Data::Floats((0..len).map(|_| reader.u64().map(f64::from_bits)).collect::<Result<_>>()?),
             DATETIMES => Data::Datetimes((0..len).map(|_| datetime(reader)).collect::<Result<_>>()?),
             BOOLS => Data::Bools((0..len).map(|_| reader.u8().map(|b| b != 0)).collect::<Result<_>>()?),
-            TEXTS => {
-                let (mut text, mut ends) = (String::new(), Vec::with_capacity(len));
-                for _ in 0..len {
-                    text.push_str(&reader.str()?);
-                    ends.push(text.len());
-                }
-                Data::Texts { text, ends }
-            }
+            TEXTS => Data::Texts(texts(reader, len)?),
             VALUES => {
                 let (mut values, mut keys, mut ends) = (Vec::with_capacity(len), Vec::new(), Vec::with_capacity(len));
                 for _ in 0..len {
@@ -159,6 +157,32 @@ impl Lane {
         lane.heap = lane.held();
         Ok(lane)
     }
+}
+
+/// \[DESIGN\] (RULES.md D1255) Reads the texts of `len` groups as
+/// `put_groups` wrote them: their whole length, each one's length, then
+/// their octets in one run. They are put in one chunk made with that
+/// whole length, so a lane read back holds no room its texts do not
+/// fill, and no text is copied twice.
+fn texts(reader: &mut Reader<'_>, len: usize) -> Result<Chunks> {
+    let whole = usize::try_from(reader.u64()?).map_err(|_| reader.corrupt("texts longer than memory tells"))?;
+    let lens = (0..len).map(|_| reader.u32().map(crate::storage::mask::index)).collect::<Result<Vec<_>>>()?;
+    let run = std::str::from_utf8(reader.take(whole)?).map_err(|_| reader.corrupt("a lane's texts are not UTF-8"))?;
+    let mut chunks = Chunks::with_room(whole);
+    chunks.reserve(len);
+    let mut from = 0_usize;
+    for octets in lens {
+        let to = from.saturating_add(octets);
+        let text = run.get(from..to).ok_or_else(|| reader.corrupt("a text ends outside its lane's texts"))?;
+        if !chunks.push(text) {
+            return Err(reader.corrupt("a text longer than a lane tells"));
+        }
+        from = to;
+    }
+    if from != whole {
+        return Err(reader.corrupt("a lane's texts are longer than its groups' texts"));
+    }
+    Ok(chunks)
 }
 
 /// The bytes from the end before `g` to the `g`th end of `ends` in `keys`.
@@ -179,7 +203,7 @@ impl Keys {
     ///
     /// # Errors
     ///
-    /// SQLCODE -901 if the bytes are not keys so written.
+    /// SQLCODE -916 if the bytes are not keys so written.
     pub(in crate::exec) fn read(reader: &mut Reader<'_>, len: usize) -> Result<Keys> {
         let width = crate::storage::mask::index(reader.u32()?);
         Ok(Keys { lanes: (0..width).map(|_| Lane::read(reader, len)).collect::<Result<_>>()? })

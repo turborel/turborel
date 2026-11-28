@@ -48,6 +48,13 @@ pub trait Text {
     fn before(&self, at: usize) -> Option<usize> {
         at.checked_sub(1)
     }
+    /// \[DESIGN\] (RULES.md D1311) Its octets as UTF-8, if it holds them
+    /// in memory and its positions count them, so a matcher may read a
+    /// character of ASCII as its octet; none of any other text.
+    #[inline]
+    fn octets(&self) -> Option<&[u8]> {
+        None
+    }
 }
 
 impl Text for [char] {
@@ -89,6 +96,10 @@ impl Text for Ascii<'_> {
     fn at(&self, at: usize) -> Result<Option<char>> {
         Ok(self.0.as_bytes().get(at).map(|&octet| char::from(octet)))
     }
+    #[inline]
+    fn octets(&self) -> Option<&[u8]> {
+        Some(self.0.as_bytes())
+    }
 }
 
 /// \[DESIGN\] (RULES.md D1189) A character string read where it lies,
@@ -100,7 +111,7 @@ impl Text for Ascii<'_> {
 pub struct Utf8<'t>(&'t str);
 
 /// The octets below this one are each a character of ASCII.
-const PAST_ASCII: u8 = 0x80;
+pub(super) const PAST_ASCII: u8 = 0x80;
 
 /// The bits that mark an octet as one that goes on a character, and
 /// their value in such an octet.
@@ -153,6 +164,10 @@ impl Text for Utf8<'_> {
             last = last.saturating_sub(1);
         }
         Some(last)
+    }
+    #[inline]
+    fn octets(&self) -> Option<&[u8]> {
+        Some(self.0.as_bytes())
     }
 }
 

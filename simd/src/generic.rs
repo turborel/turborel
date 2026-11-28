@@ -135,3 +135,8 @@ pub(crate) fn find_bytes(_isa: Isa, haystack: &[u8], needle: &[u8]) -> Option<us
 pub(crate) fn utf8(_isa: Isa, bytes: &[u8]) -> Option<&str> {
     std::str::from_utf8(bytes).ok()
 }
+
+/// `Kernels::text`: by the portable body (RULES.md D1252).
+pub(crate) fn text(_isa: Isa, octets: Vec<u8>) -> Option<String> {
+    String::from_utf8(octets).ok()
+}

@@ -30,6 +30,7 @@
 )]
 
 mod adjacency_index;
+mod alike_runs;
 mod alter_columns;
 mod certified_columns;
 mod collated_indexes;
@@ -520,6 +521,7 @@ mod vector_operators;
 mod vector_pipelines;
 mod vector_search;
 mod vectors;
+mod vetted_scans;
 mod views;
 mod warnings;
 mod weblog;

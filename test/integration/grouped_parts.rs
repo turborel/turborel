@@ -268,6 +268,9 @@ fn a_join_keyed_by_a_groupings_columns_gives_the_plans_rows() {
 #[test]
 fn an_analyzed_sort_takes_its_first_rows_from_the_tables() {
     let (_db, a) = tables();
+    // The select list's constant stays below the FETCH FIRST, where its
+    // rows are counted (RULES.md D1306).
+    exec(&a, "SET OPTIMIZER.COMPUTE_AFTER_FETCH_FIRST = 'OFF'").unwrap();
     let counted = |sql: &str| -> (u64, Option<u64>, Option<u64>) {
         let (alone, together, shown) = both(&a, sql);
         assert!(grouped_part(&shown), "{sql}\n{shown}");
@@ -293,7 +296,14 @@ fn an_analyzed_sort_takes_its_first_rows_from_the_tables() {
 /// order the plan run alone gives, with several functions between the
 /// keys and beside them; and a set function no key names still raises
 /// what it raises of a group that is not picked, here a sum past the
-/// precision of its type in a group outside the first rows.
+/// precision of its type in a group outside the first rows. That group
+/// has fewer rows than every other, so under a sort by the count no
+/// partition picks it among its own first rows whatever the hashes of
+/// the run, and nothing but the pass over the groups not picked can
+/// raise it. A regression test of the test itself. The group had as
+/// many rows as the others, a partition picked it by its first row in
+/// most runs, and making its row raised the error with that pass
+/// broken.
 #[test]
 fn the_first_rows_by_set_functions_are_picked_before_they_are_made() {
     // Two of these are past 38 digits and within the 128 bits a sum is
@@ -302,8 +312,12 @@ fn the_first_rows_by_set_functions_are_picked_before_they_are_made() {
     let (db, a) = tables();
     exec(&a, "CREATE TABLE E (K INTEGER PRIMARY KEY, G INTEGER, X NUMERIC(38, 0)) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)")
         .unwrap();
-    let values: Vec<String> =
-        (0_i64..7000).map(|k| format!("({k}, {}, {})", k % 500, if k == 77 || k == 577 { HUGE } else { "1" })).collect();
+    // Group 77 of 2000 keeps its first two rows alone, where every other
+    // group has three or four.
+    let values: Vec<String> = (0_i64..7000)
+        .filter(|k| k % 2000 != 77 || *k < 4000)
+        .map(|k| format!("({k}, {}, {})", k % 2000, if k % 2000 == 77 { HUGE } else { "1" }))
+        .collect();
     a.run(&format!("INSERT INTO E VALUES {}", values.join(", "))).unwrap();
     a.commit().unwrap();
     db.maintain().unwrap();

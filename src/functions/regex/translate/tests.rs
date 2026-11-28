@@ -266,17 +266,18 @@ fn no_match_is_searched_for_at_the_end_of_a_subject_replaced() {
     let asked = Asked { units: &units, every: &every, replacement: Cow::Borrowed("$2"), start: 1, occurrence: &one };
     let regex = Regex::new("^https?://(www\\.)?([^/]+)/.*$", "s").unwrap();
     let (mut searcher, mut with, mut out, mut found) = (regex.searcher(), None, String::new(), Captures::default());
+    let all = Chosen::Of(Which::All);
     assert!(searcher.asks_first(), "at first");
     for _ in 0..64_usize {
-        assert!(asked.of_text("http://www.a.test/b", (&mut searcher, &mut with, &mut found), &mut out).unwrap());
+        assert!(asked.of_text(("http://www.a.test/b", false, &all), (&mut searcher, &mut with, &mut found), &mut out).unwrap());
     }
     assert_eq!(out, "a.test".repeat(64));
     assert!(!searcher.asks_first(), "every search found a match");
     for _ in 0..64_usize {
-        assert!(asked.of_text("ftp://a.test/b", (&mut searcher, &mut with, &mut found), &mut out).unwrap());
+        assert!(asked.of_text(("ftp://a.test/b", false, &all), (&mut searcher, &mut with, &mut found), &mut out).unwrap());
     }
     assert!(searcher.asks_first(), "none found one");
     let empty = Regex::new("b*", "").unwrap();
-    let failed = asked.of_text("a", (&mut empty.searcher(), &mut None, &mut found), &mut out).unwrap_err();
+    let failed = asked.of_text(("a", false, &all), (&mut empty.searcher(), &mut None, &mut found), &mut out).unwrap_err();
     assert_eq!(failed.sqlstate().as_str(), "2201U");
 }

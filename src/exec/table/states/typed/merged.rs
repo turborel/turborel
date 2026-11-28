@@ -15,7 +15,7 @@ impl Typed {
         match self {
             Typed::Count(counts) => counts.resize(counts.len().saturating_add(more), 0),
             Typed::Exact(exact) => {
-                exact.units.resize(exact.units.len().saturating_add(more), 0);
+                exact.totals.grow_by(more);
                 exact.counts.resize(exact.counts.len().saturating_add(more), 0);
             }
             Typed::Approx(approx) => {
@@ -31,7 +31,7 @@ impl Typed {
         match self {
             Typed::Count(counts) => counts.reserve(more),
             Typed::Exact(exact) => {
-                exact.units.reserve(more);
+                exact.totals.reserve(more);
                 exact.counts.reserve(more);
             }
             Typed::Approx(approx) => {
@@ -49,7 +49,7 @@ impl Typed {
             Typed::Count(held) => Typed::Count(counts(held)),
             Typed::Exact(exact) => Typed::Exact(Exact {
                 kind: exact.kind,
-                units: order.iter().map(|&i| exact.units.get(index(i)).copied().unwrap_or(0)).collect(),
+                totals: exact.totals.gathered(order),
                 counts: counts(&exact.counts),
                 scale: exact.scale,
                 result: exact.result.clone(),
@@ -90,14 +90,17 @@ impl Typed {
 
 impl Exact {
     /// See `Typed::merge_all`: of the other's kind and scale, a group
-    /// that took no value merged as nothing.
+    /// that took no value merged as nothing. Each total is taken as
+    /// `merge_from` takes it, whichever form either column holds its
+    /// totals in, so a group merged alone and one merged among others are
+    /// left the same (RULES.md D1308).
     fn merge_all(&mut self, groups: &[u32], other: &Exact, places: &[u32]) -> Result<bool> {
         let Some(scale) = other.scale else { return Ok(false) };
         if other.kind != self.kind || self.scale.is_some_and(|held| held != scale) {
             return Ok(false);
         }
         for (&g, &i) in groups.iter().zip(places) {
-            let (Some(&held), Some(&units)) = (other.counts.get(index(i)), other.units.get(index(i))) else { continue };
+            let (Some(&held), Some(units)) = (other.counts.get(index(i)), other.totals.get(index(i))) else { continue };
             if held != 0 {
                 self.scale = Some(scale);
                 self.take(index(g), units, held)?;

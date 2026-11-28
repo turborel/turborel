@@ -31,8 +31,8 @@
 //! table that ends with nearly a group a row found nothing to merge, and
 //! its lookups and slots were spent for nothing, as the partition finds
 //! every key again. Such a grouping's morsels hand each row on as a group
-//! of its own, and one morsel in several still makes a table, so data
-//! that begins to reduce is seen.
+//! of its own, and a morsel now and then still makes a table, at gaps
+//! that double while none reduces, so data that begins to reduce is seen.
 
 mod spilled;
 mod wide;
@@ -82,10 +82,14 @@ fn few(still: bool, (groups, taken): (usize, usize), degree: usize) -> bool {
 /// ratio measured level, below the least measured ahead of both kinds.
 const APART_PER_MILLE: usize = 750;
 
-/// \[DESIGN\] (RULES.md D1260) The morsels of which one makes a table
-/// though the others do not, to see whether the rows reduce now. One in
-/// sixteen gives back a sixteenth of what the others save, and data that
-/// turns to few groups is grouped apart again within sixteen morsels.
+/// \[DESIGN\] (RULES.md D1260) The morsels after the last table that
+/// reduced its rows at which the first probe comes, a table made though
+/// the others make none, to see whether the rows reduce now. The gap to
+/// each next probe is twice the last, so the morsels handed on between
+/// two probes are never more than those handed on since that table. Data
+/// that turns to few groups is seen after as many morsels more as were
+/// handed on already, at most, and the probes of a grouping that never
+/// reduces are as many as its morsels halve to this.
 const PROBE_EVERY: usize = 16;
 
 /// The parts of a ratio told in a thousand.
@@ -97,25 +101,35 @@ const MILLE: usize = 1000;
 /// group, and no estimate enters it.
 struct Reduction {
     left: AtomicUsize,
+    /// The last morsel whose table reduced its rows, the first of none.
+    since: AtomicUsize,
 }
 
 impl Reduction {
     /// Nothing told yet.
     fn new() -> Reduction {
-        Reduction { left: AtomicUsize::new(0) }
+        Reduction { left: AtomicUsize::new(0), since: AtomicUsize::new(0) }
     }
 
     /// Whether morsel `m` hands its rows on ungrouped: the table made
     /// last left more than `APART_PER_MILLE` groups a thousand rows, and
     /// `m` is not one of those that probe.
     fn apart(&self, m: usize) -> bool {
-        !m.is_multiple_of(PROBE_EVERY) && self.left.load(Ordering::Relaxed) > APART_PER_MILLE
+        // A probe at 16, 32, 64 and so on morsels past the last table
+        // that reduced, as only those are a power of two.
+        let past = m.saturating_sub(self.since.load(Ordering::Relaxed));
+        let probes = past >= PROBE_EVERY && past.is_power_of_two();
+        !probes && self.left.load(Ordering::Relaxed) > APART_PER_MILLE
     }
 
-    /// Tells that a morsel's table took `rows` rows and ended with
-    /// `groups` groups.
-    fn tell(&self, rows: usize, groups: usize) {
+    /// Tells that the table of morsel `m` took `rows` rows and ended
+    /// with `groups` groups. One that reduced them is where the probes
+    /// are counted from.
+    fn tell(&self, m: usize, (rows, groups): (usize, usize)) {
         if let Some(left) = groups.saturating_mul(MILLE).checked_div(rows) {
+            if left <= APART_PER_MILLE {
+                self.since.fetch_max(m, Ordering::Relaxed);
+            }
             self.left.store(left, Ordering::Relaxed);
         }
     }
@@ -297,10 +311,11 @@ fn grouped(
         let apart = ungrouped.map_or_else(|| reduction.apart(m), |names| names(m));
         let expected = room.load(Ordering::Relaxed);
         let asked = (&runner, first_of(&making, m), &making.seed);
-        let table = morsel_groups(read, &making.spec.aggs, batches, asked, (expected, apart))?;
+        let parted = apart.then(|| (PARTS, making.lanes()));
+        let table = morsel_groups(read, &making.spec.aggs, batches, asked, (expected, parted))?;
         room.store(table.len(), Ordering::Relaxed);
         if !apart {
-            reduction.tell(table.taken, table.len());
+            reduction.tell(m, (table.taken, table.len()));
         }
         let few = few(still.load(Ordering::Relaxed), (table.len(), table.taken), degree);
         if forced.map_or(few, |named| named(m)) {

@@ -15,9 +15,11 @@ use super::slots::MAX_PROBE;
 use super::states::{Sent, States};
 use super::{GroupTable, Key, Keys, Seed, narrow};
 
+mod apart;
 mod wide;
 mod written;
-pub(in crate::exec) use wide::{Adopted, Wide};
+pub(super) use apart::Placed;
+pub(in crate::exec) use wide::{Adopted, Lying, Run, Wide};
 pub(in crate::exec) use written::PIECE;
 
 /// \[DESIGN\] The bits of a hash below those a partition is found by, as
@@ -100,6 +102,11 @@ impl GroupTable {
     ///
     /// SQLCODE -910 if an accumulator writes no state.
     pub(in crate::exec) fn made(mut self, parts: usize, lanes: &[usize]) -> Result<Made> {
+        // Groups written by these partitions lie as they are handed over
+        // already (RULES.md D1313).
+        if let Some(starts) = self.starts_placed(parts, lanes) {
+            return self.made_placed(starts);
+        }
         let by: Vec<u64> = if lanes.is_empty() {
             std::mem::take(&mut self.hashes)
         } else {
@@ -134,10 +141,9 @@ impl GroupTable {
         let mut made = self.frozen()?;
         // Its groups put in that order, so a partition's lie one after
         // another and the thread that merges them reads each column in
-        // one run, not a group from here and one from there.
-        let fresh = made.keys.like();
-        let keys = std::mem::replace(&mut made.keys, fresh);
-        made.keys.extend(&keys, &places);
+        // one run, not a group from here and one from there. A lane of
+        // texts keeps its texts where they are (RULES.md D1255).
+        made.keys = std::mem::take(&mut made.keys).gathered(&places);
         let picked = |words: &[u64]| places.iter().map(|&g| words.get(crate::storage::mask::index(g)).copied().unwrap_or(0)).collect();
         (made.hashes, made.firsts) = (picked(&made.hashes), picked(&made.firsts));
         made.states = made.states.iter().map(|sent| sent.gathered(&places)).collect();

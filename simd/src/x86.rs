@@ -338,3 +338,12 @@ pub(crate) fn utf8(isa: Isa, bytes: &[u8]) -> Option<&str> {
         Isa::Avx2 | Isa::Avx512 => utf8::utf8_avx2(bytes),
     }
 }
+
+/// `Kernels::text`: judged as `utf8` judges, 32 bytes a step on AVX2,
+/// which AVX-512's level has too (RULES.md D1252).
+pub(crate) fn text(isa: Isa, octets: Vec<u8>) -> Option<String> {
+    match isa {
+        Isa::Portable | Isa::Sse2 => String::from_utf8(octets).ok(),
+        Isa::Avx2 | Isa::Avx512 => utf8::text_avx2(octets),
+    }
+}

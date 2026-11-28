@@ -9,10 +9,11 @@
 use super::super::group::{Group, Seal, Zone};
 use super::super::packed::dense;
 use super::super::prepared::Made;
+use super::super::texts::{Asked, Gathered};
 use super::super::{Chunk, padding};
-use super::{Reading, Words, datetime_shape, float_of, ints_scale, nulls_of};
+use super::{Reading, Words, datetime_shape, float_of, ints_scale, nulls_of, stored};
 use crate::error::Result;
-use crate::storage::{Coded, Column, Datetimes, Floats, Ints, Mask, Texts};
+use crate::storage::{Column, Datetimes, Floats, Ints, Mask, Texts};
 use crate::value::{DataType, Value};
 
 /// \[DESIGN\] Column `c`, of type `t`, of the rows at `positions` of
@@ -172,13 +173,24 @@ pub(super) fn words_of(
     Some(())
 }
 
-/// \[DESIGN\] The values of column `column`, of type `t`, of the rows at
-/// `positions` of `group`, in increasing order, as text (`storage::Texts`),
-/// if `t` is a character string type, which a record writes as its text
-/// (a CHARACTER string's then padded as it is read, so as LIKE sees it),
-/// and every chunk's encoding holds text: as their dictionaries' codes if
-/// every chunk asked of is a dictionary (`coded_at`), else each position's
-/// read in place.
+/// Each chunk of `zones` asked for one of `positions`, ascending, with
+/// the positions asked of it.
+fn asked_of<'z, 'p>(zones: &'z [Zone], positions: &'p [u32]) -> impl Iterator<Item = (&'z Zone, &'p [u32])> {
+    let mut rest = positions;
+    zones.iter().filter_map(move |zone| {
+        let end = zone.run.first.saturating_add(zone.run.rows);
+        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
+        rest = after;
+        (!these.is_empty()).then_some((zone, these))
+    })
+}
+
+/// \[DESIGN\] (RULES.md D1252, D1316) The values of column `column`, of
+/// type `t`, of the rows at `positions` of `group`, in increasing order,
+/// as text, as `texts` gives those of a run: each chunk's rows asked
+/// gathered into one vector of octets, a dictionary asked for fewer rows
+/// than it has entries giving only the entries those rows read
+/// (`texts::Gathered`).
 ///
 /// # Errors
 ///
@@ -189,74 +201,22 @@ pub fn texts_at<S: Seal>(
     (column, t): (usize, &DataType),
     positions: &[u32],
 ) -> Result<Option<Texts>> {
-    if padding(t).is_none() {
-        return Ok(None);
-    }
+    let Some(pad) = padding(t) else { return Ok(None) };
     let Some(zones) = group.zones(column)? else { return Ok(None) };
-    if let Some(coded) = coded_at((zones, column, t), (pages, &mut *prepared), positions)? {
-        return Ok(Some(coded));
-    }
-    let (mut text, mut ends, mut nulls) = (String::new(), Vec::with_capacity(positions.len()), Mask::default());
-    let mut rest = positions;
-    for zone in zones {
-        let end = zone.run.first.saturating_add(zone.run.rows);
-        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
-        rest = after;
-        if these.is_empty() {
-            continue;
-        }
-        let at = |p: u32| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX);
-        // Positions one after another are read as one range.
-        let held = prepared.with(pages, (column, zone, t), |chunk, _| {
-            Ok(these.chunk_by(|a, b| b.checked_sub(*a) == Some(1)).try_for_each(|run| {
-                chunk.texts(
-                    (at(run.first().copied().unwrap_or(0)), at(run.last().copied().unwrap_or(0)).saturating_add(1)),
-                    (&mut text, &mut ends, &mut nulls),
-                    (t, pages.kernels),
-                )
-            }))
-        })?;
+    let room = stored(pages, asked_of(zones, positions).map(|(zone, these)| (zone, these.len())));
+    let (mut gathered, mut at) = (Gathered::with_room(positions.len(), room), Vec::new());
+    for (zone, these) in asked_of(zones, positions) {
+        at.clear();
+        at.extend(these.iter().map(|&p| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX)));
+        // Positions one after another are read as one run.
+        let (low, past) = (at.first().copied().unwrap_or(0), at.last().map_or(0, |&high| high.saturating_add(1)));
+        let rows = if past.saturating_sub(low) == at.len() { Asked::Run(low, past) } else { Asked::At(&at) };
+        let held = prepared.with(pages, (column, zone, t), |chunk, _| Ok(chunk.gather(rows, pad, &mut gathered)))?;
         if held.is_none() {
             return Ok(None);
         }
     }
-    if ends.len() != positions.len() {
-        return Ok(None);
-    }
-    Ok(Some(Texts::new(text, ends, nulls_of(nulls))))
-}
-
-/// \[DESIGN\] The values at `positions` of a column whose chunks are
-/// `zones`, of type `t`, as their dictionaries' entries and each row's
-/// entry among them (`storage::Coded`), every chunk's entries one after
-/// another, if every chunk asked of is a dictionary.
-pub(super) fn coded_at<S: Seal>(
-    (zones, column, t): (&[Zone], usize, &DataType),
-    (pages, prepared): Reading<'_, '_, S>,
-    positions: &[u32],
-) -> Result<Option<Texts>> {
-    let (mut text, mut ends) = (String::new(), Vec::new());
-    let (mut codes, mut nulls) = (Vec::with_capacity(positions.len()), Mask::default());
-    let mut rest = positions;
-    for zone in zones {
-        let end = zone.run.first.saturating_add(zone.run.rows);
-        let (these, after) = rest.split_at(rest.partition_point(|&p| p < end));
-        rest = after;
-        if these.is_empty() {
-            continue;
-        }
-        let at: Vec<usize> = these.iter().map(|&p| usize::try_from(p.saturating_sub(zone.run.first)).unwrap_or(usize::MAX)).collect();
-        let held = prepared.with(pages, (column, zone, t), |chunk, made| {
-            Ok(chunk.coded_made(&at, (&mut text, &mut ends, &mut codes, &mut nulls), (made, t, pages.kernels)))
-        })?;
-        if held.is_none() {
-            return Ok(None);
-        }
-    }
-    if codes.len() != positions.len() {
-        return Ok(None);
-    }
-    Ok(Some(Texts::coded(Coded { codes, entries: std::sync::Arc::new(Texts::new(text, ends, None)) }, nulls_of(nulls))))
+    Ok(gathered.finish(pages.kernels))
 }
 
 /// The values of column `column`, of type `t`, of the rows at `positions`

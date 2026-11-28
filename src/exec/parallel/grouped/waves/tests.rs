@@ -172,6 +172,30 @@ fn the_groups_are_the_same_whichever_morsels_hand_their_rows_on_ungrouped() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1313, D1260 rows handed on ungrouped,
+/// written once by partition, give the groups the morsels' tables give,
+/// in the same order, each set function the same value: of a key of an
+/// integer and a character string, of rows a filter kept some of each
+/// batch of, of every morsel, every other and the first half alone;
+/// split among the partitions and handed whole to the statement's
+/// thread; held by the grant and through the spill.
+#[test]
+fn rows_written_by_partition_give_the_groups_the_tables_give() {
+    let (db, a) = table();
+    let named: [Named; 3] = [("every morsel", EVERY), ("every other", Some(|m| m.is_multiple_of(2))), ("the first half", Some(|m| m < 12))];
+    let sql = "SELECT G, S, COUNT(*), SUM(V), MAX(K), MIN(P) FROM (SELECT MOD(K, 9000) AS G, P AS S, K, V, P FROM T WHERE MOD(K, 4) <> 1) AS Q \
+               GROUP BY G, S";
+    set(&db, "MEMORY.WORK_BYTES", HELD);
+    let expected = waved(&a, sql, &How { forced: NONE, apart: NONE, ..How::default() }, 3);
+    // Of 9,000 values of G, a fourth have no row the filter keeps.
+    assert_eq!((expected.rows.len(), expected.spills), (6750, 0));
+    for (grant, (which, apart), (forced, _)) in ways(&named) {
+        set(&db, "MEMORY.WORK_BYTES", grant);
+        let made = waved(&a, sql, &How { forced, apart, ..How::default() }, 3);
+        assert_eq!(differing(&made, &expected), None, "{which}, a grant of {grant}, {} spills", made.spills);
+    }
+}
+
 /// Where the rows of `made` first differ from those of `expected`, told
 /// shortly: how many each holds, and the first row of `made` that is not
 /// the row `expected` holds there. None if they are the same rows.
@@ -303,23 +327,34 @@ fn a_wide_lead_merges_and_spills_as_a_narrow_one() {
 /// Verifies: [DESIGN] (RULES.md D1260) morsels make tables until one
 /// tells what its rows left; they hand their rows on ungrouped after
 /// a table that left more than 750 groups a thousand rows, but the
-/// morsels that probe, one in sixteen; a table that left 750 or fewer
-/// has them make tables again, and one of no rows tells nothing.
+/// morsels that probe; a table that left 750 or fewer has them make
+/// tables again, and one of no rows tells nothing. The probes come 16,
+/// 32, 64 and so on morsels after the last table that reduced, counted
+/// anew from a probe that reduces, so the morsels handed on between two
+/// probes are never more than those handed on since that table.
 #[test]
 fn morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing() {
     let reduction = Reduction::new();
     assert!((0..40).all(|m| !reduction.apart(m)), "nothing told yet");
-    reduction.tell(2048, 2040);
-    assert!(reduction.apart(1) && reduction.apart(15) && reduction.apart(17) && reduction.apart(31));
-    assert!(!reduction.apart(0) && !reduction.apart(16) && !reduction.apart(32), "the morsels that probe");
-    reduction.tell(0, 0);
+    reduction.tell(0, (2048, 2040));
+    let probes = |from: usize, to: usize| (from..to).filter(|&m| !reduction.apart(m)).collect::<Vec<_>>();
+    assert_eq!(probes(1, 5000), [16, 32, 64, 128, 256, 512, 1024, 2048, 4096], "the gap doubles while none reduces");
+    for pair in probes(1, 100_000).windows(2) {
+        let between = pair[1].saturating_sub(pair[0]).saturating_sub(1);
+        assert!(between <= pair[0], "{between} handed on between two probes, {} since the table", pair[0]);
+    }
+    reduction.tell(16, (0, 0));
     assert!(reduction.apart(1), "a morsel of no rows tells nothing");
-    reduction.tell(1000, 751);
-    assert!(reduction.apart(1));
-    reduction.tell(1000, 750);
-    assert!(!reduction.apart(1), "at the bound a table is made");
-    reduction.tell(2048, 7);
-    assert!((0..40).all(|m| !reduction.apart(m)), "rows that reduce are grouped in their morsel");
+    reduction.tell(16, (1000, 751));
+    assert!(reduction.apart(1) && probes(1, 70) == [16, 32, 64], "a probe that reduces nothing moves no probe");
+    reduction.tell(100, (1000, 750));
+    assert!(!reduction.apart(101), "at the bound a table is made");
+    reduction.tell(101, (2048, 2040));
+    assert_eq!(probes(102, 400), [116, 132, 164, 228, 356], "counted from the table that reduced");
+    reduction.tell(90, (2048, 7));
+    assert!((0..400).all(|m| !reduction.apart(m)), "rows that reduce are grouped in their morsel");
+    reduction.tell(102, (2048, 2040));
+    assert_eq!(probes(102, 200), [116, 132, 164], "an earlier morsel's table told late moves the count back by none");
 }
 
 /// Verifies: [DESIGN] RULES.md D1282, D38 the runs that merge a wave and
@@ -379,7 +414,7 @@ fn the_groups_are_the_same_whether_partitions_go_wide() {
             assert_eq!(never.widen.merged.load(Ordering::Relaxed), 0, "no partition wide");
             let ways: [(usize, Forced); 4] = [(0, NONE), (5, NONE), (5, None), (40, Some(|m| m.is_multiple_of(2)))];
             for (past, forced) in ways {
-                let how = How { forced, widen: Widen::past(past), ..How::default() };
+                let how = How { forced, widen: Widen::past(past).parted(8), ..How::default() };
                 let made = waved(&a, &sql, &how, 3);
                 assert_eq!(differing(&made, &expected), None, "wide past {past} groups, grant {grant}: {sql}");
                 let wide = how.widen.merged.load(Ordering::Relaxed);
@@ -401,6 +436,12 @@ fn the_groups_are_the_same_whether_partitions_go_wide() {
 /// `by`, the greatest first, its waves run as `how` says on three
 /// threads: every partition's rows, in the order of their text.
 fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> Vec<String> {
+    first_rows_as(a, sql, how, |functions, db| Top::by_function((1, functions), (by, most), (db, NO_TRANSACTION)))
+}
+
+/// As `first_rows`, under the sort `top` makes of the count of the
+/// grouping's set functions.
+fn first_rows_as(a: &Session, sql: &str, how: &How, top: impl FnOnce(usize, &Db) -> Top) -> Vec<String> {
     let (st, optimized) = a.optimized(sql).unwrap();
     let planned = PhysicalPlanner::new(&st).plan(&optimized);
     let aggregate = if let Plan::Project { input, .. } = planned { *input } else { planned };
@@ -411,7 +452,7 @@ fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> 
     grouping.read = pipeline.batched.as_ref().and_then(|by_batch| read_of(&grouping, by_batch));
     let unpadded = grouping.read.as_ref().map(|by_batch| by_batch.unpadded.clone());
     grouping.seed = grouping.seed.unpadded(&unpadded.expect("grouped by batch"));
-    grouping.top = Some(Arc::new(Top::by_function((1, grouping.spec.aggs.len()), (by, most), (&db, NO_TRANSACTION))));
+    grouping.top = Some(Arc::new(top(grouping.spec.aggs.len(), &db)));
     let Held::Kept((runs, given)) = waved_as(pipeline, &Arc::new(grouping), (&db, NO_TRANSACTION, 3), &limit, how).unwrap() else {
         panic!("the grouping gave way")
     };
@@ -424,8 +465,11 @@ fn first_rows(a: &Session, sql: &str, how: &How, (by, most): (usize, usize)) -> 
 /// only of a grouping whose reader reads the groups where they lie. A
 /// grouping every group of which is read merges each wave into tables
 /// however many groups a partition holds, and gives the groups it gives
-/// with no partition wide. The same grouping asked the first rows of a
-/// sort merges its waves into wide partitions, and gives the same rows.
+/// with no partition wide. So does the same grouping asked the first
+/// rows of a sort by its grouping column, which makes every group's row
+/// of a table to sort it. Asked the first rows of a sort by a set
+/// function, it merges its waves into wide partitions, and gives the
+/// same rows.
 #[test]
 fn a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie() {
     let (_db, a) = table();
@@ -434,6 +478,11 @@ fn a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie() {
     let how = How { forced: NONE, widen: Widen::read_as_they_lie(5), ..How::default() };
     assert_eq!(differing(&waved(&a, sql, &how, 3), &waved(&a, sql, &never, 3)), None);
     assert_eq!(how.widen.merged.load(Ordering::Relaxed), 0, "every group is read, and a partition went wide");
+    let by_group = |run_as: &How| {
+        first_rows_as(&a, sql, run_as, |functions, db| Top::by_function((1, functions), (1, 7), (db, NO_TRANSACTION)).by_group())
+    };
+    assert_eq!(by_group(&how), by_group(&never));
+    assert_eq!(how.widen.merged.load(Ordering::Relaxed), 0, "a sort by a grouping column reads a table, and a partition went wide");
     assert_eq!(first_rows(&a, sql, &how, (1, 7)), first_rows(&a, sql, &never, (1, 7)));
     assert!(how.widen.merged.load(Ordering::Relaxed) > 0, "the first rows of a sort, and no partition went wide");
 }
@@ -456,7 +505,7 @@ fn the_first_rows_by_a_set_function_are_the_same_of_wide_partitions() {
         let expected = first_rows(&a, &sql, &never, (by, 7));
         assert!(expected.len() > 30 && expected.len() <= PARTS.saturating_mul(7), "{} rows: {sql}", expected.len());
         for past in [0_usize, 5] {
-            let how = How { forced: NONE, widen: Widen::past(past), ..How::default() };
+            let how = How { forced: NONE, widen: Widen::past(past).parted(8), ..How::default() };
             assert_eq!(first_rows(&a, &sql, &how, (by, 7)), expected, "wide past {past} groups, by {by}: {sql}");
             let wide = how.widen.merged.load(Ordering::Relaxed);
             assert!(past > 0 || wide > 0, "no partition went wide: {sql}");

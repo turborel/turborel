@@ -186,6 +186,43 @@ fn scans_by_sketches_keep_what_values_keep() {
     }
 }
 
+/// Verifies: [DESIGN] RULES.md D1266 a comparison a sketch's codes answer
+/// for some rows of a run is not said to be judged exactly of it, as a
+/// code is a summary's word for the row's text: of a sketched group no
+/// run judged of every row or of every third is said so, and of the same
+/// rows not sketched, each text compared, every run is.
+#[test]
+fn a_run_judged_by_a_sketch_is_not_said_judged_exactly() {
+    let (pool, file) = file();
+    let pages = Pages {
+        pool: &pool,
+        file,
+        capacity: 8192,
+        sealing: &Plain,
+        compress: true,
+        pax: false,
+        imprints: false,
+        kernels: &crate::kernels::Portable,
+        base: 0,
+        sink: None,
+    };
+    let ids: Vec<u64> = (1..=u64::from(ROWS)).collect();
+    let rows: Vec<Row> = (0..ROWS).map(|n| vec![Value::Exact(Decimal::new(i128::from(n), 0)), url(n)]).collect();
+    let sketched = Group::write(&pages, &TYPES, (&ids, &rows), (&[], &[], &[1])).unwrap();
+    let plain = Group::write(&pages, &TYPES, (&ids, &rows), (&[], &[], &[])).unwrap();
+    let texts = constants(&sketched.sketches[1]);
+    let judgment = Judgment::of(Some(&Conjunction(vec![compare(CompOp::Gt, &texts[0])])), &TYPES);
+    let said = |group: &Group| {
+        let mut prepared = Prepared::default();
+        let every = judgment.judge(group, (&pages, &mut prepared), (&TYPES, (0, 2048)), None).unwrap().exact;
+        let third =
+            judgment.judge(group, (&pages, &mut prepared), (&TYPES, (0, 2048)), Some((0..2048).step_by(3).collect())).unwrap().exact;
+        (every, third)
+    };
+    assert_eq!(said(&sketched), (0, 0), "codes answered for rows");
+    assert_eq!(said(&plain), (1, 1), "each text compared");
+}
+
 /// Verifies: [DESIGN] RULES.md D525, few rows asked for: of a run of
 /// which one row of each sixteen is asked for, a scan compares their
 /// texts, reading no code of the sketch and judging no code, and keeps

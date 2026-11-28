@@ -130,25 +130,40 @@ const QUERIES: [&str; 3] = [
     "SELECT G, SUM(N) FROM C GROUP BY G HAVING COUNT(*) > 2",
 ];
 
+/// \[DESIGN\] The partitions a grouping run in parallel merges, as the
+/// executor splits its groups (`exec/parallel/probe.rs`).
+const PARTITIONS: usize = 64;
+
 /// Verifies: [DESIGN] (RULES.md D1226) groupings run in parallel at the
 /// smallest MEMORY.WORK_BYTES, whose partitions outgrow it many times,
-/// write their partitions to the spill on the threads that merged them,
-/// not on the statement's thread alone as a grouping given way to does,
-/// and give the rows they give run alone a row at a time, in their order,
-/// with their spilled partitions split again where one outgrows the grant.
+/// write their partitions to the spill as they merge them, a run a
+/// partition a wave, so each partition is written many times over, not
+/// once after giving way as a grouping given way to is; and give the
+/// rows they give run alone a row at a time, in their order, with their
+/// spilled partitions split again where one outgrows the grant. That
+/// such a grouping keeps to its own area is shown where its groups are
+/// not all given back (`a_grouping_spilled_holds_its_partitions_in_one_area`).
+///
+/// The thread a run is made on is not asserted. A partition's unit of a
+/// wave is taken by a worker or by the statement's thread, whichever
+/// comes first, and at this grant a unit merges a few rows, so on a
+/// machine of few processors the statement's thread may take every one
+/// of a statement's. That is the scheduler's choice and D1226 claims
+/// nothing of it. No unit of the grouping is one the statement's thread
+/// cannot take, so no thread is forced here.
 #[test]
 fn partitions_past_the_grant_are_spilled_by_their_threads() {
     let (db, a, threads) = table();
     let in_memory: Vec<Vec<String>> = QUERIES.iter().map(|q| alone(&a, q)).collect();
     db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
-    let statement = std::thread::current().id();
+    threads.taken();
     for (q, expected) in QUERIES.iter().zip(&in_memory) {
         assert_eq!(&parallel(&a, q), expected, "{q}");
         let Seen { made_on, written, .. } = threads.taken();
         let shown = a.physical_plan(q, &turborel::params::Params::new()).unwrap();
         assert!(
-            made_on.iter().any(|&t| t != statement),
-            "{q}: runs made by the partitions' threads, {} runs, {written} bytes\n{shown}",
+            made_on.len() >= PARTITIONS.saturating_mul(2),
+            "{q}: a run a partition a wave, of waves many times the grant: {} runs, {written} bytes\n{shown}",
             made_on.len()
         );
         assert!(written > usize::try_from(SMALL).unwrap() * 4, "{q}: its partitions many times the grant, spilled");
@@ -355,4 +370,78 @@ fn the_strings_of_best_states_count_against_the_grant() {
     let keyed = "SELECT G, MIN(T COLLATE UCS_BASIC), MAX(T COLLATE UCS_BASIC) FROM L GROUP BY G";
     let expected = alone(&a, keyed);
     assert_eq!(parallel(&a, keyed), expected);
+}
+
+/// A value of W's B, a BIGINT of 18 digits, eleven of which leave 64 bits.
+const BIG: i64 = 900_000_000_000_000_000;
+
+/// Table W of the column store, of 12000 rows: K, a key; G, one of three
+/// groups; J, a group of sixteen rows that follow one another; H, one of
+/// 1000 groups of twelve rows 1000 apart; and B, a BIGINT, null for
+/// twelve rows. Every row of H's group 7 holds `BIG` and every row of its
+/// group 8 the negative, each row in a morsel of its own. Every row of
+/// J's group 400 holds `BIG` and every row of its group 800 the negative,
+/// each group in one morsel. Twenty-one more rows of G's group 1 hold
+/// `BIG` in the first morsel, which has no null. Every other value is
+/// within a thousand of nothing.
+fn wide_sums(db: &Database, s: &Session) {
+    let columns = "K INTEGER PRIMARY KEY, G INTEGER, J INTEGER, H INTEGER, B BIGINT";
+    s.run(&format!("CREATE TABLE W ({columns}) USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)")).unwrap();
+    let b = |k: i64| {
+        let most = k % 1000 == 7 || (400..=415).contains(&k) || ((100..=160).contains(&k) && k % 3 == 1);
+        let least = k % 1000 == 8 || (800..=815).contains(&k);
+        let far = if most { BIG } else { -BIG };
+        let value = if most || least { far } else { k * 7919 % 2001 - 1000 };
+        if k % 997 == 500 { "NULL".to_owned() } else { value.to_string() }
+    };
+    for first in (0_i64..12_000).step_by(500) {
+        let row = |k: i64| format!("({k}, {}, {}, {}, {})", k % 3, k - k % 16, k % 1000, b(k));
+        let values: Vec<String> = (first..first + 500).map(row).collect();
+        s.run(&format!("INSERT INTO W VALUES {}", values.join(", "))).unwrap();
+    }
+    s.commit().unwrap();
+    db.maintain().unwrap();
+}
+
+/// Groupings of W whose exact totals leave 64 bits in some groups and not
+/// in others: of few groups, of many whose rows lie in one morsel and in
+/// twelve, with no grouping, as a pair of groupings, and their first rows
+/// by a sum.
+const WIDE_SUMS: [&str; 7] = [
+    "SELECT G, COUNT(*), SUM(B), AVG(B), MIN(B), MAX(B) FROM W GROUP BY G",
+    "SELECT J, COUNT(B), SUM(B), AVG(B) FROM W GROUP BY J",
+    "SELECT H, SUM(B), AVG(B), MIN(B), MAX(B) FROM W GROUP BY H",
+    "SELECT COUNT(*), SUM(B), AVG(B) FROM W",
+    "SELECT H, COUNT(DISTINCT G), SUM(B), AVG(B) FROM W GROUP BY H",
+    "SELECT J, SUM(B) AS S FROM W GROUP BY J ORDER BY S DESC, J FETCH FIRST 5 ROWS ONLY",
+    "SELECT H, SUM(B) AS S, AVG(B) FROM W GROUP BY H ORDER BY S, H FETCH FIRST 5 ROWS ONLY",
+];
+
+/// Verifies: [DESIGN] (RULES.md D1308, D1226) groupings whose sums and
+/// means of BIGINT values leave 64 bits in some groups, above and below,
+/// and stay within them in the others, run in parallel in memory and
+/// again at the smallest MEMORY.WORK_BYTES, their partitions written to
+/// the spill and read back, give the rows they give run alone a row at a
+/// time, in their order: the totals past 64 bits among them, of a group
+/// whose rows one morsel holds and of one whose morsels' totals leave 64
+/// bits only as they are merged.
+#[test]
+fn sums_that_leave_64_bits_come_as_alone_in_memory_and_spilled() {
+    let (db, a, threads) = table();
+    wide_sums(&db, &a);
+    let alone_rows: Vec<Vec<String>> = WIDE_SUMS.iter().map(|q| alone(&a, q)).collect();
+    for (n, rows, held) in [(1, 16, "a morsel"), (2, 12, "a merge")] {
+        let (shown, most) = (alone_rows[n].join("\n"), (rows * i128::from(BIG)).to_string());
+        assert!(shown.contains(&most) && shown.contains(&format!("-{most}")), "{}: totals past 64 bits in {held}", WIDE_SUMS[n]);
+    }
+    for (q, expected) in WIDE_SUMS.iter().zip(&alone_rows) {
+        assert_eq!(&parallel(&a, q), expected, "{q}, in memory");
+        in_parallel(&a, q);
+    }
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    threads.taken();
+    for (q, expected) in WIDE_SUMS.iter().zip(&alone_rows) {
+        assert_eq!(&parallel(&a, q), expected, "{q}, at the smallest grant");
+    }
+    assert!(threads.taken().written > 0, "partitions of exact totals went to the spill");
 }

@@ -23,7 +23,6 @@ use std::collections::HashMap;
 use super::fields::Cells;
 use super::{WORD, corrupt, read_word, word};
 use crate::error::Result;
-use crate::kernels::Kernels;
 
 mod lengths;
 mod stepped;
@@ -398,9 +397,8 @@ impl<'a> Coded<'a> {
 
     /// The text of value `n`, decoded.
     pub(super) fn text(&self, n: usize) -> Option<Vec<u8>> {
-        let (a, b) = self.between(n)?;
         let mut text = Vec::new();
-        self.symbols.decode(self.codes.get(a..b)?, &mut text)?;
+        self.text_onto(n, &mut text)?;
         Some(text)
     }
 
@@ -430,32 +428,13 @@ impl<'a> Coded<'a> {
         steps.matches(self.codes.get(a..b)?)
     }
 
-    /// The texts at positions `from` to `to`, pushed to `text` and where
-    /// each ends to `ends`, of those `null` says are not nulls: decoded one
-    /// after another, then checked UTF-8 at once by `kernels` (RULES.md
-    /// D1175), each one's end on a character's boundary, so each is UTF-8
-    /// alone.
-    pub(super) fn texts(
-        &self,
-        (from, to): (usize, usize),
-        (text, ends): (&mut String, &mut Vec<usize>),
-        (null, kernels): (impl Fn(usize) -> bool, &dyn Kernels),
-    ) -> Option<()> {
-        let (base, mut decoded) = (text.len(), Vec::new());
-        for n in from..to {
-            if !null(n) {
-                let (a, b) = self.between(n)?;
-                self.symbols.decode(self.codes.get(a..b)?, &mut decoded)?;
-            }
-            ends.push(base.checked_add(decoded.len())?);
-        }
-        let decoded = kernels.utf8(&decoded)?;
-        let start = ends.len().checked_sub(to.checked_sub(from)?)?;
-        if !ends.get(start..)?.iter().all(|&end| decoded.is_char_boundary(end.checked_sub(base).unwrap_or(usize::MAX))) {
-            return None;
-        }
-        text.push_str(decoded);
-        Some(())
+    /// \[DESIGN\] (RULES.md D1252) Decodes the text of value `n` straight
+    /// after what `octets` hold, where a run's texts are gathered
+    /// (`texts.rs`), so it is copied nowhere else. None if its codes are
+    /// malformed. Whether the octets are text is judged of the run's whole.
+    pub(super) fn text_onto(&self, n: usize, octets: &mut Vec<u8>) -> Option<()> {
+        let (a, b) = self.between(n)?;
+        self.symbols.decode(self.codes.get(a..b)?, octets)
     }
 }
 

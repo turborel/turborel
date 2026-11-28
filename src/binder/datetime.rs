@@ -11,10 +11,10 @@ use std::sync::Arc;
 use super::{Binder, Scope, rule};
 use crate::ast::{DatetimeFunction, ExtractField, ValueExpression};
 use crate::error::{Code, Result, SqlError, SqlState, fail_with};
-use crate::functions::over_vectors::ints_of;
+use crate::functions::over_vectors::datetimes;
 use crate::functions::{Arg, ScalarFunction, ScalarRef};
 use crate::logical::{Expr, Slot};
-use crate::storage::Column;
+use crate::storage::{Column, Ints};
 use crate::value::Spelled;
 use crate::value::datetime::{Clocked, Datetime, Field, MAX_TIME_PRECISION, MICROS_PER_SECOND, Moment, Now, Written};
 use crate::value::interval::{MAX_LEADING_PRECISION, Qualifier, field_name};
@@ -73,6 +73,14 @@ impl ScalarFunction for CastAt {
     }
     fn call(&self, args: &[Value]) -> Result<Value> {
         cast_at(args.first().cloned().unwrap_or(Value::Null), &self.to, self.now)
+    }
+    /// \[DESIGN\] (RULES.md D1320) Of a vector of datetimes cast to a
+    /// datetime type, each one cast as `call` casts it, of its
+    /// microseconds and displacement, no value made: none if a row's cast
+    /// would raise, or of any other cast.
+    fn eval_batch(&self, args: &[Arg<'_>], _rows: usize) -> Option<Result<Column>> {
+        let [Arg::Column(Column::Datetimes(given))] = args else { return None };
+        datetimes::cast(given, fields(&self.to)?, self.now).map(|made| Ok(Column::Datetimes(made)))
     }
 }
 
@@ -236,20 +244,17 @@ impl ScalarFunction for Extract {
         let unit = pow10(MAX_TIME_PRECISION.saturating_sub(self.scale)).unwrap_or(i128::from(MICROS_PER_SECOND));
         Ok(Value::Exact(Decimal::new(n.checked_div(unit).unwrap_or(0), self.scale)))
     }
-    /// \[DESIGN\] (RULES.md D363) Of a vector of datetimes, each one's
-    /// field as `call` gives it, an exact number, of the scale of SECOND
-    /// or else of 0.
-    fn eval_batch(&self, args: &[Arg<'_>], rows: usize) -> Option<Result<Column>> {
-        let [Arg::Column(Column::Datetimes(datetimes))] = args else { return None };
+    /// \[DESIGN\] (RULES.md D363, D1320) Of a vector of datetimes, each
+    /// one's field as `call` gives it, an exact number, of the scale of
+    /// SECOND or else of 0, computed of its microseconds and displacement,
+    /// no value made: none of a field the type has not, whose rows `call`
+    /// gives null.
+    fn eval_batch(&self, args: &[Arg<'_>], _rows: usize) -> Option<Result<Column>> {
+        let [Arg::Column(Column::Datetimes(given))] = args else { return None };
         let unit = i64::try_from(pow10(MAX_TIME_PRECISION.saturating_sub(self.scale))?).ok()?;
-        let field = |d: Datetime| match self.field {
-            ExtractField::TimezoneHour => Some(i64::from(d.zone.checked_div(60).unwrap_or(0))),
-            ExtractField::TimezoneMinute => Some(i64::from(d.zone.checked_rem(60).unwrap_or(0))),
-            ExtractField::Datetime(Field::Second) => d.field(Field::Second).map(|n| n.checked_div(unit).unwrap_or(0)),
-            ExtractField::Datetime(f) => d.field(f),
-        };
+        let units = datetimes::fields(given, self.field, unit)?;
         let scale = if self.field == ExtractField::Datetime(Field::Second) { self.scale } else { 0 };
-        Some(Ok(ints_of(rows, scale, |n| datetimes.get(n).and_then(field))))
+        Some(Ok(Column::Ints(Ints::new(units, scale, given.nulls.clone()))))
     }
 }
 
@@ -435,3 +440,8 @@ fn extract_name(field: ExtractField) -> &'static str {
         ExtractField::TimezoneMinute => "TIMEZONE_MINUTE",
     }
 }
+
+// Unit tests: the bodies over vectors of EXTRACT and CAST against their
+// calls of each value (RULES.md R-TEST-1, R-TEST-8).
+#[cfg(test)]
+mod tests;

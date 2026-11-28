@@ -53,7 +53,7 @@ use crate::logical::{
 };
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
-pub use late_fetch::{FETCH_DEPENDENTS_LATE, FetchDependentsLate};
+pub use late_fetch::{COMPUTE_AFTER_FETCH_FIRST, ComputeAfterFetchFirst, FETCH_DEPENDENTS_LATE, FetchDependentsLate};
 pub use unnesting::{MARK_JOINS, MarkJoins, SEMI_JOINS, SemiJoins, UNNEST_SUBQUERIES, UnnestSubqueries};
 
 /// The names of the built-in rules, as EXPLAIN shows them and their
@@ -71,7 +71,7 @@ pub const PUSH_HAVING_INTO_WHERE: &str = "push_having_into_where";
 pub const REMOVE_REDUNDANT_DISTINCT: &str = "remove_redundant_distinct";
 
 pub use counted_rows::{COUNT_ROWS_OF_VALUES, CountRowsOfValues};
-pub use dependent_keys::{REDUCE_GROUPING_KEYS, ReduceGroupingKeys};
+pub use dependent_keys::{COMPUTE_KEYS_AFTER_GROUPING, ComputeKeysAfterGrouping, REDUCE_GROUPING_KEYS, ReduceGroupingKeys};
 pub use disjunctions::{FACTOR_DISJUNCTIONS, FactorDisjunctions};
 pub use distinct_aggregates::{DISTINCT_AGGREGATES, DistinctAggregates};
 pub use elimination::{ELIMINATE_JOINS, EliminateJoins};
@@ -196,8 +196,7 @@ impl Optimizer {
         // Before the conjuncts are pushed apart.
         o.add(Box::new(FactorDisjunctions));
         o.add(Box::new(PredicateTransitivity));
-        // Before the raising conjuncts move, so those it leaves of one
-        // operand alone move too (RULES.md D373).
+        // Before the raising conjuncts move, so those it leaves of one operand alone move too (RULES.md D373).
         o.add(Box::new(HoistRaisingExpressions));
         o.add(Box::new(PushRaisingFilterIntoProduct));
         o.add(Box::new(PushFilterIntoProduct));
@@ -216,14 +215,16 @@ impl Optimizer {
         o.add(Box::new(CountRowsOfValues));
         // After the filters of a join's operand alone are moved into it.
         o.add(Box::new(GroupBeforeOuterJoin));
+        // Before the columns the others determine are carried (RULES.md D1305).
+        o.add_late(Box::new(ComputeKeysAfterGrouping));
         o.add_late(Box::new(ReduceGroupingKeys));
-        // After the columns a grouping's keys determine are carried.
+        // After the columns a grouping's keys determine are carried, the select list's expressions first (RULES.md D1306).
+        o.add_late(Box::new(ComputeAfterFetchFirst));
         o.add_late(Box::new(FetchDependentsLate));
         o
     }
 
-    /// Rules run in the order they were added. Its setting is declared as
-    /// the change that adds it is published (`Database::with_optimizer`).
+    /// Rules run in the order they were added. Its setting is declared as the change adding it is published (`Database::with_optimizer`).
     pub fn add(&mut self, rule: Box<dyn Rule>) {
         self.rules.push(Switched { rule: Arc::from(rule), switch: None, late: false });
     }
@@ -274,8 +275,7 @@ impl Optimizer {
         // A safety net against rules that keep undoing each other.
         let passes = usize::try_from(settings.integer(OPTIMIZER_MAX_PASSES)).unwrap_or(DEFAULT_MAX_PASSES);
         for rules in [on(false), on(true)] {
-            // As many rewrites as the passes of the driver before D371 made
-            // at most, one at each node in each pass.
+            // As many rewrites as the passes of the driver before D371 made at most, one at each node in each pass.
             let mut budget = nodes(&plan).saturating_mul(passes);
             for _ in 0..passes {
                 let (p, changed) = pass(&rules, plan, (ctx, &mut budget), &mut trace);

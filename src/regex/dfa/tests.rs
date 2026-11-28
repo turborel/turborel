@@ -138,3 +138,30 @@ fn a_searcher_asks_its_automaton_while_half_its_texts_have_no_match() {
     }
     assert!(asks(&searcher), "after a window of half and half");
 }
+
+/// Verifies: [DESIGN] (RULES.md D1312) a scan stops where nothing can
+/// match any more. Of a program anchored at the string's start, a text
+/// whose first characters no thread reads is given up within them,
+/// however long it is, from the start and from a later position; one
+/// that matches is read as far as its match needs. A program that may
+/// begin anywhere, or may match the text's end, has threads or the end
+/// left and reads on to the end, as before.
+#[test]
+fn a_scan_that_can_match_nothing_more_stops() {
+    let read = |pattern: &str, flag: &str, text: &str, from: usize| {
+        let (regex, chars) = (Regex::new(pattern, flag).unwrap(), text.chars().collect::<Vec<char>>());
+        let mut automaton = Dfa::default();
+        let found = automaton.scan(&regex.program, chars.as_slice(), from, false).unwrap();
+        let theirs = pike::search(&regex.program, chars.as_slice(), from, true).unwrap();
+        assert_eq!(found, theirs.map_or(Scan::None, |slots| Scan::Ends(slots[1].unwrap())), "{pattern:?} in {text:?} from {from}");
+        automaton.read
+    };
+    let (host, long) = ("^https?://(www\\.)?([^/]+)/.*$", "x".repeat(500));
+    assert_eq!(read(host, "s", &format!("ttp://a.test/{long}"), 0), 1, "no thread reads the first character");
+    assert_eq!(read(host, "s", &format!("http:/a.test/{long}"), 0), 7, "none reads the seventh");
+    assert_eq!(read(host, "s", &format!("http://a.test/{long}"), 3), 1, "no start but the string's");
+    assert_eq!(read(host, "s", &format!("http://a.test/{long}"), 0), 514, "a match, read to its end");
+    assert_eq!(read("^a$", "", &format!("b{long}"), 0), 1, "the end matches nothing either");
+    assert_eq!(read("b", "", &long, 0), 500, "a match may begin at any character");
+    assert_eq!(read("^a|$", "", &format!("b{long}"), 0), 501, "the text's end may match");
+}

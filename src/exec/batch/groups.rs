@@ -19,6 +19,7 @@
 //! (`Accumulator::merge`), so each set function takes its values in the
 //! order it would without them.
 
+mod alike;
 mod coded;
 mod morsel;
 mod spilled;
@@ -109,12 +110,21 @@ pub(super) fn grouped_all(
     spilled::merged(held, overflow, how, &mut work)
 }
 
+/// \[DESIGN\] (RULES.md D31, D1323) Where each run of rows of one key
+/// ends among the rows `rows` of `batch`, or all, the rows of each run
+/// of one group. Of a grouping by `groups`, one column whose integers
+/// are known as runs (`Ints::runs`), none null, they are the store's
+/// runs, none of a null among them, of the null group. Of any other
+/// grouping they are found by comparing each row with the row before it
+/// (`alike.rs`), where every column tells by its vector; else none.
+fn run_ends(batch: &Batch, groups: &[usize], rows: Option<&[u32]>) -> Option<Vec<usize>> {
+    stored_runs(batch, groups, rows).or_else(|| alike::ends(batch, groups, rows))
+}
+
 /// \[DESIGN\] (RULES.md D31) Of a grouping by `groups`, one column of
 /// `batch` whose integers are known as runs (`Ints::runs`), none null,
-/// where each run of its rows `rows`, or all, ends among them, the rows of
-/// each run alike, so of one group: none of another grouping, nor of a
-/// null among the runs, of the null group.
-fn run_ends(batch: &Batch, groups: &[usize], rows: Option<&[u32]>) -> Option<Vec<usize>> {
+/// where each run of its rows `rows`, or all, ends among them.
+fn stored_runs(batch: &Batch, groups: &[usize], rows: Option<&[u32]>) -> Option<Vec<usize>> {
     let [at] = groups else { return None };
     let Some(Column::Ints(ints)) = batch.columns.get(*at) else { return None };
     ints.runs()?;
@@ -236,9 +246,11 @@ impl Groups {
         if !coded {
             hash_rows(batch, (&how.read.groups, rows), (how.seed, how.runner.kernels()), &mut self.hashes);
         }
-        // Of a grouping by one column of runs, a row of the run of the row
-        // before it goes to that row's group, no key compared.
-        let mut ends = run_ends(batch, &how.read.groups, rows).into_iter().flatten();
+        // A row of the run of the row before it goes to that row's group,
+        // no key compared (`run_ends`). Rows taken by their codes need no
+        // run, and tell this loop no group for the next row to follow.
+        let runs = if coded { None } else { run_ends(batch, &how.read.groups, rows) };
+        let mut ends = runs.into_iter().flatten();
         let (mut boundary, mut last) = (0_usize, None);
         for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
             let r = nth(rows, n);

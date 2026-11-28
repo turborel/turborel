@@ -24,7 +24,7 @@ use super::super::Grouping;
 use super::super::runs::Run;
 use super::Frozen;
 use crate::error::Result;
-use crate::exec::table::{Adopted, GroupTable, Made, Wide};
+use crate::exec::table::{Adopted, GroupTable, Made, WaveRun, Wide};
 use crate::exec::{Runner, broken};
 
 /// \[DESIGN\] (RULES.md D1300) The groups a partition's table holds at
@@ -36,6 +36,17 @@ use crate::exec::{Runner, broken};
 /// mebibyte.
 pub(super) const WIDE: usize = 1 << 15;
 
+/// \[DESIGN\] (RULES.md D1301) The groups and rows a sub-part of a wide
+/// partition holds, or about, while a wave's rows are looked up in it.
+/// Slots for this many are 32,768 words, a quarter of a mebibyte, and
+/// the rows looked up beside them as much, so a sub-part's lookups stay
+/// within a second-level cache of a mebibyte, the least of the
+/// processors a server runs on. Merges of keys of texts, a third of
+/// them held already, into partitions of two million groups cost least
+/// a group at this size among 4,096, 16,384, 65,536 and 262,144, and
+/// merges of integer keys all new cost the same at each.
+pub(super) const SUB: usize = 1 << 14;
+
 /// When a grouping's partitions go wide: past how many groups a table of
 /// one holds, whether whatever reads them, and how many times a wave was
 /// merged into a wide one, which a test reads.
@@ -46,6 +57,9 @@ pub(in crate::exec::parallel::grouped) struct Widen {
     /// asks so that the gathered table is compared too. A statement's
     /// partitions go wide only where they are read as they lie.
     every: bool,
+    /// \[DESIGN\] (RULES.md D1301) The groups and rows a sub-part of a
+    /// wide partition holds, or about.
+    sub: usize,
     pub(in crate::exec::parallel::grouped) merged: Arc<AtomicUsize>,
 }
 
@@ -53,7 +67,7 @@ impl Widen {
     /// Wide past `past` groups whatever reads the partition, no wave
     /// merged yet.
     pub(in crate::exec::parallel::grouped) fn past(past: usize) -> Widen {
-        Widen { past, every: true, merged: Arc::new(AtomicUsize::new(0)) }
+        Widen { past, every: true, sub: SUB, merged: Arc::new(AtomicUsize::new(0)) }
     }
 
     /// Wide past `past` groups of a grouping whose reader reads the
@@ -61,17 +75,28 @@ impl Widen {
     pub(in crate::exec::parallel::grouped) fn read_as_they_lie(past: usize) -> Widen {
         Widen { every: false, ..Widen::past(past) }
     }
+
+    /// This, a wide partition's sub-parts of `sub` groups and rows or
+    /// about, as a test asks so that few groups fill many sub-parts.
+    #[cfg(test)]
+    pub(in crate::exec::parallel::grouped) fn parted(self, sub: usize) -> Widen {
+        Widen { sub, ..self }
+    }
 }
 
 /// \[DESIGN\] (RULES.md D1300) Whether what reads a partition of
-/// `grouping` reads its groups where they lie: the first rows of a sort,
-/// and no second grouping over it, whose table reads the first's groups
-/// as a table (RULES.md D1281). Only of such a grouping does a partition
-/// go wide. Any other reader has the wide partition gathered into a
-/// table, which writes every group a second time and saves nothing a
-/// merge into the table would have cost.
+/// `grouping` reads its groups where they lie. That is the first rows of
+/// a sort whose every key names a set function, which picks its groups
+/// before their rows are made (RULES.md D1256), with no second grouping
+/// over it, whose table reads the first's groups as a table (RULES.md
+/// D1281). Only of such a grouping does a partition go wide. Any other
+/// reader, a sort by a grouping column among them, has the wide
+/// partition gathered into a table, which writes every group a second
+/// time and saves nothing a merge into the table would have cost.
 fn lies(grouping: &Grouping) -> bool {
-    grouping.top.is_some() && grouping.outer.is_none()
+    let width = grouping.read.as_ref().map_or(0, |read| read.groups.len());
+    let picked = grouping.top.as_ref().is_some_and(|top| top.sorted_by(width).is_some());
+    picked && grouping.outer.is_none()
 }
 
 /// A partition's groups between waves, as they go to another thread: a
@@ -112,18 +137,16 @@ pub(super) enum Merging {
 }
 
 impl Merging {
-    /// Itself with partition `p` of `made` merged into it, a table that
-    /// then holds more than `widen` groups gone wide.
+    /// Itself, a table, with partition `p` of `made` merged into it, gone
+    /// wide if it then holds more than `widen` groups. A wide partition
+    /// is given back as it is, as it takes a wave's Mades at once.
     fn absorbed(self, made: &Arc<Made>, p: usize, widen: usize) -> Result<Merging> {
         match self {
             Merging::Table(mut table) => {
                 table.absorb(made, p)?;
-                if table.len() > widen { Wide::of(*table).map(|wide| Merging::Wide(Box::new(wide))) } else { Ok(Merging::Table(table)) }
+                Ok(if table.len() > widen { Merging::Wide(Box::new(Wide::of(*table))) } else { Merging::Table(table) })
             }
-            Merging::Wide(mut wide) => {
-                wide.absorb(made, made.part_places(p))?;
-                Ok(Merging::Wide(wide))
-            }
+            Merging::Wide(wide) => Ok(Merging::Wide(wide)),
         }
     }
 
@@ -156,9 +179,9 @@ impl Merging {
 
 /// The groups a partition of `grouping` gives of `merged`, finished, as
 /// `Grouping::kept_of` gives a table's. Of a wide partition asked the
-/// first rows of a sort, and no second grouping over it, they are picked
-/// where the groups lie (`top.rs`). For every other reader it is
-/// gathered into a table.
+/// first rows of a sort by set functions, and no second grouping over
+/// it, they are picked where the groups lie (`top/wide.rs`). For every
+/// other reader it is gathered into a table.
 ///
 /// # Errors
 ///
@@ -201,12 +224,18 @@ pub(super) fn thawed_and_merged(grouping: &Grouping, (frozen, p): (&Frozen, usiz
         let handed: usize = wave.iter().map(|made| made.groups_of(p)).sum();
         table.reserve(first, handed.min(past.saturating_add(first.groups_of(p))));
     }
-    for made in wave {
-        if made.groups_of(p) > 0 {
-            merging = merging.absorbed(made, p, past)?;
-        }
+    let mut rest = wave.iter().filter(|made| made.groups_of(p) > 0);
+    while let Merging::Table(_) = &merging {
+        let Some(made) = rest.next() else { break };
+        merging = merging.absorbed(made, p, past)?;
     }
-    if let Merging::Wide(_) = &merging {
+    // A wide partition looks up what is left of the wave at once, a
+    // sub-part at a time (RULES.md D1301).
+    if let Merging::Wide(wide) = &mut merging {
+        let runs: Vec<WaveRun<'_>> = rest.map(|made| (made, made.part_places(p))).collect();
+        if !runs.is_empty() {
+            wide.absorb_wave(&runs, widen.sub)?;
+        }
         widen.merged.fetch_add(1, Ordering::Relaxed);
     }
     Ok(merging)

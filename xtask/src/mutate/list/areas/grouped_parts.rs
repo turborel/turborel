@@ -13,7 +13,7 @@
 use super::super::{Mutation, Package};
 
 /// Mechanisms whose removal must fail the requirements of grouped parts.
-pub const GROUPED_PARTS: [Mutation; 37] = [
+pub const GROUPED_PARTS: [Mutation; 38] = [
     Mutation {
         name: "having-part-keeps-unknown",
         package: Package::Core,
@@ -209,8 +209,8 @@ pub const GROUPED_PARTS: [Mutation; 37] = [
         package: Package::Core,
         breaks: "a sort that asks the peers of its last row takes its first rows from the tables, the peers lost (RULES.md D1124)",
         file: "src/exec/parallel/grouped/top.rs",
-        original: "(!most.ties).then(",
-        replacement: "(most.rows < usize::MAX).then(",
+        original: "(!most.ties).then_some(",
+        replacement: "(most.rows < usize::MAX).then_some(",
         integration: &["grouped_parts::a_sort_of_first_rows_the_tables_do_not_give_reads_the_groups"],
         unit: &[],
     },
@@ -335,22 +335,32 @@ pub const GROUPED_PARTS: [Mutation; 37] = [
         unit: &[],
     },
     Mutation {
-        name: "rows-apart-numbered-by-batch",
-        package: Package::Core,
-        breaks: "rows handed on ungrouped take their batch's first number, not their own, so their groups' order is lost (RULES.md D1260)",
-        file: "src/exec/batch/groups/morsel.rs",
-        original: "let own = number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));",
-        replacement: "let own = number;",
-        integration: &["grouped_parts::morsels_that_reduce_nothing_hand_their_rows_on_ungrouped"],
-        unit: &[],
-    },
-    Mutation {
         name: "rows-apart-where-they-reduce",
         package: Package::Core,
         breaks: "morsels hand their rows on ungrouped where their tables reduce them, and group them where they do not (RULES.md D1260)",
         file: "src/exec/parallel/grouped/waves.rs",
         original: "self.left.load(Ordering::Relaxed) > APART_PER_MILLE",
         replacement: "self.left.load(Ordering::Relaxed) < APART_PER_MILLE",
+        integration: &[],
+        unit: &["exec::parallel::grouped::waves::tests::morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing"],
+    },
+    Mutation {
+        name: "rows-apart-probed-every-morsel",
+        package: Package::Core,
+        breaks: "every morsel past the sixteenth after a table that reduced probes, so no rows are handed on ungrouped from then on (RULES.md D1260)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "let probes = past >= PROBE_EVERY && past.is_power_of_two();",
+        replacement: "let probes = past >= PROBE_EVERY;",
+        integration: &[],
+        unit: &["exec::parallel::grouped::waves::tests::morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing"],
+    },
+    Mutation {
+        name: "rows-apart-probes-counted-from-the-first-morsel",
+        package: Package::Core,
+        breaks: "the probes are counted from the grouping's first morsel whatever table reduced since, so the gap after a table that reduced is not sixteen (RULES.md D1260)",
+        file: "src/exec/parallel/grouped/waves.rs",
+        original: "                self.since.fetch_max(m, Ordering::Relaxed);\n",
+        replacement: "",
         integration: &[],
         unit: &["exec::parallel::grouped::waves::tests::morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing"],
     },

@@ -6,8 +6,9 @@
 //! padded with spaces as strings compare [§5.11 GR5], or unpadded under a
 //! collation of NO PAD that orders strings as their octets do (RULES.md
 //! D1183); IS NULL [§5.15]; of
-//! a store's dictionaries, each once of each entry, a row then kept by its
-//! entry. A constant not a string is judged of the values instead.
+//! a store's entries no more than the rows asked, each once of each entry,
+//! a row then kept by its entry (RULES.md D1316). A constant not a string
+//! is judged of the values instead.
 
 use std::cmp::Ordering;
 
@@ -16,16 +17,19 @@ use super::ints::holds;
 use crate::kernels::Kernels;
 use crate::storage::mask::index;
 use crate::storage::sel::rows_of;
-use crate::storage::{Mask, Texts};
+use crate::storage::{Coded, Mask, Texts};
 use crate::value::{LikePattern, Value, compare_strings};
 
 /// The rows of `over`, or of all, that `judged` keeps of `texts`, if it is
-/// judged of text: of a store's dictionaries, each entry judged once into
-/// a mask of the entries kept, the rows then by the kernel `select_codes`.
+/// judged of text: of a store's entries no more than the rows asked
+/// (RULES.md D1316), each entry judged once into a mask of the entries
+/// kept, the rows then by the kernel `select_codes`; of more entries than
+/// rows asked, each row's text, as an entry no row asked reads is not
+/// worth judging.
 pub(super) fn kept(judged: &Judged, texts: &Texts, over: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {
     let keep = |f: &dyn Fn(&str) -> bool| -> Vec<u32> {
         let mut out = Vec::new();
-        if let Some(coded) = &texts.coded {
+        if let Some(coded) = texts.coded.as_deref().filter(|coded| by_entries(coded, texts, over)) {
             let mut entries = Mask::none(coded.entries.len());
             for e in 0..coded.entries.len() {
                 if coded.entries.get(e).is_some_and(f) {
@@ -74,13 +78,31 @@ pub(super) fn kept(judged: &Judged, texts: &Texts, over: Option<&[u32]>, kernels
     }
 }
 
+/// Whether a conjunct is judged of each entry of `coded`, the codes of
+/// `texts`, and not of each row of `over`, or of all: where the entries
+/// are no more than those rows (RULES.md D1316), so no entry is judged
+/// for nothing.
+pub(super) fn by_entries(coded: &Coded, texts: &Texts, over: Option<&[u32]>) -> bool {
+    coded.entries.len() <= over.map_or(texts.len(), <[u32]>::len)
+}
+
 /// The rows of `over`, or of all, of `texts` that match `pattern`, the
 /// batch's text searched at once by `kernels` (`value/like/arena.rs`,
-/// RULES.md D1119): none of a store's dictionaries, whose entries are
-/// each matched once, of rows `over` keeps fewer than half of, or of a
-/// pattern of no piece between two `%`s.
+/// RULES.md D1119), of a store's entries the entries' text, each row then
+/// kept by its code (RULES.md D1316): none of entries more than the rows
+/// asked, of rows `over` keeps fewer than half of, or of a pattern of no
+/// piece between two `%`s.
 fn arena(pattern: &LikePattern, texts: &Texts, over: Option<&[u32]>, kernels: &dyn Kernels) -> Option<Vec<u32>> {
-    if texts.coded.is_some() || over.is_some_and(|rows| rows.len().saturating_mul(2) < texts.len()) {
+    if let Some(coded) = &texts.coded {
+        if !by_entries(coded, texts, over) {
+            return None;
+        }
+        let all = pattern.matches_all((coded.entries.text.as_bytes(), &coded.entries.ends), kernels)?;
+        let (entries, mut out) = (Mask::from_bools(&all), Vec::new());
+        kernels.select_codes(&coded.codes, entries.words(), (texts.nulls.as_ref(), over), &mut out);
+        return Some(out);
+    }
+    if over.is_some_and(|rows| rows.len().saturating_mul(2) < texts.len()) {
         return None;
     }
     let all = pattern.matches_all((texts.text.as_bytes(), &texts.ends), kernels)?;

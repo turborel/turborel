@@ -1,5 +1,6 @@
 //! Each area's mutations, in the order they run, after the core's.
 
+mod alike_runs;
 mod altered_tables;
 mod analyze;
 mod analyze_more;
@@ -18,6 +19,7 @@ mod client_sync;
 mod commit_path;
 mod commit_stamps;
 mod compiled;
+mod computed_keys;
 mod conditions;
 mod copy_columns;
 mod cost_model;
@@ -75,6 +77,7 @@ mod skipping;
 mod sorts;
 mod statistics;
 mod subquery_plans;
+mod text_lanes;
 mod tpcc;
 mod tpcc_allocs;
 mod transfer;
@@ -82,6 +85,7 @@ mod tree_path;
 mod txn_layer;
 mod undo_memory;
 mod unread_texts;
+mod vetted;
 // Unnesting's, UUID's and xxHash's mutations, here as `list.rs` holds no more
 // modules.
 mod first_groups;
@@ -92,9 +96,11 @@ mod like_entries;
 mod like_pieces;
 mod mark_joins;
 mod morsel_memory;
+mod narrow_totals;
 mod narrowed_windows;
 mod outer_steps;
 mod pair_top;
+mod placed_rows;
 mod semi_joins;
 mod spilled_joins;
 mod steady;
@@ -246,8 +252,8 @@ fn second() -> [&'static [Mutation]; 48] {
 /// cost model, orders, probed subqueries, predicate transfer, dead entries
 /// taken back by a scan and scans priced by sampled zones, key plans, a
 /// B-link tree probe's path, a commit's stamps in place, the fixed costs cut from a write, a row's fetch by its id,
-/// EXPLAIN of a data change, the work shared, one statement's statistics and the implied edges.
-fn planner() -> [&'static [Mutation]; 17] {
+/// EXPLAIN of a data change, the work shared, one statement's statistics, the implied edges and the grouping columns computed late.
+fn planner() -> [&'static [Mutation]; 18] {
     [
         &super::workers::WORKERS,
         &join_estimates::JOIN_ESTIMATES,
@@ -266,6 +272,7 @@ fn planner() -> [&'static [Mutation]; 17] {
         &shared_work::SHARED_WORK,
         &planning_statistics::PLANNING_STATISTICS,
         &implied_edges::IMPLIED_EDGES,
+        &computed_keys::COMPUTED_KEYS,
     ]
 }
 
@@ -314,15 +321,17 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// A procedure's parameter defaults', a prepared CALL's parameter modes', an export's large objects', the
 /// transport's, connections' homes', parallel queries', the client's
 /// step with its server, the decode kernels', declared types', batches', late
-/// materialization's, the table of groups', the join table's, XXH3's,
+/// materialization's, the table of groups', its text lanes', the join table's, XXH3's,
 /// semi joins', a LIKE judged on codes', a LIKE judged of a dictionary's
 /// entries', mark joins', skipping's, the undo store's memory's, the
 /// sessions' own copies', the shared lines', the server's lines', the
 /// kernels', compiled procedures', rows in demand's, the routine
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
-/// window narrowed's and a join built in passes' last, as `last` holds no
-/// more.
-fn closing() -> [&'static [Mutation]; 39] {
+/// window narrowed's, a join built in passes', a filter passing over what
+/// its scan judged's, text key lanes', the rows placed by partition's,
+/// exact totals held in 64 bits' and the runs of rows of one key's last, as
+/// `last` holds no more.
+fn closing() -> [&'static [Mutation]; 44] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -336,12 +345,14 @@ fn closing() -> [&'static [Mutation]; 39] {
         &batches::BATCHES,
         &late::LATE,
         &group_table::GROUP_TABLE,
+        &text_lanes::TEXT_LANES,
         &join_table::JOIN_TABLE,
         &join_build::JOIN_BUILD,
         &xxhash::XXHASH,
         &semi_joins::SEMI_JOINS,
         &grouped_parts::GROUPED_PARTS,
         &pair_top::PAIR_TOP,
+        &placed_rows::PLACED_ROWS,
         &first_groups::FIRST_GROUPS,
         &like_pieces::LIKE_PIECES,
         &like_coded::LIKE_CODED,
@@ -363,6 +374,9 @@ fn closing() -> [&'static [Mutation]; 39] {
         &keyed_loads::KEYED_LOADS,
         &narrowed_windows::NARROWED_WINDOWS,
         &spilled_joins::SPILLED_JOINS,
+        &vetted::VETTED,
+        &narrow_totals::NARROW_TOTALS,
+        &alike_runs::ALIKE_RUNS,
     ]
 }
 
