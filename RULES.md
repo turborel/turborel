@@ -23878,7 +23878,13 @@ window over a whole partition of a frozen table, which asks for no
 order, gave the row store's results too
 (`test/integration/window_nulls.rs`, which stays as the requirement's
 test). Which step kept the store's numbers from the lane there was not
-found. The lane's own test shows the place it now clears.
+found. It was narrowed since. The batch a frozen scan makes of a run has
+each null's place as its chunk gave it, not 0, and the same batch as
+the window takes it from its input has 0 in each. So the executor's
+stream of batches between the storage's batch and the window writes the
+0, though the line that does it was not found, and a lane fed by another
+path may still be given a place that is not 0. The lane's own test
+shows the place it now clears.
 
 #### D1293. A column store's scan does not judge a comparison that the bounds of every part of a run prove
 
