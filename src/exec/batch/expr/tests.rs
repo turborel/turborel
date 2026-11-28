@@ -348,3 +348,31 @@ fn in_a_list_of_strings_is_judged_of_a_vector_s_text() {
         }
     }
 }
+
+/// Verifies: [X3.135-1986 §5.14 GR4, GR5] (RULES.md D1119, D1316): LIKE a
+/// constant pattern, of a vector of strings given plain or as codes of
+/// entries no more than its rows or more than them, gives of each row
+/// what a row's evaluation gives of its value, unknown of a null: of a
+/// piece between two `%`s, searched at once in the texts or in the
+/// entries, and of a prefix, matched a value at a time.
+#[test]
+fn like_is_judged_of_a_vector_s_text_or_of_its_entries() {
+    let entries = Arc::new(Texts::new("abcxbxé bnone".into(), vec![3, 6, 6, 10, 14], None));
+    let coded = |codes: Vec<u32>, nulls: Vec<bool>| {
+        Texts::coded(crate::storage::Coded { codes, entries: Arc::clone(&entries) }, Some(Mask::from_bools(&nulls)))
+    };
+    let plain = Texts::new("abcbbé b".into(), vec![3, 5, 5, 9], Some(Mask::from_bools(&[false, false, true, false])));
+    let many = coded(vec![0, 1, 2, 3, 4, 1, 0, 3], vec![false, false, false, false, false, true, false, false]);
+    let few = coded(vec![3, 0], vec![false, true]);
+    for texts in [plain, many, few] {
+        let rows = texts.len();
+        let batch = Batch { columns: vec![Column::Texts(texts.clone())], rows };
+        for pattern in ["%b%", "%é b%", "a%", "%", "%bc"] {
+            let e = Expr::Truth(Box::new(Cond::Like(Expr::Column(0), Expr::Const(Value::Char(pattern.into())), None)));
+            let wanted: Vec<Value> = (0..rows)
+                .map(|n| eval(&e, &vec![texts.get(n).map_or(Value::Null, |s| Value::Char(s.into()))], &NoSubqueries).unwrap())
+                .collect();
+            assert_eq!(of(e, &batch), Some(shown(&wanted)), "{pattern} of {texts:?}");
+        }
+    }
+}

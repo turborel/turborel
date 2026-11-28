@@ -7,7 +7,7 @@
 //! made empty first, at a place far from the row's before. The states
 //! are those the feed leaves. Any other column of states is fed.
 
-use super::{Exact, Typed};
+use super::{Exact, Totals, Typed};
 use crate::exec::batch::Taken;
 use crate::storage::mask::index;
 use crate::storage::{Batch, Column, Ints, Sel};
@@ -59,7 +59,7 @@ impl Exact {
     fn set_apart(&mut self, take: &Taken, held: &Held, sources: &[(u32, u32)]) -> Option<bool> {
         let Taken::Column(c) = take else { return None };
         let (ints, scale) = ints_of(held, *c)?;
-        if !self.units.is_empty() || self.scale.is_some_and(|of| of != scale) {
+        if self.totals.len() != 0 || self.scale.is_some_and(|of| of != scale) {
             return None;
         }
         let (mut units, mut counts) = (Vec::with_capacity(sources.len()), Vec::with_capacity(sources.len()));
@@ -68,10 +68,10 @@ impl Exact {
             let r = index(r);
             let read = ints.get(index(b)).filter(|of| !of.is_null(r)).and_then(|of| of.units.get(r));
             any = any || read.is_none();
-            units.push(read.map_or(0, |&unit| i128::from(unit)));
+            units.push(read.copied().unwrap_or(0));
             counts.push(i64::from(read.is_some()));
         }
-        (self.units, self.counts, self.scale) = (units, counts, Some(scale));
+        (self.totals, self.counts, self.scale) = (Totals::Narrow(units), counts, Some(scale));
         Some(any)
     }
 }

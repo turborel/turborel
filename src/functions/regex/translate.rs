@@ -13,7 +13,7 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use super::subject::{Body, Subject, short, slice};
+use super::subject::{Body, Subject, octets, short, slice};
 use super::{Cache, as_long_as, entries, operands, parameter};
 use crate::error::{Code, Result, SqlState, fail, fail_with};
 use crate::functions::strings::{character, text, whole};
@@ -232,9 +232,20 @@ impl Asked<'_> {
         state: &mut (Searcher<'_>, Option<Replacement>, Captures),
     ) -> Result<(Texts, Vec<bool>)> {
         let (mut made, mut ends, mut given) = (String::new(), Vec::with_capacity(count), Vec::with_capacity(count));
+        // The units and which matches are asked for are every string's,
+        // so they are read at the first and kept (RULES.md D1311).
+        let mut read: Option<(bool, Chosen)> = None;
         for n in 0..count {
             given.push(match texts.get(n).filter(|_| wanted(n)) {
-                Some(subject) => self.of_text(subject, (&mut state.0, &mut state.1, &mut state.2), &mut made)?,
+                Some(subject) => {
+                    let asked = match read.take() {
+                        Some(asked) => asked,
+                        None => (octets(self.units)?, self.chosen()?),
+                    };
+                    let put = self.of_text((subject, asked.0, &asked.1), (&mut state.0, &mut state.1, &mut state.2), &mut made)?;
+                    read = Some(asked);
+                    put
+                }
                 None => false,
             });
             ends.push(made.len());
@@ -243,25 +254,26 @@ impl Asked<'_> {
     }
 
     /// \[GR9\] (RULES.md D1188) As `of`, of the character string
-    /// `subject` of a vector of them, what it becomes put after `out`:
+    /// `subject` of a vector of them, counted in octets if `octets`,
+    /// `chosen` the matches asked for, what it becomes put after `out`:
     /// false, and nothing put, if the result is null. Each match is read
     /// into `found`, kept from one subject to the next (RULES.md D1189).
     fn of_text(
         &self,
-        subject: &str,
+        (subject, octets, chosen): (&str, bool, &Chosen),
         (searcher, with, found): (&mut Searcher<'_>, &mut Option<Replacement>, &mut Captures),
         out: &mut String,
     ) -> Result<bool> {
-        let counted = Subject::of_text(subject, self.units)?;
+        let counted = Subject::of_text(subject, octets);
         let Some(at) = counted.start(self.start)? else { return Ok(false) };
-        match self.chosen()? {
+        match chosen {
             Chosen::Null => Ok(false),
             Chosen::Itself => {
                 out.push_str(subject);
                 Ok(true)
             }
             Chosen::Of(which) => {
-                Job { searcher, at, which, replacement: &self.replacement, with, found }.put(&counted.body, out).map(|()| true)
+                Job { searcher, at, which: *which, replacement: &self.replacement, with, found }.put(&counted.body, out).map(|()| true)
             }
         }
     }

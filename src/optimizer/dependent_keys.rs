@@ -32,6 +32,11 @@
 //! HAVING condition of grouping columns into WHERE, or group below a join,
 //! read the grouping as written first.
 
+mod computed;
+
+pub(super) use computed::quiet;
+pub use computed::{COMPUTE_KEYS_AFTER_GROUPING, ComputeKeysAfterGrouping};
+
 use super::{Rule, RuleContext};
 use crate::binder::{Known, group_value};
 use crate::logical::{Cond, Expr, LogicalPlan, map_cond_columns, plan_column_type};

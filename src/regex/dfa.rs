@@ -27,6 +27,14 @@
 //! position, `^` and `$` of each line, has no automaton here, nor has one
 //! with a back-reference. Past `OCTETS_MOST` octets of states the automaton
 //! gives up, and the search goes on without it.
+//!
+//! \[DESIGN\] (RULES.md D1312) A state no thread waits at leads, at every
+//! character, to one no thread waits at, as a new start is tried at each
+//! and led to none, so only the text's end could still match from it. If
+//! the end cannot either, nothing can match any more and the scan stops
+//! there. So a program anchored at the string's start, `^` of the whole
+//! string, is given up at the first character no thread reads, where the
+//! scan read every text with no match to its end.
 
 use std::collections::BTreeMap;
 
@@ -69,6 +77,9 @@ struct State {
     threads: Vec<u32>,
     accepts: bool,
     next: Box<[u32; KEPT]>,
+    /// Whether nothing can match from it (RULES.md D1312): no thread
+    /// waits at it, and the text's end there matches nothing.
+    barren: bool,
 }
 
 /// What a scan found.
@@ -111,6 +122,9 @@ pub(super) struct Dfa {
     /// Scratch of `closed`: the work left and the instructions met.
     stack: Vec<usize>,
     seen: Vec<bool>,
+    /// How many characters its scans read, counted for the tests.
+    #[cfg(test)]
+    read: usize,
 }
 
 impl Dfa {
@@ -140,6 +154,10 @@ impl Dfa {
                 }
             }
             let Some(c) = text.at(at)? else { break };
+            #[cfg(test)]
+            {
+                self.read = self.read.saturating_add(1);
+            }
             let crlf = c == '\r' && text.at(text.after(at))? == Some('\n');
             match self.step(program, state, (c, crlf)) {
                 Some(DEAD) => return Ok(last.map_or(Scan::None, Scan::Ends)),
@@ -189,11 +207,19 @@ impl Dfa {
         };
         let kernel: Vec<u32> = from.threads.iter().filter(reads).map(|pc| pc.saturating_add(1)).collect();
         let matched = from.key.1 || from.accepts;
-        let next = if kernel.is_empty() && matched { DEAD } else { self.state(program, (kernel, matched, false))? };
+        let next = if kernel.is_empty() && matched { DEAD } else { self.live(program, (kernel, matched, false))? };
         if let Some(kept) = slot.and_then(|at| self.states.get_mut(index(state))?.next.get_mut(at)) {
             *kept = next;
         }
         Some(next)
+    }
+
+    /// \[DESIGN\] (RULES.md D1312) The state of `key`, or `DEAD` if
+    /// nothing can match from it; none past `OCTETS_MOST`.
+    fn live(&mut self, program: &Program, key: Key) -> Option<u32> {
+        let at = self.state(program, key)?;
+        let barren = self.states.get(index(at)).is_some_and(|state| state.barren);
+        Some(if barren { DEAD } else { at })
     }
 
     /// The state of `key`, made if not met before; none past `OCTETS_MOST`.
@@ -202,6 +228,8 @@ impl Dfa {
             return Some(at);
         }
         let (threads, accepts) = self.closed(program, (&key.0, key.1), (key.2, false));
+        // No thread waits and none will, so only the text's end is left to match.
+        let barren = threads.is_empty() && !self.closed(program, (&key.0, key.1), (key.2, true)).1;
         // Its key is kept twice, by the state and by where it is found.
         let numbers = key.0.len().saturating_mul(2).saturating_add(threads.len());
         let octets = size_of::<[u32; KEPT]>().saturating_add(numbers.saturating_mul(size_of::<u32>()));
@@ -211,7 +239,7 @@ impl Dfa {
         }
         let at = u32::try_from(self.states.len()).ok()?;
         self.found.insert(key.clone(), at);
-        self.states.push(State { key, threads, accepts, next: Box::new([UNKNOWN; KEPT]) });
+        self.states.push(State { key, threads, accepts, next: Box::new([UNKNOWN; KEPT]), barren });
         Some(at)
     }
 

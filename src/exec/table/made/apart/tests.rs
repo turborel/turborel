@@ -2,12 +2,14 @@
 //! D1313): what is handed over is what the rows appended in the order
 //! they come and then gathered by partition give, of integer keys with
 //! nulls, of text keys, of batches a filter kept some rows of, by whole
-//! keys and by a lane; and a table written by other partitions than it
-//! is handed by is gathered as any table is.
+//! keys and by a lane; a table written by other partitions than it is
+//! handed by is gathered as any table is; and totals set in 64 bits
+//! merge with wider ones as fed ones do (RULES.md D1308).
 
-use super::super::tests::{calls, fed};
+use super::super::tests::{calls, exact, fed};
 use super::*;
 use crate::exec::batch::Taken;
+use crate::exec::table::states::Sent;
 use crate::exec::table::{Key, Pending, hash_lanes, hash_rows};
 use crate::kernels::Portable;
 use crate::storage::{Column, Ints, Mask};
@@ -130,19 +132,27 @@ fn rows_written_by_partition_are_the_rows_appended_and_gathered() {
     }
 }
 
-/// Each partition's groups of `made`, merged into a table and finished,
-/// in the order of their first rows, and where its partitions begin.
-fn groups(made: &Made, parts: usize, seed: &Seed) -> (Vec<String>, Vec<u32>) {
+/// Each partition's groups of the `mades`, merged in turn into one table
+/// and finished, in the order of their first rows.
+fn merged(mades: &[&Made], parts: usize, seed: &Seed) -> Vec<String> {
     let mut all = Vec::new();
     for p in 0..parts {
         let mut table = GroupTable::new(AT.len(), &calls(), seed, usize::MAX);
-        table.reserve(made, made.groups_of(p));
-        table.absorb(made, p).unwrap();
+        for made in mades {
+            table.reserve(made, made.groups_of(p));
+            table.absorb(made, p).unwrap();
+        }
         let mut finished = table.finished().unwrap();
         finished.sort_by_key(|(first, _)| *first);
         all.extend(finished.iter().map(|(first, row)| format!("{p} {first} {row:?}")));
     }
-    (all, made.starts.clone())
+    all
+}
+
+/// Each partition's groups of `made`, merged into a table and finished,
+/// in the order of their first rows, and where its partitions begin.
+fn groups(made: &Made, parts: usize, seed: &Seed) -> (Vec<String>, Vec<u32>) {
+    (merged(&[made], parts, seed), made.starts.clone())
 }
 
 /// Verifies: [DESIGN] RULES.md D1313 a table written by partition is
@@ -216,4 +226,54 @@ fn states_set_as_their_rows_take_nothing_of_a_null() {
         let read = held[index(b)].0.cell(0, index(r)).to_value();
         assert_eq!(format!("{:?}", sum.finish(place).unwrap()), format!("{read:?}"), "the sum of one row is its value, of a null none");
     }
+}
+
+/// An integer near the greatest of 64 bits, two of which leave them
+/// together, and the least integer 64 bits do not hold.
+const NEAR: i64 = i64::MAX - 1000;
+const PAST: i128 = 9_223_372_036_854_775_808;
+
+/// The bytes a group takes of a column of exact states whose totals are
+/// held in 128 bits, its total and its count.
+const WIDE: usize = 24;
+
+/// A table of the keys of the rows kept of `held`, found or made in
+/// turn, each row's group fed a value 64 bits do not hold, its rows
+/// numbered from 5000.
+fn wider(held: &[(Batch, Option<Sel>)], hashes: &[u64], seed: &Seed) -> GroupTable {
+    let mut table = GroupTable::with_room(AT.len(), &calls(), seed, 0);
+    let (mut hash, mut number) = (hashes.iter(), 5000_u64);
+    for (batch, rows) in held {
+        let rows = rows.as_ref().map(Sel::as_slice);
+        for n in 0..rows.map_or(batch.rows, <[u32]>::len) {
+            let g = table.found_or_made(*hash.next().unwrap(), Key::Row(batch, &AT, nth(rows, n)), number);
+            fed(&mut table, g, (number, &vec![exact(PAST.saturating_add(i128::from(number)))]));
+            number = number.saturating_add(1);
+        }
+    }
+    table
+}
+
+/// Verifies: [DESIGN] RULES.md D1313, D1308 the totals of rows written by
+/// partition are set in 64 bits, and a partition's table merges them
+/// with totals held in 128 bits, in either order, into what it merges of
+/// the same rows appended and fed. Each key's COUNT(*), SUM, MIN and MAX
+/// are those of all its rows, where the rows of one key leave 64 bits
+/// between them and where the wider table's values leave them alone.
+#[test]
+fn totals_set_in_64_bits_merge_with_wider_ones_as_fed_ones_do() {
+    let (mut held, seed) = (held(false), Seed::fixed(0x5EED));
+    for (batch, _) in &mut held {
+        batch.columns[2] = Column::Ints(Ints::new((0..400).map(|r| NEAR.saturating_add(r)).collect(), 0, None));
+    }
+    let (hashes, _) = hashed(&held, WHOLE, &seed);
+    let lying = written(&held, (8, WHOLE), &seed).made(8, WHOLE).unwrap();
+    let gathered = appended(&held, &hashes, &seed).made(8, WHOLE).unwrap();
+    let wide = wider(&held, &hashes, &seed).made(8, WHOLE).unwrap();
+    let sums = |made: &Made| made.states.get(1).map_or(0, Sent::bytes).checked_div(made.hashes.len()).unwrap();
+    assert!(sums(&lying) < WIDE && sums(&wide) >= WIDE, "sums set in 64 bits, and sums held in 128");
+    let (after, before) = (merged(&[&lying, &wide], 8, &seed), merged(&[&wide, &lying], 8, &seed));
+    assert_eq!(after, merged(&[&gathered, &wide], 8, &seed), "the wider totals merged into those set");
+    assert_eq!(before, merged(&[&wide, &gathered], 8, &seed), "the totals set merged into the wider");
+    assert_eq!(after, before, "a group's states are those of its rows whichever came first");
 }

@@ -117,6 +117,14 @@ fn more_rows(db: Database) -> Database {
     db
 }
 
+/// The rows the scan of `sql` gave, as EXPLAIN ANALYZE counts them.
+pub fn scanned(s: &Session, sql: &str) -> usize {
+    let analyzed = s.analyzed(sql, &Params::new()).unwrap();
+    let scan =
+        analyzed.operators.iter().find(|o| o.label.starts_with("SeqScan")).unwrap_or_else(|| panic!("no scan in\n{}", analyzed.text));
+    usize::try_from(scan.rows).unwrap()
+}
+
 /// The bytes of `db`'s memory budget its spill areas and their files hold,
 /// as INFORMATION_SCHEMA.MEMORY_RESERVATIONS shows the database's owner:
 /// OWNER, made so if no one is.

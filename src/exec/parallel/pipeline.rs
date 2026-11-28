@@ -97,6 +97,23 @@ pub(super) struct Branch {
     pub(super) split: Arc<dyn Split>,
     pub(super) steps: Vec<Step>,
     pub(super) scanned: Option<(Vec<usize>, usize)>,
+    /// \[DESIGN\] (RULES.md D1266) Whether its scan was told the conjuncts
+    /// of the condition of its first filter step, which begin the scan's
+    /// (`scan_branch`), and that condition cannot raise an error: one that
+    /// can sees every row its scan gives, as before.
+    pub(super) vets: bool,
+}
+
+impl Branch {
+    /// \[DESIGN\] (RULES.md D1266) The place among its steps of the
+    /// filter its scan was told the conjuncts of, if that filter is the
+    /// first step to judge or change the scan's batches, only counting
+    /// before it: the filter that hears what the scan judged of each
+    /// batch (`parallel/batched.rs`).
+    pub(super) fn told_filter(&self) -> Option<usize> {
+        let first = self.steps.iter().position(|step| !matches!(step, Step::Count(_)))?;
+        (self.vets && matches!(self.steps.get(first), Some(Step::Filter(_)))).then_some(first)
+    }
 }
 
 /// A pipeline, its tables split; and, if each of its morsels is read by
@@ -174,7 +191,8 @@ fn scan_branch(
     }
     let Some(split) = split(storage, (tx, columns, told.as_ref(), rows)) else { return false };
     let scanned = db.catalog.table(table).map(|t| (columns.to_vec(), t.columns.len()));
-    out.push(Branch { split, steps: cond.map(|c| Step::Filter(c.clone())).into_iter().collect(), scanned });
+    let vets = cond.is_some_and(|c| !c.can_raise());
+    out.push(Branch { split, steps: cond.map(|c| Step::Filter(c.clone())).into_iter().collect(), scanned, vets });
     true
 }
 
@@ -187,7 +205,7 @@ fn index_branch(plan: &Plan, (db, tx, rows): (&Db, TxId, usize), told: &[Told], 
     let placed = db.probe(probe, slots)?;
     let scanned = Scanned { table, index, probe: &placed, columns, covering: *covering };
     let Some(split) = indexed::split(db, tx, &scanned, (crate::physical::parallel_rows(*est), rows))? else { return Ok(false) };
-    out.push(Branch { split, steps: judged(told.to_vec()), scanned: None });
+    out.push(Branch { split, steps: judged(told.to_vec()), scanned: None, vets: false });
     Ok(true)
 }
 

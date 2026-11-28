@@ -130,7 +130,7 @@ pub const PLACED_ROWS: [Mutation; 12] = [
         package: Package::Core,
         breaks: "a set function of an integer column is set to nothing of every row handed on ungrouped (RULES.md D1313)",
         file: STATES_FILE,
-        original: "units.push(read.map_or(0, |&unit| i128::from(unit)));",
+        original: "units.push(read.copied().unwrap_or(0));",
         replacement: "units.push(0);",
         integration: &[],
         unit: &[WRITTEN],

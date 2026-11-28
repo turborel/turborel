@@ -47,7 +47,7 @@ use super::super::group::{Group, Seal, Zone};
 use super::super::scan::Reading;
 use super::super::sketch::{Verdict, Verdicts};
 use super::super::{Chunk, padding};
-use super::{Against, KEPT_SHARE, Pred, entries, lengths, sketched, sorted, text_keeps};
+use super::{Against, KEPT_SHARE, Pred, Reach, entries, lengths, sketched, sorted, text_keeps};
 use crate::error::Result;
 use crate::storage::Liked;
 use crate::storage::mask::index;
@@ -58,7 +58,10 @@ use std::cmp::Ordering;
 /// `to` of `group`, that `pred` keeps, of a column of type `t`, if every
 /// chunk the run reads of it is coded by symbols or a dictionary in order
 /// and the conjunct is judged of text (`text_keeps`): none if not, the
-/// column then decoded.
+/// column then decoded. With them, how far the conjunct itself was
+/// evaluated of the rows asked (RULES.md D1266): of every one, or, if a
+/// sketch's codes answered for some, which is a summary's word for the
+/// row's text, of a part.
 ///
 /// # Errors
 ///
@@ -69,13 +72,14 @@ pub(super) fn kept<S: Seal>(
     (pred, t): (&Pred, &DataType),
     (from, to): (u32, u32),
     given: Option<&[u32]>,
-) -> Result<Option<Vec<u32>>> {
+) -> Result<Option<(Vec<u32>, Reach)>> {
     if padding(t).is_none() || text_keeps(&pred.conjunct, &|_| Some(Ordering::Equal)).is_none() {
         return Ok(None);
     }
-    // Of a column the scan gives measured, by the lengths it takes (RULES.md D1267).
+    // Of a column the scan gives measured, by the lengths it takes (RULES.md D1267): the conjunct itself of each row
+    // asked, as a string's octets order against none as its length does against 0 (RULES.md D1266).
     if let Some(rows) = lengths::kept(group, (pages, &mut *prepared), (pred, t), (from, to), given)? {
-        return Ok(Some(rows));
+        return Ok(Some((rows, Reach::Every)));
     }
     // Symbols of VARCHAR alone, never padded, as the table codes no other.
     let symbols = padding(t) == Some(None);
@@ -95,7 +99,7 @@ pub(super) fn kept<S: Seal>(
             return Ok(None);
         }
     }
-    Ok(Some(out))
+    Ok(Some((out, if sketch.is_none() { Reach::Every } else { Reach::Part })))
 }
 
 /// Each chunk of `zones` the run `from` to `to` reads, with the rows of
@@ -122,7 +126,11 @@ fn parted<'z, 'r>(zones: &'z [Zone], all: &'r [u32], (from, to): (u32, u32)) -> 
 /// it cannot judge so are all kept, for the filter to judge, and so are
 /// the rows of the chunks left once the run is seen to be one given
 /// whole (`whole_by`). None, of a column of another type, as a
-/// CHARACTER string is padded as it is read, which no chunk holds.
+/// CHARACTER string is padded as it is read, which no chunk holds. With
+/// the rows, how far the LIKE was evaluated of those asked (RULES.md
+/// D1266): of every one; of those before the first row of the chunks
+/// left when the judging stopped, which are kept unjudged; or, if a chunk
+/// gave way, of a part.
 ///
 /// # Errors
 ///
@@ -133,7 +141,7 @@ pub(super) fn liked<S: Seal>(
     (pred, like, t): (&Pred, &Liked, &DataType),
     (from, to): (u32, u32),
     given: Option<&[u32]>,
-) -> Result<Option<Vec<u32>>> {
+) -> Result<Option<(Vec<u32>, Reach)>> {
     if padding(t) != Some(None) {
         return Ok(None);
     }
@@ -143,7 +151,7 @@ pub(super) fn liked<S: Seal>(
     // The steps made are kept by the chunks opened, taken while a chunk
     // is read of them and put back whatever reading gives.
     let mut stepped = std::mem::take(&mut prepared.stepped);
-    let (mut out, mut asked, mut read) = (Vec::new(), 0_usize, Ok(()));
+    let (mut out, mut asked, mut read, mut every) = (Vec::new(), 0_usize, Ok(()), true);
     let mut chunks = parted(zones, &all, (from, to)).into_iter();
     for (zone, these) in chunks.by_ref() {
         let (first, before) = (zone.run.first, out.len());
@@ -153,7 +161,7 @@ pub(super) fn liked<S: Seal>(
                 .or_else(|| liked_of(chunk, (pred.at, like, &mut stepped), (first, from), these, &mut out)))
         });
         match judged {
-            Ok(judged) => or_all(judged, these, (before, &mut out)),
+            Ok(judged) => every = or_all(judged, these, (before, &mut out)) && every,
             Err(e) => {
                 read = Err(e);
                 break;
@@ -164,10 +172,23 @@ pub(super) fn liked<S: Seal>(
             break;
         }
     }
-    // The chunks left when the run was seen to be given whole.
+    // The chunks left when the run was seen to be given whole, each
+    // holding a row asked, kept unjudged from the first row of the first.
+    let unjudged = chunks.as_slice().first().and_then(|(_, these)| these.first().copied());
     chunks.for_each(|(_, these)| out.extend_from_slice(these));
     prepared.stepped = stepped;
-    read.map(|()| Some(out))
+    read.map(|()| Some((out, reach(every, unjudged))))
+}
+
+/// \[DESIGN\] (RULES.md D1266) How far a LIKE was judged of the rows
+/// asked of a run: `every` chunk read was judged, none giving way, and
+/// `unjudged` is the first row of the chunks left unread, if any were.
+fn reach(every: bool, unjudged: Option<u32>) -> Reach {
+    match (every, unjudged) {
+        (true, None) => Reach::Every,
+        (true, Some(place)) => Reach::Before(place),
+        (false, Some(_) | None) => Reach::Part,
+    }
 }
 
 /// \[DESIGN\] (RULES.md D1251) Whether a run of `rows` rows, of which
@@ -187,12 +208,15 @@ fn whole_by((kept, asked): (usize, usize), (all, rows): (usize, usize)) -> bool 
 /// What judging a chunk gave of `these`, pushed to `out` past its first
 /// `before` rows: as it is, if the chunk was judged; else every row of
 /// `these` in the place of those pushed before the chunk gave way, as
-/// the filter judges what the scan does not.
-fn or_all(judged: Option<()>, these: &[u32], (before, out): (usize, &mut Vec<u32>)) {
+/// the filter judges what the scan does not. Whether the chunk was
+/// judged: the rows of one that gave way are kept unjudged, so the LIKE
+/// is not judged exactly of the run (RULES.md D1266).
+fn or_all(judged: Option<()>, these: &[u32], (before, out): (usize, &mut Vec<u32>)) -> bool {
     if judged.is_none() {
         out.truncate(before);
         out.extend_from_slice(these);
     }
+    judged.is_some()
 }
 
 /// Pushes to `out` the rows of `these`, places from `from`, that `like`,

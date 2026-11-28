@@ -64,14 +64,18 @@ impl Widen {
 }
 
 /// \[DESIGN\] (RULES.md D1300) Whether what reads a partition of
-/// `grouping` reads its groups where they lie: the first rows of a sort,
-/// and no second grouping over it, whose table reads the first's groups
-/// as a table (RULES.md D1281). Only of such a grouping does a partition
-/// go wide. Any other reader has the wide partition gathered into a
-/// table, which writes every group a second time and saves nothing a
-/// merge into the table would have cost.
+/// `grouping` reads its groups where they lie. That is the first rows of
+/// a sort whose every key names a set function, which picks its groups
+/// before their rows are made (RULES.md D1256), with no second grouping
+/// over it, whose table reads the first's groups as a table (RULES.md
+/// D1281). Only of such a grouping does a partition go wide. Any other
+/// reader, a sort by a grouping column among them, has the wide
+/// partition gathered into a table, which writes every group a second
+/// time and saves nothing a merge into the table would have cost.
 fn lies(grouping: &Grouping) -> bool {
-    grouping.top.is_some() && grouping.outer.is_none()
+    let width = grouping.read.as_ref().map_or(0, |read| read.groups.len());
+    let picked = grouping.top.as_ref().is_some_and(|top| top.sorted_by(width).is_some());
+    picked && grouping.outer.is_none()
 }
 
 /// A partition's groups between waves, as they go to another thread: a
@@ -156,9 +160,9 @@ impl Merging {
 
 /// The groups a partition of `grouping` gives of `merged`, finished, as
 /// `Grouping::kept_of` gives a table's. Of a wide partition asked the
-/// first rows of a sort, and no second grouping over it, they are picked
-/// where the groups lie (`top.rs`). For every other reader it is
-/// gathered into a table.
+/// first rows of a sort by set functions, and no second grouping over
+/// it, they are picked where the groups lie (`top/wide.rs`). For every
+/// other reader it is gathered into a table.
 ///
 /// # Errors
 ///

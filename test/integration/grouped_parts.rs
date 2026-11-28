@@ -268,6 +268,9 @@ fn a_join_keyed_by_a_groupings_columns_gives_the_plans_rows() {
 #[test]
 fn an_analyzed_sort_takes_its_first_rows_from_the_tables() {
     let (_db, a) = tables();
+    // The select list's constant stays below the FETCH FIRST, where its
+    // rows are counted (RULES.md D1306).
+    exec(&a, "SET OPTIMIZER.COMPUTE_AFTER_FETCH_FIRST = 'OFF'").unwrap();
     let counted = |sql: &str| -> (u64, Option<u64>, Option<u64>) {
         let (alone, together, shown) = both(&a, sql);
         assert!(grouped_part(&shown), "{sql}\n{shown}");
