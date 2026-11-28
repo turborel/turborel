@@ -23379,9 +23379,18 @@ in all, so that the partitions merge the rows anyway into tables that
 stay small, it was ahead at 730 and above. The bound sits between the
 ratio measured level and the least measured ahead of both kinds.
 
-One morsel in sixteen still makes a table. It gives back a sixteenth of
-what the others save, and data that turns to few groups is grouped in
-its morsels again within sixteen of them.
+A morsel now and then still makes a table, a probe. The first comes
+sixteen morsels after the last table that reduced its rows, and the gap
+to each next is twice the last while no probe reduces. So the morsels
+handed on between two probes are never more than those handed on since
+that table: data that turns to few groups is seen after as many morsels
+more as were handed on already, at most, and what a turn seen late
+costs is no more than the hand-over cost so far. A grouping that never
+reduces probes as many times as its morsels halve to sixteen, where a
+probe every sixteenth morsel gave back a sixteenth of what the others
+saved. A probe that reduces has every morsel make its table again, and
+the next probes are counted from it. No bound is put on the gap, as
+none is needed for that.
 
 Two things follow from rows of one key arriving as several groups. A
 partition's table finds a key the morsel holds twice in the group its
