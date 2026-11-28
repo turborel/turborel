@@ -23211,24 +23211,34 @@ chunk is a buffer made once with its room and filled no further, so a
 text stays where it was written and a lane that grows copies nothing it
 holds. A group's text is told by its chunk and where it lies there,
 twelve bytes a group. A new chunk is made with room for as much text as
-the lane holds, at least 1 KiB and at most 64 KiB. So a lane of few short
-texts holds little, a lane of many makes a chunk for every 64 KiB, and no
-lane holds more room unfilled than its texts fill or than one chunk. A
-text longer than 64 KiB has a chunk of its own, of its length, and the
+the lane holds, at least 1 KiB and at most 1 MiB. So a lane of few short
+texts holds little, a lane of many makes a chunk for every mebibyte, and
+no lane holds more room unfilled than its texts fill or than one chunk.
+A text longer than 1 MiB has a chunk of its own, of its length, and the
 chunk open before it stays open. A text of four gibibytes or more is not
 told by a place of 32 bits, and turns the lane into values as a value of
 another type does (D356). Nothing is sized by an estimate of the groups.
 
-Both bounds were measured, on the lanes alone, in the shape of a grouping
+Both bounds were measured. On the lanes alone, in the shape of a grouping
 of tens of millions of text keys of 7 to 7,770 octets made by eight
-threads and merged into 64 partitions. With at most 32 KiB to 16 MiB a
-chunk the lanes cost the same, and with 16 KiB their merge cost more.
-Above that the choice is of memory: a lane holds one chunk part filled,
-and a chunk under the size at which an allocator maps a buffer from the
-system by itself is taken again by the next morsel's table when one lets
-it go. A first chunk of 64 bytes to 4 KiB cost the same on lanes of four
-short texts, so it is a kibibyte, the least of what a partition holds of
-a text column while its keys are few.
+threads and merged into 64 partitions, the lanes cost the same with at
+most 32 KiB to 16 MiB a chunk, and with 16 KiB their merge cost more. A
+first chunk of 64 bytes to 4 KiB cost the same on lanes of four short
+texts, so it is a kibibyte, the least of what a partition holds of a
+text column while its keys are few.
+
+What chooses the most is the statement that runs next. A grouping's
+chunks are freed when it ends, and the system's allocator, which the
+server runs on (D765), keeps freed memory and hands the next statement
+only the blocks its requests fit. Measured in the server, a grouping by
+integers run after groupings by long texts took more fresh memory, held
+more at its peak and ran longer after chunks of 64 KiB than after chunks
+of 1 MiB or 16 MiB, which read alike, as a morsel's lane seldom holds
+more than a few mebibytes. Run first in a server it cost the same after
+any. So the most is 1 MiB, the least measured that leaves the next
+statement room it can use. A lane holds one chunk part filled, so a
+grouping's partitions hold at most a mebibyte a text column each
+unfilled, and only once each holds that much text.
 
 A morsel's groups are put in their partitions' order with their texts
 left where they are (`Keys::gathered`, `exec/table/made.rs`). Only what

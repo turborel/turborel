@@ -33,13 +33,18 @@ const FIRST: usize = 1 << 10;
 /// text longer than it. Measured on the lanes of a grouping of tens of
 /// millions of long text keys, made by eight threads and merged into
 /// their partitions, chunks of at most 32 KiB to 16 MiB cost the same,
-/// and of 16 KiB the merge cost more. So the choice above that is of
-/// memory. A lane holds at most one chunk part filled, so a grouping's
-/// partitions hold 64 KiB a text column each unfilled at most, and a
-/// chunk stays under the size at which an allocator maps a buffer from
-/// the system by itself, so the chunks a morsel's table lets go are
-/// taken again by the next.
-const MOST: usize = 1 << 16;
+/// and of 16 KiB the merge cost more. What chooses among them is the
+/// statement that runs next. A grouping's chunks are freed when it ends,
+/// and an allocator that keeps freed memory hands the next statement
+/// only the blocks its requests fit. Measured in the server, a grouping
+/// of integers run after groupings of long texts took more fresh memory
+/// and more time after chunks of 64 KiB than after chunks of 1 MiB or
+/// 16 MiB, which read alike. So a chunk is a mebibyte at most, the least
+/// of those that leave the next statement room it can use. A lane holds
+/// one chunk part filled, so a grouping's partitions hold at most a
+/// mebibyte a text column each unfilled, and only once each holds that
+/// much text.
+const MOST: usize = 1 << 20;
 
 /// Where a group's text lies: its chunk, and from where to where in it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
