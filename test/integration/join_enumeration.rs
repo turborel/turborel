@@ -269,7 +269,7 @@ fn keyed_parts() -> Database {
     load("INSERT INTO CUSTOMER VALUES (?, ?)", (1..=10).map(|c| vec![n(c), n(c * 7)]).collect());
     load("INSERT INTO ORDERS VALUES (?, ?, ?, ?)", (1..=50).map(|o| vec![n(o), n(1 + o % 10), n(1), n(1 + o * 977 % 60_000)]).collect());
     load("INSERT INTO PART VALUES (?, ?, ?)", (1..=60_000).map(|p| vec![n(1), n(p), n(p % 91)]).collect());
-    load("INSERT INTO BIN VALUES (?, ?, ?, ?)", (1..=120_000).map(|b| vec![n(1), n(1 + b / 2), n(b % 2), n(b % 13)]).collect());
+    load("INSERT INTO BIN VALUES (?, ?, ?, ?)", (1..=120_000).map(|b| vec![n(1), n(1 + (b >> 1)), n(b % 2), n(b % 13)]).collect());
     load("INSERT INTO PRICE VALUES (?, ?, ?)", (1..=60_000).map(|p| vec![n(1), n(p), n(p % 97)]).collect());
     s.commit().unwrap();
     for table in ["CUSTOMER", "ORDERS", "PART", "BIN", "PRICE"] {
