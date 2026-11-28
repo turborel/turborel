@@ -461,6 +461,41 @@ fn chunks_of_runs_give_their_values_and_where_each_run_ends() {
     assert_eq!((read, units.len(), ends.len()), (Some(false), 0, 0), "a frame of reference, nothing read");
 }
 
+/// Verifies: [DESIGN] RULES.md D1340 a chunk of runs gives its values at
+/// positions that ascend, and whether each is null, as its values read
+/// one at a time give them, a null's run the one before it; a chunk of
+/// another encoding says it keeps no runs and pushes nothing; a position
+/// past the end gives nothing.
+#[test]
+fn chunks_of_runs_give_their_values_at_positions() {
+    let chunk_of = |values: &[Value]| {
+        let fields = Fields::of(&INTEGER, values.iter().cloned()).unwrap();
+        fields.chunk(&INTEGER, 0, (fields.len(), true)).unwrap()
+    };
+    let values: Vec<Value> =
+        (0..2000_i128).map(|n| if n % 97 == 5 || n < 2 { Value::Null } else { int(n.checked_div(250).unwrap()) }).collect();
+    let bytes = chunk_of(&values);
+    let chunk = Chunk::parse(&bytes).unwrap();
+    let mut unpacked = runs::Unpacked::default();
+    for positions in [vec![0, 1, 2, 5, 102, 249, 250, 1999], vec![3, 1000], vec![248, 251, 499, 500, 501]] {
+        let (mut units, mut nulls) = (vec![5], Mask::default());
+        let span = (positions[0], positions[positions.len() - 1]);
+        assert_eq!(chunk.ints_among(positions.iter().copied(), span, (&mut units, &mut nulls), &mut unpacked), Some(true), "{positions:?}");
+        for (n, &p) in positions.iter().enumerate() {
+            let alone = chunk.value(p, &INTEGER).unwrap();
+            assert_eq!(nulls.get(n), alone.is_null(), "{positions:?}: null {p}");
+            let held = if p < 250 { 0 } else { p / 250 };
+            assert_eq!(units[n + 1], i64::try_from(held).unwrap(), "{positions:?}: value {p}");
+        }
+        assert_eq!((units[0], units.len(), nulls.len()), (5, 1 + positions.len(), positions.len()), "{positions:?}");
+    }
+    let (mut units, mut nulls) = (Vec::new(), Mask::default());
+    assert_eq!(chunk.ints_among([3, 2000].into_iter(), (3, 2000), (&mut units, &mut nulls), &mut unpacked), None, "past the end");
+    let framed = chunk_of(&(0..300_i128).map(int).collect::<Vec<_>>());
+    let read = Chunk::parse(&framed).unwrap().ints_among([3, 9].into_iter(), (3, 9), (&mut units, &mut nulls), &mut unpacked);
+    assert_eq!((read, units.len(), nulls.len()), (Some(false), 0, 0), "a frame of reference, nothing read");
+}
+
 /// Verifies: [DESIGN] RULES.md D354 a chunk of truth values, of every
 /// encoding it is written in (all alike, a constant; nulls among them; of
 /// two values, fixed or a dictionary), gives as bits what its values read

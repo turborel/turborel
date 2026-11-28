@@ -7,7 +7,7 @@
 use super::{Mutation, Package};
 
 /// The mutations of the reads, in the order they run.
-pub const READS: [Mutation; 44] = [
+pub const READS: [Mutation; 48] = [
     Mutation {
         name: "zone-write-visible",
         package: Package::Core,
@@ -147,6 +147,46 @@ pub const READS: [Mutation; 44] = [
         replacement: "        out.truncate(start.saturating_add(if spread.is_some() { count.saturating_add(LINE) } else { 0 }));",
         integration: &[],
         unit: &["engine::columns::runs::tests::runs_written_a_line_at_a_time_are_their_rows_values"],
+    },
+    Mutation {
+        name: "runs-positions-judged-by-their-count",
+        package: Package::Core,
+        breaks: "positions are judged dense among a chunk's runs by their count, not by the reads their searches take, so those a search apiece would cost more are still each found alone (RULES.md D1340)",
+        file: "src/engine/columns/runs.rs",
+        original: "dense(count.saturating_mul(steps.saturating_add(1)), runs.saturating_mul(PAIR))",
+        replacement: "dense(count, runs.saturating_mul(PAIR))",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::positions_dense_among_a_chunks_runs_are_read_along_them"],
+    },
+    Mutation {
+        name: "runs-walked-to-the-run-before",
+        package: Package::Core,
+        breaks: "a position at a run's first row is given the value of the run before it (RULES.md D1340)",
+        file: "src/engine/columns/runs.rs",
+        original: "while usize::try_from(*ends.get(r)?).ok()? <= p {",
+        replacement: "while usize::try_from(*ends.get(r)?).ok()? < p {",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::positions_dense_among_a_chunks_runs_are_read_along_them"],
+    },
+    Mutation {
+        name: "runs-last-position-of-the-first-run",
+        package: Package::Core,
+        breaks: "the last of positions each found alone is given the first's run (RULES.md D1340)",
+        file: "src/engine/columns/runs.rs",
+        original: "Some(last)",
+        replacement: "Some(first)",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::positions_dense_among_a_chunks_runs_are_read_along_them"],
+    },
+    Mutation {
+        name: "runs-walked-ends-kept-whole",
+        package: Package::Core,
+        breaks: "the ends unpacked for one walk are still held at the next (RULES.md D1340)",
+        file: "src/engine/columns/runs.rs",
+        original: "        ends.clear();",
+        replacement: "",
+        integration: &[],
+        unit: &["engine::columns::runs::tests::positions_dense_among_a_chunks_runs_are_read_along_them"],
     },
     Mutation {
         name: "runs-grouped",

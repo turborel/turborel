@@ -226,6 +226,25 @@ impl<'a> Chunk<'a> {
         Some(ran)
     }
 
+    /// \[DESIGN\] (RULES.md D1340) Of runs, its values at `positions`,
+    /// which ascend from `low` to `high`, pushed to `units`, and whether
+    /// each is null to `nulls`, the runs they span unpacked into
+    /// `unpacked` where they are dense among them (`Runs::ints_at`):
+    /// whether its encoding keeps its values as runs, nothing pushed if
+    /// not; none if they are not there.
+    pub(super) fn ints_among(
+        &self,
+        positions: impl ExactSizeIterator<Item = usize> + Clone,
+        (low, high): (usize, usize),
+        (units, nulls): (&mut Vec<i64>, &mut Mask),
+        unpacked: &mut runs::Unpacked,
+    ) -> Option<bool> {
+        let Body::Runs(runs) = &self.body else { return Some(false) };
+        runs.ints_at(positions.clone(), (low, high), units, unpacked)?;
+        positions.for_each(|p| nulls.push(self.is_null(p)));
+        Some(true)
+    }
+
     /// Its `n`th value, of type `t`.
     ///
     /// # Errors

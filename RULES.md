@@ -852,6 +852,7 @@ verification approach DO-178C expects (§8).
 | D1315 | A chunk's runs are written to their rows a line a run, unpacked into vectors the scan keeps |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
+| D1340 | Positions asked of a chunk of runs are read along its runs where their searches would cost more |
 
 ### The project
 
@@ -25377,6 +25378,40 @@ displacements, and a spread of a fixed seed. No datetime holds a leap
 second, so none is among them. An integration test holds queries of
 both engines, in sessions of three displacements, to the rows they give
 a row at a time.
+
+#### D1340. Positions asked of a chunk of runs are read along its runs where their searches would cost more
+
+A scan that kept some rows of a run reads the other columns at the
+positions kept (D360). Of each chunk the positions are read as a range
+if they follow one another, by decoding their span whole if they are
+dense among its rows, and else each alone (`packed::dense`). The rule
+weighs a value read alone against the values of a block, which is right
+of a frame of reference, where a value read alone is one read. Of a
+chunk of runs it is not. A position's run is found by a search of the
+runs' ends, as many reads as the runs' count has bits, and then its
+value is read. A grouping under a condition that keeps a small share of
+the rows, over columns kept as runs of a few rows, read most of its
+values so, a search a row, and a profile showed those searches as the
+largest single cost of reading the rows it kept.
+
+Of a chunk of runs the positions are now weighed against its runs, not
+its rows (`engine/columns/runs.rs`, `Runs::ints_at`). The runs of the
+first and the last position are found, which tells how many runs the
+positions span. Reading the positions alone takes, for each, the bits of
+the runs' count in reads and one more for the value, and each read
+alone costs what `packed::DENSE_SPAN` values unpacked in a block cost,
+the constant D360 measured. Reading along the runs unpacks two values a
+run of the span, its value and its end. Where the first is not less than
+the second, the span's runs are unpacked once, into the vectors the scan
+keeps (D1315), and the positions are walked along them, each position's
+run the first whose end is past it, looked for from the run of the
+position before. No row is written. Where the positions are fewer than
+that, each is found by its own search as before, the first's and the
+last's by the two searches already made.
+
+Positions that follow one another are read as a range as before, and a
+chunk of another encoding is read as before. The values and the nulls
+are those read before.
 
 ## 2. Project layout
 
