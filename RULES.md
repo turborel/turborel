@@ -20789,6 +20789,11 @@ encoded and the bytes of the pages they take. Each chunk's kind and
 length are read from the chunk itself (`rows/sizes.rs`), so groups any
 build wrote show them, and no group's format changes; reading the view
 reads every group's pages. Of a tree's rows, of either store, it is ROW.
+A VARCHAR column's lengths lane (D1319) is listed as rows of the column
+with the encoding LENGTHS, whatever encodes its chunks. Those rows count
+the column's rows again, so a sum of ROW_COUNT by column leaves LENGTHS
+out, and a sum of bytes that takes them in is what the column takes with
+its lane.
 TABLE_STATISTICS reads no chunk
 (`TableStorage::sizes`, asked without the columns).
 
@@ -24559,7 +24564,8 @@ lanes, as every group writer goes through one place.
 
 INFORMATION_SCHEMA.COLUMN_STORAGE shows a lane's chunks as rows of
 their column with the encoding LENGTHS, so what the lanes take is read
-there. A group's pages include its lanes', so they are freed with it.
+there (D1165). A group's pages include its lanes', so they are freed
+with it.
 
 ## 2. Project layout
 

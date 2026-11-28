@@ -8,7 +8,10 @@
 //! FRAME, DICTIONARY, RUNS, ALP, FSST), as each chunk's first byte names
 //! it: their count, the rows they hold, their bytes encoded, and the bytes
 //! of the pages they take, a page each of a chunk on a page of its own.
-//! Reading the view reads each chunk, so it reads every group's pages. Of a tree's rows, of either store, it is
+//! Reading the view reads each chunk, so it reads every group's pages. A
+//! VARCHAR column's lengths lane (RULES.md D1319) is rows of the column
+//! with the encoding LENGTHS, which count the column's rows again, so a
+//! sum of ROW_COUNT by column leaves them out. Of a tree's rows, of either store, it is
 //! ROW: the rows, and their number times the column's mean width the
 //! table's statistics last measured, NULL if they never did; no chunks and
 //! no pages, as a column's values share the tree's pages with the others'.
