@@ -323,7 +323,7 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
 /// window narrowed's and a join built in passes' last, as `last` holds no
 /// more.
-fn closing() -> [&'static [Mutation]; 39] {
+fn closing() -> [&'static [Mutation]; 40] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
