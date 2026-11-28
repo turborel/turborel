@@ -137,11 +137,12 @@ const PARTITIONS: usize = 64;
 /// Verifies: [DESIGN] (RULES.md D1226) groupings run in parallel at the
 /// smallest MEMORY.WORK_BYTES, whose partitions outgrow it many times,
 /// write their partitions to the spill as they merge them, a run a
-/// partition a wave, in the one area of their grant, not after giving
-/// way as a grouping given way to does, which spills in an area more;
-/// and give the rows they give run alone a row at a time, in their
-/// order, with their spilled partitions split again where one outgrows
-/// the grant.
+/// partition a wave, so each partition is written many times over, not
+/// once after giving way as a grouping given way to is; and give the
+/// rows they give run alone a row at a time, in their order, with their
+/// spilled partitions split again where one outgrows the grant. That
+/// such a grouping keeps to its own area is shown where its groups are
+/// not all given back (`a_grouping_spilled_holds_its_partitions_in_one_area`).
 ///
 /// The thread a run is made on is not asserted. A partition's unit of a
 /// wave is taken by a worker or by the statement's thread, whichever
@@ -158,9 +159,8 @@ fn partitions_past_the_grant_are_spilled_by_their_threads() {
     threads.taken();
     for (q, expected) in QUERIES.iter().zip(&in_memory) {
         assert_eq!(&parallel(&a, q), expected, "{q}");
-        let Seen { made_on, written, areas } = threads.taken();
+        let Seen { made_on, written, .. } = threads.taken();
         let shown = a.physical_plan(q, &turborel::params::Params::new()).unwrap();
-        assert_eq!(areas, 1, "{q}: the grouping's own area alone, none of a grouping given way to\n{shown}");
         assert!(
             made_on.len() >= PARTITIONS.saturating_mul(2),
             "{q}: a run a partition a wave, of waves many times the grant: {} runs, {written} bytes\n{shown}",
