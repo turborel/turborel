@@ -205,7 +205,7 @@ fn handed_on<'p>(at: &'p LogicalPlan, place: usize, out: &mut Vec<Made<'p>>) -> 
 /// Whether `e`, over the rows of `over`, gives the same value of the same
 /// columns each time and can neither raise nor warn, so it may be
 /// evaluated of other rows than it was (RULES.md D15).
-fn quiet(e: &Expr, over: &LogicalPlan, catalog: &dyn Catalog) -> bool {
+pub(in crate::optimizer) fn quiet(e: &Expr, over: &LogicalPlan, catalog: &dyn Catalog) -> bool {
     expr_pure(e) && !can_raise_typed(e, &|c| plan_column_type(over, c, catalog))
 }
 

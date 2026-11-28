@@ -34,6 +34,7 @@
 
 mod computed;
 
+pub(super) use computed::quiet;
 pub use computed::{COMPUTE_KEYS_AFTER_GROUPING, ComputeKeysAfterGrouping};
 
 use super::{Rule, RuleContext};

@@ -4,7 +4,11 @@
 //! whose values a group may tell apart, a column of another node or one
 //! of the operand an outer join extends with nulls, with a group made
 //! before any row or with no column kept, the projection below losing a
-//! column a set function reads, and a select list that may raise merged.
+//! column a set function reads, and a select list that may raise merged;
+//! and of the select list computed after FETCH FIRST (D1306): an
+//! expression moved that may raise or that the sort reads, the sort's
+//! keys left where they were, and the columns the expressions read not
+//! handed on.
 
 use super::super::{Mutation, Package};
 
@@ -17,8 +21,17 @@ const NOT_COMPUTED: &str = "rewrites::computed_keys::a_grouping_column_that_may_
 /// The test of grouping columns computed after the grouping.
 const COMPUTED: &str = "rewrites::computed_keys::a_grouping_column_computed_of_the_others_is_computed_after_the_grouping";
 
-/// The mutations of the rule.
-pub const COMPUTED_KEYS: [Mutation; 9] = [
+/// The file of the select list computed after FETCH FIRST.
+const LATE_LIST_FILE: &str = "src/optimizer/late_fetch/projected.rs";
+
+/// The test of select lists that stay below their FETCH FIRST.
+const NOT_LATE: &str = "rewrites::computed_late::a_select_list_that_may_not_be_computed_late_is_left";
+
+/// The test of expressions computed after FETCH FIRST.
+const LATE: &str = "rewrites::computed_late::expressions_of_the_select_list_are_computed_of_the_rows_kept";
+
+/// The mutations of the two rules.
+pub const COMPUTED_KEYS: [Mutation; 13] = [
     Mutation {
         name: "computed-keys-may-raise",
         package: Package::Core,
@@ -107,6 +120,46 @@ pub const COMPUTED_KEYS: [Mutation; 9] = [
         original: "all(|e| of_groups(e) && quiet(e, grouped, catalog))",
         replacement: "all(|e| of_groups(e))",
         integration: &[NOT_COMPUTED],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-list-unquiet",
+        package: Package::Core,
+        breaks: "an expression that may raise or is not deterministic is computed of the rows FETCH FIRST keeps alone (RULES.md D1306)",
+        file: LATE_LIST_FILE,
+        original: "!matches!(e, Expr::Column(_)) && quiet(e, rows, catalog)",
+        replacement: "!matches!(e, Expr::Column(_))",
+        integration: &[NOT_LATE],
+        unit: &["optimizer::late_fetch::projected::tests::a_call_not_deterministic_stays_below_the_fetch_first"],
+    },
+    Mutation {
+        name: "late-list-sort-key-moved",
+        package: Package::Core,
+        breaks: "an expression the sort reads is computed after the sort (RULES.md D1306)",
+        file: LATE_LIST_FILE,
+        original: ".all(|k| matches!(exprs.get(k.column), Some(Expr::Column(_))))",
+        replacement: ".all(|k| exprs.get(k.column).is_some())",
+        integration: &[NOT_LATE],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-list-keys-where-they-were",
+        package: Package::Core,
+        breaks: "the sort below reads its keys where the select list had them before (RULES.md D1306)",
+        file: LATE_LIST_FILE,
+        original: "SortKey { column: moved(k.column), ..*k }",
+        replacement: "SortKey { column: k.column, ..*k }",
+        integration: &[LATE],
+        unit: &[],
+    },
+    Mutation {
+        name: "late-list-columns-not-handed-on",
+        package: Package::Core,
+        breaks: "the select list below hands on no column the expressions above read (RULES.md D1306)",
+        file: LATE_LIST_FILE,
+        original: "if place_of(&below, c).is_none() {",
+        replacement: "if place_of(&below, c).is_none() && c > usize::MAX {",
+        integration: &[LATE],
         unit: &[],
     },
 ];

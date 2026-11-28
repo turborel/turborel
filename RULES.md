@@ -826,6 +826,7 @@ verification approach DO-178C expects (§8).
 | D1293 | A column store's scan does not judge a comparison that the bounds of every part of a run prove |
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1305 | A grouping column that is an expression of other grouping columns is computed after the grouping |
+| D1306 | A select list's expressions that cannot raise are computed after FETCH FIRST |
 
 ### The project
 
@@ -23885,6 +23886,42 @@ of the columns it reads (D1082).
 Not covered are SELECT DISTINCT of a column and expressions of it,
 which is no grouping in the plan, an expression of a column that is
 itself an expression, and an expression that may raise.
+
+#### D1306. A select list's expressions that cannot raise are computed after FETCH FIRST
+
+A query that sorts its rows and keeps the first of them, as `SELECT A,
+A - 1, COUNT(*) ... GROUP BY A ORDER BY 3 DESC FETCH FIRST 10 ROWS
+ONLY`, computed every expression of its select list of every row it
+sorted, though ten rows show them. A select list that holds an
+expression also kept a grouping run in parallel from giving only its
+first groups (D1124), which it does under a select list of its columns
+and of constants alone. So the grouping of D1305, with its expressions in the
+select list, ran longer than the grouping by every column written.
+
+The rule `compute_after_fetch_first`
+(`optimizer/late_fetch/projected.rs`) now computes above the FETCH
+FIRST each expression of the select list below the sort that gives the
+same value of the same columns each time and can neither raise nor
+warn, judged by its columns' declared types (D373). The select list
+below keeps every other expression where it was and hands on the
+columns the expressions moved read. A projection above the FETCH FIRST
+puts every column where it was.
+
+The rows are the same, in the same order. Which rows are kept and how
+they are ordered is the sort keys' doing alone, and OFFSET, FETCH FIRST
+of rows or of a percentage and WITH TIES read nothing else. An
+expression moved is evaluated of the rows kept alone, which hides no
+error, as it raises none (D15). An expression that may raise stays
+below and is evaluated of every row, so a row the FETCH FIRST drops
+still raises what it raised.
+
+The rule takes a sort by column references of the select list, the set
+functions of a grouping among them. A sort by an expression is left, as
+a search by a distance is planned of that shape. A FETCH FIRST with no
+sort is left, as it reads no row past those it keeps. The rule is a
+late one, after the grouping columns are computed (D1305) and before
+`fetch_dependents_late` (D1202), which then finds a select list of
+column references below the FETCH FIRST.
 
 ## 2. Project layout
 

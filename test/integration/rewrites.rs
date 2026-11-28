@@ -6,6 +6,7 @@
 //! EXPLAIN telling whether the rule rewrote it.
 
 mod computed_keys;
+mod computed_late;
 mod counted_rows;
 mod deferred_keys;
 mod dependent_keys;

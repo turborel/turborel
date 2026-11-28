@@ -53,7 +53,7 @@ use crate::logical::{
 };
 use crate::settings::{Key, OPTIMIZER_MAX_PASSES};
 pub use inlining::{INLINE_FUNCTIONS, InlineFunctions};
-pub use late_fetch::{FETCH_DEPENDENTS_LATE, FetchDependentsLate};
+pub use late_fetch::{COMPUTE_AFTER_FETCH_FIRST, ComputeAfterFetchFirst, FETCH_DEPENDENTS_LATE, FetchDependentsLate};
 pub use unnesting::{MARK_JOINS, MarkJoins, SEMI_JOINS, SemiJoins, UNNEST_SUBQUERIES, UnnestSubqueries};
 
 /// The names of the built-in rules, as EXPLAIN shows them and their
@@ -218,7 +218,8 @@ impl Optimizer {
         // Before the columns the others determine are carried (RULES.md D1305).
         o.add_late(Box::new(ComputeKeysAfterGrouping));
         o.add_late(Box::new(ReduceGroupingKeys));
-        // After the columns a grouping's keys determine are carried.
+        // After the columns a grouping's keys determine are carried, the select list's expressions first (RULES.md D1306).
+        o.add_late(Box::new(ComputeAfterFetchFirst));
         o.add_late(Box::new(FetchDependentsLate));
         o
     }

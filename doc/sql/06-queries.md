@@ -1494,6 +1494,25 @@ those kept is read, unless computing one can raise an exception, as a
 division by zero does. Then every row is read, and the exception is
 raised as it would be if every row were kept.
 
+An expression of the select list that cannot raise an exception and
+gives the same value of the same values each time is computed of the
+rows kept alone, after the sort, where the sort is by columns of the
+select list. The rows and their order are the same.
+[EXPLAIN](statements/explain.md) names the rule
+compute_after_fetch_first where it rewrote a plan.
+
+```sql
+SELECT NAME, SALARY * 12 AS YEARLY FROM STAFF ORDER BY NAME FETCH FIRST 2 ROWS ONLY;
+```
+
+```
+ NAME                           |        YEARLY
+--------------------------------+---------------
+ Ada                            |      86400.00
+ Barbara                        |          NULL
+(2 rows)
+```
+
 Over GROUP BY with no ORDER BY, the clauses keep some of the groups, and
 which is left to the order the groups come in. Each row kept is a whole
 group, its set functions of every row of it. The grouping then makes

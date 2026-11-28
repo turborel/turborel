@@ -33,6 +33,10 @@
 //! fetched where the fetch so counted reads fewer rows than the grouping
 //! is estimated to group.
 
+mod projected;
+
+pub use projected::{COMPUTE_AFTER_FETCH_FIRST, ComputeAfterFetchFirst};
+
 use super::dependent_keys::by_own;
 use super::{Rule, RuleContext};
 use crate::binder::{Known, group_value};
