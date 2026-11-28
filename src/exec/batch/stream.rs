@@ -574,7 +574,7 @@ fn scan_of(scan: (&QualifiedName, &[usize], Option<&Cond>), deferred: &Deferred,
     if !more.is_empty() {
         pushed.get_or_insert_with(|| Conjunction(Vec::new())).0.extend(more);
     }
-    let batches = storage.scan_batches(tx, scan.1, pushed.as_ref(), &deferred.late_of(scan.1));
+    let batches = storage.scan_measured(tx, (scan.1, pushed.as_ref()), (&deferred.late_of(scan.1), &deferred.measured_of(scan.1)));
     let batches: Batches =
         Box::new(counted(batches, db.tx.stop_of(tx), |b| u64::try_from(b.rows).unwrap_or(u64::MAX)).map(|b| b.map(|b| (b, None))));
     Ok(runtime::applied(batches, told.to_vec(), scan.1, (db, true)))

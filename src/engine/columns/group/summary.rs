@@ -110,6 +110,7 @@ impl Summary {
             | Conjunct::Any(_)
             | Conjunct::Dynamic { .. }
             | Conjunct::Spans { .. }
+            | Conjunct::Among { .. }
             | Conjunct::Unpadded { .. }
             | Conjunct::Like { .. } => {
                 let mut bounds: Vec<Option<(Value, Value)>> = vec![None; column.saturating_add(1)];

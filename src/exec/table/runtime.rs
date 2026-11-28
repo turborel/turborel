@@ -25,6 +25,12 @@
 //! with no false hit, in place of the key set and the Bloom filter, in
 //! fewer bits a key than the Bloom filter's.
 //!
+//! Of an exact key the scan is told the keys too (`storage::Members`,
+//! RULES.md D1294): the bitmap, the key set, or, of whole numbers, the
+//! Bloom filter's words and the seed of their hashes. A column store's
+//! scan asks them of each run of the key's column before it decodes the
+//! others, and the filter judges the rows it gives as before.
+//!
 //! A row it drops is one the join drops: its key outside the range, or
 //! not in the filter, matches no built key, and a null matches none but
 //! on a key whose nulls match, of which no range is made and whose
@@ -34,16 +40,18 @@
 //! batches stops judging them, as Behm et al. (SIGMOD 2022) stop a
 //! runtime filter that does not pay.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::hash::Seed;
 use super::join::{DENSE_SPAN, Hashing, KeyHashes};
 use crate::error::Result;
+use crate::hash::xxhash::Words;
 use crate::index::Probe;
 use crate::kernels::Kernels;
 use crate::kernels::portable::bloom::{BLOCK_WORDS, bits_of, block_of};
 use crate::storage::{Batch, Column};
-use crate::storage::{Condition, Conjunct};
+use crate::storage::{Condition, Conjunct, Held, Members};
 use crate::value::{CompOp, Decimal, Value};
 
 /// \[DESIGN\] The most built rows a Bloom filter is made of: its bits, 8 a
@@ -101,6 +109,10 @@ pub(in crate::exec) struct RuntimeFilter {
     /// Whether texts are hashed by SipHash (RULES.md D369), as the join's
     /// table hashed them.
     keyed: bool,
+    /// \[DESIGN\] (RULES.md D1294) Its keys as a scan is told them, of
+    /// an exact key: its bitmap, its key set, or, of whole numbers, its
+    /// Bloom filter.
+    members: Option<Arc<Members>>,
     /// The rows of its first batches judged, and those it kept.
     judged: AtomicUsize,
     kept: AtomicUsize,
@@ -131,6 +143,18 @@ impl RuntimeFilter {
             return None;
         }
         let (seed, keyed) = (how.seed.clone(), how.keyed);
+        let members = range.and_then(|(least, _, scale)| {
+            let told = if let Some(bits) = &bitmap {
+                Held::Bits { least, words: bits.clone() }
+            } else if let Some(keys) = &keys {
+                Held::Keys(keys.clone())
+            } else {
+                // Its hashes are of whole numbers hashed as words alone.
+                let words = bloom.clone().filter(|_| scale == 0 && !how.direct)?;
+                Held::Bloom { words, hash: Words::new(seed.word_seed()) }
+            };
+            Some(Arc::new(Members::new(told, scale, TRIED)))
+        });
         Some(RuntimeFilter {
             nulls,
             range,
@@ -140,6 +164,7 @@ impl RuntimeFilter {
             bloom,
             seed,
             keyed,
+            members,
             judged: AtomicUsize::new(0),
             kept: AtomicUsize::new(0),
             batches: AtomicUsize::new(0),
@@ -147,8 +172,8 @@ impl RuntimeFilter {
     }
 
     /// The conjuncts a scan of column `column` is told of its range: the
-    /// key at least its least and at most its greatest; and its spans, if
-    /// it has them (RULES.md D600).
+    /// key at least its least and at most its greatest; its spans, if it
+    /// has them (RULES.md D600); and its keys (RULES.md D1294).
     pub(in crate::exec) fn range_conjuncts(&self, column: usize) -> Vec<Conjunct> {
         let Some((least, most, scale)) = self.range else { return Vec::new() };
         let exact = |units: i64| Value::Exact(Decimal::new(i128::from(units), scale));
@@ -157,6 +182,11 @@ impl RuntimeFilter {
         let mut told = vec![bound(CompOp::Ge, least), bound(CompOp::Le, most)];
         if let Some(spans) = &self.spans {
             told.push(Conjunct::Spans { column, spans: spans.iter().map(|&(a, b)| (exact(a), exact(b))).collect() });
+        }
+        // Its keys, which a column store's scan asks of each run before
+        // it decodes the other columns (RULES.md D1294).
+        if let Some(members) = &self.members {
+            told.push(Conjunct::Among { column, members: Arc::clone(members) });
         }
         told
     }
@@ -400,7 +430,7 @@ mod tests {
         let kept = kept(&f, &probes);
         assert!(built.iter().all(|&k| kept.contains(&u32::try_from(k).unwrap())), "every built key kept");
         assert!(kept.len() < 1_100, "few of the 2,000 keys not built kept, found {}", kept.len());
-        assert_eq!(f.range_conjuncts(4).len(), 3, "the range and the spans of its keys");
+        assert_eq!(f.range_conjuncts(4).len(), 4, "the range, the spans of its keys and the keys");
     }
 
     /// Verifies: [DESIGN] RULES.md D369 (MC/DC): a filter judges its first
@@ -431,7 +461,7 @@ mod tests {
         assert_eq!(few.keys.as_deref(), Some(&[3_i64, 9, 700][..]));
         assert!(few.blooms());
         assert_eq!(kept(&few, &[300, 400, 900, 70_000, 70_001]), vec![0, 2, 3], "exactly the keys at another scale");
-        assert_eq!(few.range_conjuncts(0).len(), 3, "the range and the spans");
+        assert_eq!(few.range_conjuncts(0).len(), 4, "the range, the spans and the keys");
         let most = i64::try_from(KEYSET_MAX).unwrap();
         let wide: Vec<i64> = (0..most + 100).map(|k| k * 10 - k % 50 * 9).collect();
         let (keys, spans) = keyset_of(&Ints::new(wide.clone(), 0, None));
@@ -460,5 +490,40 @@ mod tests {
         let past = [built.as_slice(), &[21_004]].concat();
         assert!(filter(&past).bitmap.is_none(), "a range of 20005 of 5001 rows");
         assert!(filter(&past).bloom.is_some());
+    }
+
+    /// Verifies: [DESIGN] RULES.md D1294: the keys a filter tells a scan
+    /// hold, of whole numbers in its range, the rows the filter itself
+    /// keeps: of dense keys by its bitmap, of a few by its key set, and
+    /// of many apart by its Bloom filter, asked the hash the join made,
+    /// so the same false hits and no built key lost. A filter of a key
+    /// whose nulls match tells no keys.
+    #[test]
+    fn the_keys_told_a_scan_hold_what_the_filter_keeps() {
+        let told = |f: &RuntimeFilter| {
+            let keys = |c: Conjunct| if let Conjunct::Among { members, .. } = c { Some(members) } else { None };
+            f.range_conjuncts(0).into_iter().find_map(keys)
+        };
+        let probes: Vec<i64> = (-50..230_000).collect();
+        let batch = Batch { columns: vec![Column::Ints(Ints::new(probes.clone(), 0, None))], rows: probes.len() };
+        let dense: Vec<i64> = (0..5_000).map(|k| k * 4 + 1_000).collect();
+        let apart: Vec<i64> = (0..6_000).map(|k| k * 37).collect();
+        for built in [dense, vec![9, 3, 3, 700], apart] {
+            let f = filter(&built);
+            let members = told(&f).unwrap();
+            let (least, most) = (*built.iter().min().unwrap(), *built.iter().max().unwrap());
+            let held = |&(&u, _): &(&i64, u32)| (least..=most).contains(&u) && members.may_hold(u, 0);
+            let by_keys: Vec<u32> = probes.iter().zip(0_u32..).filter(held).map(|(_, n)| n).collect();
+            assert_eq!(by_keys, f.kept((&batch, 0), (None, (true, true)), &Portable).unwrap(), "{} keys built", built.len());
+            assert!(built.iter().all(|&k| members.may_hold(k, 0)));
+        }
+        assert!(filter(&(0..6_000).map(|k| k * 37).collect::<Vec<i64>>()).bloom.is_some(), "the last by its Bloom filter");
+        let seed = Seed::fixed(0x5EED);
+        let how = Hashing { seed: &seed, keyed: false, direct: false, kernels: None };
+        let built = Batch { columns: vec![Column::Ints(Ints::new(vec![1, 2], 0, None))], rows: 2 };
+        let mut hashes = KeyHashes::default();
+        hashes.of_batch((&built, None), (&[0], &[true]), how).unwrap();
+        let nulls_match = RuntimeFilter::of_built(&built, (0, true), &hashes, how).unwrap();
+        assert!(told(&nulls_match).is_none() && nulls_match.range_conjuncts(0).is_empty());
     }
 }

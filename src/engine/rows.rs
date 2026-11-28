@@ -93,7 +93,9 @@ use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::stats::Statistics;
-use crate::storage::{Condition, Conjunction, Garbage, Near, Newest, Region, Removed, Row, RowId, Rows, ScanOrder, Split, TableStorage};
+use crate::storage::{
+    Batches, Condition, Conjunction, Garbage, Near, Newest, Region, Removed, Row, RowId, Rows, ScanOrder, Split, TableStorage,
+};
 use crate::txn::{Concurrency, NO_TRANSACTION, Persistence, ReadMode, Timestamp, TxCapabilities, TxId, Undo};
 
 /// The name of the row store.
@@ -284,14 +286,14 @@ impl TableStorage for RowTable {
     /// row store its rows, each record decoded straight into the vectors
     /// (`rows/gathered.rs`); its frozen rows' columns of `late` as their
     /// places (`rows/frozen/late.rs`).
-    fn scan_batches(
-        self: Arc<Self>,
-        tx: TxId,
-        columns: &[usize],
-        condition: Option<&Conjunction>,
-        late: &[usize],
-    ) -> crate::storage::Batches {
-        self.scan_batches_of(tx, columns, condition.cloned(), late)
+    fn scan_batches(self: Arc<Self>, tx: TxId, columns: &[usize], condition: Option<&Conjunction>, late: &[usize]) -> Batches {
+        self.scan_batches_of(tx, columns, condition.cloned(), (late, &[]))
+    }
+
+    /// \[DESIGN\] (RULES.md D1267) As `scan_batches`, its frozen rows' columns of `asked.1` measured, late with their octet lengths
+    /// (`rows/frozen/batches/measured.rs`).
+    fn scan_measured(self: Arc<Self>, tx: TxId, what: (&[usize], Option<&Conjunction>), asked: (&[usize], &[usize])) -> Batches {
+        self.scan_batches_of(tx, what.0, what.1.cloned(), asked)
     }
 
     /// Split at row ids, of the column store at its groups' starts
@@ -334,7 +336,7 @@ impl TableStorage for RowTable {
         columns: &[usize],
         order: ScanOrder<'_>,
         conditions: Option<&Conjunction>,
-    ) -> Option<crate::storage::Batches> {
+    ) -> Option<Batches> {
         (!order.0.is_empty() && self.ordered_by().starts_with(order.0))
             .then(|| self.scan_ordered_batches_of(tx, (columns, order), conditions.cloned()))
     }

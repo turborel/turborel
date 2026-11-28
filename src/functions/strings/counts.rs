@@ -221,8 +221,14 @@ impl ScalarFunction for Length {
         Ok(counted(if matches!(self.unit, Unit::Bits) { octets.saturating_mul(u64::from(BYTE_BITS)) } else { octets }))
     }
     /// \[DESIGN\] (RULES.md D363) Of a vector of character strings, each
-    /// counted in characters or octets, as `call` counts it.
+    /// counted in characters or octets, as `call` counts it. Of a column
+    /// its scan gave measured, the octet lengths the scan took, no text
+    /// made (RULES.md D1267); characters and bits are not counted so,
+    /// as no store keeps them.
     fn eval_batch(&self, args: &[Arg<'_>], _rows: usize) -> Option<Result<Column>> {
+        if let ([Arg::Column(Column::Late(late))], Unit::Octets) = (args, self.unit) {
+            return late.lengths().map(|octets| Ok(Column::Ints(octets)));
+        }
         let [Arg::Column(Column::Texts(texts))] = args else { return None };
         let made = match self.unit {
             Unit::Characters => counted_texts(texts, |s| s.chars().count()),

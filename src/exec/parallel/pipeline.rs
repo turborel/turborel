@@ -23,10 +23,12 @@
 //! the serial stream takes them (`batch/runtime.rs`): a scan is told a
 //! filter's range among the conjuncts its split judges, so a morsel skips
 //! what lies outside it, and a step right after the operator a filter
-//! stops at judges the filters of a morsel's batches. A morsel's scan
-//! judges no Bloom filter, which costs a morsel more than the probe it
-//! spares. A morsel read a row at a time passes the step by, as a filter
-//! keeps only rows the join would drop.
+//! stops at judges the filters of a morsel's batches. A scan is told a
+//! filter's keys beside its range (RULES.md D1294), which a column store
+//! asks of each run before it decodes the other columns, while that
+//! leaves few rows of a run; the step and the probe judge the rows it
+//! gives as before. A morsel read a row at a time passes the step by, as
+//! a filter keeps only rows the join would drop.
 
 use std::sync::Arc;
 
