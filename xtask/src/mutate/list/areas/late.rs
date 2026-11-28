@@ -95,7 +95,7 @@ pub const LATE: [Mutation; 8] = [
         package: Package::Core,
         breaks: "a morsel of a column store gives the columns it is told late as their places",
         file: "src/engine/rows/split.rs",
-        original: "what, self.zones_within(range)).with_late(late)))",
+        original: "what, self.zones_within(range)).asked(given)))",
         replacement: "what, self.zones_within(range))))",
         integration: &[],
         unit: &["engine::rows::frozen::tests::morsels::morsels_give_late_columns_as_their_places"],
