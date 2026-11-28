@@ -56,7 +56,7 @@ const WIDE_WAVES: &str = "exec::parallel::grouped::waves::tests::the_groups_are_
 const WIDE_FIRST: &str = "exec::parallel::grouped::waves::tests::the_first_rows_by_a_set_function_are_the_same_of_wide_partitions";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 37] = [
+pub const GROUP_TABLE: [Mutation; 39] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -198,14 +198,34 @@ pub const GROUP_TABLE: [Mutation; 37] = [
         unit: &[],
     },
     Mutation {
-        name: "merged-groups-made-when-found",
+        name: "merged-groups-new-not-noted",
         package: Package::Core,
-        breaks: "a group a partition holds is made again of a morsel that holds it too (RULES.md D1110)",
+        breaks: "a group new to a partition is given its number and slot but its key is never appended (RULES.md D1110)",
         file: "src/exec/table/made.rs",
-        original: "            if found.is_none() {\n                fresh.push(i);",
-        replacement: "            if found.is_some() {\n                fresh.push(i);",
+        original: "                fresh.push(i);\n",
+        replacement: "",
         integration: &[],
         unit: &["exec::table::made::tests::partitions_merged_by_columns_hold_what_the_morsels_hold"],
+    },
+    Mutation {
+        name: "merged-group-not-appended-read-by-its-number",
+        package: Package::Core,
+        breaks: "a key that meets the slot of a group not yet appended is compared with the key at that group's number, not at its place (RULES.md D1275)",
+        file: "src/exec/table/made.rs",
+        original: "Some(new) => unappended_equal(made, fresh.get(new).copied(), key, scratch),",
+        replacement: "Some(new) => unappended_equal(made, u32::try_from(new).ok(), key, scratch),",
+        integration: &[],
+        unit: &["exec::table::made::tests::groups_merged_in_one_pass_are_those_found_or_made_in_turn"],
+    },
+    Mutation {
+        name: "merged-groups-dropped-past-a-long-probe",
+        package: Package::Core,
+        breaks: "the groups after the one whose probe grew past the longest are taken for looked up, so none of them is merged (RULES.md D1275)",
+        file: "src/exec/table/made.rs",
+        original: "return (n.saturating_add(1), true);",
+        replacement: "return (places.len(), true);",
+        integration: &[],
+        unit: &["exec::table::made::tests::groups_merged_in_one_pass_are_those_found_or_made_in_turn"],
     },
     Mutation {
         name: "merged-counts-not-added",
@@ -392,8 +412,8 @@ pub const GROUP_TABLE: [Mutation; 37] = [
         package: Package::Core,
         breaks: "a sort's first rows of a wide partition are picked of the groups of several rows alone, those of one row where they lie never read (RULES.md D1300)",
         file: "src/exec/parallel/grouped/top.rs",
-        original: "let batches = held.into_iter().chain(rest);",
-        replacement: "let batches = held.into_iter().chain(rest.take(0));",
+        original: "let batches = own_batch.into_iter().chain(rest);",
+        replacement: "let batches = own_batch.into_iter().chain(rest.take(0));",
         integration: &[],
         unit: &[WIDE_FIRST],
     },
@@ -402,8 +422,8 @@ pub const GROUP_TABLE: [Mutation; 37] = [
         package: Package::Core,
         breaks: "a sort's first rows of a wide partition are picked of the groups of one row alone, the partition's own table never read (RULES.md D1300)",
         file: "src/exec/parallel/grouped/top.rs",
-        original: "(table.len() > 0).then(",
-        replacement: "(table.len() > table.len()).then(",
+        original: "(held.len() > 0).then(",
+        replacement: "(held.len() > held.len()).then(",
         integration: &[],
         unit: &[WIDE_FIRST],
     },

@@ -211,7 +211,9 @@ fn a_like_is_judged_after_the_other_conjuncts() {
     let wanted = expected(&rows, &|row| below.matches_key(&[&row[0]]) && conjunct.matches_key(&[&row[1]]));
     kept_as_wanted(&kept, &wanted, false, "after a comparison");
     assert_eq!(prepared.stepped.made, 1);
-    let run = judgment.judge(&group, (&pages, &mut Prepared::default()), (&TYPES, (0, 2048)), None).unwrap();
+    // Of a run the comparison cuts: one whose every row it keeps is
+    // proved by its parts' bounds and decodes nothing (RULES.md D1293).
+    let run = judgment.judge(&group, (&pages, &mut Prepared::default()), (&TYPES, (2048, 4096)), None).unwrap();
     assert_eq!(run.decoded.iter().map(|(column, _)| *column).collect::<Vec<_>>(), [0], "the number's column alone is decoded");
     let none = judgment.judge(&group, (&pages, &mut Prepared::default()), (&TYPES, (4096, 6144)), None).unwrap();
     assert!(none.kept.is_empty(), "no row at or past 3000 is given the LIKE");

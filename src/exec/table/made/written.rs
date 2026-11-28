@@ -2,7 +2,8 @@
 //! a spill and read back as they were: how many, their keys, hashes and
 //! first rows' numbers, and each set function's states, so a partition of
 //! a grouping run in parallel is held in the spill between waves, not in
-//! memory. A partition is written in pieces of at most `PIECE` groups each,
+//! memory. No two groups written hold one key, as a morsel's rows handed
+//! on ungrouped are grouped before they are written (RULES.md D1260). A partition is written in pieces of at most `PIECE` groups each,
 //! one record a piece, so neither its writing nor its reading holds its
 //! groups twice. A piece read back is a table's groups frozen whole, its
 //! groups in the order written, merged into another table as any other.
@@ -58,7 +59,7 @@ impl Made {
         let keys = Keys::read(&mut reader, len)?;
         let states = aggs.iter().map(|agg| Sent::read(&mut reader, len, agg)).collect::<Result<Vec<_>>>()?;
         reader.finish()?;
-        Ok(Made { keys, hashes, firsts, states, places: Vec::new(), starts: Vec::new(), keyed: None })
+        Ok(Made { keys, hashes, firsts, states, places: Vec::new(), starts: Vec::new(), keyed: None, repeats: false })
     }
 
     /// \[DESIGN\] (RULES.md D1113, D1226) The partition of `parts`, at

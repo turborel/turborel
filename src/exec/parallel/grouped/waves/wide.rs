@@ -131,8 +131,9 @@ impl Merging {
 
 /// The groups a partition of `grouping` gives of `merged`, finished, as
 /// `Grouping::kept_of` gives a table's. Of a wide partition asked the
-/// first rows of a sort they are picked where the groups lie
-/// (`top.rs`). For every other reader it is gathered into a table.
+/// first rows of a sort, and no second grouping over it, they are picked
+/// where the groups lie (`top.rs`). For every other reader it is
+/// gathered into a table.
 ///
 /// # Errors
 ///
@@ -142,7 +143,9 @@ pub(super) fn kept_of(grouping: &Grouping, merged: Merging, runner: &Runner) -> 
         Merging::Table(table) => return grouping.kept_of(*table, runner),
         Merging::Wide(wide) => *wide,
     };
-    match &grouping.top {
+    // Of a pair the first rows are the second grouping's table's (RULES.md
+    // D1281), which reads the first's groups as a table.
+    match grouping.top.as_ref().filter(|_| grouping.outer.is_none()) {
         Some(top) => Ok(Run::Rows(top.of_wide(wide, &grouping.spec.aggs)?.into_iter().map(|row| (0, row)).collect())),
         None => grouping.kept_of(wide.into_table()?, runner),
     }

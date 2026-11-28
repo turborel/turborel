@@ -46,6 +46,10 @@ pub(in crate::exec) struct Made {
     /// The keyed hashes its groups are placed by, if its table took them
     /// (RULES.md D357).
     keyed: Option<Vec<u64>>,
+    /// \[DESIGN\] (RULES.md D1260) Whether two of its groups may hold one
+    /// key, as rows handed on ungrouped do. Such groups are grouped
+    /// before they go to the spill as they are (`waves.rs`).
+    repeats: bool,
 }
 
 impl Made {
@@ -56,6 +60,11 @@ impl Made {
         let states = self.states.iter().map(Sent::bytes).sum::<usize>();
         let keyed = self.keyed.as_ref().map_or(0, |k| k.capacity().saturating_mul(size_of::<u64>()));
         words.saturating_add(keyed).saturating_add(places).saturating_add(states).saturating_add(self.keys.bytes())
+    }
+
+    /// Whether two of its groups may hold one key (RULES.md D1260).
+    pub(in crate::exec) fn repeats(&self) -> bool {
+        self.repeats
     }
 
     /// How many groups of partition `part` it holds.
@@ -69,6 +78,16 @@ impl Made {
         let range = bound(part).zip(part.checked_add(1).and_then(bound));
         range.and_then(|(from, to)| self.places.get(from..to)).unwrap_or(&[])
     }
+}
+
+/// \[DESIGN\] (RULES.md D1275) Whether the group of `made` at `place`,
+/// one given its slot and not yet appended, holds `key`. Kept out of the
+/// lookup's loop, which then compares keys in one place alone, those the
+/// table holds: a key seldom meets the slot of a group not yet appended,
+/// and never of a morsel's groups no two of which share a key.
+#[inline(never)]
+fn unappended_equal(made: &Made, place: Option<u32>, key: Key<'_>, scratch: &mut Vec<u8>) -> bool {
+    place.is_some_and(|j| made.keys.equal(crate::storage::mask::index(j), key, scratch))
 }
 
 impl GroupTable {
@@ -147,6 +166,7 @@ impl GroupTable {
             places: Vec::new(),
             starts: Vec::new(),
             keyed: self.keyed,
+            repeats: self.apart,
         })
     }
 
@@ -198,25 +218,33 @@ impl GroupTable {
         self.states.iter_mut().for_each(|states| states.reserve(more));
     }
 
-    /// \[DESIGN\] (RULES.md D1110) Merges the groups at `places` of
-    /// `made` into its own, a column at a time: each looked up by its key
-    /// and hash; those new, no two of one key as they are one table's,
-    /// appended lane by lane and placed; then each set function's states
-    /// merged in one loop.
+    /// \[DESIGN\] (RULES.md D1110, D1275) Merges the groups at `places` of
+    /// `made` into its own, a column at a time and in one pass over them:
+    /// each looked up by its key and hash, and one that is new given its
+    /// slot at once (`looked_up`); then the new groups' keys, first rows
+    /// and states appended lane by lane; then each set function's states
+    /// merged in one loop. The groups, their numbers and their slots are
+    /// those that finding or making them one at a time gives, of a table's
+    /// groups, no two of a key, and of rows handed on ungrouped, which may
+    /// share one (`Made::repeats`).
     fn absorb_places(&mut self, made: &Made, places: &[u32]) -> Result<()> {
-        let base = self.hashes.len();
         let (mut groups, mut fresh) = std::mem::take(&mut self.merging);
         groups.clear();
         fresh.clear();
-        for &i in places {
-            let at = crate::storage::mask::index(i);
-            let found = self.find(made.hashes.get(at).copied().unwrap_or(0), Key::Group(&made.keys, at));
-            groups.push(found.unwrap_or_else(|| narrow(base.saturating_add(fresh.len()))));
-            if found.is_none() {
-                fresh.push(i);
-            }
+        let (looked, long) = self.looked_up(made, places, (&mut groups, &mut fresh));
+        self.keys.extend(&made.keys, &fresh);
+        self.firsts.extend(fresh.iter().map(|&i| made.firsts.get(crate::storage::mask::index(i)).copied().unwrap_or(u64::MAX)));
+        self.states.iter_mut().for_each(|states| states.grow_by(fresh.len()));
+        if long {
+            self.rekeyed();
         }
-        self.make_all(made, &fresh);
+        // A table placed by keyed hashes finds or makes the rest one at a
+        // time, each by its key's keyed hash (RULES.md D357).
+        for &i in places.get(looked..).unwrap_or(&[]) {
+            let at = crate::storage::mask::index(i);
+            let (hash, first) = (made.hashes.get(at).copied().unwrap_or(0), made.firsts.get(at).copied().unwrap_or(u64::MAX));
+            groups.push(self.found_or_made(hash, Key::Group(&made.keys, at), first));
+        }
         for (&g, &i) in groups.iter().zip(places) {
             let first = made.firsts.get(crate::storage::mask::index(i)).copied().unwrap_or(u64::MAX);
             if let Some(held) = self.firsts.get_mut(crate::storage::mask::index(g)) {
@@ -230,35 +258,48 @@ impl GroupTable {
         Ok(())
     }
 
-    /// Makes the groups at `fresh` of `made`, none of them its own yet,
-    /// fed nothing, in that order: their keys, hashes and first rows
-    /// appended, then each placed. A table placed by keyed hashes makes
-    /// them one by one (RULES.md D357).
-    fn make_all(&mut self, made: &Made, fresh: &[u32]) {
-        let of = |i: u32| {
-            let at = crate::storage::mask::index(i);
-            (at, made.hashes.get(at).copied().unwrap_or(0), made.firsts.get(at).copied().unwrap_or(u64::MAX))
-        };
+    /// \[DESIGN\] (RULES.md D1275) Looks up the groups at `places` of
+    /// `made`, in their order, each group's number appended to `groups`.
+    /// A key that has no group is given the next number, its hash and its
+    /// slot at once, and its place in `made` is appended to `fresh`. Its
+    /// key, first row and states are not appended here. So a key looked
+    /// up after it that meets its slot is compared with the key `made`
+    /// holds at that place, and a key `made` holds twice finds the group
+    /// its first made.
+    ///
+    /// Gives how many of the places it looked up, and whether a probe
+    /// grew past `MAX_PROBE`. It stops after the place whose probe did,
+    /// and looks none up of a table placed by keyed hashes, as those are
+    /// found by their keys' bytes (RULES.md D357).
+    fn looked_up(&mut self, made: &Made, places: &[u32], (groups, fresh): (&mut Vec<u32>, &mut Vec<u32>)) -> (usize, bool) {
         if self.keyed.is_some() {
-            for (at, hash, first) in fresh.iter().map(|&i| of(i)) {
-                self.make(hash, Key::Group(&made.keys, at), first);
-            }
-            return;
+            return (0, false);
         }
-        let from = self.hashes.len();
-        self.keys.extend(&made.keys, fresh);
-        self.hashes.extend(fresh.iter().map(|&i| of(i).1));
-        self.firsts.extend(fresh.iter().map(|&i| of(i).2));
-        self.states.iter_mut().for_each(|states| states.grow_by(fresh.len()));
-        for g in from..self.hashes.len() {
-            let hash = self.hashes.get(g).copied().unwrap_or(0);
-            if self.slots.place(hash, narrow(g), &self.hashes) > MAX_PROBE {
-                // Every group, those not yet placed too, placed by its
-                // keyed hash.
-                self.rekeyed();
-                break;
+        let base = self.hashes.len();
+        for (n, &i) in places.iter().enumerate() {
+            let at = crate::storage::mask::index(i);
+            let (hash, key) = (made.hashes.get(at).copied().unwrap_or(0), Key::Group(&made.keys, at));
+            let Self { slots, keys, scratch, .. } = self;
+            let probe = slots.find(hash, |g| {
+                let held = crate::storage::mask::index(g);
+                match held.checked_sub(base) {
+                    None => keys.equal(held, key, scratch),
+                    Some(new) => unappended_equal(made, fresh.get(new).copied(), key, scratch),
+                }
+            });
+            let mut length = probe.length;
+            groups.push(probe.found.unwrap_or_else(|| {
+                let g = narrow(self.hashes.len());
+                self.hashes.push(hash);
+                fresh.push(i);
+                length = length.max(self.slots.place(hash, g, &self.hashes));
+                g
+            }));
+            if length > MAX_PROBE {
+                return (n.saturating_add(1), true);
             }
         }
+        (places.len(), false)
     }
 }
 
