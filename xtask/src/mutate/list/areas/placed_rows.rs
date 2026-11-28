@@ -38,10 +38,10 @@ pub const PLACED_ROWS: [Mutation; 12] = [
     Mutation {
         name: "placed-rows-first-rows-one-number",
         package: Package::Core,
-        breaks: "every row handed on ungrouped is numbered as the morsel's first, so no group's first row is its own and their order is lost (RULES.md D1260, D1313)",
+        breaks: "every row handed on ungrouped is given one number, so no group's first row is its own and their order is lost (RULES.md D1260, D1313)",
         file: APART_FILE,
-        original: "scattered((0_u64..).map(|n| first.saturating_add(n)), &places)",
-        replacement: "scattered((0_u64..).map(|_| first), &places)",
+        original: "table.firsts = scattered(numbers, &places);",
+        replacement: "table.firsts = scattered(numbers.map(|_| 0), &places);",
         integration: &[],
         unit: &[WRITTEN],
     },

@@ -110,13 +110,13 @@ impl Runs {
     }
 
     /// Whether any batch is held an entry a run of several rows.
-    pub(in crate::exec::table) fn any(&self) -> bool {
+    pub(in crate::exec) fn any(&self) -> bool {
         self.any
     }
 
     /// The rows kept of all the batches, of which the entries are fewer
     /// where any run is told.
-    pub(in crate::exec::table) fn rows(&self) -> usize {
+    pub(in crate::exec) fn rows(&self) -> usize {
         self.rows
     }
 
@@ -145,7 +145,7 @@ impl Runs {
     /// The number of each entry's first row, the entries of `held` in
     /// their order: `first` and the rows kept before that row in the
     /// morsel, the rows of the runs before it among them.
-    pub(in crate::exec::table) fn numbers<'a>(&'a self, held: &'a Held, first: u64) -> impl Iterator<Item = u64> + 'a {
+    pub(in crate::exec) fn numbers<'a>(&'a self, held: &'a Held, first: u64) -> impl Iterator<Item = u64> + 'a {
         let mut base = first;
         held.iter().enumerate().flat_map(move |(b, (batch, heads))| {
             let (from, entries) = (base, heads.as_ref().map_or(batch.rows, Sel::len));

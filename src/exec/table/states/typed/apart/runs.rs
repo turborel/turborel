@@ -58,6 +58,21 @@ fn folded(kind: ColumnarKind, ints: &Ints, rows: Option<&[u32]>, (from, to): (us
     Some((total, count))
 }
 
+/// How many rows each entry of `held` took, its run's, or one, the
+/// entries in their order at `places`.
+fn lengths(held: &Held, runs: &Runs, places: &[u32]) -> Vec<i64> {
+    let mut lengths = vec![0_i64; places.len()];
+    let mut place = places.iter();
+    for (b, (batch, heads)) in held.iter().enumerate() {
+        for (from, to) in runs.spans(b, heads.as_ref().map_or(batch.rows, Sel::len)) {
+            if let Some(length) = place.next().and_then(|&p| lengths.get_mut(index(p))) {
+                *length = i64::try_from(to.saturating_sub(from)).unwrap_or(i64::MAX);
+            }
+        }
+    }
+    lengths
+}
+
 impl States {
     /// \[DESIGN\] (RULES.md D1325) Makes its states those of entries of
     /// a run each, as `Typed::set_runs` makes a column's: whether a null
@@ -83,16 +98,7 @@ impl Typed {
                 if !counts.is_empty() {
                     return None;
                 }
-                let mut lengths = vec![0_i64; places.len()];
-                let mut place = places.iter();
-                for (b, (batch, heads)) in held.iter().enumerate() {
-                    for (from, to) in runs.spans(b, heads.as_ref().map_or(batch.rows, Sel::len)) {
-                        if let Some(length) = place.next().and_then(|&p| lengths.get_mut(index(p))) {
-                            *length = i64::try_from(to.saturating_sub(from)).unwrap_or(i64::MAX);
-                        }
-                    }
-                }
-                *counts = lengths;
+                *counts = lengths(held, runs, places);
                 Some(false)
             }
             Typed::Exact(exact) => exact.set_runs(take, (held, runs), places),

@@ -36,9 +36,12 @@ const NULLS: &str = "exec::table::made::apart::tests::runs::states_set_as_their_
 /// A run whose sum leaves 64 bits is fed.
 const WIDE: &str = "exec::table::made::apart::tests::runs::a_run_whose_sum_leaves_64_bits_is_fed";
 
+/// The groups are the same whichever morsels hand their rows on.
+const UNGROUPED: &str = "exec::parallel::grouped::waves::tests::the_groups_are_the_same_whichever_morsels_hand_their_rows_on_ungrouped";
+
 /// Mechanisms whose removal must fail the requirements of runs handed
 /// on an entry each.
-pub const HANDED_RUNS: [Mutation; 14] = [
+pub const HANDED_RUNS: [Mutation; 15] = [
     Mutation {
         name: "morsel-table-judged-by-the-rows-it-took",
         package: Package::Core,
@@ -88,6 +91,16 @@ pub const HANDED_RUNS: [Mutation; 14] = [
         replacement: "if runs && batch.rows == 0 { super::run_ends(batch, at, rows) } else { None }",
         integration: &[],
         unit: &[HAND_ON],
+    },
+    Mutation {
+        name: "rows-handed-on-numbered-as-the-morsels-first",
+        package: Package::Core,
+        breaks: "every row a morsel hands on a row each is numbered as the morsel's first, so the order of the groups' first rows is lost (RULES.md D1260, D1325)",
+        file: MORSEL,
+        original: "(0_u64..).map(|n| first.saturating_add(n))",
+        replacement: "(0_u64..).map(|_| first)",
+        integration: &[],
+        unit: &[UNGROUPED],
     },
     Mutation {
         name: "batch-held-by-runs-short-of-its-rows",
