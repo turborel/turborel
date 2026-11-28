@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use super::*;
 use crate::error::{Code, SqlError};
-use crate::storage::Ints;
+use crate::storage::{Ints, Mask};
 
 /// A source whose value of a place is ten times it, the places it was
 /// asked to decode noted; it fails if asked for place 99.
@@ -80,4 +80,33 @@ fn rows_kept_in_order_are_decoded_of_their_places_alone() {
     assert_eq!(resolved(&[]), ["NULL", "NULL", "NULL", "NULL", "NULL"]);
     let joined = late.gathered(&[Some(4), Some(1)]);
     assert_eq!(shown(&joined.resolved(Some(&[0, 1]), &crate::kernels::Portable).unwrap()), ["90", "40"], "a join's picks");
+}
+
+/// Verifies: [DESIGN] RULES.md D1267, a late column that holds its
+/// lengths: the lengths are given as held, a null's null; gathered by a
+/// join they follow its picks, a row taken twice, one paired with none
+/// and one whose value is null; `Batch::resolve` leaves the column late
+/// and asks its source for nothing, while one not measured beside it is
+/// decoded; a reader of its values still reads what the scan would have
+/// given, decoded whole; and lengths not one a place are not held. MC/DC
+/// of what resolve decodes: measured (left) against not (decoded).
+#[test]
+fn a_measured_late_column_gives_its_lengths_and_is_left_late() {
+    let tens = Arc::new(Tens::default());
+    let source: Arc<dyn LateSource> = Arc::<Tens>::clone(&tens);
+    let lengths = Ints::new(vec![4, 0, 9, 1], 0, Some(Mask::from_bools(&[false, true, false, false])));
+    let late = Late::new(Arc::clone(&source), 3, vec![2, 5, 7, 11].into()).measured(lengths);
+    assert!(late.is_measured());
+    assert_eq!(shown(&Column::Ints(late.lengths().unwrap())), ["4", "NULL", "9", "1"]);
+    let joined = late.gathered(&[Some(3), None, Some(0), Some(3), Some(1)]);
+    assert_eq!(shown(&Column::Ints(joined.lengths().unwrap())), ["1", "NULL", "4", "1", "NULL"]);
+    assert_eq!(shown(&Column::Ints(joined.gathered(&[Some(2), Some(4)]).lengths().unwrap())), ["4", "NULL"]);
+    let plain = Late::new(Arc::clone(&source), 3, vec![2, 5].into());
+    assert!(!plain.is_measured() && plain.lengths().is_none());
+    assert!(!plain.clone().measured(Ints::new(vec![1], 0, None)).is_measured(), "one length of two places");
+    let mut batch = Batch { columns: vec![Column::Late(late.clone()), Column::Late(plain)], rows: 2 };
+    batch.resolve(None, &crate::kernels::Portable).unwrap();
+    assert!(matches!(batch.columns[0], Column::Late(_)) && !matches!(batch.columns[1], Column::Late(_)));
+    assert_eq!(*tens.asked.lock().unwrap(), vec![vec![2, 5]], "the measured column asked its source for nothing");
+    assert_eq!(shown(&Column::Late(late)), ["20", "50", "70", "110"], "its values are still the scan's");
 }

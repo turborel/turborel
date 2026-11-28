@@ -103,6 +103,9 @@ pub struct Prepared {
     columns: Vec<VecDeque<Held>>,
     /// The bytes of chunks let go, to hold the next ones'.
     spare: Vec<Vec<u8>>,
+    /// The columns given measured, and the lengths held of a run
+    /// (`prepared/lengths.rs`, RULES.md D1267).
+    lengths: lengths::Lengths,
     /// What is read and made of the group's sketches (`sketch.rs`).
     pub(super) sketches: super::sketch::Held,
     /// The steps of the scan's LIKEs by the tables of symbols its chunks
@@ -125,8 +128,9 @@ impl Prepared {
 
     /// Lets every chunk go, as the next group is taken up.
     pub fn clear(&mut self) {
-        let Prepared { columns, spare, sketches, .. } = self;
+        let Prepared { columns, spare, sketches, lengths, .. } = self;
         sketches.clear();
+        lengths.clear();
         for kept in columns {
             spare.extend(kept.drain(..).map(|h| h.bytes));
         }
@@ -234,6 +238,8 @@ impl Chunk<'_> {
         self.coded_with(positions, outs, made.texts_of(self, (t, kernels))?)
     }
 }
+
+mod lengths;
 
 #[cfg(test)]
 mod tests;

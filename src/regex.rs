@@ -79,6 +79,8 @@ pub struct Regex {
     /// What its instructions read (`matches_alone`).
     reads: Reads,
     table: Table,
+    /// What its searchers left for the next (RULES.md D1292).
+    left: searcher::Leavings,
 }
 
 /// The matcher a search runs on (`Regex::matcher`).
@@ -164,6 +166,7 @@ impl Regex {
             caseless: flags.has(Flag::Caseless),
             literal: flags.has(Flag::Literal),
             table,
+            left: searcher::Leavings::default(),
         })
     }
 
@@ -181,7 +184,8 @@ impl Regex {
         let parsed = parse_schema(pattern, &table)?;
         let program = compile(&parsed, Flags::default())?;
         let reads = Reads::of(&program);
-        Ok(Regex { program, groups: parsed.groups, back_references: false, caseless: false, literal: false, reads, table })
+        let left = searcher::Leavings::default();
+        Ok(Regex { program, groups: parsed.groups, back_references: false, caseless: false, literal: false, reads, table, left })
     }
 
     /// How many groups capture [§9.28 GR8].
@@ -316,21 +320,21 @@ impl Regex {
 
     /// \[DESIGN\] (RULES.md D1188) Searches of it over text after text,
     /// which keep its automaton between them (`regex/dfa.rs`), if it has
-    /// one: what a call over a vector of texts searches each with.
+    /// one: what a call over a vector of texts searches each with. It
+    /// takes up what a searcher done before it left (RULES.md D1292), and
+    /// leaves what it keeps in its turn.
     pub fn searcher(&self) -> Searcher<'_> {
-        let automaton = !self.back_references && dfa::fits(&self.program);
-        Searcher {
-            regex: self,
-            dfa: automaton.then(dfa::Dfa::default),
-            found: searcher::Found::default(),
-            kept: bounded::Scratch::default(),
-        }
+        let left = self.left.take().unwrap_or_else(|| {
+            let automaton = !self.back_references && dfa::fits(&self.program);
+            searcher::Left { dfa: automaton.then(dfa::Dfa::default), found: searcher::Found::default(), kept: bounded::Scratch::default() }
+        });
+        Searcher { regex: self, dfa: left.dfa, found: left.found, kept: left.kept, lasting: true }
     }
 
     /// Searches of it over one text, which would make an automaton only
-    /// to drop it, so make none.
+    /// to drop it, so make none, and take up and leave nothing.
     pub fn once(&self) -> Searcher<'_> {
-        Searcher { regex: self, dfa: None, found: searcher::Found::default(), kept: bounded::Scratch::default() }
+        Searcher { regex: self, dfa: None, found: searcher::Found::default(), kept: bounded::Scratch::default(), lasting: false }
     }
 }
 

@@ -27,9 +27,24 @@
 use std::cmp::Ordering;
 
 use super::super::group::{Group, PART_ROWS, Part};
-use super::Pred;
+use super::{KEPT_SHARE, Pred};
 use crate::error::Result;
 use crate::value::{CompOp, DataType, Value, compare};
+
+impl Pred {
+    /// Whether it is true of every row the run `from` to `to` of `group`
+    /// gives, with nothing judged: a comparison the bounds of the run's
+    /// parts prove, of its column of type `t` (RULES.md D1293); or a
+    /// join's keys no longer asked, which then keep every row (RULES.md
+    /// D1294).
+    ///
+    /// # Errors
+    ///
+    /// As `proved`.
+    pub(super) fn passed(&self, group: &Group, t: &DataType, (from, to): (u32, u32)) -> Result<bool> {
+        Ok(self.among().is_some_and(|members| !members.asking(KEPT_SHARE)) || proved(group, (self, t), (from, to))?)
+    }
+}
 
 /// Whether `pred`, of a column of type `t`, is a comparison with a
 /// constant that the bounds of every part the run `from` to `to` of

@@ -141,7 +141,7 @@ pub(super) fn evaluable(c: &Cond, width: usize) -> bool {
 /// Whether `e` can be evaluated on a sampled row `width` columns wide:
 /// deterministic, of none of the row's columns past it, and of no outer
 /// reference, `?`, subquery, sequence value or routine.
-fn evaluable_expr(e: &Expr, width: usize) -> bool {
+pub(in crate::physical) fn evaluable_expr(e: &Expr, width: usize) -> bool {
     let own = match e {
         Expr::Column(c) => *c < width,
         Expr::Call(f, _) => f.0.deterministic(),

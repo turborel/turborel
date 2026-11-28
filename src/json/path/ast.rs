@@ -261,7 +261,9 @@ pub enum Predicate {
     /// `<JSON like_regex predicate>`: the wff, and its `<JSON like_regex
     /// pattern>` compiled under its `<JSON like_regex flags>`, none if not
     /// written. \[§9.46 SR7\] Both are checked when the path is parsed.
-    LikeRegex(Expr, Regex),
+    /// Boxed, a compiled expression being several times a predicate's
+    /// other forms.
+    LikeRegex(Expr, Box<Regex>),
     /// `<JSON starts with predicate>`: the `<JSON starts with whole>` and
     /// the `<JSON starts with initial>`, which is an `Expr::Literal` of a
     /// string or an `Expr::Variable`. \[§9.46 SR8\] That the variable is a

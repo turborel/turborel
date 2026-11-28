@@ -33,6 +33,15 @@ pub trait Split: Send + Sync {
         None
     }
 
+    /// \[DESIGN\] (RULES.md D1267) As `morsel_batches`, the columns of
+    /// `asked.0` late and those of `asked.1` measured if it can, late
+    /// with their values' octet lengths and never decoded
+    /// (`TableStorage::scan_measured`). Default: `morsel_batches`, none
+    /// measured.
+    fn morsel_measured(&self, n: usize, asked: (&[usize], &[usize])) -> Option<Batches> {
+        self.morsel_batches(n, asked.0)
+    }
+
     /// \[DESIGN\] (RULES.md D1241) The same split, each morsel reading the
     /// same rows, told `more` beside its condition, a conjunct that is
     /// true of every row its reader wants, as the bound of a sort of its

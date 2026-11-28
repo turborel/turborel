@@ -221,3 +221,51 @@ fn a_run_with_a_lead_and_no_room_dropped_early_holds_nothing() {
         assert!(shared.taken.load(Ordering::Acquire) <= window(4).saturating_add(1), "none past the window");
     }
 }
+
+/// Verifies: [DESIGN] RULES.md D1282 a run whose reader asked the lead
+/// of one that keeps every result takes every morsel there is before its
+/// reader is given the first, however many more than its window, and
+/// counts no byte of a result landed, so nothing paces it; asked two a
+/// thread it keeps to the window, as a run that asked no lead does.
+#[test]
+fn a_run_led_by_every_morsel_takes_them_all_and_counts_no_byte() {
+    let run_of = |wide: usize| Run {
+        led: Some(Led { lead: Lead::unmetered(wide), held: AtomicUsize::new(0) }),
+        ..gated(64, 2, &Arc::new(Gate::default()))
+    };
+    let taken = |run: &Run<usize>| std::iter::from_fn(|| run.claim()).count();
+    assert!(window(2) < 64, "more morsels than the window holds");
+    let every = run_of(64);
+    assert_eq!(taken(&every), 64, "every morsel, the reader given none yet");
+    assert_eq!(every.bytes_of(&Ok(7)), 0, "a result landed counts no byte");
+    assert_eq!(taken(&run_of(2)), window(2), "two a thread, the window alone");
+}
+
+/// Verifies: [DESIGN] RULES.md D1282 a run led by every morsel, dropped
+/// by its reader after its first result while its threads are in others,
+/// returns and leaves nothing held: its drop waits for the morsels its
+/// workers are in, one a worker whatever the lead, and lets go of its
+/// work and of every result not read.
+#[test]
+fn a_run_led_by_every_morsel_dropped_early_holds_nothing() {
+    let db = Database::new();
+    db.set_setting("EXECUTOR.WORKERS", &Value::Exact(Decimal::new(4, 0))).unwrap();
+    db.schema("CREATE SCHEMA AUTHORIZATION A CREATE TABLE T (K INTEGER)").unwrap();
+    let (st, _) = db.session("A").optimized("SELECT K FROM T").unwrap();
+    let token = Arc::new(());
+    for _ in 0_usize..20 {
+        let held = Arc::clone(&token);
+        let work: Work<Arc<()>> = Box::new(move |_m: usize| {
+            let running = Arc::clone(&held);
+            std::thread::sleep(Duration::from_millis(1));
+            Ok(running)
+        });
+        let mut run = Morsels::led(&st, NO_TRANSACTION, (64, 4), work, Some(Lead::unmetered(64)));
+        assert!(run.next().is_some_and(|first| first.is_ok()));
+        let shared = Arc::clone(&run.run);
+        drop(run);
+        assert_eq!(Arc::strong_count(&token), 1, "nothing of the run left held");
+        assert!(done_of(&shared).is_empty(), "no result kept unread");
+        assert_eq!(shared.led.as_ref().unwrap().held.load(Ordering::Acquire), 0, "no byte counted ahead");
+    }
+}

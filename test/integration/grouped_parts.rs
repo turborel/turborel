@@ -327,3 +327,46 @@ fn the_first_rows_by_set_functions_are_picked_before_they_are_made() {
     assert_eq!(alone, Err(turborel::error::Code::Data), "the sum of group 77 is past its type's precision");
     assert_eq!(alone, together, "{raising}");
 }
+
+/// Verifies: [X3.135-1986 §5.22 GR2] (RULES.md D1260) a grouping whose
+/// morsels each hold nearly a group a row, so that after the first
+/// their rows are handed on ungrouped, gives the groups the plan run
+/// alone gives, in its order: of a key of integers each morsel holds
+/// once and the table four times, of the same key as text, of a key
+/// that turns to seven values after the fifteenth morsel, whose rows are
+/// handed on ungrouped until the morsel that probes, read by a join and
+/// by a sort of its first rows; and a key of seven values throughout,
+/// grouped in its morsels as before.
+#[test]
+fn morsels_that_reduce_nothing_hand_their_rows_on_ungrouped() {
+    let (db, a) = tables();
+    exec(
+        &a,
+        "CREATE TABLE H (K INTEGER PRIMARY KEY, U INTEGER, V INTEGER, W INTEGER, T VARCHAR(12), N INTEGER) \
+         USING columnstore WITH (COLUMNSTORE.GROUP_ROWS = 2048)",
+    )
+    .unwrap();
+    let values: Vec<String> = (0_i64..40_000)
+        .map(|k| {
+            let u = k * 7919 % 10_000;
+            let v = if k < 30_720 { u } else { k % 7 };
+            format!("({k}, {u}, {v}, {}, 'u{u}{}', {})", k % 7, " ".repeat(usize::try_from(k % 3).unwrap()), k % 101)
+        })
+        .collect();
+    a.run(&format!("INSERT INTO H VALUES {}", values.join(", "))).unwrap();
+    a.commit().unwrap();
+    db.maintain().unwrap();
+    for sql in [
+        "SELECT U, COUNT(*), SUM(N), MIN(K), AVG(N) FROM H GROUP BY U",
+        "SELECT T, COUNT(*), MIN(N) FROM H GROUP BY T",
+        "SELECT V, COUNT(*), SUM(N), MAX(K) FROM H GROUP BY V",
+        "SELECT W, COUNT(*), SUM(N) FROM H GROUP BY W",
+        "SELECT H.K, X.S FROM H JOIN (SELECT U, SUM(N) AS S FROM H GROUP BY U) AS X ON X.U = H.N",
+        "SELECT V, COUNT(*), MIN(K) FROM H GROUP BY V ORDER BY 2 DESC FETCH FIRST 9 ROWS ONLY",
+    ] {
+        let (alone, together, shown) = both(&a, sql);
+        assert!(grouped_part(&shown), "{sql}\n{shown}");
+        assert!(alone.as_ref().is_ok_and(|r| !r.is_empty()), "{sql}: {alone:?}");
+        assert_eq!(alone, together, "{sql}");
+    }
+}

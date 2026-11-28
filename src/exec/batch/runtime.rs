@@ -18,9 +18,9 @@
 //! below it a filter dropped could have raised an error row by row
 //! (RULES.md D15). An analyzed plan's count of an operator's rows passes
 //! them on, so it counts the rows the operator gives as it runs. A scan
-//! in no order is told a filter's range as conjuncts (`stream::scan_of`),
-//! and judges its rows by it right as it gives each batch, before any
-//! column it gives late is decoded.
+//! in no order is told a filter's range and its keys as conjuncts
+//! (`stream::scan_of`, RULES.md D1294), and judges its rows by it right as
+//! it gives each batch, before any column it gives late is decoded.
 
 use std::sync::Arc;
 
