@@ -104,13 +104,13 @@ impl GroupTable {
         let Some(placed) = placed.as_mut() else { return };
         let from = placed.fed;
         placed.fed = from.saturating_add(count);
-        let Some(places) = placed.places.get(from..placed.fed).filter(|_| !aggs.is_empty()) else { return };
+        let Some(groups) = placed.places.get(from..placed.fed).filter(|_| !aggs.is_empty()) else { return };
         pending.given.extend((0..count).map(narrow));
         match rows {
             Some(rows) => pending.read.extend_from_slice(rows),
             None => pending.read.extend((0..count).map(narrow)),
         }
-        pending.groups.extend_from_slice(places);
+        pending.groups.extend_from_slice(groups);
     }
 
     /// Where each partition's groups begin, and the last's end, if its
