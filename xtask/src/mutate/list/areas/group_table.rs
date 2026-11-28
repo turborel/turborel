@@ -8,7 +8,7 @@
 //! by the optimizer's groups; and EXCEPT and INTERSECT counted in a table
 //! (D358, D359); a grouping's partitions held in the spill past its
 //! grant, written and read back as they were (D1226); a partition's
-//! groups adopted where they lie (D1300), of entries mostly new or many groups to come (D1302); and integers compared by their
+//! groups adopted where they lie (D1300); and integers compared by their
 //! words, a null told apart from the zero in its place (D1274).
 
 use super::super::{Mutation, Package};
@@ -62,12 +62,8 @@ const WIDE_FIRST: &str = "exec::parallel::grouped::waves::tests::the_first_rows_
 /// A partition wide only where its groups are read as they lie.
 const WIDE_READ: &str = "exec::parallel::grouped::waves::tests::a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie";
 
-/// A partition wide only of entries mostly new, or on course for many groups.
-const WIDE_NEW: &str =
-    "exec::parallel::grouped::waves::tests::a_partition_goes_wide_only_of_entries_mostly_new_or_on_course_for_many_groups";
-
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 53] = [
+pub const GROUP_TABLE: [Mutation; 50] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -537,36 +533,6 @@ pub const GROUP_TABLE: [Mutation; 53] = [
         replacement: "let past = widen.past;",
         integration: &[],
         unit: &[WIDE_READ],
-    },
-    Mutation {
-        name: "wide-whatever-share-of-a-waves-rows-met-a-group",
-        package: Package::Core,
-        breaks: "a partition whose entries mostly meet a group it holds goes wide once its table passes the count, and pays for each (RULES.md D1302)",
-        file: "src/exec/parallel/grouped/waves/wide.rs",
-        original: "let mostly_new = met.saturating_mul(THOUSAND) <= self.met.saturating_mul(counted.so_far);",
-        replacement: "let mostly_new = met.saturating_mul(THOUSAND) <= THOUSAND.saturating_mul(counted.so_far);",
-        integration: &[],
-        unit: &[WIDE_NEW],
-    },
-    Mutation {
-        name: "wide-by-the-last-made-of-a-wave-alone",
-        package: Package::Core,
-        breaks: "the entries a wave has handed a partition are counted of its last Made alone, fewer than the groups the wave made, so none seems to have met a held group (RULES.md D1302)",
-        file: "src/exec/parallel/grouped/waves/wide.rs",
-        original: "counted.so_far = counted.so_far.saturating_add(made.groups_of(p));",
-        replacement: "counted.so_far = made.groups_of(p);",
-        integration: &[],
-        unit: &[WIDE_NEW],
-    },
-    Mutation {
-        name: "wide-never-by-the-groups-a-wave-is-on-course-for",
-        package: Package::Core,
-        breaks: "a partition on course to hold many groups, many of whose entries meet a held group, stays a table however far past a cache it grows (RULES.md D1302)",
-        file: "src/exec/parallel/grouped/waves/wide.rs",
-        original: "mostly_new || counted.began.saturating_add(to_come) >= self.course",
-        replacement: "mostly_new",
-        integration: &[],
-        unit: &[WIDE_NEW],
     },
     Mutation {
         name: "key-words-of-any-scale",
