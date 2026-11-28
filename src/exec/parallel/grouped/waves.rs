@@ -26,13 +26,13 @@
 //! back a partition at a time at the end (`spilled.rs`), so the threads'
 //! work is kept and the grouping does not give way.
 //!
-//! \[DESIGN\] (RULES.md D1260) Where the morsels' tables do not reduce
-//! their rows, the morsels stop making them (`Reduction`). A morsel's
-//! table that ends with nearly a group a row found nothing to merge, and
-//! its lookups and slots were spent for nothing, as the partition finds
-//! every key again. Such a grouping's morsels hand each row on as a group
-//! of its own, and a morsel now and then still makes a table, at gaps
-//! that double while none reduces, so data that begins to reduce is seen.
+//! \[DESIGN\] (RULES.md D1260, D1325) Where the morsels' tables do not reduce their
+//! rows, the morsels stop making them (`Reduction`). A table that ends with nearly a
+//! group a row it looked up found nothing to merge, and its lookups and slots were
+//! spent for nothing, as the partition finds every key again. Such a grouping's
+//! morsels hand each row on as a group of its own, a run of rows of one key as one
+//! where the tables followed runs, and a morsel now and then still makes a table, at
+//! gaps that double while none reduces, so data that begins to reduce is seen.
 
 mod spilled;
 mod wide;
@@ -71,15 +71,15 @@ fn few(still: bool, (groups, taken): (usize, usize), degree: usize) -> bool {
     still && groups.saturating_mul(DIRECT_ROWS).saturating_mul(degree) <= taken
 }
 
-/// \[DESIGN\] (RULES.md D1260) The groups a thousand rows of a morsel
-/// must leave for the next morsels to be handed on ungrouped. From a
-/// sweep with the hand-over forced on and forced off, over groupings of
-/// integer keys whose morsels leave from 640 to 1000 groups a thousand
-/// rows. Where every group is new to its partition the two were level at
-/// 640 and the hand-over ahead at 790 and above, by more the nearer to a
-/// group a row. Where the partitions merge the rows anyway, the keys few
-/// in all, it was ahead at 730 and above. So the bound is 750: above the
-/// ratio measured level, below the least measured ahead of both kinds.
+/// \[DESIGN\] (RULES.md D1260, D1325) The groups a thousand rows looked up a
+/// morsel's table must leave for the next morsels to be handed on ungrouped. From
+/// a sweep with the hand-over forced on and forced off, over groupings of integer
+/// keys whose morsels leave from 640 to 1000 groups a thousand rows, each row
+/// looked up. Where every group is new to its partition the two were level at 640
+/// and the hand-over ahead at 790 and above, by more the nearer to a group a row.
+/// Where the partitions merge the rows anyway, the keys few in all, it was ahead
+/// at 730 and above. So the bound is 750: above the ratio measured level, below
+/// the least measured ahead of both kinds.
 const APART_PER_MILLE: usize = 750;
 
 /// \[DESIGN\] (RULES.md D1260) The morsels after the last table that
@@ -95,42 +95,41 @@ const PROBE_EVERY: usize = 16;
 /// The parts of a ratio told in a thousand.
 const MILLE: usize = 1000;
 
-/// \[DESIGN\] (RULES.md D1260) What the morsels' tables tell of their
-/// rows: the groups a thousand rows left in the table made last, none
-/// while no table is made yet. The workers measure it of the rows they
-/// group, and no estimate enters it.
+/// \[DESIGN\] (RULES.md D1260, D1325) What the morsels' tables tell: the groups a thousand rows looked up left
+/// in the table made last, none while no table is made yet. The workers measure it, and no estimate enters it.
 struct Reduction {
     left: AtomicUsize,
     /// The last morsel whose table reduced its rows, the first of none.
     since: AtomicUsize,
+    /// Whether the table made last followed a run of rows of one key.
+    runs: AtomicBool,
 }
 
 impl Reduction {
     /// Nothing told yet.
     fn new() -> Reduction {
-        Reduction { left: AtomicUsize::new(0), since: AtomicUsize::new(0) }
+        Reduction { left: AtomicUsize::new(0), since: AtomicUsize::new(0), runs: AtomicBool::new(false) }
     }
 
-    /// Whether morsel `m` hands its rows on ungrouped: the table made
-    /// last left more than `APART_PER_MILLE` groups a thousand rows, and
-    /// `m` is not one of those that probe.
-    fn apart(&self, m: usize) -> bool {
-        // A probe at 16, 32, 64 and so on morsels past the last table
-        // that reduced, as only those are a power of two.
+    /// Whether morsel `m` hands its rows on ungrouped, and then whether a run each, as the table made last
+    /// followed runs: that table left more than `APART_PER_MILLE` groups a thousand rows looked up, and `m`
+    /// is not one of those that probe.
+    fn apart(&self, m: usize) -> Option<bool> {
+        // A probe at 16, 32, 64 and so on morsels past the last table that reduced, as only those are a power of two.
         let past = m.saturating_sub(self.since.load(Ordering::Relaxed));
         let probes = past >= PROBE_EVERY && past.is_power_of_two();
-        !probes && self.left.load(Ordering::Relaxed) > APART_PER_MILLE
+        (!probes && self.left.load(Ordering::Relaxed) > APART_PER_MILLE).then(|| self.runs.load(Ordering::Relaxed))
     }
 
-    /// Tells that the table of morsel `m` took `rows` rows and ended
-    /// with `groups` groups. One that reduced them is where the probes
-    /// are counted from.
-    fn tell(&self, m: usize, (rows, groups): (usize, usize)) {
-        if let Some(left) = groups.saturating_mul(MILLE).checked_div(rows) {
+    /// Tells that the table of morsel `m` looked up `looked` of its `rows` rows and ended with `groups`
+    /// groups. One that reduced them is where the probes are counted from.
+    fn tell(&self, m: usize, (looked, groups, rows): (usize, usize, usize)) {
+        if let Some(left) = groups.saturating_mul(MILLE).checked_div(looked) {
             if left <= APART_PER_MILLE {
                 self.since.fetch_max(m, Ordering::Relaxed);
             }
             self.left.store(left, Ordering::Relaxed);
+            self.runs.store(looked < rows, Ordering::Relaxed);
         }
     }
 }
@@ -293,8 +292,8 @@ pub(super) fn waved_as(
 /// threads: its rows grouped in a table of its own, handed whole if its
 /// groups are few (`few`) while morsels are `still` handed so, or if
 /// `forced` names it, else split among the partitions. Its rows are
-/// handed on ungrouped if `ungrouped` names it, or, of none named, as
-/// the tables made before it tell (`Reduction`).
+/// handed on ungrouped if `ungrouped` names it, a run each, or, of none
+/// named, as the tables made before it tell (`Reduction`).
 fn grouped(
     pipeline: Pipeline,
     grouping: &Arc<Grouping>,
@@ -308,16 +307,17 @@ fn grouped(
         let runner = Runner::new(&db_for, tx);
         let read = making.read.as_ref().ok_or_else(|| broken("a grouping by batch reads no batch"))?;
         let batches = pipeline.morsel_kept(m, (&db_for, tx))?;
-        let apart = ungrouped.map_or_else(|| reduction.apart(m), |names| names(m));
+        let apart = ungrouped.map_or_else(|| reduction.apart(m), |names| names(m).then_some(true));
         let expected = room.load(Ordering::Relaxed);
         let asked = (&runner, first_of(&making, m), &making.seed);
-        let parted = apart.then(|| (PARTS, making.lanes()));
+        let parted = apart.map(|runs| (PARTS, making.lanes(), runs));
         let table = morsel_groups(read, &making.spec.aggs, batches, asked, (expected, parted))?;
         room.store(table.len(), Ordering::Relaxed);
-        if !apart {
-            reduction.tell(m, (table.taken, table.len()));
+        if apart.is_none() {
+            reduction.tell(m, (table.looked, table.len(), table.taken));
         }
-        let few = few(still.load(Ordering::Relaxed), (table.len(), table.taken), degree);
+        // Entries written by partition lie in no order of their first rows, so none is frozen whole (RULES.md D1325).
+        let few = apart.is_none() && few(still.load(Ordering::Relaxed), (table.len(), table.taken), degree);
         if forced.map_or(few, |named| named(m)) {
             return table.frozen().map(Handed::Whole);
         }

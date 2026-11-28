@@ -19,6 +19,7 @@ mod apart;
 mod wide;
 mod written;
 pub(super) use apart::Placed;
+pub(in crate::exec) use apart::Runs;
 pub(in crate::exec) use wide::{Adopted, Lying, Run, Wide};
 pub(in crate::exec) use written::PIECE;
 

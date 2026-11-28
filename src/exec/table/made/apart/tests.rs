@@ -15,6 +15,8 @@ use crate::kernels::Portable;
 use crate::storage::{Column, Ints, Mask};
 use crate::value::Value;
 
+mod runs;
+
 /// The columns of a key in the batches of `held`.
 const AT: [usize; 2] = [0, 1];
 
@@ -84,7 +86,7 @@ fn appended(held: &[(Batch, Option<Sel>)], hashes: &[u64], seed: &Seed) -> Group
 fn written(held: &[(Batch, Option<Sel>)], (parts, lanes): (usize, &[usize]), seed: &Seed) -> GroupTable {
     let (hashes, by) = hashed(held, lanes, seed);
     let by = (!lanes.is_empty()).then_some(by.as_slice());
-    let mut table = GroupTable::placed((held, AT.as_slice()), (calls().as_slice(), seed), (hashes.as_slice(), by, 1000), (parts, lanes));
+    let mut table = GroupTable::placed((held, AT.as_slice()), (calls().as_slice(), seed), (hashes.as_slice(), by, 1000..), (parts, lanes));
     let sources = table.placed.as_ref().unwrap().sources.clone();
     for (states, take) in table.states.iter_mut().zip([Taken::Count, Taken::Column(2), Taken::Column(2), Taken::Column(2)]) {
         assert_eq!(states.set_apart(&take, held, &sources), Some(false), "set, and no null passed over");
@@ -215,7 +217,7 @@ fn states_set_as_their_rows_take_nothing_of_a_null() {
     let (held, seed) = (held(false), Seed::fixed(0x5EED));
     let (hashes, _) = hashed(&held, WHOLE, &seed);
     let mut table =
-        GroupTable::placed((held.as_slice(), AT.as_slice()), (calls().as_slice(), &seed), (hashes.as_slice(), None, 0), (8, WHOLE));
+        GroupTable::placed((held.as_slice(), AT.as_slice()), (calls().as_slice(), &seed), (hashes.as_slice(), None, 0..), (8, WHOLE));
     let sources = table.placed.as_ref().unwrap().sources.clone();
     let [count, sum, least, _] = table.states.as_mut_slice() else { panic!("four set functions") };
     assert_eq!(count.set_apart(&Taken::Column(0), &held, &sources), None, "COUNT of a column is fed");

@@ -33,7 +33,7 @@ pub(in crate::exec) use hash::{hash_lanes, hash_rows, hash_values};
 pub(in crate::exec) use join::{BUILD_PARTS, BuiltPart, Parted, Parting, Span};
 pub(in crate::exec) use join::{Candidates, Hashing, JoinTable, KeyHashes, keys_equal, numbers_hashed, values_hash};
 pub(in crate::exec) use keys::{Key, Keys};
-pub(in crate::exec) use made::{Adopted, Lying, Made, PIECE, Run as WaveRun, Wide};
+pub(in crate::exec) use made::{Adopted, Lying, Made, PIECE, Run as WaveRun, Runs, Wide};
 pub(in crate::exec) use runtime::RuntimeFilter;
 
 use crate::error::Result;
@@ -122,6 +122,9 @@ pub(in crate::exec) struct GroupTable<S: Columns = Vec<States>> {
     limit: usize,
     /// The rows and pieces its groups took since it was last empty.
     pub(in crate::exec) taken: usize,
+    /// \[DESIGN\] (RULES.md D1325) The rows of those a group was looked
+    /// up for: of rows of one key that come one after another, the first.
+    pub(in crate::exec) looked: usize,
     /// The groups a merge found or made and the places of those it made,
     /// kept between merges for their room (`made.rs`).
     merging: (Vec<u32>, Vec<u32>),
@@ -150,6 +153,7 @@ impl GroupTable {
             scratch: Vec::new(),
             limit,
             taken: 0,
+            looked: 0,
             merging: (Vec::new(), Vec::new()),
             apart: false,
             placed: None,
@@ -200,6 +204,7 @@ impl GroupTable<()> {
             scratch: Vec::new(),
             limit: usize::MAX,
             taken: 0,
+            looked: 0,
             merging: (Vec::new(), Vec::new()),
             apart: false,
             placed: None,

@@ -19,6 +19,8 @@ use crate::storage::Row;
 use crate::txn::NO_TRANSACTION;
 use crate::value::{Decimal, Value};
 
+mod runs;
+
 /// Rows of T.
 const ROWS: i64 = 24_000;
 
@@ -324,36 +326,43 @@ fn a_wide_lead_merges_and_spills_as_a_narrow_one() {
     }
 }
 
-/// Verifies: [DESIGN] (RULES.md D1260) morsels make tables until one
-/// tells what its rows left; they hand their rows on ungrouped after
-/// a table that left more than 750 groups a thousand rows, but the
-/// morsels that probe; a table that left 750 or fewer has them make
+/// Verifies: [DESIGN] (RULES.md D1260, D1325) morsels make tables until
+/// one tells what its rows left; they hand their rows on ungrouped after
+/// a table that left more than 750 groups a thousand rows looked up, but
+/// the morsels that probe; a table that left 750 or fewer has them make
 /// tables again, and one of no rows tells nothing. The probes come 16,
 /// 32, 64 and so on morsels after the last table that reduced, counted
 /// anew from a probe that reduces, so the morsels handed on between two
-/// probes are never more than those handed on since that table.
+/// probes are never more than those handed on since that table. A table
+/// is judged by the rows it looked up, not those it took: one that took
+/// 2048 rows in 500 runs and made 490 groups hands the next on, a run
+/// each, and one that looked up every row hands them on a row each.
 #[test]
 fn morsels_are_handed_on_ungrouped_after_a_table_that_reduces_nothing() {
     let reduction = Reduction::new();
-    assert!((0..40).all(|m| !reduction.apart(m)), "nothing told yet");
-    reduction.tell(0, (2048, 2040));
-    let probes = |from: usize, to: usize| (from..to).filter(|&m| !reduction.apart(m)).collect::<Vec<_>>();
+    assert!((0..40).all(|m| reduction.apart(m).is_none()), "nothing told yet");
+    reduction.tell(0, (2048, 2040, 2048));
+    let probes = |from: usize, to: usize| (from..to).filter(|&m| reduction.apart(m).is_none()).collect::<Vec<_>>();
     assert_eq!(probes(1, 5000), [16, 32, 64, 128, 256, 512, 1024, 2048, 4096], "the gap doubles while none reduces");
     for pair in probes(1, 100_000).windows(2) {
         let between = pair[1].saturating_sub(pair[0]).saturating_sub(1);
         assert!(between <= pair[0], "{between} handed on between two probes, {} since the table", pair[0]);
     }
-    reduction.tell(16, (0, 0));
-    assert!(reduction.apart(1), "a morsel of no rows tells nothing");
-    reduction.tell(16, (1000, 751));
-    assert!(reduction.apart(1) && probes(1, 70) == [16, 32, 64], "a probe that reduces nothing moves no probe");
-    reduction.tell(100, (1000, 750));
-    assert!(!reduction.apart(101), "at the bound a table is made");
-    reduction.tell(101, (2048, 2040));
+    reduction.tell(16, (0, 0, 0));
+    assert_eq!(reduction.apart(1), Some(false), "a morsel of no rows tells nothing");
+    reduction.tell(16, (1000, 751, 1000));
+    assert!(reduction.apart(1) == Some(false) && probes(1, 70) == [16, 32, 64], "a probe that reduces nothing moves no probe");
+    reduction.tell(16, (500, 490, 2048));
+    assert_eq!(reduction.apart(1), Some(true), "490 groups of 500 rows looked up, whatever the rows taken, and runs followed");
+    reduction.tell(16, (2048, 2040, 2048));
+    assert_eq!(reduction.apart(1), Some(false), "every row looked up: no run to look for");
+    reduction.tell(100, (1000, 750, 4000));
+    assert!(reduction.apart(101).is_none(), "at the bound a table is made");
+    reduction.tell(101, (2048, 2040, 2048));
     assert_eq!(probes(102, 400), [116, 132, 164, 228, 356], "counted from the table that reduced");
-    reduction.tell(90, (2048, 7));
-    assert!((0..400).all(|m| !reduction.apart(m)), "rows that reduce are grouped in their morsel");
-    reduction.tell(102, (2048, 2040));
+    reduction.tell(90, (2048, 7, 2048));
+    assert!((0..400).all(|m| reduction.apart(m).is_none()), "rows that reduce are grouped in their morsel");
+    reduction.tell(102, (2048, 2040, 2048));
     assert_eq!(probes(102, 200), [116, 132, 164], "an earlier morsel's table told late moves the count back by none");
 }
 

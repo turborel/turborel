@@ -26,6 +26,9 @@ use crate::storage::mask::index;
 use crate::storage::sel::nth;
 use crate::storage::{Batch, Row, Sel};
 
+mod runs;
+pub(in crate::exec) use runs::Runs;
+
 /// Where the rows of a table written by partition lie: the place of each
 /// row as it came, the row at each place, its batch and its row in it,
 /// where each partition's rows begin and the last's end, and the lanes
@@ -126,15 +129,15 @@ impl GroupTable {
     /// \[DESIGN\] (RULES.md D1313) A table of the rows kept of `held`, a
     /// morsel's batches, each a group of its own, of the key of its
     /// columns at `at`, computing `aggs`, fed nothing yet: the `n`th row
-    /// of hash `hashes[n]`, its first row numbered `first + n`. The
-    /// groups lie by partition among `parts`, a row's partition of its
-    /// hash, or of `by`'s, the hashes of its key's `lanes` alone, if
-    /// given (RULES.md D1113). No group is looked for and none has a
-    /// slot, as of `unplaced`.
+    /// of hash `hashes[n]`, its first row numbered the `n`th of
+    /// `numbers`. The groups lie by partition among `parts`, a row's
+    /// partition of its hash, or of `by`'s, the hashes of its key's
+    /// `lanes` alone, if given (RULES.md D1113). No group is looked for
+    /// and none has a slot, as of `unplaced`.
     pub(in crate::exec) fn placed(
         (held, at): (&[(Batch, Option<Sel>)], &[usize]),
         (aggs, seed): (&[AggCall], &Seed),
-        (hashes, by, first): (&[u64], Option<&[u64]>, u64),
+        (hashes, by, numbers): (&[u64], Option<&[u64]>, impl Iterator<Item = u64>),
         (parts, lanes): (usize, &[usize]),
     ) -> GroupTable {
         let (starts, places) = placed_by(by.unwrap_or(hashes), parts);
@@ -142,7 +145,7 @@ impl GroupTable {
         let rows_at = sources(held, &places);
         table.keys = Keys::placed(held, at, (&places, &rows_at), &table.keys);
         table.hashes = scattered(hashes.iter().copied(), &places);
-        table.firsts = scattered((0_u64..).map(|n| first.saturating_add(n)), &places);
+        table.firsts = scattered(numbers, &places);
         (table.apart, table.taken) = (true, places.len());
         table.placed = Some(Placed { places, sources: rows_at, starts, lanes: lanes.to_vec() });
         table
@@ -156,17 +159,22 @@ impl GroupTable {
     /// grown to the groups' count and fed each batch's rows with their
     /// places as their groups, as `taken` says, of `lanes`, a batch's
     /// each, where evaluated by vectors; an expression's row made in
-    /// `scratch`, warnings heard by `runner`.
+    /// `scratch`, warnings heard by `runner`. Of batches held an entry a
+    /// run, as `runs` says, each entry is given its run's states
+    /// (`runs.rs`, RULES.md D1325).
     ///
     /// # Errors
     ///
     /// As a set function, or an expression it takes, fails.
     pub(in crate::exec) fn feed_placed(
         &mut self,
-        held: &[(Batch, Option<Sel>)],
+        (held, runs): (&[(Batch, Option<Sel>)], &Runs),
         (taken, lanes): (&[Taken], &[Vec<Option<Fed<'_>>>]),
         (scratch, runner): (&mut Row, &Runner),
     ) -> Result<()> {
+        if runs.any() {
+            return self.feed_runs((held, runs), (taken, lanes), (scratch, runner));
+        }
         let Self { placed, states, aggs, pending, .. } = self;
         let Some(placed) = placed.as_ref() else { return Ok(()) };
         let spans = spans(held);

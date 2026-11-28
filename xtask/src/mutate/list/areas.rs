@@ -44,6 +44,7 @@ mod alloc;
 #[path = "estimates.rs"]
 mod estimates;
 mod group_table;
+mod handed_runs;
 mod hot_rows;
 mod implied_edges;
 mod insert_values;
@@ -329,9 +330,9 @@ pub fn late() -> impl Iterator<Item = &'static [Mutation]> {
 /// debugger's, a morsel's memory's, a copy by column's, keyed loads', a
 /// window narrowed's, a join built in passes', a filter passing over what
 /// its scan judged's, text key lanes', the rows placed by partition's,
-/// exact totals held in 64 bits' and the runs of rows of one key's last, as
-/// `last` holds no more.
-fn closing() -> [&'static [Mutation]; 44] {
+/// exact totals held in 64 bits', the runs of rows of one key's and the
+/// runs handed on an entry each's last, as `last` holds no more.
+fn closing() -> [&'static [Mutation]; 45] {
     [
         &parameter_defaults::PARAMETER_DEFAULTS,
         &call_modes::CALL_MODES,
@@ -377,6 +378,7 @@ fn closing() -> [&'static [Mutation]; 44] {
         &vetted::VETTED,
         &narrow_totals::NARROW_TOTALS,
         &alike_runs::ALIKE_RUNS,
+        &handed_runs::HANDED_RUNS,
     ]
 }
 

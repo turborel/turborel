@@ -52,11 +52,11 @@ fn tables() -> (Database, Session) {
 }
 
 /// The rows of a query, or the code it failed with.
-type Rows = Result<Vec<String>, turborel::error::Code>;
+pub(crate) type Rows = Result<Vec<String>, turborel::error::Code>;
 
 /// The rows of `sql` run a row at a time on one thread, by batch on one
 /// thread, and by batch on 4 threads in morsels of 256 rows.
-fn three_ways(s: &Session, sql: &str) -> (Rows, Rows, Rows) {
+pub(crate) fn three_ways(s: &Session, sql: &str) -> (Rows, Rows, Rows) {
     exec(s, "SET EXECUTOR.DEGREE = 1").unwrap();
     exec(s, "SET EXECUTOR.BATCHES = 'OFF'").unwrap();
     let alone = rows(s, sql);

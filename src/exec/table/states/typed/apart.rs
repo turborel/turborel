@@ -12,6 +12,8 @@ use crate::exec::batch::Taken;
 use crate::storage::mask::index;
 use crate::storage::{Batch, Column, Ints, Sel};
 
+mod runs;
+
 /// A morsel's batches as it holds them, each with the rows kept of it.
 type Held = [(Batch, Option<Sel>)];
 

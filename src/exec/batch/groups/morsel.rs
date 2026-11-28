@@ -14,11 +14,16 @@
 //! (`table/made/apart.rs`): the morsel's batches are held and hashed, the
 //! rows of each partition counted, and then each column is written at its
 //! size, every row's value at its place.
+//!
+//! \[DESIGN\] (RULES.md D1325) Where the tables made before it followed
+//! runs of one key, such a morsel hands on an entry a run, not a row. A
+//! run's first row alone is hashed and written, and the entry's states
+//! are those of the run's rows (`table/made/apart/runs.rs`).
 
 use super::super::{Batches, Read, fed, lanes};
 use super::coded::{Memo, grouped, hash_of};
 use crate::error::Result;
-use crate::exec::table::{GroupTable, Key, Seed, hash_lanes, hash_rows, narrow};
+use crate::exec::table::{GroupTable, Key, Runs, Seed, hash_lanes, hash_rows, narrow};
 use crate::exec::{Runner, broken};
 use crate::functions::Accumulator;
 use crate::logical::AggCall;
@@ -33,7 +38,8 @@ use crate::storage::{Batch, Sel};
 /// is given, every row is a group of its own, none looked for (RULES.md
 /// D1260), the groups written by partition among as many partitions as
 /// it says, by the lanes of the key it says, or by whole keys of none
-/// (RULES.md D1313).
+/// (RULES.md D1313); and, if it says so, the rows of a run of one key
+/// are one such group (RULES.md D1325).
 ///
 /// # Errors
 ///
@@ -43,7 +49,7 @@ pub(in crate::exec) fn morsel_groups(
     aggs: &[AggCall],
     batches: Batches,
     (runner, first, seed): (&Runner, u64, &Seed),
-    (room, apart): (usize, Option<(usize, &[usize])>),
+    (room, apart): (usize, Option<(usize, &[usize], bool)>),
 ) -> Result<GroupTable> {
     if read.groups.is_empty()
         && let Some(states) = writing(aggs)
@@ -62,7 +68,11 @@ pub(in crate::exec) fn morsel_groups(
         let count = rows.map_or(batch.rows, <[u32]>::len);
         // Of keys all codes of dictionaries, by their codes (`coded.rs`).
         let at = (&batch, read.groups.as_slice(), rows);
-        if !grouped((&mut table, &mut memo), at, (number, seed, runner.kernels()), &mut hashes) {
+        if grouped((&mut table, &mut memo), at, (number, seed, runner.kernels()), &mut hashes) {
+            // Rows taken by their codes are each counted as looked up, as
+            // no run is followed of them (RULES.md D1323, D1325).
+            table.looked = table.looked.saturating_add(count);
+        } else {
             hashed(&mut table, at, (number, seed, runner), &mut hashes);
         }
         let lanes = lanes(&read.taken, &batch, rows);
@@ -81,6 +91,13 @@ pub(in crate::exec) fn morsel_groups(
 /// it over. No group is looked for, so a key the morsel holds twice is
 /// two groups, which the partition's table merges.
 ///
+/// \[DESIGN\] (RULES.md D1325) If `runs`, the rows of one key that come
+/// one after another in a batch (`run_ends`) are one group, an entry a
+/// run. Such a batch is held with each run's first row as the rows kept
+/// of it, so its keys, hashes and places are those rows', and every row
+/// kept of it and the runs' ends are held beside it for the states
+/// alone, which take every row of a run.
+///
 /// # Errors
 ///
 /// As reading the batches, or a set function, fails.
@@ -89,11 +106,12 @@ fn rows_apart(
     aggs: &[AggCall],
     batches: Batches,
     (runner, first, seed): (&Runner, u64, &Seed),
-    (parts, by_lanes): (usize, &[usize]),
+    (parts, by_lanes, runs): (usize, &[usize], bool),
 ) -> Result<GroupTable> {
-    let held = batches.collect::<Result<Vec<_>>>()?;
-    let (mut hashes, mut by, mut one) = (Vec::new(), Vec::new(), Vec::new());
     let at = read.groups.as_slice();
+    let ends_of = |batch: &Batch, rows: Option<&[u32]>| if runs { super::run_ends(batch, at, rows) } else { None };
+    let (held, told) = Runs::held(batches.collect::<Result<Vec<_>>>()?, ends_of);
+    let (mut hashes, mut by, mut one) = (Vec::new(), Vec::new(), Vec::new());
     for (batch, rows) in &held {
         let rows = rows.as_ref().map(Sel::as_slice);
         hash_rows(batch, (at, rows), (seed, runner.kernels()), &mut one);
@@ -104,9 +122,17 @@ fn rows_apart(
         }
     }
     let by = (!by_lanes.is_empty()).then_some(by.as_slice());
-    let mut table = GroupTable::placed((held.as_slice(), at), (aggs, seed), (hashes.as_slice(), by, first), (parts, by_lanes));
-    let vectors: Vec<_> = held.iter().map(|(batch, rows)| lanes(&read.taken, batch, rows.as_ref().map(Sel::as_slice))).collect();
-    table.feed_placed(&held, (&read.taken, &vectors), (&mut Vec::new(), runner))?;
+    let (of, how) = ((held.as_slice(), at), (parts, by_lanes));
+    // An entry's first row is numbered among all the morsel's rows.
+    let mut table = if told.any() {
+        GroupTable::placed(of, (aggs, seed), (hashes.as_slice(), by, told.numbers(&held, first)), how)
+    } else {
+        GroupTable::placed(of, (aggs, seed), (hashes.as_slice(), by, (0_u64..).map(|n| first.saturating_add(n))), how)
+    };
+    let vectors: Vec<_> =
+        held.iter().enumerate().map(|(b, (batch, heads))| lanes(&read.taken, batch, told.rows_of(b, heads.as_ref()))).collect();
+    table.feed_placed((&held, &told), (&read.taken, &vectors), (&mut Vec::new(), runner))?;
+    table.taken = told.rows();
     Ok(table)
 }
 
@@ -152,7 +178,9 @@ fn one_group(
         let written = written.ok_or_else(|| broken("a set function of no grouping wrote no state"))?;
         table.merge_written(0, (first, &written))?;
     }
-    table.taken = taken;
+    // Its rows are told as looked up, as they were before lookups were
+    // counted apart from rows (RULES.md D1325).
+    (table.taken, table.looked) = (taken, taken);
     Ok(table)
 }
 
@@ -170,7 +198,8 @@ fn written_state(state: &dyn Accumulator) -> Option<Vec<u8>> {
 /// after another (`run_ends`), a run's first row alone is hashed and
 /// looked up, and the rows after it go to its group. Where no row
 /// repeats the one before it, every row's key is hashed a vector at a
-/// time, as of a batch that tells no run.
+/// time, as of a batch that tells no run. The table counts the rows
+/// looked up (RULES.md D1325).
 fn hashed(
     table: &mut GroupTable,
     (batch, at, rows): (&Batch, &[usize], Option<&[u32]>),
@@ -180,6 +209,7 @@ fn hashed(
     let count = rows.map_or(batch.rows, <[u32]>::len);
     let numbered = |n: usize| number.saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
     let Some(ends) = super::run_ends(batch, at, rows).filter(|ends| ends.len() < count) else {
+        table.looked = table.looked.saturating_add(count);
         hash_rows(batch, (at, rows), (seed, runner.kernels()), hashes);
         for (n, &hash) in hashes.iter().enumerate() {
             let r = nth(rows, n);
@@ -190,6 +220,7 @@ fn hashed(
     };
     // Each run's first row, as its place among the rows given and in the
     // batch: the first row given, then the row after each end but the last.
+    table.looked = table.looked.saturating_add(ends.len());
     let begins: Vec<usize> = std::iter::once(0).chain(ends.iter().copied()).take(ends.len()).collect();
     let firsts: Vec<u32> = begins.iter().map(|&n| narrow(nth(rows, n))).collect();
     hash_rows(batch, (at, Some(&firsts)), (seed, runner.kernels()), hashes);

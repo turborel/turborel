@@ -854,6 +854,7 @@ verification approach DO-178C expects (§8).
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
 | D1323 | A grouping looks up the first row alone of rows of one key that come one after another |
+| D1325 | A morsel's table is judged by the rows it looked up, and a morsel handed on ungrouped hands on a run of one key as one entry |
 
 ### The project
 
@@ -23558,9 +23559,10 @@ row is first grouped differs.
 
 Whether to group is the workers' own measurement, never the planner's
 estimate (`exec/parallel/grouped/waves.rs`, `Reduction`). Each morsel's
-table tells the groups it ended with of the rows it took. After a table
-that left more than 750 groups a thousand rows the next morsels are
-handed on ungrouped. A table spends a lookup and a slot on each row, and
+table tells the groups it ended with of the rows it looked up, which
+were all the rows it took until a table followed runs of one key
+(D1323, D1325). After a table that left more than 750 groups a thousand
+rows looked up the next morsels are handed on ungrouped. A table spends a lookup and a slot on each row, and
 saves, for each row it merges, the appending, the ordering by partition
 and the lookup the partition would spend on it. Where the two meet was
 measured, the hand-over forced on and forced off over groupings of
@@ -25490,6 +25492,94 @@ a count of distinct values among them, under WHERE and HAVING, of both
 stores, and counts the rows each group took. One of them groups by a
 text the column store gives as codes, in runs, on one thread, which
 fails where runs are followed of rows taken by their codes.
+
+#### D1325. A morsel's table is judged by the rows it looked up, and a morsel handed on ungrouped hands on a run of one key as one entry
+
+A morsel whose table reduces nothing hands its rows on ungrouped
+(D1260), and the table was judged by the groups it left of the rows it
+took. Since a grouping looks up the first row alone of rows of one key
+that come one after another (D1323), the rows that repeat the key
+before them cost the table nothing. A table of a log of visits, whose
+rows come a few of a visitor running and each run a visitor the morsel
+has not held, then looked a group up for the first row of each run
+alone and made a group nearly every time it looked. Judged by its rows
+it reduced them well, so the morsels went on making tables nearly every
+lookup of which missed, each group given a slot the partition gives it
+again.
+
+- A table counts the rows it looked a group up for
+  (`exec/table.rs`, `looked`; `exec/batch/groups/morsel.rs`, `hashed`):
+  the first row of each run where it followed runs, every row where no
+  row repeated the one before it. Rows taken by their codes (D1161)
+  are each counted, as no run is followed of them and a row taken so
+  costs no probe, so a grouping by such a key is judged as it was.
+- The morsels' tables tell the groups they ended with of the rows they
+  looked up (`exec/parallel/grouped/waves.rs`, `Reduction`), and the
+  bound of D1260 is read of those: after a table that left more than
+  750 groups a thousand rows looked up, the next morsels are handed on.
+  The bound's measurement stands as it was made, as every row of its
+  groupings was looked up. What a table spends is a lookup and a slot,
+  and what it saves is an entry the partition need not merge, and both
+  are now counted of the same rows. This hands on more groupings than
+  before, those whose rows repeat only the row before them. The probes
+  and their gaps are unchanged (D1260).
+- A morsel handed on after a table that followed runs hands on an
+  entry a run, not a row (`morsel.rs`, `rows_apart`;
+  `exec/table/made/apart/runs.rs`). The runs are those a table follows
+  (`run_ends`), told a batch at a time, so no run crosses a batch. An
+  entry's key and hash are its run's first row's, and only first rows
+  are hashed. Its first row's number is that row's place among all the
+  rows kept of the morsel. Two runs of one key are two entries, which
+  the partition merges as it merges two rows of one key. A batch that
+  tells a run is held with the first rows of its runs as the rows kept
+  of it, so the keys, the hashes and the places are written of those
+  rows as D1313 writes them of any rows, and nothing there is changed.
+  A batch no row of which repeats the one before it is held as it
+  came, an entry a row.
+- An entry's states are those of its run's rows, every row taken by
+  the entry of its own run and by no other. COUNT(\*) is set to the
+  run's length. A set function of an integer column is set to what the
+  run's integers give, read in the order they lie in the batch's
+  vector: their sum and how many are not null of a sum or a mean, the
+  best of them of an extreme (`exec/table/states/typed/apart/runs.rs`).
+  A null is passed over and its warning raised [ISO/IEC 9075:1992 §6.5
+  GR1b], and a run all of nulls leaves its entry the state of no value,
+  which a table's group fed those rows holds. A sum that leaves 64 bits
+  within one run sets nothing, and that column is fed (D1308). Every
+  other column of states is grown once and fed every row of every
+  batch with its run's entry's place as its group, as a table's states
+  are fed, so each state is the one a table's group of those rows
+  holds whatever the function.
+- After a table that looked up every row it took, no run is looked for
+  in the morsels handed on, until a probe's table follows one. A
+  grouping whose rows never repeat the row before them pays no compare
+  for this decision, and its morsels are handed on as D1313 hands them.
+- A morsel that hands its runs on is split among the partitions and
+  never handed whole to the statement's thread (D1247), though its
+  entries may be few beside its rows. Its entries lie by partition, not
+  in the order of their first rows, which a table handed whole keeps.
+
+What is handed over has the form a morsel's groups always had, with
+`Made::repeats` true as of rows handed on. The partitions merge it,
+hold it, adopt it where it lies (D1300) and regroup it before the
+spill (D1260) as before. The groups, their order and each set
+function's value are unchanged, and nothing stored or sent changes.
+
+Unit tests compare the entries of a morsel of three batches, one that
+tells no run, one a filter kept some rows of, and one whose keys come
+back in later runs, with the same runs appended and fed as a table's
+groups are, by whole keys and by a lane, for each kind of state, nulls
+and runs of nulls alone among them; number each entry among all the
+morsel's rows; hold a batch by its runs only where they cover its rows;
+say whether a null was passed over; and feed a run whose sum leaves 64
+bits. Tests of the waves show the first morsel's table judged by its
+lookups, the next morsel handing on an entry a run, a grouping whose
+runs reduce still grouped in its morsels, rows that never repeat
+handed on one by one, and a morsel handed on never handed whole; and
+that the groups are the same whichever morsels hand their runs on,
+through the spill too. An integration test compares groupings of rows
+in runs, in parallel, with the plan run a row at a time, of both
+stores, and checks each run's count, sum and least themselves.
 
 ## 2. Project layout
 
