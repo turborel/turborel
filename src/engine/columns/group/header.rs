@@ -51,7 +51,7 @@ pub(super) fn encode(group: &Group, types: &[DataType]) -> Result<Vec<u8>> {
     put_u64(&mut out, group.last);
     put_u32(&mut out, group.rows);
     put_places(&mut out, &group.order)?;
-    out.push(u8::from(group.pax));
+    out.push(layout_of(group));
     for runs in [&group.ids, &group.by_id] {
         put_u32(&mut out, count32(runs.len())?);
         for run in runs {
@@ -99,16 +99,38 @@ fn put_zones(out: &mut Vec<u8>, zones: &[Zone], t: &DataType) -> Result<()> {
     Ok(())
 }
 
+/// The layout byte of a group written by columns with no lengths lane.
+const COLUMNS: u8 = 0;
+/// The layout byte of a group written in the hybrid layout.
+const HYBRID: u8 = 1;
+/// \[DESIGN\] (RULES.md D1319) The layout byte of a group written by
+/// columns that has lengths lanes, which its header then ends with.
+const LANED: u8 = 2;
+
+/// Whether `group` has a lengths lane of any column.
+fn laned(group: &Group) -> bool {
+    (0..group.lanes.len()).any(|c| group.lane(c).is_some())
+}
+
+/// The layout byte of `group`'s header.
+fn layout_of(group: &Group) -> u8 {
+    match (group.pax, laned(group)) {
+        (true, _) => HYBRID,
+        (false, true) => LANED,
+        (false, false) => COLUMNS,
+    }
+}
+
 /// \[DESIGN\] (RULES.md D1319) Appends the lengths lanes of `group`, if
 /// it has any: how many, then of each its column's place and its chunks,
-/// as a column of `LENGTH` writes them. A group with no lane ends where
-/// a header ended before lanes were, so one written before is read as
-/// one that has none.
+/// as a column of `LENGTH` writes them. Its layout byte says they follow
+/// (`LANED`), so a header cut before them is refused, and a group with
+/// no lane is written byte for byte as one was before lanes were.
 fn put_lanes(out: &mut Vec<u8>, group: &Group) -> Result<()> {
-    let lanes: Vec<(usize, &[Zone])> = (0..group.lanes.len()).filter_map(|c| group.lane(c).map(|zones| (c, zones))).collect();
-    if lanes.is_empty() {
+    if layout_of(group) != LANED {
         return Ok(());
     }
+    let lanes: Vec<(usize, &[Zone])> = (0..group.lanes.len()).filter_map(|c| group.lane(c).map(|zones| (c, zones))).collect();
     put_u32(out, count32(lanes.len())?);
     for (column, zones) in lanes {
         put_u32(out, count32(column)?);
@@ -187,8 +209,19 @@ impl<'a> Reader<'a> {
     /// A group's layout: whether the hybrid.
     fn layout(&mut self) -> Result<bool> {
         match self.byte()? {
-            0 => Ok(false),
-            1 => Ok(true),
+            COLUMNS => Ok(false),
+            HYBRID => Ok(true),
+            _ => Err(corrupt("its layout is of another format")),
+        }
+    }
+
+    /// A group's layout as its header holds it: whether the hybrid, and
+    /// whether lengths lanes end the header (RULES.md D1319).
+    fn laned_layout(&mut self) -> Result<(bool, bool)> {
+        match self.byte()? {
+            COLUMNS => Ok((false, false)),
+            HYBRID => Ok((true, false)),
+            LANED => Ok((false, true)),
             _ => Err(corrupt("its layout is of another format")),
         }
     }
@@ -272,13 +305,13 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// \[DESIGN\] (RULES.md D1319) The lengths lanes a header ends with,
-    /// by their columns' places among `width`, those of the columns
-    /// `wanted` read and the others passed over: none if the header ends
-    /// before them, as one written before lanes were does.
-    fn lanes(&mut self, width: usize, wanted: Option<&[usize]>) -> Result<Vec<Option<Vec<Zone>>>> {
+    /// \[DESIGN\] (RULES.md D1319) The lengths lanes a header ends with if
+    /// its layout says so, `laned`, by their columns' places among
+    /// `width`, those of the columns `wanted` read and the others passed
+    /// over: none of a header whose layout names none.
+    fn lanes(&mut self, width: usize, wanted: Option<&[usize]>, laned: bool) -> Result<Vec<Option<Vec<Zone>>>> {
         let mut lanes = vec![None; width];
-        if self.0.is_empty() {
+        if !laned {
             return Ok(lanes);
         }
         for _ in 0..self.count()? {
@@ -327,7 +360,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType], wa
     }
     let (first_id, last, rows) = (r.u64()?, r.u64()?, r.u32()?);
     let order = r.places()?;
-    let pax = r.layout()?;
+    let (pax, laned) = r.laned_layout()?;
     let ids = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     let by_id = (0..r.count()?).map(|_| r.run()).collect::<Result<Vec<_>>>()?;
     if r.count()? != types.len() {
@@ -345,7 +378,7 @@ pub fn read<S: Seal>(pages: &Pages<'_, S>, first: PageId, types: &[DataType], wa
     let edges = types.iter().map(|t| (0..r.count()?).map(|_| r.bound(t)).collect::<Result<Vec<_>>>()).collect::<Result<Vec<_>>>()?;
     let named = r.places()?;
     let sketches = types.iter().map(|t| r.sketch(t)).collect::<Result<Vec<_>>>()?;
-    let lanes = r.lanes(types.len(), wanted)?;
+    let lanes = r.lanes(types.len(), wanted, laned)?;
     if !r.0.is_empty() {
         return Err(corrupt("its header has bytes past its end"));
     }

@@ -73,7 +73,8 @@ fn a_varchar_column_has_a_lane_of_its_lengths() {
 /// Verifies: [DESIGN] RULES.md D1319, groups with no lane: one written in
 /// the hybrid layout has none, nor has a CHARACTER column, and a header
 /// written with none, as before
-/// lanes were, ends where it did and is read as a group that has none;
+/// lanes were, ends where it did and is read as a group that has none,
+/// while one that names lanes and is cut before them is refused;
 /// lengths are then read of the text's chunks. A header whose lane names
 /// no column of the table is refused, SQLCODE -916. Robustness.
 #[test]
@@ -90,7 +91,11 @@ fn a_group_with_no_lane_is_read_as_before() {
     let with = header::encode(&group, &TYPES).unwrap();
     group.lanes = vec![None; TYPES.len()];
     let without = header::encode(&group, &TYPES).unwrap();
-    assert!(without.len() < with.len() && with.starts_with(&without), "a header with no lane ends before them");
+    assert!(without.len() < with.len(), "a header with no lane ends before them");
+    let apart: Vec<usize> = (0..without.len()).filter(|&n| with[n] != without[n]).collect();
+    assert_eq!(apart.len(), 1, "alike to there but for the layout's byte, which says lanes follow");
+    let mut cut = put_chain(&plain, &with[..without.len()], &mut Vec::new()).unwrap();
+    assert_eq!(read(&plain, cut.remove(0), &TYPES, None).unwrap_err().code, Code::Corrupt, "cut before its lanes");
     let mut written_pages = Vec::new();
     let old = put_chain(&plain, &without, &mut written_pages).unwrap();
     let read_back = read(&plain, old[0], &TYPES, None).unwrap();

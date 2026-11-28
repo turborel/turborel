@@ -24546,10 +24546,12 @@ is padded as it is read, so its length is its type's and no lane tells
 it. CHAR_LENGTH still reads the text, as a lane counts octets and no
 column's stored form says its characters are one octet each.
 
-The format's version stays 1 and nothing is migrated. A header written
-with no lane ends where a header ended before lanes were, so a group
-written before is read as one that has none, and so is a group in the
-hybrid layout, which writes none. Of such a group a length is read of
+The format's version stays 1 and nothing is migrated. A header's layout
+byte says whether lanes end it, so a header cut before its lanes is
+refused as any header cut short is. A group with no lane is written
+byte for byte as one was before lanes were, so a group written before
+is read as one that has none, and so is a group in the hybrid layout,
+which writes none. Of such a group a length is read of
 the text's chunks as D1267 reads it, and the comparison with the empty
 string is judged as it was. Old and new groups of one table are read
 side by side. A group replaced by a merge or a freeze is written with

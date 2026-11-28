@@ -22,7 +22,8 @@
 //! ```text
 //! page:    next page u64 (0 for none) | the header's bytes
 //! header:  GROUP_FORMAT u8 | first id u64 | last id u64 | rows u32 |
-//!          order u32 | each: column u32 | layout u8 (1 of the hybrid) |
+//!          order u32 | each: column u32 | layout u8 (1 of the hybrid, 2
+//!          of columns with lengths lanes) |
 //!          id runs u32 | each: run | by id runs u32 | each: run |
 //!          columns u32 | each: runs u32 | each:
 //!          run | nulls u32 | bounds u8 (1 if any) | least | greatest |

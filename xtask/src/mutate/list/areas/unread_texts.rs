@@ -26,7 +26,7 @@ const BY_LENGTHS: &str =
 
 /// Mechanisms whose removal must fail the requirements of texts made
 /// only for a reader.
-pub const UNREAD_TEXTS: [Mutation; 22] = [
+pub const UNREAD_TEXTS: [Mutation; 23] = [
     Mutation {
         name: "entries-made-text-at-open",
         package: Package::Core,
@@ -182,8 +182,8 @@ pub const UNREAD_TEXTS: [Mutation; 22] = [
         package: Package::Core,
         breaks: "a header's lanes are not read, and its bytes past the sketches refused",
         file: "src/engine/columns/group/header.rs",
-        original: "        if self.0.is_empty() {\n            return Ok(lanes);",
-        replacement: "        if !self.0.is_empty() {\n            return Ok(lanes);",
+        original: "        if !laned {\n            return Ok(lanes);",
+        replacement: "        if laned {\n            return Ok(lanes);",
         integration: &[],
         unit: &["engine::columns::group::tests::lanes::a_varchar_column_has_a_lane_of_its_lengths"],
     },
@@ -246,5 +246,15 @@ pub const UNREAD_TEXTS: [Mutation; 22] = [
         replacement: "    if let Some(runs) = lengths::kept_parts(group, condition).filter(|_| group.rows == 0) {",
         integration: &[],
         unit: &["engine::columns::judged::lengths::tests::a_lanes_bounds_prove_a_run_and_pass_over_parts"],
+    },
+    Mutation {
+        name: "lane-header-cut-before-its-lanes",
+        package: Package::Core,
+        breaks: "a header with lanes says it is of columns alone, so one cut before its lanes is read as a group with none",
+        file: "src/engine/columns/group/header.rs",
+        original: "        (false, true) => LANED,",
+        replacement: "        (false, true) => COLUMNS,",
+        integration: &[],
+        unit: &["engine::columns::group::tests::lanes::a_group_with_no_lane_is_read_as_before"],
     },
 ];
