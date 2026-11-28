@@ -847,6 +847,7 @@ verification approach DO-178C expects (§8).
 | D1311 | The matcher that marks does a step's work once a step |
 | D1316 | A run's texts have codes once one of its chunks shares entries among its rows, whatever the others' encodings, and never more entries than rows |
 | D1320 | A field or a cast of datetimes is computed over a vector's microseconds |
+| D1323 | A column equal to one compared with a `?` is given the same comparison, as with a constant |
 
 ### The project
 
@@ -25130,6 +25131,28 @@ displacements, and a spread of a fixed seed. No datetime holds a leap
 second, so none is among them. An integration test holds queries of
 both engines, in sessions of three displacements, to the rows they give
 a row at a time.
+
+#### D1323. A column equal to one compared with a `?` is given the same comparison, as with a constant
+
+Predicate transitivity (D35, D404) gave a column equal to another the
+comparisons the other has with constants. If `a = b` and `a < 5` hold,
+so does `b < 5`, as equal values compare alike with any value
+[X3.135-1986 §5.11 GR4, GR5]. A comparison with a `?` was not passed on.
+A prepared statement is planned with its execution's values and with its
+slots, and keeps the second once the two have one shape (D45). Planned
+with values, a table equal to another by a column got that column's
+constant comparison, and its index join probed by it as its own filter
+fixed it (D761). Planned with slots it got none, and joined by the
+column. The two never had one shape, and the statement was planned at
+every execution. STOCK LEVEL's join of a district, its order lines and
+their stock is such a statement.
+
+A comparison with a `?` is now passed on as one with a constant is, by
+the same rule and no wider. The `?` has one value in an execution, so
+the comparison added is the `?` itself, its place filled once with the
+others, and no parameter is added. Two comparisons are of one value
+when their constants are identical (`Value::norm`) or their `?` is one
+place. A null makes both unknown, which is the same answer.
 
 ## 2. Project layout
 

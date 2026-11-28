@@ -6,6 +6,7 @@
 use turborel::db::{Database, Session};
 use turborel::optimizer::PREDICATE_TRANSITIVITY;
 use turborel::params::Params;
+use turborel::physical::plannings;
 use turborel::value::{DataType, Spelled};
 
 use crate::common::{number, set_rule, sorted};
@@ -75,4 +76,32 @@ fn columns_equal_to_one_parameter_join_by_an_index() {
     let plan = a.physical_plan(&apart, &Params::new()).unwrap();
     assert!(plan.contains("IndexNestedLoop") && plan.contains("L.I, 2"), "{plan}");
     assert_eq!(sorted(&a, &apart), sorted(&a, &apart.replace("S.I = L.I", "S.I + 0 = L.I")));
+}
+
+/// Verifies: [DESIGN] RULES.md D1323, D404, D761, D45, a column compared
+/// with a `?` and equal to a column of another table gives that column the
+/// same comparison, as a constant does: the stock level with its warehouse
+/// given once, by a parameter, fixes S's warehouse in the plan made with
+/// its slots as in the one made with its values. So it learns its plan in
+/// the five runs learning takes, each planning twice, and plans nothing
+/// after; with the `?` not passed on, the two plans never agree and it
+/// plans at every execution.
+#[test]
+fn a_column_equal_to_a_parameter_gives_its_equal_the_comparison() {
+    let (_db, a) = stock();
+    let level = "SELECT COUNT(DISTINCT S.I) FROM L, S
+        WHERE L.W = ? AND L.D = ? AND L.O < 25 AND L.O >= 5 AND S.W = L.W AND S.I = L.I AND S.Q < ?";
+    let p = a.prepare(level).unwrap();
+    let runs: Vec<u64> = (0..30_i64)
+        .map(|k| {
+            let before = plannings();
+            a.execute_prepared(&p, &[number(1), number(1 + k % 10), number(10 + k % 10)]).unwrap();
+            plannings().wrapping_sub(before)
+        })
+        .collect();
+    let learning = runs.iter().take_while(|&&n| n > 0).count();
+    assert_eq!((learning, &runs[..learning]), (5, &[2; 5][..]), "{runs:?}");
+    assert!(runs[learning..].iter().all(|&n| n == 0), "{runs:?}");
+    let given = level.replace("L.W = ?", "L.W = 1").replace("L.D = ?", "L.D = 3").replace("S.Q < ?", "S.Q < 15");
+    assert_eq!(sorted(&a, &given), sorted(&a, LEVEL));
 }
