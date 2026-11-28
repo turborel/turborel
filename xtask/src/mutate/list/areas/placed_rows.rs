@@ -20,7 +20,7 @@ const GATHERED: &str = "exec::table::made::apart::tests::a_table_written_by_othe
 
 /// Mechanisms whose removal must fail the requirements of rows written
 /// by partition.
-pub const PLACED_ROWS: [Mutation; 9] = [
+pub const PLACED_ROWS: [Mutation; 10] = [
     Mutation {
         name: "placed-rows-one-place-a-partition",
         package: Package::Core,
@@ -78,6 +78,16 @@ pub const PLACED_ROWS: [Mutation; 9] = [
         file: KEYS_FILE,
         original: "                    *at = null;",
         replacement: "                    *at = false;",
+        integration: &[],
+        unit: &[WRITTEN],
+    },
+    Mutation {
+        name: "placed-rows-lane-of-nulls-told-to-hold-none",
+        package: Package::Core,
+        breaks: "a lane of integers written by partition that holds nulls says it holds none, so a null reads as the number 0 (RULES.md D1313, D1274)",
+        file: KEYS_FILE,
+        original: "Lane { data, nulls, nulled, room: places.len(), ..Lane::default() }",
+        replacement: "Lane { data, nulls, room: places.len(), ..Lane::default() }",
         integration: &[],
         unit: &[WRITTEN],
     },
