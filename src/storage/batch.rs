@@ -19,6 +19,7 @@ pub mod listed;
 pub mod mask;
 mod runs;
 pub mod sel;
+mod vetted;
 
 use std::sync::{Arc, OnceLock};
 
@@ -28,6 +29,7 @@ pub use self::kinds::{Bools, Datetimes};
 pub use self::late::{Late, LateSource};
 pub use self::mask::Mask;
 pub use self::sel::Sel;
+pub use self::vetted::{VETTED_PLACES, Vetted, VettedBatches, unvetted};
 use super::{Conjunction, Row, Rows, TableStorage};
 use crate::error::Result;
 use crate::txn::TxId;

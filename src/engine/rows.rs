@@ -69,7 +69,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 pub use files::TableFiles;
-use frozen::{Frozen, Merged, Merging};
+use frozen::Frozen;
 pub use frozen::{SYSTEM_CACHE_BYTES, extents::SegmentPlace};
 use ids::IdBlocks;
 use ids::{key, no_row, row_id};
@@ -93,6 +93,7 @@ use crate::disk::pager::PageId;
 use crate::error::{Code, Result, SqlError};
 use crate::log::Lsn;
 use crate::stats::Statistics;
+use crate::storage::VettedBatches;
 use crate::storage::{
     Batches, Condition, Conjunction, Garbage, Near, Newest, Region, Removed, Row, RowId, Rows, ScanOrder, Split, TableStorage,
 };
@@ -290,10 +291,10 @@ impl TableStorage for RowTable {
         self.scan_batches_of(tx, columns, condition.cloned(), (late, &[]))
     }
 
-    /// \[DESIGN\] (RULES.md D1267) As `scan_batches`, its frozen rows' columns of `asked.1` measured, late with their octet lengths
-    /// (`rows/frozen/batches/measured.rs`).
-    fn scan_measured(self: Arc<Self>, tx: TxId, what: (&[usize], Option<&Conjunction>), asked: (&[usize], &[usize])) -> Batches {
-        self.scan_batches_of(tx, what.0, what.1.cloned(), asked)
+    /// \[DESIGN\] (RULES.md D1266, D1267) As `scan_batches`, its frozen rows' columns of `asked.1` measured, late with their octet lengths
+    /// (`rows/frozen/batches/measured.rs`), each batch of the column store's frozen rows with what the scan judged of it (`rows/scan.rs`).
+    fn scan_vetted(self: Arc<Self>, tx: TxId, what: (&[usize], Option<&Conjunction>), asked: (&[usize], &[usize])) -> VettedBatches {
+        self.scan_vetted_of(tx, what.0, what.1.cloned(), asked)
     }
 
     /// Split at row ids, of the column store at its groups' starts
@@ -572,23 +573,7 @@ impl TableStorage for RowTable {
     }
 
     fn versions(self: Arc<Self>, horizon: Timestamp, as_of: Timestamp, columns: &[usize]) -> Rows {
-        let keep: Box<dyn Fn(Timestamp, bool) -> bool + Send> = Box::new(move |at, own| if own { at <= as_of } else { at <= horizon });
-        let unreadable = self.pending(keep, Some(columns)).map(|read| read.map(|(id, row, _)| (id, row)));
-        let frozen = match self.frozen.directory() {
-            Ok(directory) => Merged::new(Arc::clone(&self), (Merging::FrozenOnly, directory), columns.to_vec(), None),
-            Err(e) => return Box::new(std::iter::once(Err(e))),
-        };
-        let columns = columns.to_vec();
-        // Held to the end, so no entry of a row frozen meanwhile is taken out before it is read.
-        let held = self.frozen.directory();
-        Box::new(unreadable.chain(frozen).chain(Self::entries(&self).flat_map(move |entry| {
-            let _held = &held;
-            let found = entry.and_then(|(key, newest)| self.versions_of(row_id(&key)?, newest, (horizon, as_of), &columns));
-            match found {
-                Ok(found) => found.into_iter().map(Ok).collect::<Vec<_>>(),
-                Err(e) => vec![Err(e)],
-            }
-        })))
+        self.versions_as_of(horizon, as_of, columns)
     }
 }
 

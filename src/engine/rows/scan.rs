@@ -6,15 +6,15 @@ use std::iter;
 use std::ops::{Bound, Deref};
 use std::sync::Arc;
 
-use super::frozen::{Batched, Merged, Merging, Ordered};
+use super::frozen::{Batched, Merged, Merging, Ordered, Vetting};
 use super::mvcc::{EVERY_COLUMN, Read, Reader, columns_mask};
 use super::sealing::sealed;
 use super::version::Version;
 use super::{RowTable, key, row_id};
 use crate::engine::tree::{BLinkTree, Direction, Scan, Visit, Visited, scan_of};
 use crate::error::Result;
-use crate::storage::{Batches, Conjunction, Near, Ramp, Row, RowId, Rows, ScanOrder, batches_of};
-use crate::txn::TxId;
+use crate::storage::{Batches, Conjunction, Near, Ramp, Row, RowId, Rows, ScanOrder, VettedBatches, batches_of, unvetted};
+use crate::txn::{Timestamp, TxId};
 
 /// A table's tree, reached through the table, so a scan that owns the
 /// table owns the tree it reads.
@@ -300,15 +300,66 @@ impl RowTable {
             let rows = Arc::clone(&self).scan_rows(tx, columns, condition);
             return batches_of(rows, columns);
         }
-        let read = || Read::scan(condition.as_ref(), columns);
-        let reader = match self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader)) {
-            Ok(reader) => reader,
-            Err(e) => return Box::new(iter::once(Err(e))),
-        };
-        match self.directory_for(reader) {
-            Ok(directory) => Box::new(Batched::new(Arc::clone(&self), (reader, directory), columns.to_vec(), condition).asked(asked)),
+        match self.batched(tx, columns, condition, asked) {
+            Ok(batched) => Box::new(batched),
             Err(e) => Box::new(iter::once(Err(e))),
         }
+    }
+
+    /// \[DESIGN\] (RULES.md D1266) As `scan_batches_of`, each batch of a
+    /// table that freezes rows with what its scan judged of it
+    /// (`frozen/batches/vetted.rs`); of any other nothing is said.
+    pub(super) fn scan_vetted_of(
+        self: Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        condition: Option<Conjunction>,
+        asked: (&[usize], &[usize]),
+    ) -> VettedBatches {
+        if self.frozen.columns().is_none() {
+            return unvetted(self.scan_batches_of(tx, columns, condition, asked));
+        }
+        match self.batched(tx, columns, condition, asked) {
+            Ok(batched) => Box::new(Vetting(batched)),
+            Err(e) => Box::new(iter::once(Err(e))),
+        }
+    }
+
+    /// `TableStorage::versions`: the versions not yet readable by all,
+    /// the frozen rows, then each tree entry's versions as of the times.
+    pub(super) fn versions_as_of(self: Arc<Self>, horizon: Timestamp, as_of: Timestamp, columns: &[usize]) -> Rows {
+        let keep: Box<dyn Fn(Timestamp, bool) -> bool + Send> = Box::new(move |at, own| if own { at <= as_of } else { at <= horizon });
+        let unreadable = self.pending(keep, Some(columns)).map(|read| read.map(|(id, row, _)| (id, row)));
+        let frozen = match self.frozen.directory() {
+            Ok(directory) => Merged::new(Arc::clone(&self), (Merging::FrozenOnly, directory), columns.to_vec(), None),
+            Err(e) => return Box::new(iter::once(Err(e))),
+        };
+        let columns = columns.to_vec();
+        // Held to the end, so no entry of a row frozen meanwhile is taken out before it is read.
+        let held = self.frozen.directory();
+        Box::new(unreadable.chain(frozen).chain(Self::entries(&self).flat_map(move |entry| {
+            let _held = &held;
+            let found = entry.and_then(|(key, newest)| self.versions_of(row_id(&key)?, newest, (horizon, as_of), &columns));
+            match found {
+                Ok(found) => found.into_iter().map(Ok).collect::<Vec<_>>(),
+                Err(e) => vec![Err(e)],
+            }
+        })))
+    }
+
+    /// The batches of a table that freezes rows, as `tx` sees them, what
+    /// `condition` matches counted as read.
+    fn batched(
+        self: &Arc<Self>,
+        tx: TxId,
+        columns: &[usize],
+        condition: Option<Conjunction>,
+        asked: (&[usize], &[usize]),
+    ) -> Result<Batched> {
+        let read = || Read::scan(condition.as_ref(), columns);
+        let reader = self.reader(tx).and_then(|reader| self.note_read(tx, read).map(|()| reader))?;
+        let directory = self.directory_for(reader)?;
+        Ok(Batched::new(Arc::clone(self), (reader, directory), columns.to_vec(), condition).asked(asked))
     }
 
     /// The batches of the rows `tx` sees, of `columns`, of only the zones

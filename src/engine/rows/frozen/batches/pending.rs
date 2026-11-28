@@ -4,6 +4,13 @@
 //! as each run is judged. A batch of them then takes those columns as
 //! held, so a column a filter reads is decoded once, to judge its run,
 //! and not again at the rows it kept.
+//!
+//! \[DESIGN\] (RULES.md D1266) It holds, too, the conjuncts every run it
+//! gathered rows of judged exactly: a conjunct one of them did not is
+//! not known true of that run's rows, so it is said of the batch only if
+//! each run says it. A conjunct a run judged of its first rows alone is
+//! said of none of the rows gathered, whose places are no longer the
+//! run's.
 
 use crate::storage::mask::index;
 use crate::storage::{Column, Floats, Ints, Mask};
@@ -14,6 +21,8 @@ use crate::storage::{Column, Floats, Ints, Mask};
 pub(super) struct Pending {
     places: Vec<u32>,
     piles: Vec<(usize, Pile)>,
+    /// The conjuncts judged exactly of every row held (`Judged::exact`).
+    exact: u64,
 }
 
 /// \[DESIGN\] A column's values of the rows held, in their order: a vector
@@ -39,12 +48,14 @@ impl Pending {
     }
 
     /// Holds the rows at `places` too, the rows `rows` of the run whose
-    /// columns `decoded` judging decoded whole.
-    pub(super) fn add(&mut self, places: &[u32], (rows, decoded): (&[u32], &[(usize, Column)])) {
+    /// columns `decoded` judging decoded whole, `exact` the conjuncts it
+    /// judged exactly of them.
+    pub(super) fn add(&mut self, places: &[u32], (rows, decoded): (&[u32], &[(usize, Column)]), exact: u64) {
         if places.is_empty() {
             return;
         }
         let first = self.places.is_empty();
+        self.exact = if first { exact } else { self.exact & exact };
         for (c, column) in decoded {
             if let Some((_, pile)) = self.piles.iter_mut().find(|(p, _)| p == c) {
                 pile.add(column, rows);
@@ -63,11 +74,11 @@ impl Pending {
         self.places.extend_from_slice(places);
     }
 
-    /// The places of the rows held and the columns held of them, it left
-    /// holding none.
-    pub(super) fn take(&mut self) -> (Vec<u32>, Vec<(usize, Column)>) {
+    /// The places of the rows held, the columns held of them and the
+    /// conjuncts judged exactly of them all, it left holding none.
+    pub(super) fn take(&mut self) -> (Vec<u32>, Vec<(usize, Column)>, u64) {
         let piles = std::mem::take(&mut self.piles).into_iter().filter_map(|(c, pile)| pile.made().map(|m| (c, m))).collect();
-        (std::mem::take(&mut self.places), piles)
+        (std::mem::take(&mut self.places), piles, std::mem::take(&mut self.exact))
     }
 }
 

@@ -817,6 +817,7 @@ verification approach DO-178C expects (§8).
 | D1259 | A transaction dropped without its end is rolled back by its drop, or stops the database |
 | D1260 | Morsels whose tables reduce nothing hand their rows to the partitions ungrouped |
 | D1262 | A grouping's threads lead the statement's thread by more morsels while the grant has room for what they hold |
+| D1266 | The first filter over a scan judges only the rows the scan kept of each batch and passes over the conjuncts the scan says it judged exactly of them |
 | D1267 | A column read only for its octet length is given by its scan with its lengths and never decoded |
 | D1270 | A page of a B-link tree is read by its number only by code that holds proof of being in the tree's epoch |
 | D1271 | A split that is refused a page gives back those it took |
@@ -840,6 +841,7 @@ verification approach DO-178C expects (§8).
 | D1298 | A dictionary chunk's entries are made text the first time a run asks for its rows as text, not when the chunk is opened |
 | D1299 | A table's sample remembers a function by its handle, not by its name alone |
 | D1300 | A partition of a grouping that holds many groups adopts them where its morsels put them |
+| D1311 | The matcher that marks does a step's work once a step |
 
 ### The project
 
@@ -23467,6 +23469,126 @@ values, as MIN of strings equal under their collation and different in
 their octets, gives what the plan run alone gives. Timing changes when
 a thread waits, and nothing a statement can see.
 
+#### D1266. The first filter over a scan judges only the rows the scan kept of each batch and passes over the conjuncts the scan says it judged exactly of them
+
+A column store's scan judges the conjuncts it is told of each frozen run
+before it decodes the columns its filter does not read (D360), and the
+filter over it judges every row the scan gives (D15). Where a run keeps
+one row in eight or more the scan gives the run whole and the filter
+selects of it. Every conjunct the scan had judged of that run was then
+judged a second time of each of its rows, by the scan and again by the
+filter, and of a run whose rows were gathered each conjunct was judged
+again of rows already known to satisfy it. A condition that keeps most
+rows paid for its conjuncts twice.
+
+The scan now says what it judged. With each batch of frozen rows it
+gives, beside the batch, the rows of it its judging kept, if not all,
+and the set of told conjuncts it judged exactly (`storage::Vetted`). The
+first filter over the scan judges only those rows, as the rows a filter
+before it kept, and passes over each of its conjuncts whose own told
+conjunct is in the set.
+
+A conjunct is judged exactly of a run when the conjunct itself was
+evaluated of every row asked, so it is true of each row kept
+(`Judgment::judge`). That holds of a comparison, IS NULL, IN, NOT IN and
+an OR of them judged over the column's vector or of its texts in place,
+and of a LIKE judged of every chunk to the run's end. It does not hold
+of a sort's bound, which is judged as the test it is at that moment and
+tightens as the scan runs. It does not hold of a LIKE one of whose
+chunks gave way, as that chunk's rows were kept unjudged. It does not
+hold of a comparison that a sketch's codes answered for some rows
+(D525), which is a summary's word for the row's text. So the filter
+still judges such a comparison of the rows given, and a sketched column
+gains nothing here for the conjuncts its sketch judges. A conjunct not
+reached because no row was left is not said either.
+
+Three things other decisions judge of a run meet this one. A comparison
+the bounds of a run's parts prove of every row of it (D1293) is true of
+each row the run gives, so it is said to be judged exactly though no
+row was tested. A comparison with the empty string judged of a measured
+column's octet lengths (D1267) is the conjunct itself of each row asked,
+as a string's octets order against none as its length does against 0,
+and is said so too. A join's keys told the scan (D1294) are no conjunct
+of the filter and are asked of a run or not as they keep rows, so they
+are never said, whether they were asked or passed.
+
+A LIKE whose judging stopped once the run was seen to be given whole
+(D1251) was evaluated of the rows asked up to the chunk it stopped
+before, and the rows of the chunks after were kept unjudged. The scan
+says so with the place of the first row it did not judge
+(`Vetted::partly`). The filter keeps the rows before that place as the
+scan found them and judges the LIKE of the rows from it on, after its
+other conjuncts (`Judged::rest_kept`). So the rows the scan judged
+before it could tell that the run keeps most of its rows are not judged
+again either. One conjunct of a run is said so, the first, and it is
+said only of a run given whole of which another conjunct was judged
+exactly, as the rows gathered of several runs have places of their own. A group or a zone
+passed over by its bounds says nothing of any row given. A batch of the
+rows kept of several runs holds only the conjuncts each of those runs
+judged exactly (`batches/pending.rs`). A batch of the tree's rows, which
+the scan judges nothing of, comes with nothing said, and so do the rows
+of a table of the row store.
+
+Of a run given whole the set speaks of the rows the scan kept alone.
+The other rows of the batch are rows a told conjunct is false of or a
+sort's bound leaves out, and the filter would keep none of them, as a
+scan is told only conjuncts every row its filter keeps satisfies (D15).
+So the filter starts from the rows kept. A run given whole of which no
+conjunct was judged exactly comes with nothing said, every row of it for
+the filter, as before. The filter then passes over nothing, and it
+judges a conjunct of a whole batch, its vectors where they lie, more
+cheaply than of most of the batch's rows picked out, as a LIKE the scan
+stopped judging and no other conjunct beside it leaves them.
+
+A filter's conjunct and a told conjunct are the same predicate where
+the scan was told that conjunct as itself (`logical::told_conjuncts`).
+That is a comparison of a column with a constant, padded or by octets,
+IS NULL or IS NOT NULL, IN or NOT IN constants, an OR of those of one
+column, and LIKE or NOT LIKE of a constant pattern. The bounds of a
+LIKE's prefix are told before the LIKE and are not it, as they hold of
+strings the LIKE is false of. A runtime filter's range, a sort's bound
+and a join's spans are told after the filter's conjuncts and are no
+conjunct of the filter. Each conjunct the filter judges over vectors is
+paired with its told place as the filter is made, before the conjuncts
+are ordered, so the pair stays together however they are ordered
+(`exec/batch/judge.rs`).
+
+No conjunct passed over can raise an error or complete a warning. A
+scan is told nothing of a condition that can raise (D15), and a
+comparison with a constant, a null test, a list of constants and a LIKE
+of a constant pattern report nothing of a row. So nothing a row would
+have reported is lost with its second judging. A filter whose condition
+can raise an error is read as before: it hears nothing, and it is given
+every row of each batch its scan gives, so which rows it judges does not
+change.
+
+What the scan says is no part of a batch. A batch is read and passed on
+by every operator, and what the scan judged is true only of the batch
+as the scan gave it, against the condition that scan was told. It
+travels on the scan's own stream (`TableStorage::scan_vetted`, the one
+method a scan by batch is read through, which also takes the columns
+asked late and measured, and `Split::morsel_vetted`, whose defaults say
+nothing) to the one filter
+whose conjuncts the scan was told, the filter directly over the scan
+with at most the counting of an analyzed plan and the judging of runtime
+filters between. The rows kept go beside the batch as a filter's kept
+rows do. The set of conjuncts is said to a value only that scan's
+stream and that filter hold (`exec/batch/vetted.rs`). It is heard only
+while the filter has judged exactly as many batches as the scan has
+given, so the batch in hand is the scan's last. Were a batch ever held
+back, repeated or made of two, the counts part, and from then on nothing
+is heard and every conjunct is judged. A filter over a projection, a
+join or another filter is made as before and hears nothing. A filter
+whose subqueries are made constants judges by a filter made of that
+other condition, which hears nothing, of the rows the scan kept.
+
+A told conjunct past the sixty-fourth of a condition has no place in
+the set and is judged by the filter, as the set is one word.
+
+The rows a query gives are the same. An analyzed plan shows a scan under
+a filter giving the rows its judging kept, where it showed every row of
+a run given whole.
+
 #### D1267. A column read only for its octet length is given by its scan with its lengths and never decoded
 
 OCTET_LENGTH of a column counted the octets of each value's text
@@ -24532,6 +24654,129 @@ every function and plug-in to write. The handle needs none.
 The count a grouping makes of an expression (D1279) writes its key the
 same way and keeps the expression for its statement.
 
+#### D1300. A partition of a grouping that holds many groups adopts them where its morsels put them
+
+A grouping run in parallel merges each partition's groups into a table
+of the partition's own (D356, D1110). Every new group is copied there
+out of the groups its morsel handed over (`exec/table/made.rs`), key,
+first row's number and states, and found again through the table's
+slots. For a partition of many groups, most of them new, that copy and
+those slots are most of what a group costs to merge, and while a wave is
+merged its groups are held twice, in the Mades and in the tables.
+
+A partition whose table holds more groups than a cache keeps close goes
+wide (`exec/table/made/wide.rs`, `exec/parallel/grouped/waves/wide.rs`).
+A wide partition copies nothing of a new group. It keeps the Mades it
+was handed, shared as they were, and of each group its hash and where
+the group lies, the Made and the place of its first row. A Made is never
+written once its morsel's thread has made it, so any thread may read it,
+and a group that takes a second row cannot merge it there. The first
+time a row meets a group held already, the group is taken up into a
+table of the partition's own, and that row and every later one merge
+there. A group of one row has no state but the Made's. A group is taken
+up alone, its key appended and each state of its first row merged into
+one fed nothing, and the table of its own gives no group a slot, as the
+partition's slots find a group wherever it lies and no key is ever
+looked up there.
+
+The groups, their order and each set function's result are those of the
+table the partition would have merged. A wave holds its Mades in the
+morsels' order and a Made holds a partition's rows in the morsel's, so
+the first row of a group to be looked up is its first row, and the
+groups listed are in the order of their first rows. A group taken up is
+given the states of its first row and then those of its later rows in
+the order they come, which is the order a table merges them in, so a
+state that depends on that order is the same: the least of strings
+equal as padded, the value of a group's first row. A sum of approximate
+numbers writes no state and is not merged at all (D53).
+
+A partition goes wide by its table's own count of groups after a Made
+is merged, never by a count handed nor an estimate, and stays wide for
+the rest of the statement. A grouping whose partitions hold few groups,
+though many are handed them, is merged as before. Which morsels a wave
+holds may differ from one run to the next, as before, and nothing a
+statement returns depends on it.
+
+Between waves a wide partition is kept as it is and charged its share
+of each Made it adopted, the hashes and places of its groups and its own
+table. A sort's first rows by set functions alone (D1256) are picked
+where the groups lie. The sort keys' results are made each as a table
+makes a new group's, the Made's state merged into one fed nothing, so no
+value differs from a table's. A Made holds few of a partition's groups,
+so the results of one Made after another fill a batch of the rows a
+scan's batch holds before the sort reads it. One top-N takes those
+batches with the partition's own table's, so as many rows are kept as
+of a table, and only the groups picked are made rows, no key copied.
+Every other reader reads a table, so a wide partition is gathered into
+one for it, each group taken up from where it lies in the order of the
+first rows, as it is before it is written to the spill, whose form is
+unchanged. A wide partition whose probe grows long places its groups by
+keyed hashes, each key read where its group lies (D357).
+
+Unit tests merge the same Mades into a table and into a partition that
+goes wide before its first Made, after its first and after its second,
+frozen between two Mades or not, and compare every group, first row and
+state, and run groupings with their partitions forced wide against the
+same not wide, held by the grant, through several waves and through the
+spill, and compare the first rows a sort by a count, a sum and a
+greatest value keeps of wide partitions with those it keeps of tables,
+the batches filled to a few groups so a partition is read in several.
+
+A partition goes wide only of a grouping whose reader reads the groups
+where they lie. That reader is the first rows of a sort whose every key
+names a set function, with no second grouping over it. Whatever else
+reads a partition reads a table, a sort by a grouping column among
+them, and a wide partition gathered into one for it writes every group
+a second time, which costs what the merge into a table would have and
+the adoption besides, as a grouping under a HAVING condition showed
+when its partitions went wide.
+So the rule is the reader's, not a count of groups
+(`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
+which goes wide whatever reads, is what the tests of the gathered table
+ask.
+
+#### D1311. The matcher that marks does a step's work once a step
+
+The matcher of a program with no back-reference over a short text
+(D1188) marked every instruction it followed at every position, asked
+at every step whether the instruction began the loop that takes the
+rest, tested a character against a class by a binary search of the
+class's ranges, and passed a loop it runs through (D1190) a character
+at a time with a mark each. Over a column of addresses it spent more
+in those than in anything the pattern asked.
+
+- Only an instruction two ways can meet at is marked
+  (`compile/steps.rs`, `Passed::meets`). A way reaches an instruction
+  from the one before it, at one position, unless a fork or a jump
+  leads to it. So an instruction and a position are reached twice only
+  if an instruction a fork or a jump leads to was reached twice at one
+  position before them on that straight run, and the second way is
+  given up there. The first instruction, which every start begins at,
+  and the one after the loop that takes the rest of a text, which every
+  position leads to, are marked too. Each instruction is still followed
+  at each position once at most, which a test counts.
+- Of a text read by its octets (`Text::octets`, a string of ASCII or of
+  any characters read where it lies), a character of ASCII is tested by
+  the instruction's table of the 128 of them, built with the program.
+- A loop the program runs through finds its end in one pass over the
+  octets. Where its class is every character but one of ASCII, as
+  `[^/]+`, the end is the first such octet, found a word at a time by
+  the portable search of octets (D1118), since no octet of a longer
+  character is one of ASCII. Of any other class it is the first octet
+  that is no character of ASCII the class holds, and characters of
+  several octets go on one at a time from there.
+- The positions passed are marked a word at a time (`bounded::marked`).
+  A position marked before stops the walk as it did, with the positions
+  before it marked. The walk that marked it went on to the same end and
+  marked the rest, so nothing after it is left unmarked.
+- TRANSLATE_REGEX over a vector reads its units and which matches it is
+  asked for once, at the first string, where it read them of every
+  string.
+
+What a search finds is unchanged. The model tests hold the matcher to
+the matcher of threads over the corpus, of texts read by their
+characters and by their octets.
+
 ## 2. Project layout
 
 ```
@@ -24835,83 +25080,6 @@ was fixed that week, and lint baselines and over-long files were paid down.
   Performance Software-based CRC Generators* (2005); D. V. Sarwate,
   *Computation of Cyclic Redundancy Checks via Table Look-Up* (1988).
 
-#### D1300. A partition of a grouping that holds many groups adopts them where its morsels put them
-
-A grouping run in parallel merges each partition's groups into a table
-of the partition's own (D356, D1110). Every new group is copied there
-out of the groups its morsel handed over (`exec/table/made.rs`), key,
-first row's number and states, and found again through the table's
-slots. For a partition of many groups, most of them new, that copy and
-those slots are most of what a group costs to merge, and while a wave is
-merged its groups are held twice, in the Mades and in the tables.
-
-A partition whose table holds more groups than a cache keeps close goes
-wide (`exec/table/made/wide.rs`, `exec/parallel/grouped/waves/wide.rs`).
-A wide partition copies nothing of a new group. It keeps the Mades it
-was handed, shared as they were, and of each group its hash and where
-the group lies, the Made and the place of its first row. A Made is never
-written once its morsel's thread has made it, so any thread may read it,
-and a group that takes a second row cannot merge it there. The first
-time a row meets a group held already, the group is taken up into a
-table of the partition's own, and that row and every later one merge
-there. A group of one row has no state but the Made's. A group is taken
-up alone, its key appended and each state of its first row merged into
-one fed nothing, and the table of its own gives no group a slot, as the
-partition's slots find a group wherever it lies and no key is ever
-looked up there.
-
-The groups, their order and each set function's result are those of the
-table the partition would have merged. A wave holds its Mades in the
-morsels' order and a Made holds a partition's rows in the morsel's, so
-the first row of a group to be looked up is its first row, and the
-groups listed are in the order of their first rows. A group taken up is
-given the states of its first row and then those of its later rows in
-the order they come, which is the order a table merges them in, so a
-state that depends on that order is the same: the least of strings
-equal as padded, the value of a group's first row. A sum of approximate
-numbers writes no state and is not merged at all (D53).
-
-A partition goes wide by its table's own count of groups after a Made
-is merged, never by a count handed nor an estimate, and stays wide for
-the rest of the statement. A grouping whose partitions hold few groups,
-though many are handed them, is merged as before. Which morsels a wave
-holds may differ from one run to the next, as before, and nothing a
-statement returns depends on it.
-
-Between waves a wide partition is kept as it is and charged its share
-of each Made it adopted, the hashes and places of its groups and its own
-table. A sort's first rows by set functions alone (D1256) are picked
-where the groups lie: the sort keys' results are made a Made at a time,
-each as a table makes a new group's, the Made's state merged into one
-fed nothing, so no value differs from a table's; one top-N takes them
-with the partition's own table's, so as many rows are kept as of a
-table; and only the groups picked are made rows, no key copied. Every
-other reader reads a table, so a wide partition is gathered into one
-for it, each group taken up from where it lies in the order of the
-first rows, as it is before it is written to the spill, whose form is
-unchanged. A wide partition whose probe
-grows long places its groups by keyed hashes, each key read where its
-group lies (D357).
-
-Unit tests merge the same Mades into a table and into a partition that
-goes wide before its first Made, after its first and after its second,
-frozen between two Mades or not, and compare every group, first row and
-state, and run groupings with their partitions forced wide against the
-same not wide, held by the grant, through several waves and through the
-spill, and compare the first rows a sort by a count, a sum and a
-greatest value keeps of wide partitions with those it keeps of tables.
-
-A partition goes wide only of a grouping whose reader reads the groups
-where they lie: the first rows of a sort, and no second grouping over
-it. Whatever else reads a partition reads a table, and a wide partition
-gathered into one for it writes every group a second time, which costs
-what the merge into a table would have and the adoption besides, as a
-grouping under a HAVING condition showed when its partitions went wide.
-So the rule is the reader's, not a count of groups
-(`lies`, `exec/parallel/grouped/waves/wide.rs`), and `Widen::past`,
-which goes wide whatever reads, is what the tests of the gathered table
-ask.
-
 #### D447. A unique constraint added in a transaction fills its index with every version
 
 ALTER TABLE ADD UNIQUE inside a transaction filled the constraint's
@@ -25192,4 +25360,3 @@ claimed a write finds none from one counter, without a look.
 
 A claim holds back a newcomer once the line's writer has ended only if
 its first waiter was overtaken once already (D851).
-

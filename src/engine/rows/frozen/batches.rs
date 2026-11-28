@@ -46,11 +46,14 @@ use crate::engine::rows::scan::Ranged;
 use crate::engine::rows::{RowTable, key, row_id};
 use crate::engine::tree::Direction;
 use crate::error::Result;
-use crate::storage::{BATCH_ROWS, Batch, Conjunction, LateSource, Ramp, RowId};
+use crate::storage::{BATCH_ROWS, Batch, Conjunction, LateSource, Ramp, RowId, Vetted};
 
 mod measured;
 mod pending;
 mod run;
+mod vetted;
+
+pub(in crate::engine::rows) use vetted::Vetting;
 
 /// \[DESIGN\] A column store table's batches.
 pub(in crate::engine::rows) struct Batched {
@@ -94,6 +97,11 @@ pub(in crate::engine::rows) struct Batched {
     prepared: Prepared,
     /// How many of the tree's rows each batch of them holds.
     ramp: Ramp,
+    /// \[DESIGN\] (RULES.md D1266) What it judged of a batch of frozen
+    /// rows as it made the batch (`run.rs`), until it is taken with that
+    /// batch (`batches/vetted.rs`): nothing is noted of a batch of the
+    /// tree's rows, which it judges nothing of.
+    vetted: Option<Vetted>,
 }
 
 impl Batched {
@@ -126,6 +134,7 @@ impl Batched {
             ahead: GroupAhead::default(),
             prepared: Prepared::default(),
             ramp: Ramp::default(),
+            vetted: None,
         }
     }
 

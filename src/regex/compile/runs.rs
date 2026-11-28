@@ -26,6 +26,10 @@ use crate::regex::class::CharSet;
 /// check and the jump.
 const LOOP: usize = 5;
 
+/// Where, after its fork, a loop of one instruction has that instruction:
+/// past the position it keeps.
+pub(in crate::regex) const LOOP_TAKES: usize = 2;
+
 /// Of each instruction of `insts`, whether it is the fork of a loop the
 /// program runs through (see the module).
 pub(super) fn runs(insts: &[Inst]) -> Vec<bool> {
@@ -59,7 +63,7 @@ fn apart(taken: &Inst, next: &Inst) -> bool {
 
 /// The characters `inst` matches, if it matches one character by what
 /// that character is alone, reading none beside it.
-fn taken_by(inst: &Inst) -> Option<CharSet> {
+pub(super) fn taken_by(inst: &Inst) -> Option<CharSet> {
     match inst {
         Inst::Char(c) => Some(CharSet::single(*c)),
         Inst::Set(set) => Some(set.clone()),

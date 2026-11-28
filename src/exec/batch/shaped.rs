@@ -16,6 +16,7 @@ use super::picks::{pick, picked};
 use super::project::{Place, computed, place_of};
 use super::runtime::{Told, applied};
 use super::stream::{Batches, filtered};
+use super::vetted::Said;
 use crate::error::Result;
 use crate::exec::Db;
 use crate::exec::Runner;
@@ -115,6 +116,13 @@ pub(in crate::exec) fn filter_step(cond: &Cond, layout: &[usize]) -> Shaped {
     Shaped::Filter(Box::new(Judging::of(cond, layout)))
 }
 
+/// \[DESIGN\] (RULES.md D1266) As `filter_step`, of the filter directly
+/// over its branch's scan, which was told `cond`'s conjuncts: it passes
+/// over those the scan says it judged exactly (`Judging::over_scan`).
+pub(in crate::exec) fn told_step(cond: &Cond, layout: &[usize]) -> Shaped {
+    Shaped::Filter(Box::new(Judging::over_scan(cond, layout)))
+}
+
 /// The step of a projection by `exprs` over batches of `layout`, and the
 /// layout after it, of every expression in order; none if one of them is
 /// not evaluated over batches (`project::place_of`).
@@ -128,10 +136,12 @@ pub(in crate::exec) fn project_step(exprs: &[Expr], layout: &[usize]) -> Option<
 }
 
 /// `batches` taken through `steps`, the first first, their expressions
-/// evaluated for the statement of `tx`.
-pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], (db, tx): (&Db, TxId)) -> Batches {
+/// evaluated for the statement of `tx`; `said` what the scan that gives
+/// `batches` says it judged of each, if it says so, heard by the filter
+/// its conjuncts were told of alone (`told_step`, RULES.md D1266).
+pub(in crate::exec) fn through(batches: Batches, steps: &[Shaped], said: Option<&Arc<Said>>, (db, tx): (&Db, TxId)) -> Batches {
     steps.iter().fold(batches, |inner, step| match step {
-        Shaped::Filter(judging) => filtered(inner, ((**judging).clone(), Runner::new(db, tx))),
+        Shaped::Filter(judging) => filtered(inner, (judging.hearing(said), Runner::new(db, tx))),
         Shaped::Pick(picks) => {
             let picks = picks.clone();
             Box::new(inner.map(move |kept| kept.map(|(batch, rows)| (pick(batch, &picks), rows))))

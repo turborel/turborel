@@ -55,18 +55,30 @@
 //! filter still judges every row the scan gives (RULES.md D15). So a row
 //! left out here is one the filter would have left out, and a conjunct a
 //! column's vector cannot be judged over is left to the filter.
+//!
+//! \[DESIGN\] (RULES.md D1266) Judging a run says which conjuncts it
+//! judged exactly (`Judged::exact`): the conjunct itself evaluated of
+//! every row it was asked of, so it is true of each row kept and the
+//! filter need not judge it of them again. A LIKE whose judging stopped
+//! part way through the run is said to be judged of the rows before the
+//! one it stopped at (`Judged::partly`). A sort's bound is never said to
+//! be judged, as it tightens while the scan runs; nor a LIKE a chunk gave
+//! way under; nor a comparison a sketch's codes answered for some rows;
+//! nor a conjunct not reached because no row was left.
 
 mod among;
 mod coded;
 mod entries;
 mod lengths;
 mod proved;
+mod reached;
 mod sketched;
 mod sorted;
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
+use self::reached::{Reach, Reached};
 use super::group::{Group, Seal};
 use super::scan::{Reading, column_of_run};
 use crate::error::Result;
@@ -114,6 +126,15 @@ pub struct Judged {
     pub kept: Vec<u32>,
     /// The columns decoded of every row of the run.
     pub decoded: Vec<(usize, Column)>,
+    /// \[DESIGN\] (RULES.md D1266) The conjuncts judged exactly, by
+    /// their places in the condition (`Vetted::bit`): each is true of
+    /// every row kept.
+    pub exact: u64,
+    /// \[DESIGN\] (RULES.md D1266) A conjunct judged exactly of the
+    /// rows kept before a place alone, by its bit and that place from
+    /// the run's first (`Vetted::partly`): the rows kept from there on
+    /// were kept unjudged by it.
+    pub partly: Option<(u64, u32)>,
 }
 
 impl Judgment {
@@ -181,12 +202,13 @@ impl Judgment {
         (types, (from, to)): (&[DataType], (u32, u32)),
         given: Option<Vec<u32>>,
     ) -> Result<Judged> {
-        let (mut kept, mut decoded) = (given, Vec::<(usize, Column)>::new());
+        let (mut kept, mut decoded, mut reached) = (given, Vec::<(usize, Column)>::new(), Reached::default());
         let all = usize::try_from(to.saturating_sub(from)).unwrap_or(0);
         for pred in &self.preds {
             if kept.as_ref().is_some_and(Vec::is_empty) {
                 break;
             }
+            let bit = pred.bit();
             // A sort's bound is judged as the test it is now. One not yet
             // set keeps every row, so its column is not decoded for it.
             let Some(pred) = pred.now() else { continue };
@@ -195,18 +217,25 @@ impl Judgment {
             // A comparison the bounds of the run's parts prove keeps every
             // row (RULES.md D1293), and a join's keys are asked only while
             // that leaves few rows of a run (RULES.md D1294): neither's
-            // column is decoded to judge it.
+            // column is decoded to judge it. The comparison proved is true
+            // of each row of the run, so it is judged exactly of them; a
+            // join's keys have no bit (RULES.md D1266).
             if pred.passed(group, t, (from, to))? {
+                reached.note(bit, Reach::Every);
                 continue;
             }
             // A LIKE is judged in place or left to the filter, its
             // column not decoded to judge it (RULES.md D1251).
             if let Conjunct::Like { like, .. } = &pred.conjunct {
-                kept = coded::liked(group, (pages, &mut *prepared), (pred, like, t), (from, to), kept.as_deref())?.or(kept);
+                if let Some((rows, reach)) = coded::liked(group, (pages, &mut *prepared), (pred, like, t), (from, to), kept.as_deref())? {
+                    kept = Some(rows);
+                    reached.note(bit, reach);
+                }
                 continue;
             }
-            if let Some(rows) = coded::kept(group, (pages, &mut *prepared), (pred, t), (from, to), kept.as_deref())? {
+            if let Some((rows, reach)) = coded::kept(group, (pages, &mut *prepared), (pred, t), (from, to), kept.as_deref())? {
                 kept = Some(rows);
+                reached.note(bit, reach);
                 continue;
             }
             let asked = kept.as_ref().map_or(all, Vec::len);
@@ -214,9 +243,10 @@ impl Judgment {
             if let Some(rows) = by_vector(group, read, (pred, t), (from, to), (kept.as_deref(), &mut decoded))? {
                 pred.counted(asked, rows.len());
                 kept = Some(rows);
+                reached.note(bit, Reach::Every);
             }
         }
-        Ok(Judged { kept: kept.unwrap_or_else(|| rows_of(0..all)), decoded })
+        Ok(Judged { kept: kept.unwrap_or_else(|| rows_of(0..all)), decoded, exact: reached.exact, partly: reached.partly })
     }
 }
 
