@@ -64,6 +64,14 @@ impl Typed {
         }
     }
 
+    /// \[DESIGN\] (RULES.md D1337) COUNT's counts, a group a slot, if it
+    /// is a column of counts: what a reader of states where they lie
+    /// takes as the integers they are, where a merge into states fed
+    /// nothing would copy each.
+    pub(in crate::exec::table::states) fn counts(&self) -> Option<&[i64]> {
+        if let Typed::Count(counts) = self { Some(counts) } else { None }
+    }
+
     /// Merges each group at `places` of `other` into the group of `groups`
     /// beside it, if both are of one kind and scale: whether they were,
     /// nothing merged if not.

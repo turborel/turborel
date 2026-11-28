@@ -8,6 +8,7 @@
 
 use super::{ColumnarKind, Exact, Totals, Typed};
 use crate::error::Result;
+use crate::storage::mask::index;
 use crate::value::DataType;
 
 /// \[DESIGN\] (RULES.md D1256) The digits under which an exact total
@@ -41,6 +42,23 @@ impl Typed {
             Typed::Approx(approx) => (0..len).try_for_each(|g| approx.finish(g).map(drop)),
         }
     }
+
+    /// \[DESIGN\] (RULES.md D1337, D1256) As `checked`, of the groups at
+    /// `places` alone, in their order, as a reader of states where they
+    /// lie in the column a table sent asks. An exact total is finished
+    /// only where it could raise, whichever form holds it.
+    ///
+    /// # Errors
+    ///
+    /// As the accumulator's `finish`, of the first place that fails.
+    pub(in crate::exec::table::states) fn checked_at(&self, places: &[u32]) -> Result<()> {
+        match self {
+            // A count raises nothing, and a best string is given as it is.
+            Typed::Count(_) | Typed::Best(_) => Ok(()),
+            Typed::Exact(exact) => exact.checked_at(places),
+            Typed::Approx(approx) => places.iter().try_for_each(|&i| approx.finish(index(i)).map(drop)),
+        }
+    }
 }
 
 impl Exact {
@@ -62,6 +80,24 @@ impl Exact {
             }
             Totals::Wide(totals) => totals.iter().take(len).enumerate().try_for_each(|(g, units)| loud(g, units.unsigned_abs())),
         }
+    }
+
+    /// \[DESIGN\] (RULES.md D1337) As `checked`, of the groups at
+    /// `places` alone. A narrow column no total of which can reach the
+    /// bound is passed over with no place read (RULES.md D1308).
+    fn checked_at(&self, places: &[u32]) -> Result<()> {
+        let bound = self.quiet_below();
+        let none_loud = matches!(self.totals, Totals::Narrow(_)) && bound > NARROW_MOST;
+        if none_loud {
+            return Ok(());
+        }
+        for &i in places {
+            let g = index(i);
+            if self.totals.get(g).is_some_and(|total| total.unsigned_abs() >= bound) {
+                self.finish(g)?;
+            }
+        }
+        Ok(())
     }
 
     /// The total, of either sign, under which finishing a group raises
