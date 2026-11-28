@@ -273,3 +273,59 @@ fn results_that_raise_are_raised_of_totals_in_either_form() {
         assert_eq!(width(&mut means, 3), NARROW);
     });
 }
+
+/// Asserts that each group of the states of `agg` fed `batches`, read at
+/// its place of the column a table sends, is that state merged into one
+/// fed nothing, its result or its error, a place past the column's end
+/// too; and that the column finished at places for its errors alone
+/// raises what the merged states finished for theirs raise.
+fn lying_as_merged(agg: &AggCall, batches: &[&Rows], runner: &Runner) {
+    let sent = states_of(agg, 4, batches, runner).sent().unwrap();
+    let Sent::Typed(typed) = &sent else { panic!("{} sent as a column", agg.label) };
+    for place in 0..5_u32 {
+        let (lying, merged) = (format!("{:?}", typed.finish(index(place))), format!("{:?}", sent.finished_at(agg, place)));
+        assert_eq!(lying, merged, "{} at place {place}", agg.label);
+    }
+    let lists: [&[u32]; 5] = [&[0, 1, 2, 3], &[0, 2, 3], &[3, 1, 0], &[2, 9], &[]];
+    for places in lists {
+        let groups: Vec<u32> = (0_u32..).take(places.len()).collect();
+        let fed_nothing = Sent::checked_of(agg, &[(&sent, places)], &groups);
+        assert_eq!(format!("{:?}", typed.checked_at(places)), format!("{fed_nothing:?}"), "{} checked at {places:?}", agg.label);
+    }
+    assert_eq!(typed.counts().is_some(), agg.label == "COUNT", "COUNT's counts alone are given as they lie");
+}
+
+/// Verifies: [DESIGN] (RULES.md D1337, D1308, D1300) a group's result read
+/// at its place of the column a table sends is the result of that state
+/// merged into one fed nothing, and its error where it raises: of COUNT,
+/// and of SUM, AVG, MIN and MAX with narrow totals, with wide ones and
+/// with a column widened midway, a group that took no value among them, a
+/// sum of more digits than a number has and a mean whose total at its
+/// result's scale has more. A column finished at places for its errors
+/// alone raises what the merged states raise, of the first place that
+/// fails, and nothing of places that raise nothing. An approximate sum is
+/// the one column of which this does not hold. It writes no state, so
+/// merged it is refused (SQLCODE -916) where read as it lies it gives a
+/// value, and a reader of states where they lie must not take one.
+#[test]
+fn a_state_read_where_it_lies_is_the_state_merged_into_one_fed_nothing() {
+    let most_digits = 6 * 10_i128.pow(37);
+    let raising: &Rows = &[(0, Some(5)), (1, Some(most_digits)), (1, Some(most_digits)), (2, Some(MOST))];
+    let small: &Rows = &[(0, Some(5)), (1, Some(10_i128.pow(12))), (2, Some(7))];
+    let columns: [&[&Rows]; 5] = [&[FIT], &[PAST], &[FIT, MORE], &[raising], &[]];
+    with_runner(|runner| {
+        for (name, batches) in NAMES.iter().chain(&["COUNT"]).flat_map(|name| columns.map(|batches| (*name, batches))) {
+            lying_as_merged(&call(name, Some(WHOLE)), batches, runner);
+        }
+        let scaled = DataType::Exact { precision: crate::value::MAX_EXACT_PRECISION, scale: 30, spelled: Spelled::Numeric };
+        lying_as_merged(&AggCall { result: scaled, ..call("AVG", Some(WHOLE)) }, &[small], runner);
+        let sum = call("SUM", Some(DOUBLE));
+        let mut approx = States::of(&sum);
+        approx.grow_by(2);
+        approx.feed((&pending(), &sum), (&batch(), &Taken::Column(1), &None), (&mut Vec::new(), runner)).unwrap();
+        let sent = approx.sent().unwrap();
+        let Sent::Typed(typed) = &sent else { panic!("an approximate sum sent as a column") };
+        assert!(typed.finish(0).is_ok_and(|value| !value.is_null()), "read as it lies it gives a value");
+        assert_eq!(sent.finished_at(&sum, 0).unwrap_err().sqlcode(), -916_i32, "merged it is refused");
+    });
+}
