@@ -22,7 +22,7 @@ const LANE: &[usize] = &[0];
 const BY: [&[usize]; 3] = [WHOLE, LANE, &[1]];
 
 /// No set function.
-const NO_CALLS: &[crate::logical::AggCall] = &[];
+const NO_CALLS: &[AggCall] = &[];
 
 /// A morsel's batches, three of 400 rows: integers, each key held four
 /// times and a null every eleventh row, and texts with and without a
@@ -177,12 +177,12 @@ fn rows_taken_of_a_batch_are_fed_at_their_places() {
     let places = table.placed.as_ref().unwrap().places.clone();
     let kept = held.get(1).and_then(|(_, rows)| rows.as_ref()).map(Sel::as_slice).unwrap();
     table.take_placed(400, (Some(kept), 320));
-    assert_eq!(table.pending.groups, places.get(400..720).unwrap());
+    assert_eq!(table.pending.groups, &places[400..720]);
     assert_eq!(table.pending.read, kept);
     assert_eq!(table.pending.given, (0..320).collect::<Vec<u32>>());
     table.pending = crate::exec::table::Pending::default();
     table.take_placed(720, (None, 400));
-    assert_eq!((table.pending.groups.as_slice(), table.taken), (places.get(720..).unwrap(), 720));
+    assert_eq!((table.pending.groups.as_slice(), table.taken), (&places[720..], 720));
     assert_eq!(table.pending.read, (0..400).collect::<Vec<u32>>());
     let (hashes, _) = hashed(&held, WHOLE, &seed);
     let mut keys = GroupTable::placed((held.as_slice(), AT.as_slice()), (NO_CALLS, &seed), (hashes.as_slice(), None, 0), (8, WHOLE));
