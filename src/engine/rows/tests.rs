@@ -5,9 +5,9 @@
 //! freed, a fetch priced by what its table reads and by the system's
 //! cache, the pages its pool reads ahead as the settings say, writes
 //! that keep what every snapshot reads failing no reader, a validation
-//! out of commit order still checked, and a scan keeping a transaction's
-//! bookkeeping only while it is open (RULES.md
-//! R-TEST-1, R-TEST-2, R-TEST-7).
+//! out of commit order still checked, a scan keeping a transaction's
+//! bookkeeping only while it is open, and an older version lost told with
+//! what the store knew (RULES.md R-TEST-1, R-TEST-2, R-TEST-7).
 
 use turborel_test_support::Scratch;
 
@@ -88,6 +88,48 @@ fn an_undone_change_keeps_its_older_version_for_open_readers() {
     table.commit(reader, 9);
     table.gc(12, &mut |_, _, _| true).unwrap();
     assert_eq!(files.undo().pinned(), 0, "released once the reader ended");
+}
+
+/// Verifies: [DESIGN] RULES.md D1321, an older version lost: a reader
+/// going back to a version the undo store no longer holds is refused with
+/// SQLCODE -916. The message tells who read, each version walked with its
+/// maker as written and as read, the position not found, the oldest
+/// position pinned, the position the log is kept from, and the store's
+/// latest snapshot and horizon, in a few hundred characters and with no
+/// value of the row.
+#[test]
+fn an_older_version_lost_tells_what_the_store_knew() {
+    let scratch = Scratch::new("unit-lost");
+    let pager =
+        Pager::create(&OsFileSystem, &scratch.path("rows"), Arc::new(Crc::new(CRC32_ISCSI).unwrap()), Pipeline::none(), 4096).unwrap();
+    let pool = Arc::new(BufferPool::new(16, Box::new(Clock::new(16))).unwrap());
+    let file = pool.add_pager(Arc::new(pager));
+    let files = TableFiles::new(pool, file, Arc::new(MemoryLog::new()));
+    let table = RowTable::create(&files, &[DataType::character(5)], TableOptions::default()).unwrap();
+    let id = table.insert(NO_TRANSACTION, vec![crate::value::Value::Char("abcde".into())]).unwrap();
+    let (writer, reader) = (10, 11);
+    table.begin(reader, 9).unwrap();
+    table.begin(writer, 9).unwrap();
+    table.update(writer, id, vec![crate::value::Value::Char("vwxyz".into())]).unwrap();
+    table.commit(writer, 12);
+    let newest = table.tree.get(&key(id)).unwrap().unwrap();
+    let at = version::Version::parse(&newest).unwrap().older.unwrap();
+    files.undo().release(at);
+    files.undo().truncate().unwrap();
+    let lost = table.visible_in(&newest, Reader::At { tx: reader, snapshot: 9 }).err().unwrap();
+    assert_eq!(lost.code, Code::Corrupt);
+    let at = at.0;
+    let told = [
+        format!("at {at}, is not in the undo store"),
+        "; read by transaction 11 at 9; walked from ".to_owned(),
+        format!(" read committed 12, {at} not found; "),
+        format!("oldest pinned none, log kept from {}; ", at + 1),
+        "latest snapshot 9, horizon 0".to_owned(),
+    ];
+    for part in told {
+        assert!(lost.msg.contains(&part), "{part:?} in {:?}", lost.msg);
+    }
+    assert!(!lost.msg.contains("abcde") && !lost.msg.contains("vwxyz") && lost.msg.len() < 512, "{}", lost.msg);
 }
 
 /// Verifies: [DESIGN] RULES.md D29, D31, writes to deleted rows: a

@@ -126,6 +126,13 @@ impl Statuses {
         raise(&self.snapshots, snapshot);
     }
 
+    /// \[DESIGN\] (RULES.md D1321) The latest snapshot a transaction joined
+    /// a table of the store at, and the latest horizon one was collected
+    /// at: for an error that tells what the store knew.
+    pub(in crate::engine::rows) fn bounds(&self) -> (Timestamp, Timestamp) {
+        (self.snapshots.load(Ordering::SeqCst), self.horizon.load(Ordering::SeqCst))
+    }
+
     /// A table of the store is collected at `horizon`: no transaction reads
     /// before it.
     pub(in crate::engine::rows) fn collected(&self, horizon: Timestamp) {

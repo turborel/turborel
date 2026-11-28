@@ -40,7 +40,7 @@
 //! it many times.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::bytes::{Put, Reader};
@@ -97,6 +97,8 @@ pub struct UndoStore {
     /// The last batches read back from the log, at most `CACHED`, the
     /// oldest first.
     read: Mutex<Vec<Stored>>,
+    /// The position the last truncation kept the log from.
+    kept_from: AtomicU64,
 }
 
 /// Where the batches of a batched store are.
@@ -149,6 +151,7 @@ impl UndoStore {
             batches: Mutex::new(batches),
             resident: Resident::new(),
             read,
+            kept_from: AtomicU64::new(0),
         }
     }
 
@@ -328,7 +331,9 @@ impl UndoStore {
             return Ok(());
         }
         let before = if self.batch == 0 { self.alone_before() } else { self.batches_before() };
-        self.log.truncate_before(before).inspect_err(|_| self.released.store(true, Ordering::Release))
+        self.log.truncate_before(before).inspect_err(|_| self.released.store(true, Ordering::Release))?;
+        self.kept_from.fetch_max(before.0, Ordering::AcqRel);
+        Ok(())
     }
 
     /// The log position before which no version still needed is, in a
@@ -396,6 +401,19 @@ impl UndoStore {
             }
         }
         (oldest, gone)
+    }
+
+    /// \[DESIGN\] (RULES.md D1321) The oldest position still pinned, if any
+    /// is, a batch's first of a store of batches, and the position its last
+    /// truncation kept the log from: for an error that tells what the store
+    /// held.
+    pub(super) fn extent(&self) -> (Option<Lsn>, Lsn) {
+        let pinned = if self.batch == 0 {
+            lock_builtin(&self.pinned).keys().next().copied()
+        } else {
+            self.pins.oldest_written().map(|n| Lsn(n.checked_shl(INDEX_BITS).unwrap_or(u64::MAX)))
+        };
+        (pinned, Lsn(self.kept_from.load(Ordering::Acquire)))
     }
 
     /// How many positions are pinned: for tests and statistics.

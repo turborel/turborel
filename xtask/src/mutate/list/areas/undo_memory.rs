@@ -3,7 +3,8 @@
 //! share, the budget's refusal, a batch gone past the bound let go, a
 //! truncation forgetting what memory holds, and a refused writer told the
 //! row's writer with no older version read (D747); and batches gathered by
-//! stripe, their pins counted by batch (D873).
+//! stripe, their pins counted by batch (D873); and a version lost reported
+//! with what the store knew (D1321).
 
 use super::super::{Mutation, Package};
 
@@ -13,7 +14,7 @@ const UNDO: &str = "src/engine/rows/undo.rs";
 const KEPT: &str = "src/engine/rows/undo/kept.rs";
 
 /// Mechanisms whose removal must fail the requirements of batches kept.
-pub const UNDO_MEMORY: [Mutation; 9] = [
+pub const UNDO_MEMORY: [Mutation; 10] = [
     Mutation {
         name: "undo-kept-none",
         package: Package::Core,
@@ -106,5 +107,15 @@ pub const UNDO_MEMORY: [Mutation; 9] = [
         replacement: "            if self.pins.live(number, stripe.count) < usize::MAX {",
         integration: &[],
         unit: &["engine::rows::undo::tests::a_batch_a_stripe_gathers_holds_the_log_only_while_it_is_pinned"],
+    },
+    Mutation {
+        name: "undo-lost-maker-as-written",
+        package: Package::Core,
+        breaks: "a version lost is reported with each maker as written alone, not as its status reads it (D1321)",
+        file: "src/engine/rows/mvcc/gone.rs",
+        original: "shown(self.maker(&version))",
+        replacement: "shown(version.maker)",
+        integration: &[],
+        unit: &["engine::rows::tests::an_older_version_lost_tells_what_the_store_knew"],
     },
 ];
