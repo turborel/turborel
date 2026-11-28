@@ -47,6 +47,9 @@ const SPILLED_STATES: &str = "exec::table::states::typed::written::tests::every_
 /// A wide partition against the table merged of the same Mades.
 const WIDE: &str = "exec::table::made::wide::tests::a_wide_partition_holds_the_groups_a_table_holds_in_its_order";
 
+/// A wide partition merged a wave at a time, its sub-parts split between them.
+const WIDE_COUNTS: &str = "exec::table::made::wide::tests::a_wide_partition_counts_its_new_groups_and_the_bytes_it_adopted";
+
 /// A wide partition of keys that collide.
 const WIDE_KEYED: &str = "exec::table::made::wide::tests::colliding_groups_turn_a_wide_partition_keyed";
 
@@ -60,7 +63,7 @@ const WIDE_FIRST: &str = "exec::parallel::grouped::waves::tests::the_first_rows_
 const WIDE_READ: &str = "exec::parallel::grouped::waves::tests::a_partition_goes_wide_only_where_its_groups_are_read_as_they_lie";
 
 /// Mechanisms whose removal must fail the table's requirements.
-pub const GROUP_TABLE: [Mutation; 47] = [
+pub const GROUP_TABLE: [Mutation; 50] = [
     Mutation {
         name: "group-table-texts-untrimmed",
         package: Package::Core,
@@ -365,7 +368,7 @@ pub const GROUP_TABLE: [Mutation; 47] = [
         name: "wide-group-met-again-left-where-it-lay",
         package: Package::Core,
         breaks: "a group of a wide partition that a second row meets is taken up into the partition's own table but still listed where it lay, so it is taken up again by every later row and read with its first row's states alone (RULES.md D1300)",
-        file: "src/exec/table/made/wide.rs",
+        file: "src/exec/table/made/wide/part.rs",
         original: "        *lies = (OWN, number);",
         replacement: "        *lies = (segment, place);",
         integration: &[],
@@ -375,7 +378,7 @@ pub const GROUP_TABLE: [Mutation; 47] = [
         name: "wide-group-taken-up-with-no-state",
         package: Package::Core,
         breaks: "a group of a wide partition taken up into the partition's own table is given its key and first row but not the states of its first row, so its results are those of its later rows alone (RULES.md D1300)",
-        file: "src/exec/table/made/wide.rs",
+        file: "src/exec/table/made/wide/own.rs",
         original: "            states.merge((index(g), agg), (sent, at))?;",
         replacement: "            if at == usize::MAX { states.merge((index(g), agg), (sent, at))?; }",
         integration: &[],
@@ -385,9 +388,9 @@ pub const GROUP_TABLE: [Mutation; 47] = [
         name: "wide-held-rows-not-merged",
         package: Package::Core,
         breaks: "the rows of a Made that met a group a wide partition holds are not merged into it (RULES.md D1300)",
-        file: "src/exec/table/made/wide.rs",
-        original: "        self.own.merge_into(&groups, made, &rows)?;",
-        replacement: "        self.own.merge_into(&[], made, &[])?;",
+        file: "src/exec/table/made/wide/part.rs",
+        original: "                    self.own.merged_one(number, made, place)?;",
+        replacement: "                    if place == u32::MAX { self.own.merged_one(number, made, place)?; }",
         integration: &[],
         unit: &[WIDE],
     },
@@ -396,8 +399,8 @@ pub const GROUP_TABLE: [Mutation; 47] = [
         package: Package::Core,
         breaks: "a wide partition gathered into a table takes a Made's groups up last first, so its groups are not in the order of their first rows (RULES.md D1300)",
         file: "src/exec/table/made/wide.rs",
-        original: "            run.push(place);",
-        replacement: "            run.insert(0, place);",
+        original: "        run.push(place);",
+        replacement: "        run.insert(0, place);",
         integration: &[],
         unit: &[WIDE],
     },
@@ -405,9 +408,9 @@ pub const GROUP_TABLE: [Mutation; 47] = [
         name: "wide-rekeyed-forgotten",
         package: Package::Core,
         breaks: "a wide partition whose probe grew long places its groups by keyed hashes but looks keys up by the hashes they came with, so no group is found again (RULES.md D1300, D357)",
-        file: "src/exec/table/made/wide.rs",
-        original: "        self.keyed = Some(keyed);",
-        replacement: "        drop(keyed);",
+        file: "src/exec/table/made/wide/part.rs",
+        original: "        *pass.keyed = true;",
+        replacement: "        *pass.keyed = false;",
         integration: &[],
         unit: &[WIDE_KEYED],
     },
@@ -426,8 +429,8 @@ pub const GROUP_TABLE: [Mutation; 47] = [
         package: Package::Core,
         breaks: "a sort's first rows of a wide partition are picked of the groups of several rows alone, those of one row where they lie never read (RULES.md D1300)",
         file: "src/exec/parallel/grouped/top/wide.rs",
-        original: "let batches = own_batch.into_iter().chain(rest);",
-        replacement: "let batches = own_batch.into_iter().chain(rest.take(0));",
+        original: "let batches = held.into_iter().map(Ok).chain(rest);",
+        replacement: "let batches = held.into_iter().map(Ok).chain(rest.take(0));",
         integration: &[],
         unit: &[WIDE_FIRST],
     },
@@ -436,8 +439,8 @@ pub const GROUP_TABLE: [Mutation; 47] = [
         package: Package::Core,
         breaks: "a sort's first rows of a wide partition are picked of the groups of one row alone, the partition's own table never read (RULES.md D1300)",
         file: "src/exec/parallel/grouped/top/wide.rs",
-        original: "(held.len() > 0).then(",
-        replacement: "(held.len() > held.len()).then(",
+        original: "let batches = held.into_iter().map(Ok).chain(rest);",
+        replacement: "let batches = held.into_iter().take(0).map(Ok).chain(rest);",
         integration: &[],
         unit: &[WIDE_FIRST],
     },
@@ -480,6 +483,36 @@ pub const GROUP_TABLE: [Mutation; 47] = [
         replacement: "states.merge_all(agg, &[], (sent, &[]))?;",
         integration: &[],
         unit: &[WIDE_FIRST],
+    },
+    Mutation {
+        name: "sub-part-rows-placed-by-other-bits",
+        package: Package::Core,
+        breaks: "a wave's rows are counted by the sub-parts their hashes name and placed by other bits, so a sub-part looks up rows of keys another lists (RULES.md D1301)",
+        file: "src/exec/table/made/wide.rs",
+        original: "let Some(at) = next.get_mut(sub_of(hash, self.bits)) else { continue };",
+        replacement: "let Some(at) = next.get_mut(sub_of(hash.rotate_left(7), self.bits)) else { continue };",
+        integration: &[],
+        unit: &[WIDE],
+    },
+    Mutation {
+        name: "sub-part-listed-groups-not-placed",
+        package: Package::Core,
+        breaks: "the groups a sub-part lists are given no slot before a wave's rows are looked up, so a row of a key held since an earlier wave is listed as a new group (RULES.md D1301)",
+        file: "src/exec/table/made/wide/part.rs",
+        original: "            longest = longest.max(slots.place(hash, g, by));",
+        replacement: "            longest = longest.max(usize::from(hash == 0 && g == u32::MAX));",
+        integration: &[],
+        unit: &[WIDE],
+    },
+    Mutation {
+        name: "sub-part-split-without-its-own-table",
+        package: Package::Core,
+        breaks: "a sub-part split among those further bits name leaves its groups of several rows behind, listed in tables that do not hold them (RULES.md D1301)",
+        file: "src/exec/table/made/wide/part.rs",
+        original: "            part.own.take_up(&own, taken)?;",
+        replacement: "            if taken.is_empty() { part.own.take_up(&own, taken)?; }",
+        integration: &[],
+        unit: &[WIDE_COUNTS],
     },
     Mutation {
         name: "wide-under-a-sort-by-a-grouping-column",

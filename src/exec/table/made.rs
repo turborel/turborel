@@ -17,7 +17,7 @@ use super::{GroupTable, Key, Keys, Seed, narrow};
 
 mod wide;
 mod written;
-pub(in crate::exec) use wide::{Adopted, Lying, Wide};
+pub(in crate::exec) use wide::{Adopted, Lying, Run, Wide};
 pub(in crate::exec) use written::PIECE;
 
 /// \[DESIGN\] The bits of a hash below those a partition is found by, as
