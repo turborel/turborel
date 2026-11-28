@@ -62,6 +62,14 @@ impl Estimates<'_> {
         cardenas(distinct, n)
     }
 
+    /// \[DESIGN\] (RULES.md D1278) The groups `rows` rows of `input` fall
+    /// into by its columns `columns`, as `groups` estimates them: asked of
+    /// the rows of a plan built of `input`, where they are not the rows
+    /// the estimator counts of it.
+    pub(in crate::physical) fn groups_of(&self, input: &LogicalPlan, columns: &[usize], rows: f64) -> f64 {
+        self.asked(|| self.groups(input, columns, rows))
+    }
+
     /// The distinct combinations of `input`'s columns `columns`, and the
     /// rows of the one table that has them all, if one does.
     fn combinations(&self, input: &LogicalPlan, columns: &[usize]) -> (f64, Option<f64>) {

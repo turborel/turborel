@@ -192,6 +192,37 @@ fn a_grouping_spilled_holds_its_partitions_in_one_area() {
     }
 }
 
+/// Verifies: [DESIGN] (RULES.md D1276, D1247, D1226) a grouping of few
+/// groups a morsel, its morsels merged on the statement's thread, where
+/// the groups of one morsel alone pass the smallest MEMORY.WORK_BYTES by
+/// the states of a hundred and eighty set functions, writes that thread's
+/// table to the spill each time and gives every group, with the rows the
+/// statement gives alone at degree 1. A regression test: with no wave
+/// merged the spill was forgotten at the end, and the groups of the
+/// statement thread's last table alone were given.
+#[test]
+fn a_table_of_few_groups_past_the_grant_gives_every_group() {
+    let (db, a, threads) = table();
+    let made: Vec<String> = (0..60).map(|n| format!("N + {n} AS N{n}")).collect();
+    let asked: Vec<String> = (0..60).map(|n| format!("SUM(N{n}), MIN(N{n}), MAX(N{n})")).collect();
+    let sql =
+        format!("SELECT B, COUNT(*), {} FROM (SELECT K - MOD(K, 8) AS B, {} FROM C) AS Q GROUP BY B", asked.join(", "), made.join(", "));
+    let in_memory = alone(&a, &sql);
+    assert_eq!(in_memory.len(), 12_000);
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    threads.taken();
+    for set in
+        ["SET EXECUTOR.BATCHES = 'ON'", "SET EXECUTOR.DEGREE = 4", "SET EXECUTOR.MORSEL_ROWS = 1024", "SET EXECUTOR.PARALLEL_MIN_ROWS = 0"]
+    {
+        exec(&a, set).unwrap();
+    }
+    let spilled = rows(&a, &sql).unwrap();
+    let shown = in_parallel(&a, &sql);
+    assert!(threads.taken().written > 0, "its table went to the spill\n{shown}");
+    let differs = spilled.iter().zip(&in_memory).position(|(row, same)| row != same);
+    assert_eq!((spilled.len(), differs), (12_000, None), "{shown}");
+}
+
 /// Verifies: [DESIGN] (RULES.md D1226, D1113) the first grouping of a
 /// pair, as a DISTINCT set function is run, and SELECT DISTINCT, at the
 /// smallest MEMORY.WORK_BYTES, give the rows they give run alone, in
@@ -248,5 +279,37 @@ fn a_crossing_second_grouping_past_the_grant_gives_its_rows() {
         assert!(expected.len() > 100, "{q}: many groups of the second");
         assert_eq!(&parallel(&a, q), expected, "{q}");
         in_parallel(&a, q);
+    }
+}
+
+/// Verifies: [DESIGN] (RULES.md D1281, D1226) the first rows of a sort
+/// over a pair of groupings, at the smallest MEMORY.WORK_BYTES, whose
+/// partitions are written to the spill and merged back, are the rows the
+/// plan run alone gives in memory, in its order: by a count nearly every
+/// group ties on, where the first rows' numbers order them, and past an
+/// offset. Each part read back gives its first rows alone, so an analyzed
+/// plan counts its projection fewer rows than there are groups, which a
+/// part given way to would not. The WHERE clause keeps a third of the
+/// groups, that of null G not among them. Of every group this pair gives
+/// way at this grant, with a sort over it or none.
+#[test]
+fn a_pairs_first_rows_past_the_grant_are_the_plans() {
+    let (db, a, threads) = table();
+    let queries = [
+        "SELECT 1, G, COUNT(DISTINCT N / 2) FROM C WHERE G < 8000 GROUP BY G ORDER BY 3 DESC FETCH FIRST 2 ROWS ONLY",
+        "SELECT 1, G, COUNT(DISTINCT N / 40) FROM C WHERE G < 8000 GROUP BY G ORDER BY 3 DESC OFFSET 1 ROWS FETCH FIRST 2 ROWS ONLY",
+    ];
+    let in_memory: Vec<Vec<String>> = queries.iter().map(|q| alone(&a, q)).collect();
+    let groups: u64 = alone(&a, "SELECT COUNT(*) FROM (SELECT G FROM C WHERE G < 8000 GROUP BY G) AS X").concat().parse().unwrap();
+    db.set_setting("MEMORY.WORK_BYTES", &Value::Exact(Decimal::new(SMALL, 0))).unwrap();
+    threads.taken();
+    for (q, expected) in queries.iter().zip(&in_memory) {
+        assert_eq!(&parallel(&a, q), expected, "{q}");
+        let written = threads.taken().written;
+        let shown = in_parallel(&a, q);
+        assert!(written > usize::try_from(SMALL).unwrap() * 4, "{q}: its partitions many times the grant, spilled\n{shown}");
+        let analyzed = a.analyzed(q, &turborel::params::Params::new()).unwrap();
+        let projected = analyzed.operators.iter().find(|o| o.label.starts_with("Project")).map(|o| o.rows);
+        assert!(projected.is_some_and(|kept| kept < groups), "{q}: the rows the parts kept, {projected:?} of {groups}\n{shown}");
     }
 }

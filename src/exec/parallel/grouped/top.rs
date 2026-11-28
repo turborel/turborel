@@ -28,6 +28,19 @@
 //! value of them is kept. A key that names a grouping column sorts every
 //! column of the groups, as before.
 //!
+//! \[DESIGN\] (RULES.md D1281) Of a pair of groupings run as one part
+//! (RULES.md D1113), the rows asked are the second's groups. A partition's
+//! thread makes the second's table of its groups of the first (RULES.md
+//! D1123) and takes its first rows from that table, as it does from the
+//! table of a grouping alone (`of_part`). A group of the second is
+//! numbered by its first group of the first, the first row of its own,
+//! and lies in one partition whole, so the number as the last key orders
+//! any two of them as the plan run alone gives them. It does so where
+//! each partition makes the second in a table and the second crosses no
+//! partition (`fits`). A partition whose groups of the first are not in
+//! the order of their first rows makes the second's of rows, as before,
+//! and keeps the first of those under the same keys (`of_groups`).
+//!
 //! \[EXTENSION\] (RULES.md D378, D1254) An analyzed plan counts the
 //! projection and the grouping, and the first rows are taken under those
 //! counts as under none, so the statement analyzed runs as the statement
@@ -37,18 +50,19 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use super::regrouped::Outer;
 use super::runs::{Ordered, Run};
 use super::{Given, Grouping};
 use crate::error::Result;
 use crate::exec::counted::Tally;
 use crate::exec::sort::first_of_morsel;
 use crate::exec::table::GroupTable;
-use crate::exec::{Db, RowIter, broken};
+use crate::exec::{Db, RowIter, Runner, broken};
 use crate::logical::{Expr, Most, SortKey};
 use crate::physical::{NodeCount, Plan};
 use crate::storage::{Batch, Column, Ints, Row};
 use crate::txn::TxId;
-use crate::value::Value;
+use crate::value::{Decimal, Value};
 
 /// What a projection over a grouping gives of a group's row at one
 /// place: the row's column at this place, or a constant.
@@ -176,6 +190,46 @@ impl Top {
         Most { rows: self.most, ties: false }
     }
 
+    /// \[DESIGN\] (RULES.md D1124, D1281) The first rows of a partition
+    /// of `grouping` whose groups `table` holds. Of a grouping alone they
+    /// are that table's (`of_table`). Of a pair they are those of the
+    /// second grouping's table, made of `table`'s groups as a batch
+    /// (RULES.md D1123), or, where `table`'s groups are not in the order
+    /// of their first rows, of the second's groups made of rows
+    /// (`of_groups`).
+    ///
+    /// # Errors
+    ///
+    /// As a set function, or the sort, fails.
+    pub(super) fn of_part(&self, grouping: &Grouping, table: GroupTable, runner: &Runner) -> Result<Vec<Row>> {
+        let Some(outer) = &grouping.outer else { return self.of_table(table) };
+        if !outer.tabled(&table) {
+            return self.of_groups(grouping.rows_of(table, runner)?);
+        }
+        let second = outer.second_table(table, (runner, &grouping.seed))?;
+        self.of_table(second.ok_or_else(|| broken("a second grouping made in a table reads no batch"))?)
+    }
+
+    /// \[DESIGN\] (RULES.md D1281) The first rows of `groups`, a
+    /// partition's groups of a pair's second grouping made of rows, each
+    /// with its number. Each is given as the projection's row with its
+    /// number after it, and those first under the keys and then the
+    /// numbers are kept, as `of_table` keeps them of a table.
+    fn of_groups(&self, groups: Vec<(u64, Row)>) -> Result<Vec<Row>> {
+        add(&self.counts.made, groups.len());
+        let numbered = |(first, group): (u64, Row)| {
+            let mut row = self.columns.iter().map(|pick| pick.value(&group)).collect::<Result<Row>>()?;
+            row.push(Value::Exact(Decimal::new(i128::from(i64::try_from(first).unwrap_or(i64::MAX)), 0)));
+            Ok(row)
+        };
+        let rows = groups.into_iter().map(numbered).collect::<Result<Vec<Row>>>()?;
+        let (db, tx) = &self.run;
+        let sorted = crate::exec::sort::first(&self.keys, Box::new(rows.into_iter().map(Ok)), self.most(), db, *tx);
+        let first = sorted.collect::<Result<Vec<Row>>>()?;
+        add(&self.counts.given, first.len());
+        Ok(first)
+    }
+
     /// [X3.135-1986 §8.3 GR3b] The first rows of the groups of `table`,
     /// a partition's, under the keys and then their first rows' numbers:
     /// each the projection's row with that number after it.
@@ -183,7 +237,7 @@ impl Top {
     /// # Errors
     ///
     /// As a set function's `finish`, or the sort, fails.
-    pub(super) fn of_table(&self, table: GroupTable) -> Result<Vec<Row>> {
+    fn of_table(&self, table: GroupTable) -> Result<Vec<Row>> {
         add(&self.counts.made, table.len());
         if let Some(sorted_by) = self.sorted_by(table.width()) {
             return self.picked_of(&table, &sorted_by).map_err(|e| table.finished().err().unwrap_or(e));
@@ -283,10 +337,12 @@ impl Top {
 
 /// Whether `grouping` gives the first rows asked of it from its tables:
 /// its groups are made by batch, so every partition is finished through
-/// its table, and each group's row is the table's own, with no HAVING
-/// condition nor second grouping over it.
+/// its table, and each group's row is a table's own, with no HAVING
+/// condition over it. Of a pair the table is the second grouping's, where
+/// each partition makes one of its own groups whole (RULES.md D1281,
+/// `Outer::in_tables`).
 pub(super) fn fits(grouping: &Grouping) -> bool {
-    let plain = grouping.having.is_none() && grouping.outer.is_none();
+    let plain = grouping.having.is_none() && grouping.outer.as_ref().is_none_or(Outer::in_tables);
     grouping.read.is_some() && plain && !grouping.distinct && !grouping.spec.groups.is_empty()
 }
 
@@ -364,3 +420,8 @@ impl Drop for Counting {
         }
     }
 }
+
+// Unit tests: a pair's first rows of a partition whose first groups are
+// out of order (RULES.md R-TEST-1).
+#[cfg(test)]
+mod tests;

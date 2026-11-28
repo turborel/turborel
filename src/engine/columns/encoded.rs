@@ -491,6 +491,8 @@ impl Body<'_> {
         let Some(last) = count.checked_sub(1) else { return Some(held) };
         let (start, end) = (between(offsets, 0)?.0, between(offsets, last)?.1);
         let span = kernels.utf8(entries.get(start..end)?)?;
+        // Room for every entry's octets at once, all an unpadded text takes.
+        held.text.reserve(span.len());
         for e in 0..count {
             let (from, to) = between(offsets, e)?;
             padded(&mut held.text, span.get(from.checked_sub(start)?..to.checked_sub(start)?)?, pad);

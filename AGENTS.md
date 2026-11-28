@@ -171,7 +171,8 @@ A finished feature updates these in the same change:
 - CONFORMANCE.md, for a clause implemented or changed (R-TRACE-3)
 - TODO.md, which only holds open work
 - [doc/](doc/README.md), for anything users or operators see (R-DOC-8)
-- README.md, a short line in "What it has" for a major feature (R-DOC-9)
+- README.md, where a new area of capability gets one short line in "What it has" and a
+  feature of an area already named at most a few words in its line (R-DOC-9)
 
 For the manual, search `doc/` for what changed, check each claim against
 the code, and run every example and paste its real output. A new statement

@@ -54,11 +54,19 @@ fn regret(cost: f64, least: f64) -> f64 {
 /// Of `costs`, each a method's, the method whose larger regret at the
 /// rows `e` and `h` is least, the first of those of equal regret.
 pub(super) fn choose<M: Copy>(costs: &[(M, Linear)], (e, h): (f64, f64)) -> Option<M> {
-    let least = |rows: f64| costs.iter().map(|(_, c)| c.at(rows)).fold(f64::INFINITY, f64::min);
-    let (at_e, at_h) = (least(e), least(h));
+    least_regret(costs.iter().map(|&(method, cost)| (method, (cost.at(e), cost.at(h)))))
+}
+
+/// Of `costs`, each a method's costs at the two ends of what an estimate
+/// is taken to be, the method whose larger regret of the two is least,
+/// the first of those of equal regret: the rule of `choose` for costs
+/// that are not linear in what is estimated, which holds of any that
+/// only rise with it or only fall (RULES.md D1278).
+pub(super) fn least_regret<M: Copy>(costs: impl Iterator<Item = (M, (f64, f64))> + Clone) -> Option<M> {
+    let (at_e, at_h) = costs.clone().fold((f64::INFINITY, f64::INFINITY), |(e, h), (_, (x, y))| (e.min(x), h.min(y)));
     let mut chosen: Option<(M, f64)> = None;
-    for &(method, cost) in costs {
-        let worst = regret(cost.at(e), at_e).max(regret(cost.at(h), at_h));
+    for (method, (x, y)) in costs {
+        let worst = regret(x, at_e).max(regret(y, at_h));
         if chosen.is_none_or(|(_, best)| worst < best) {
             chosen = Some((method, worst));
         }
